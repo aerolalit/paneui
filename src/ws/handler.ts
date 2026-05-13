@@ -221,27 +221,35 @@ async function handleFrame(
     data?: unknown;
     causation_id?: unknown;
     idempotency_key?: unknown;
+    correlation_id?: unknown;
   };
+  const cid = typeof f.correlation_id === "string" ? f.correlation_id : null;
   if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
-    sendJson(ws, { error: { code: "invalid_request", message: "type must be a non-empty string ≤64 chars" } });
+    sendJson(ws, {
+      error: { code: "invalid_request", message: "type must be a non-empty string within 64 chars" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
     return;
   }
   if (
     Buffer.byteLength(JSON.stringify(f.data ?? null), "utf8") >
     config.MAX_EVENT_DATA_BYTES
   ) {
-    sendJson(ws, { error: { code: "payload_too_large" } });
+    sendJson(ws, {
+      error: { code: "payload_too_large" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
     return;
   }
 
   // Re-read the session for the latest schema/status.
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
-    sendJson(ws, { error: { code: "not_found" } });
+    sendJson(ws, { error: { code: "not_found" }, ...(cid ? { correlation_id: cid } : {}) });
     return;
   }
   if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
-    sendJson(ws, { error: { code: "gone" } });
+    sendJson(ws, { error: { code: "gone" }, ...(cid ? { correlation_id: cid } : {}) });
     return;
   }
 
@@ -256,14 +264,20 @@ async function handleFrame(
     });
   } catch (err) {
     if (err instanceof ApiError) {
-      sendJson(ws, { error: { code: err.code, message: err.message, details: err.details } });
+      sendJson(ws, {
+        error: { code: err.code, message: err.message, details: err.details },
+        ...(cid ? { correlation_id: cid } : {}),
+      });
       return;
     }
-    sendJson(ws, { error: { code: "internal" } });
+    sendJson(ws, { error: { code: "internal" }, ...(cid ? { correlation_id: cid } : {}) });
     return;
   }
 
   const idempotencyKey = typeof f.idempotency_key === "string" ? f.idempotency_key : null;
+  const correlationId = typeof (f as { correlation_id?: unknown }).correlation_id === "string"
+    ? (f as { correlation_id: string }).correlation_id
+    : null;
   if (idempotencyKey) {
     const existing = await prisma.event.findUnique({
       where: {
@@ -275,7 +289,11 @@ async function handleFrame(
       },
     });
     if (existing) {
-      sendJson(ws, { ack: String(existing.id), deduped: true });
+      sendJson(ws, {
+        ack: String(existing.id),
+        deduped: true,
+        ...(correlationId ? { correlation_id: correlationId } : {}),
+      });
       return;
     }
   }
@@ -293,7 +311,11 @@ async function handleFrame(
   });
   const serialized: SerializedEvent = serializeEvent(event);
   publish(sessionId, serialized);
-  sendJson(ws, { ack: serialized.id, deduped: false });
+  sendJson(ws, {
+    ack: serialized.id,
+    deduped: false,
+    ...(correlationId ? { correlation_id: correlationId } : {}),
+  });
 
   if (
     session.callbackUrl &&
