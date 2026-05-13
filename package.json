@@ -23,11 +23,14 @@
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@prisma/client": "^6.19.0",
+    "ajv": "^8.20.0",
     "hono": "^4.6.0",
+    "ws": "^8.20.1",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@types/ws": "^8.18.1",
     "prisma": "^6.19.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

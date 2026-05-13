@@ -7,14 +7,23 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBootstrap } from "./bootstrap.js";
 import { hashKey } from "./keys.js";
 import type { Config } from "./config.js";
 
-const MIGRATION_SQL_PATH = "prisma/migrations/20260513163701_init/migration.sql";
+function findInitMigrationSql(): string {
+  const dir = "prisma/migrations";
+  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
+  if (entries.length === 0) throw new Error("no migrations found");
+  // There's only ever one migration in v1; if multiple, pick the latest.
+  entries.sort();
+  return join(dir, entries[entries.length - 1]!, "migration.sql");
+}
+
+const MIGRATION_SQL_PATH = findInitMigrationSql();
 
 const baseConfig: Config = {
   DATABASE_URL: "",

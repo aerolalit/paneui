@@ -44,7 +44,7 @@ CREATE TABLE "Participant" (
 
 -- CreateTable
 CREATE TABLE "Event" (
-    "id" BIGINT NOT NULL PRIMARY KEY,
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "sessionId" TEXT NOT NULL,
     "authorKind" TEXT NOT NULL,
     "authorId" TEXT NOT NULL,
