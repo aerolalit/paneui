@@ -1,118 +1,389 @@
-# Pane — Technical Spec
+# Pane: Technical Spec (v1)
 
-Design sketch, v0. Subject to change. Companion to `README.md` and `ROADMAP.md`.
+Companion to `README.md` and `ROADMAP.md`. Supersedes the v0 sketch.
 
-## Stack (decided)
+This spec describes Pane v1: the minimum protocol and implementation needed to ship the OSS core. The shape is locked, the details are open.
 
-TypeScript. Runtime: Node 20+ (Bun is fine — keep code runtime-agnostic). Web framework: Hono (tiny, fast, runs on Node/Bun/edge — good fit for a single small container). ORM: **Prisma** — SQLite for the self-host/default build, PostgreSQL for the hosted build. MCP server via the official `@modelcontextprotocol/sdk`. Keep dependencies few.
+## Core idea
 
-Note on Prisma + two databases: Prisma sets the DB via the `provider` in `schema.prisma`, not purely the connection string, so switching SQLite↔Postgres isn't a runtime swap — handle it at build time (a small codegen step, or two `schema.prisma` targets, or env-templated provider). For v1 (SQLite only) this doesn't matter; bake the Postgres path in when the hosted build appears. The model definitions stay in one place either way.
+The agent generates and ships a UI artifact AND a per-session event schema. Humans and agents are peers connected to a single session. Every interaction (a human click, an agent reply) is an event. State is what you get by replaying events. The relay transports and validates; it does not interpret.
+
+Three things change vs. v0:
+
+1. Events are the only primitive. No separate `emit` / `submit` verbs. `submit` is one event type; the agent's reply is another, schema-defined.
+2. Both sides write to the same UI symmetrically. The agent's reply to a human comment uses the same primitive the human used to post it.
+3. The agent declares the session's event schema up front. The relay validates writes against it.
+
+## Stack (unchanged from v0)
+
+TypeScript. Runtime: Node 20+ (Bun fine; keep code runtime-agnostic). Web framework: Hono. ORM: Prisma. SQLite for self-host/default, PostgreSQL for the hosted build (dialect selected at build time via `schema.prisma` provider). MCP server via `@modelcontextprotocol/sdk`. Minimal dependencies.
 
 ## Roles
 
-- **Agent** — anything that wants to ask a human something richer than a text prompt. Has no public address; only makes outbound HTTPS calls.
-- **Relay** — the Pane service. Has a public URL. Stores sessions + events, serves the UI, exposes the API. Self-hosted (one Docker container) or the managed hosted version.
-- **Human** — opens a URL in any browser, interacts with the UI.
+- **Agent**: any process that wants to give a human a rich UI. No public address; only outbound HTTPS or WS calls. Owns the artifact and the schema for the sessions it creates.
+- **Relay**: the Pane service. Public URL. Stores sessions and events. Serves the shell page that loads the artifact. Transports and validates events. Self-host (Docker + SQLite) or hosted (Postgres).
+- **Human**: opens a URL in any browser; interacts with the artifact. Multiple humans can share a session.
 
-## The flow
+## Identity
+
+Every connection authenticates with a token issued by the relay at session creation. Each token names one identity:
+
+- `human:<id>` (browser; one token per invited human)
+- `agent:<id>` (the agent that created the session)
+- `system` (relay-emitted only)
+
+The relay stamps `author` on every accepted event from the auth context. Clients cannot spoof author.
+
+## Event (the only primitive)
+
+Wire shape, identical across both transports:
+
+```json
+{
+  "id":              "evt_<ulid>",
+  "session_id":     "<id>",
+  "author":          { "kind": "human|agent|system", "id": "<id>" },
+  "ts":              "2026-05-13T14:30:52.000Z",
+  "type":            "<namespace.name>",
+  "data":            { "...": "per the session's schema" },
+  "causation_id":    "evt_... or null",
+  "idempotency_key": "<optional>"
+}
+```
+
+Field rules:
+
+- `id`, `ts`, `author` are stamped server-side. The writer omits them.
+- `type` must exist in the session's event schema. 422 otherwise.
+- `data` must validate against the type's payload schema. 422 otherwise.
+- `author.kind` must be in the type's `emittedBy`. 403 otherwise.
+- `causation_id` is the event id that triggered this one. Optional. Stored verbatim; not validated for existence (it is metadata).
+- `idempotency_key` is optional. If `(session_id, author_id, key)` was seen before, return the existing event id with 200 (not 201).
+
+System events (relay-only; not writable by agent or page):
+
+| Type | Payload |
+|---|---|
+| `system.participant.joined` | `{ author }` |
+| `system.participant.left`   | `{ author }` |
+| `system.artifact.updated`   | `{ version, source_hash }` |
+| `system.schema.updated`     | `{ version, added: [type names] }` |
+| `system.session.expired`    | `{}` |
+
+## Per-session event schema
+
+The agent ships this at session creation. Shape:
+
+```json
+{
+  "events": {
+    "review.commentAdded": {
+      "payload":   { "...JSON Schema..." },
+      "emittedBy": ["page", "agent"]
+    },
+    "review.approved": {
+      "payload":   { "approver": { "type": "string" } },
+      "emittedBy": ["page"]
+    },
+    "highlight.requested": {
+      "payload":   { "selector": { "type": "string" } },
+      "emittedBy": ["agent"]
+    }
+  }
+}
+```
+
+- `emittedBy`: which actor kinds may write the type. `"page"` covers any human peer; `"agent"` covers any agent peer. `"system"` is reserved.
+- No global event registry. Each session owns its vocabulary. An agent that wants stable cross-session types simply ships the same schema each time.
+- Schema can be PATCHed mid-session (additive only). The relay emits `system.schema.updated`.
+- The relay uses Ajv to validate `data` against the type's `payload`.
+
+## Artifact
+
+The HTML/JS the agent generated for this session. v1 formats:
+
+| Type | Source |
+|---|---|
+| `html-inline` | A single string of HTML/CSS/JS, capped 2 MB. Served as-is. |
+| `html-ref`    | An opaque URL the agent uploaded elsewhere; relay fetches and caches. |
+
+Same sandbox rules apply to both. Not in v1: React bundles, runtime compilers, server-rendered frameworks.
+
+`PATCH /v1/sessions/{id}/artifact` replaces it; relay emits `system.artifact.updated`. The shell page reloads the iframe. The event log is preserved across reloads.
+
+## Sandbox
+
+The artifact is treated as hostile by default (LLM-generated). The relay enforces:
+
+- Iframe `sandbox="allow-scripts"`. No `allow-same-origin`, no `allow-top-navigation`, no `allow-forms`.
+- CSP on `/s/{token}/content`: `default-src 'self'; script-src 'unsafe-inline'; connect-src 'none'; img-src data: 'self'; style-src 'unsafe-inline' 'self'`.
+- No external network. The artifact's only escape is `postMessage` to the shell page.
+- `frame-ancestors` on relay's own pages.
+- HTML served only through the relay endpoint (never a raw URL with bypassable headers).
+- HTML size cap (2 MB); event `data` cap (64 KB).
+
+## Bridge
+
+The shell page (outside the iframe) holds the WebSocket and the token. The bridge shim, served alongside the shell, exposes `pane` to the artifact via `postMessage`:
+
+```ts
+pane.emit(type, data, opts?): Promise<{ id }>
+pane.on(type, handler): unsubscribe
+pane.state: ReadonlyEventLog
+```
+
+`opts.causationId` tags the parent event. `opts.idempotencyKey` makes the write retry-safe.
+
+The shell page:
+
+1. Opens a WS to the relay using the human's token.
+2. Replays events into local state on connect.
+3. Forwards new events to the iframe via `postMessage` (filtered to public types).
+4. Receives `pane.emit` calls from the iframe via `postMessage`, validates origin, forwards to WS.
+
+The artifact never sees the token.
+
+## Transports
+
+Two, interchangeable, same event shape.
+
+### WebSocket (primary)
 
 ```
-agent ──POST /sessions {html, schema, ttl}──▶ relay ──▶ {session_id, url}
-agent ──(sends url over its own channel: Telegram/Slack/email)──▶ human
-human ──GET /s/{id}──▶ relay ──▶ shell page + sandboxed iframe(/s/{id}/content) + bridge shim
-human ──(interacts)──▶ bridge ──postMessage──▶ shell ──POST /s/{id}/events──▶ relay (append to log)
-agent ──GET /s/{id}/events?since=N (or webhook, or SSE)──▶ relay ──▶ new events
-                                                                  └─ on "submit": status=submitted, result set
-agent's "ask the human" call returns (submit event, or timeout)
+WS /v1/sessions/{id}/stream
+Header: Authorization: Bearer <participant_token>
+
+on open  → server replays event log from cursor=0
+server → { id, session_id, author, ts, type, data, causation_id, idempotency_key }
+client → { type, data, causation_id?, idempotency_key? }
 ```
+
+### HTTP POST + cursor read (stateless fallback)
+
+```
+POST /v1/sessions/{id}/events
+  Authorization: Bearer <token>
+  Body: { type, data, causation_id?, idempotency_key? }
+  → 201 { event: ... }
+
+GET /v1/sessions/{id}/events?since=<cursor>&wait=<seconds>
+  Authorization: Bearer <token>
+  → 200 { events: [...], cursor: <opaque> }
+```
+
+A stateless agent reads via `?wait=30` (long-poll) or callback. A long-running agent (a claw, an open Claude Code session) holds a WS.
+
+## Callbacks (optional)
+
+Agents that cannot poll or hold a WS register a webhook at session creation:
+
+```json
+"callback": {
+  "url":     "https://my-agent/pane",
+  "events":  ["review.*", "approval.*"],
+  "secret":  "<HMAC shared secret>"
+}
+```
+
+The relay POSTs `{ session_id, event }` for each matching event. Signed `X-Pane-Signature: sha256=<hmac of timestamp.body>`. Retries 3x with exponential backoff. Durable delivery (dead-letter, replay) is a hosted feature.
 
 ## HTTP API (v1)
 
-All agent-facing endpoints require `Authorization: Bearer <api_key>`.
+All agent endpoints require `Authorization: Bearer <api_key>` from `agents`.
 
-- `POST /register` → `{api_key}` — agent self-provisions. (Hosted: rate-limited, returns a *provisional/limited* key; optional later "claim with email" lifts limits. Self-host: off by default, or behind a config `REGISTRATION_SECRET`.)
-- `POST /sessions` `{html, schema?, ttl?, metadata?}` → `{session_id, url}` — `html` is capped (~2 MB). `schema` (optional JSON) describes the data the agent expects back. `ttl` defaults to e.g. 1h.
-- `GET /sessions/{id}` → session metadata + `status` + `result` (no html)
-- `GET /sessions/{id}/events?since=<id>` → events with `id > since`, ordered. Long-poll variant: `?wait=30` holds the connection up to N seconds for the next event. SSE variant: `GET /sessions/{id}/events/stream`.
-- `DELETE /sessions/{id}` — end early
-- `GET /keys` / `DELETE /keys/{id}` — list/revoke keys for the calling account
+| Method | Path | Description |
+|---|---|---|
+| `POST`   | `/v1/register` | Self-provision an API key. Gated by `REGISTRATION_SECRET` on self-host. |
+| `POST`   | `/v1/sessions` | Create session (artifact + schema + participants). |
+| `GET`    | `/v1/sessions/{id}` | Session metadata. |
+| `PATCH`  | `/v1/sessions/{id}/schema`   | Additive schema update. |
+| `PATCH`  | `/v1/sessions/{id}/artifact` | Replace artifact. |
+| `DELETE` | `/v1/sessions/{id}` | End session. |
+| `POST`   | `/v1/sessions/{id}/events` | Write one event. |
+| `GET`    | `/v1/sessions/{id}/events?since=<cur>&wait=<s>` | Read events. Long-poll. |
+| `WS`     | `/v1/sessions/{id}/stream` | Bidirectional event stream. |
+| `GET`    | `/keys` | List the calling agent's keys. |
+| `DELETE` | `/keys/{id}` | Revoke. |
 
-Human-facing (no auth — the URL token *is* the auth):
-- `GET /s/{token}` — the shell page (creates the sandboxed iframe, injects the bridge shim)
-- `GET /s/{token}/content` — streams the stored HTML with `Content-Security-Policy`, `X-Frame-Options`, sandbox-appropriate headers. Served only through this endpoint so the relay controls the headers; never a raw/public CDN URL.
-- `POST /s/{token}/events` `{type, payload}` — called by the bridge shim
+Human-facing (no agent auth; URL token IS the auth):
 
-Webhook (optional): `POST /sessions` can take `webhook_url`; the relay POSTs `{session_id, event}` there on each new event (or just on `submit`). v1: best-effort with a couple of retries. (Robust delivery — signing, dead-letter — is a hosted feature.)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/s/{human_token}`         | Shell page. Loads bridge + iframe. |
+| `GET` | `/s/{human_token}/content` | Streams artifact under sandbox CSP. |
 
-## The bridge
+### `POST /v1/sessions` request
 
-The agent's HTML runs inside a sandboxed `<iframe>` (`sandbox="allow-scripts allow-forms"`, no `allow-same-origin` — so it can't touch the parent or the relay's cookies). Its only channel out is `window.postMessage` to the parent shell page. The shell relays validated messages to `POST /s/{token}/events`.
+```json
+{
+  "artifact": {
+    "type":   "html-inline",
+    "source": "<...html...>"
+  },
+  "schema": {
+    "events": {
+      "review.commentAdded": {
+        "payload":   { "...": "JSON Schema" },
+        "emittedBy": ["page", "agent"]
+      }
+    }
+  },
+  "participants": { "humans": 1 },
+  "ttl":         3600,
+  "metadata":    { "label": "PR #42 review" },
+  "callback":    { "url": "...", "events": ["..."], "secret": "..." }
+}
+```
 
-The shim injected/available to the agent's HTML:
-- `pane.emit(type, data)` — fire an arbitrary event (e.g. `"open"`, `"button_click"`, `"step_done"`)
-- `pane.submit(data)` — the terminal answer; sets session `status=submitted`, `result=data`, and is the event the agent's blocking call waits for
-- `pane.on(type, handler)` — receive events the agent pushes *into* the UI (future: agent updating the UI mid-session)
+`participants.humans` is a count; the relay issues that many human tokens. The agent that created the session is implicitly the only agent participant. Multi-agent sessions are v2.
 
-Decision pending: adopt the **MCP Apps** postMessage/JSON-RPC contract (`ui/initialize`, `ui/toolResult`, `tools/call`) verbatim — so any UI written for an MCP App works on Pane unchanged and MCP-aware agents target it with zero changes — versus a thinner custom `pane.*` shim with an MCP-Apps-compat mode. Leaning toward: thin `pane.*` for the simple case + an MCP-Apps adapter. The protocol/SDK stays fully open (it's a standard play, not a moat).
+### `POST /v1/sessions` response
 
-## Data model (v1, two tables)
+```json
+{
+  "session_id": "ses_...",
+  "tokens": {
+    "humans": ["tok_h_..."],
+    "agent":  "tok_a_..."
+  },
+  "urls": {
+    "humans":       ["https://pane.relay/s/tok_h_..."],
+    "agent_stream": "wss://pane.relay/v1/sessions/ses_.../stream"
+  },
+  "expires_at": "2026-05-13T..."
+}
+```
 
-`sessions`:
+## Data model (v1)
+
+```
+agents 1 ──< sessions 1 ──< events
+                       1 ──< participants
+```
+
+### `agents` (one row per API key issued)
+
 | column | notes |
 |---|---|
-| `id` | URL token, 128+ bits of entropy — this is the access control for an anonymous link |
-| `owner` (or `key_id`) | which API key created it; v1 only ever writes one value, but having the column makes multi-tenant-later a migration not a refactor |
-| `html` | TEXT, capped ~2 MB |
-| `schema` | JSON, optional |
-| `status` | `open` / `submitted` / `expired` |
-| `created_at`, `expires_at` | |
-| `metadata` | JSON, arbitrary (label, channel it was sent on, ...) |
-| `result` | JSON, denormalized copy of the final `submit` payload (convenience; source of truth is the event log) |
-| `webhook_url` | nullable |
+| `id`            | cuid. FK target. |
+| `name`          | human label. |
+| `key_hash`      | sha256(api_key), unique. |
+| `key_prefix`    | display only. |
+| `created_at`    | |
+| `last_used_at`  | nullable. |
+| `revoked_at`    | nullable; non-null = revoked. |
+| `rate_limit`    | nullable int. Per-agent sessions-per-hour cap. |
 
-`events`:
+### `sessions`
+
 | column | notes |
 |---|---|
-| `id` | integer autoincrement — doubles as the global poll cursor |
-| `session_id` | FK → `sessions.id`, `ON DELETE CASCADE` |
-| `type` | text, open-ended (`open`, `emit`, `submit`, `heartbeat`, ...) |
-| `payload` | JSON |
-| `created_at` | |
-| index | `(session_id, id)` so `?since=N` is `WHERE session_id=? AND id>? ORDER BY id` |
+| `id`                   | cuid. |
+| `agent_id`             | FK → `agents`. |
+| `artifact_type`        | `html-inline` or `html-ref`. |
+| `artifact_source`      | TEXT (inline) or URL (ref); capped 2 MB. |
+| `artifact_version`     | int; bumps on PATCH. |
+| `event_schema`         | JSON. The per-session vocabulary. |
+| `schema_version`       | int. |
+| `status`               | `open` or `closed`. |
+| `created_at`           | |
+| `expires_at`           | |
+| `metadata`             | JSON. |
+| `callback_url`         | nullable. |
+| `callback_secret_hash` | nullable. |
+| `callback_filter`      | nullable. |
 
-(Hosted-only, later, in `/ee/`: `accounts`/`api_keys`, `projects`/`orgs`, RBAC tables, audit log.)
+### `participants` (one row per identity that may connect)
 
-TTL cleanup: periodic `DELETE FROM sessions WHERE expires_at < now()`; cascade removes events.
+| column | notes |
+|---|---|
+| `id`             | cuid. |
+| `session_id`     | FK → `sessions`. |
+| `kind`           | `human` or `agent`. |
+| `identity_id`    | the value in `author.id`. |
+| `token_hash`     | sha256 of the auth token. |
+| `token_prefix`   | display only. |
+| `joined_at`      | nullable; stamped on first connect. |
+| `revoked_at`     | nullable. |
 
-### Storage / DB
+### `events`
 
-- HTML is stored in the DB (TEXT column on the session row), not the filesystem or object storage. One storage system, free TTL cleanup, identical self-hosted/hosted. (Object storage is a hosted-only optimization for later, behind config.)
-- DB selection: SQLite (`DATABASE_URL=file:./data.db`) for self-host/default; PostgreSQL (`DATABASE_URL=postgresql://...`) for the hosted build. With Prisma the dialect is the `provider` in `schema.prisma`, set at build time (see Stack note) — not a runtime swap. Model definitions live in one schema. No hand-rolled "Store interface with two impls" abstraction in v1 — Prisma is the data layer.
-- SQLite is the right default for self-host: zero ops, single writer (the relay), tiny append-mostly workload, ephemeral data. Never make Postgres mandatory in the OSS version.
+| column | notes |
+|---|---|
+| `id`              | BIGINT autoincrement. Doubles as the poll cursor (API exposes it as opaque). |
+| `session_id`      | FK → `sessions`, ON DELETE CASCADE. |
+| `author_kind`     | `human` / `agent` / `system`. |
+| `author_id`       | participant identity. |
+| `type`            | text. |
+| `data`            | JSON. |
+| `causation_id`    | nullable; not constrained (metadata only). |
+| `idempotency_key` | nullable. |
+| `ts`              | timestamp. |
+| Unique            | `(session_id, author_id, idempotency_key)` where `idempotency_key NOT NULL`. |
+| Index             | `(session_id, id)` for cursor reads. |
 
-## Auth (three layers; only #1 in v1)
+TTL cleanup: hourly `DELETE FROM sessions WHERE expires_at < now()`. Cascades to `events` and `participants`.
 
-1. **Agent → relay**: one bearer token. "My sessions" = sessions created with this key. Self-host: one key set at deploy (`API_KEY` env var) + optionally an admin endpoint to mint more. v1.
-2. **Human → session link**: the URL token is the auth — unguessable, whoever has the link opens it. "Only user X can open this" = a later/hosted feature.
-3. **Multi-tenancy / roles / orgs / RBAC / audit / SSO**: the hosted product. `/ee/`, v2+.
+(Hosted-only later, in `/ee/`: `orgs`, `projects`, scoped api_keys, quotas, audit log.)
 
-## Security notes (the part you can't get wrong)
+## Validation flow
 
-- Sandboxed iframe with **no** `allow-same-origin`. The agent's JS can never read the relay's cookies, the parent's DOM, or call relay endpoints directly — only `postMessage` to the parent, which validates and forwards.
-- Strict `Content-Security-Policy` on `/s/{token}/content` (no `unsafe-eval`; restrict `connect-src`, `img-src`, etc. — the agent's HTML should be self-contained, no external CDNs encouraged).
-- `X-Frame-Options` / `frame-ancestors` so the relay's own pages can't be reframed.
-- The HTML is served only through the relay's endpoint (never a raw public URL) so the relay owns the headers.
-- `POST /register` on the hosted version is rate-limited (per IP) and returns provisional/limited keys — never an open unlimited-key faucet on a public domain (abuse: spam sessions, phishing pages on `relay.<domain>`, burned compute).
-- Keys revocable from day 1 (`revoked` flag).
-- HTML size cap; event payload size cap; per-key rate limits on session creation.
+Every write (POST or WS message) runs:
+
+1. Decode token; resolve `participant`. 401 if invalid or revoked.
+2. Check `session.status == 'open'`. 410 otherwise.
+3. Lookup `type` in `session.event_schema`. 422 if missing.
+4. Check `participant.kind ∈ type.emittedBy`. 403 if not.
+5. Validate `data` against the type's `payload` schema (Ajv). 422 with the failed path on error.
+6. Idempotency check: if `(session_id, author_id, idempotency_key)` exists, return that event_id with status 200. Else proceed.
+7. Insert event row; stamp `id`, `ts`, `author` server-side.
+8. Broadcast to every participant WS socket in the session.
+9. Fire callback if `callback_filter` matches.
+
+## Auth (three layers; only #1 and #2 in v1)
+
+1. **Agent → relay**: bearer token in the `agents` table. Issued via `POST /register` (gated by `REGISTRATION_SECRET` on self-host). `sha256(key) + prefix` stored. Bump `last_used_at` on each request. Revocable via `DELETE /keys/{id}`.
+2. **Participant → session**: per-identity token issued at `POST /sessions` time. Stored as `sha256(token)` in `participants.token_hash`. URL token IS the auth for humans.
+3. **Multi-tenancy / roles / orgs / SSO**: hosted only, v2+.
+
+## Security checklist
+
+- Iframe `sandbox="allow-scripts"` only. No `allow-same-origin` (cookies + parent DOM remain unreachable).
+- CSP `connect-src 'none'` on `/s/{token}/content`: artifact has no external network.
+- `frame-ancestors` on relay's own pages.
+- HTML served only through the relay endpoint.
+- HTML size cap (2 MB); event data cap (64 KB).
+- Per-agent session-create rate limit.
+- Token entropy 128 bits, base32 encoded.
+- Webhook signatures HMAC-SHA256 over `timestamp.body`, 5-minute replay window.
+- `postMessage` origin check on the shell-iframe boundary.
+- Schema validation rejects writes outside the declared vocabulary, so LLM-generated artifacts cannot exfiltrate via custom event types.
 
 ## Open/closed line (open-core)
 
-Principle: **the OSS version must do the entire core job, end to end, for one user, on their own server, forever, with no asterisks.** Never cap volume in the self-hosted version. Never make OSS phone home or need an account. Open the bridge protocol fully.
+Principle: the OSS version must do the whole job, end to end, for one user, on their own server, forever, no asterisks. Never cap volume on self-host. Never phone home. The bridge protocol stays fully open.
 
-- **Open source (core relay):** publish a session; serve the UI (sandboxed iframe, bridge shim, CSP); capture interactions (event log); retrieve (poll, long-poll, SSE, basic webhook with retries); lifecycle (TTL, one-time links, bearer-token auth, agent self-register-with-secret for self-host); the MCP server + LangChain tool wrappers; single-container deploy + docs.
-- **Closed / hosted-only (`/ee/` + private):** managed hosting itself; a console (browse sessions, replay interaction timelines, analytics — open rate, completion rate, time-to-answer — search); orgs/multi-tenancy (projects, multiple scoped API keys, usage quotas); team + access control (human SSO/magic-link login to gate who can open a session, audit logs, retention policies, RBAC); higher limits, SLA, SOC2, EU data residency, support; maybe a managed UI-template gallery (templates themselves OSS; gallery + analytics hosted); robust webhook delivery (signing, dead-letter).
+**OSS (MIT, default build):**
 
-**Code-sharing:** one repo, mostly MIT/Apache, an `/ee/` directory under a commercial license (GitLab/PostHog pattern). Community edition = default build with `/ee/` excluded; hosted edition = core + `/ee/`. License-key gate only on enterprise features that run in self-host. Design the core with clean seams (auth, storage, event delivery as interfaces) so `/ee/` plugs in instead of monkey-patching — but don't build a full plugin framework. Move to "OSS core as a published library + separate private repo" only if proprietary code grows or others want to depend on the core.
+- Single-container relay (Docker + SQLite).
+- All transports: WS, HTTP POST + long-poll, best-effort signed webhook.
+- Schema validation, identity stamping, sandbox.
+- Bearer auth, key issuance, revocation, `POST /register` behind `REGISTRATION_SECRET`.
+- MCP server wrapping `create_pane_session(artifact, schema)` and `await_pane_result(session_id, terminal_event_type)`.
+- Reference demo: a `claudeclaw` integration that lets the agent ask Lalit something through a UI.
 
-**License:** MIT or Apache on the core; hosted-only code in a separate private repo. Skip BSL / "fair-code".
+**Hosted / `/ee/`:**
+
+- Console: browse sessions, replay timelines, analytics (open rate, time-to-answer, completion rate), search.
+- Orgs, projects, scoped api_keys, usage quotas, billing.
+- Participant access control: SSO, magic-link, "only user X can open this".
+- Robust webhook delivery: dead-letter queue, replay, configurable retry. Signing is already in OSS.
+- Higher limits, SLA, SOC2, EU data residency, support.
+
+**Code-sharing:** one repo, MIT/Apache core, `/ee/` directory under a commercial license. Default build excludes `/ee/`. License-key gate only for enterprise features that run in self-host. Clean seams (auth, storage, event delivery) so `/ee/` plugs in without monkey-patches.
+
+**License:** MIT or Apache on the core. Hosted-only code in a private repo. Skip BSL.
+
+---
+
+That's v1. Ship the OSS core in a weekend, dogfood in a claw, hosted-lite demo on Azure credits.
