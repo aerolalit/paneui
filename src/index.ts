@@ -6,6 +6,29 @@ import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { attachWs } from "./ws/handler.js";
 
+function startTtlSweeper(): void {
+  const intervalSec = config.TTL_SWEEP_SECONDS;
+  if (intervalSec <= 0) {
+    log.info("ttl sweeper disabled (TTL_SWEEP_SECONDS=0)");
+    return;
+  }
+  const jitter = () => Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const tick = (): void => {
+    void prisma.session
+      .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+      .then((r) => {
+        if (r.count > 0) log.debug("ttl swept", { count: r.count });
+      })
+      .catch((e) =>
+        log.warn("ttl sweep error", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+  };
+  setInterval(tick, intervalSec * 1000 + jitter());
+  log.info("ttl sweeper started", { intervalSeconds: intervalSec });
+}
+
 async function main(): Promise<void> {
   log.info("starting pane relay", { config: redactConfig(config) });
 
@@ -17,6 +40,7 @@ async function main(): Promise<void> {
     log.info("listening", { port: info.port, publicUrl: config.publicUrl });
   });
   attachWs(server);
+  startTtlSweeper();
 }
 
 main().catch((err) => {
