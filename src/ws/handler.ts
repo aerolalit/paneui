@@ -233,9 +233,14 @@ async function handleFrame(
     data?: unknown;
     causation_id?: unknown;
     idempotency_key?: unknown;
+    correlation_id?: unknown;
   };
+  const cid = typeof f.correlation_id === "string" ? f.correlation_id : null;
   if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
-    sendJson(ws, { error: { code: "invalid_request", message: "type must be a non-empty string ≤64 chars" } });
+    sendJson(ws, {
+      error: { code: "invalid_request", message: "type must be a non-empty string within 64 chars" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
     return;
   }
 
@@ -245,14 +250,19 @@ async function handleFrame(
     Buffer.byteLength(JSON.stringify(f.data ?? null), "utf8") >
     config.MAX_EVENT_DATA_BYTES
   ) {
-    sendJson(ws, { error: { code: "payload_too_large" } });
+    sendJson(ws, {
+      error: { code: "payload_too_large" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
     return;
   }
 
   // Re-read the session so writeEvent sees the latest schema/status.
+  // (writeEvent itself throws errors.gone() if the session is closed/expired,
+  // so we don't double-check that here.)
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
-    sendJson(ws, { error: { code: "not_found" } });
+    sendJson(ws, { error: { code: "not_found" }, ...(cid ? { correlation_id: cid } : {}) });
     return;
   }
 
@@ -263,13 +273,16 @@ async function handleFrame(
       causationId: typeof f.causation_id === "string" ? f.causation_id : null,
       idempotencyKey: typeof f.idempotency_key === "string" ? f.idempotency_key : null,
     });
-    sendJson(ws, { ack: event.id, deduped });
+    sendJson(ws, { ack: event.id, deduped, ...(cid ? { correlation_id: cid } : {}) });
   } catch (err) {
     if (err instanceof ApiError) {
-      sendJson(ws, { error: { code: err.code, message: err.message, details: err.details } });
+      sendJson(ws, {
+        error: { code: err.code, message: err.message, details: err.details },
+        ...(cid ? { correlation_id: cid } : {}),
+      });
       return;
     }
     log.error("ws writeEvent failed", { sessionId, err: err instanceof Error ? err.message : String(err) });
-    sendJson(ws, { error: { code: "internal" } });
+    sendJson(ws, { error: { code: "internal" }, ...(cid ? { correlation_id: cid } : {}) });
   }
 }

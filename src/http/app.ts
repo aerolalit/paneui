@@ -7,6 +7,7 @@ import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
+import bridge from "../bridge/routes.js";
 
 export function buildApp(): Hono {
   const app = new Hono();
@@ -53,6 +54,7 @@ export function buildApp(): Hono {
   app.route("/v1/sessions", sessions);
   app.route("/v1/sessions/:id/events", events);
   app.route("/v1/keys", keys);
+  app.route("/s", bridge);
 
   return app;
 }
