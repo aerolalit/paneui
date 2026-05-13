@@ -10,6 +10,10 @@ export function generateToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
+export function generateSessionId(): string {
+  return "ses_" + randomBytes(12).toString("base64url");
+}
+
 export function hashKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }

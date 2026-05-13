@@ -1,22 +1,22 @@
-import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import config, { redactConfig } from "./config.js";
 import prisma from "./db.js";
 import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
+import { buildApp } from "./http/app.js";
+import { attachWs } from "./ws/handler.js";
 
 async function main(): Promise<void> {
   log.info("starting pane relay", { config: redactConfig(config) });
 
   await runBootstrap(prisma, config);
 
-  const app = new Hono();
+  const app = buildApp();
 
-  app.get("/healthz", (c) => c.json({ status: "ok" }));
-
-  serve({ fetch: app.fetch, port: config.PORT }, (info) => {
+  const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     log.info("listening", { port: info.port, publicUrl: config.publicUrl });
   });
+  attachWs(server);
 }
 
 main().catch((err) => {

@@ -1,0 +1,94 @@
+import type { Context, MiddlewareHandler } from "hono";
+import type { Agent, Participant, Session } from "@prisma/client";
+import prisma from "../db.js";
+import { hashKey } from "../keys.js";
+import type { Author } from "../types.js";
+import { errors } from "./errors.js";
+
+export type AuthEnv = {
+  Variables: {
+    agent: Agent;
+    author: Author;
+    session: Session;
+    participant: Participant;
+  };
+};
+
+function parseBearer(c: Context): string {
+  const header = c.req.header("authorization") ?? "";
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) throw errors.unauthorized();
+  return match[1]!.trim();
+}
+
+// Resolve a raw token to either an agent or a (participant, session) pair.
+// Used by both the HTTP middlewares and the WebSocket upgrade.
+export async function resolveBearer(token: string): Promise<
+  | { kind: "agent"; agent: Agent }
+  | { kind: "participant"; participant: Participant; session: Session }
+  | null
+> {
+  const hash = hashKey(token);
+  const participant = await prisma.participant.findUnique({ where: { tokenHash: hash } });
+  if (participant) {
+    if (participant.revokedAt) return null;
+    const session = await prisma.session.findUnique({ where: { id: participant.sessionId } });
+    if (!session) return null;
+    return { kind: "participant", participant, session };
+  }
+  const agent = await prisma.agent.findUnique({ where: { keyHash: hash } });
+  if (agent && !agent.revokedAt) return { kind: "agent", agent };
+  return null;
+}
+
+export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const token = parseBearer(c);
+  const resolved = await resolveBearer(token);
+  if (!resolved || resolved.kind !== "agent") throw errors.unauthorized();
+  const agent = resolved.agent;
+  prisma.agent
+    .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
+    .catch(() => {});
+  c.set("agent", agent);
+  c.set("author", { kind: "agent", id: agent.id });
+  await next();
+};
+
+// Dual auth for the events endpoints + WS upgrade.
+// Accepts either the agent's bearer (when it matches session.agentId) OR a
+// participant token (when it matches a Participant row for this session).
+export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const token = parseBearer(c);
+  const sessionId = c.req.param("id");
+  if (!sessionId) throw errors.notFound();
+  const resolved = await resolveBearer(token);
+  if (!resolved) throw errors.notFound();
+
+  if (resolved.kind === "participant") {
+    if (resolved.participant.sessionId !== sessionId) throw errors.notFound();
+    if (!resolved.participant.joinedAt) {
+      await prisma.participant.update({
+        where: { id: resolved.participant.id },
+        data: { joinedAt: new Date() },
+      });
+    }
+    c.set("session", resolved.session);
+    c.set("participant", resolved.participant);
+    c.set("author", {
+      kind: resolved.participant.kind === "agent" ? "agent" : "human",
+      id: resolved.participant.identityId,
+    });
+    return next();
+  }
+
+  // Agent path: must own the session.
+  const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  if (!session || session.agentId !== resolved.agent.id) throw errors.notFound();
+  prisma.agent
+    .update({ where: { id: resolved.agent.id }, data: { lastUsedAt: new Date() } })
+    .catch(() => {});
+  c.set("agent", resolved.agent);
+  c.set("session", session);
+  c.set("author", { kind: "agent", id: resolved.agent.id });
+  await next();
+};
