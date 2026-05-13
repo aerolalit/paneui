@@ -28,15 +28,16 @@ Ships as: a standalone HTTP API + an MCP server (`create_pane_session` / `await_
 
 ## Stack
 
-TypeScript. Runtime: Node 20+ (Bun fine too). Web: Hono (tiny, fast, container/edge-friendly). ORM: Prisma. SQLite for self-host (default), PostgreSQL for the hosted build. MCP server via the official `@modelcontextprotocol/sdk`. See `SPEC.md`.
+TypeScript. Runtime: Node 20+ (Bun fine too). Web: Hono (tiny, fast, container/edge-friendly). ORM: Prisma. SQLite for self-host (default), PostgreSQL for the hosted build. MCP server via the official `@modelcontextprotocol/sdk`. See `docs/SPEC.md`.
 
 ## Business model
 
-Open-core. MIT core (this repo, minus the `/ee/` directory) + a managed hosted version for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `SPEC.md` for where the open/closed line sits, `ROADMAP.md` for sequencing.
+Open-core. MIT core (this repo, minus the `/ee/` directory) + a managed hosted version for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
 
 ## See also
 
-- `SPEC.md`: technical design (architecture, API, data model, bridge, auth, open/closed split)
-- `ROADMAP.md`: v1 scope, later phases, strategy notes
+- [`docs/SPEC.md`](docs/SPEC.md): technical design (architecture, API, data model, bridge, auth, open/closed split)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): v1 scope, later phases, strategy notes
+- [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the bridge shim, the MCP tools)
 - Prior art / landscape: MCP Apps (`blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/`), mcp-ui (`github.com/MCP-UI-Org/mcp-ui`), AG-UI (`copilotkit.ai`), A2UI (Google), Thesys C1
 - Motivating read: Thariq, "Using Claude Code: The Unreasonable Effectiveness of HTML" (`simonwillison.net/2026/May/8/unreasonable-effectiveness-of-html/`)

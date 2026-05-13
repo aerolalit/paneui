@@ -10,9 +10,9 @@ frag() { pandoc -f gfm -t html "$1"; }
 
 # Phase 0 summary (the SPEC/ROADMAP delta) as inline markdown:
 PHASE0_MD=$(cat <<'MD'
-## Phase 0: design decisions folded into SPEC.md + ROADMAP.md (done)
+## Phase 0: design decisions folded into docs/SPEC.md + docs/ROADMAP.md (done)
 
-The v1 design, now reflected in `SPEC.md`, `ROADMAP.md`, and the phase docs:
+The v1 design, now reflected in `docs/SPEC.md`, `docs/ROADMAP.md`, and the phase docs:
 
 - **Events are the only primitive on the wire.** No separate `emit` / `submit` verbs. State is what you get by replaying events. The agent that creates the session bundles the rendered artifact AND a per-session event schema; the relay validates every write against that schema.
 - **Four-table data model**: `agents`, `sessions`, `participants`, `events`. The `participants` table is new (per-identity tokens with `kind: "human" | "agent"`). The `events` table carries `author_kind`, `author_id`, `causation_id`, `idempotency_key`; a unique constraint on `(session_id, author_id, idempotency_key)` does dedup.
@@ -95,7 +95,7 @@ cat > "$OUT" <<HTML
 <body>
 
 <h1>Pane: v1 Architecture</h1>
-<div class="lead">Per-phase build/architecture docs for Pane v1. Source: <code>docs/architecture/</code>, with <code>SPEC.md</code> + <code>ROADMAP.md</code> as the system-level companions. OPEN = decide during implementation; DECIDED = settled.</div>
+<div class="lead">Per-phase build/architecture docs for Pane v1. Source: <code>docs/architecture/</code>, with <code>docs/SPEC.md</code> + <code>docs/ROADMAP.md</code> as the system-level companions. OPEN = decide during implementation; DECIDED = settled.</div>
 
 <div class="toc">
 <h4>Contents</h4>

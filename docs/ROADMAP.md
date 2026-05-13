@@ -1,6 +1,6 @@
 # Pane: Roadmap
 
-Companion to `README.md` and `SPEC.md`. Sequencing matters more than scope: ship the boring shippable thing, let it pull you toward the exciting thing.
+Companion to the root `README.md` and `SPEC.md` (sibling). Sequencing matters more than scope: ship the boring shippable thing, let it pull you toward the exciting thing.
 
 ## v1: the minimum that's actually useful (OSS only)
 

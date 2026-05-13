@@ -1,10 +1,10 @@
 # Pane: Architecture docs
 
-Per-phase architecture for building Pane v1. This sits one level below `SPEC.md` and one level above the code:
+Per-phase architecture for building Pane v1. This sits one level below `docs/SPEC.md` and one level above the code:
 
 - `README.md` (root): what Pane is, for whom.
-- `SPEC.md`: the system-level design. Architecture, API surface, data model, bridge, auth, open/closed line. The "what and why" at the whole-system level.
-- `ROADMAP.md`: phasing and strategy. What's in v1, what's deferred, why this order.
+- `docs/SPEC.md`: the system-level design. Architecture, API surface, data model, bridge, auth, open/closed line. The "what and why" at the whole-system level.
+- `docs/ROADMAP.md`: phasing and strategy. What's in v1, what's deferred, why this order.
 - **`docs/architecture/` (this dir)**: the "what and why" at the phase/module level, with the exact interfaces (Prisma models, endpoint shapes, the `pane.*` shim, the MCP tools) that the code has to satisfy. Detailed enough to implement against, close enough to the code that it shouldn't rot the way speculative architecture does.
 
 These are pre-implementation docs. Anything still genuinely undecided is marked **OPEN** with the candidate options and a lean; settled calls are marked **DECIDED**. Don't treat an OPEN item as blocking. It means "decide when you get there, here's the shortlist."
@@ -13,7 +13,7 @@ These are pre-implementation docs. Anything still genuinely undecided is marked 
 
 | Phase | Doc | Delivers |
 |---|---|---|
-| 0 | (decision pass) | v1 design locked in `SPEC.md` + `ROADMAP.md`: events as the only primitive on the wire, 4-table schema (`agents`, `sessions`, `participants`, `events`), WebSocket primary transport with an HTTP fallback, per-session event schema validated by the relay, server-stamped identity. No code. **Done.** |
+| 0 | (decision pass) | v1 design locked in `docs/SPEC.md` + `docs/ROADMAP.md`: events as the only primitive on the wire, 4-table schema (`agents`, `sessions`, `participants`, `events`), WebSocket primary transport with an HTTP fallback, per-session event schema validated by the relay, server-stamped identity. No code. **Done.** |
 | 1 | [`phase-1-skeleton-and-data.md`](./phase-1-skeleton-and-data.md) | Project skeleton, build tooling, the data layer: Prisma schema (the 4 models), migrations, the boot bootstrap, config/env. No HTTP beyond `GET /healthz`. |
 | 2 | [`phase-2-relay-api.md`](./phase-2-relay-api.md) | The agent-facing HTTP + WebSocket API: `POST /v1/register`, `POST /v1/sessions`, `GET /v1/sessions/:id`, `PATCH /v1/sessions/:id/{schema,artifact}`, `DELETE /v1/sessions/:id`, `POST|GET /v1/sessions/:id/events`, `WS /v1/sessions/:id/stream`, `GET|DELETE /v1/keys`. Ajv schema validation. Identity stamping. Idempotency dedup. Signed best-effort webhooks. Error model, size caps. |
 | 3 | [`phase-3-human-side.md`](./phase-3-human-side.md) | Everything a browser touches: `GET /s/:token` (the shell), `GET /s/:token/content` (the agent's artifact, sandboxed), the `pane.*` shim (`emit` / `on` / `state`), the postMessage protocol between iframe and shell, the WS connection lifecycle, and the CSP / security headers. The part the SPEC flags as "can't get wrong." |

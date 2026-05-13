@@ -1,6 +1,6 @@
 # Phase 3: The human side (shell, sandboxed iframe, bridge)
 
-This is the part `SPEC.md` flags as "the part you can't get wrong." Read the Security section twice.
+This is the part `docs/SPEC.md` flags as "the part you can't get wrong." Read the Security section twice.
 
 ## Scope
 

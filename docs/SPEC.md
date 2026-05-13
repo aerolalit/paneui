@@ -1,6 +1,6 @@
 # Pane: Technical Spec (v1)
 
-Companion to `README.md` and `ROADMAP.md`. Supersedes the v0 sketch.
+Companion to the root `README.md` and `ROADMAP.md` (sibling). Supersedes the v0 sketch.
 
 This spec describes Pane v1: the minimum protocol and implementation needed to ship the OSS core. The shape is locked, the details are open.
 
