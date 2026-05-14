@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { Agent, Participant, Session } from "@prisma/client";
 import prisma from "../db.js";
 import { hashKey } from "../keys.js";
+import { log } from "../log.js";
 import type { Author } from "../types.js";
 import { errors } from "./errors.js";
 
@@ -48,7 +49,7 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const agent = resolved.agent;
   prisma.agent
     .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
-    .catch(() => {});
+    .catch((err: unknown) => log.warn("lastUsedAt update failed", { agentId: agent.id, err: String(err) }));
   c.set("agent", agent);
   c.set("author", { kind: "agent", id: agent.id });
   await next();
@@ -86,7 +87,7 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   if (!session || session.agentId !== resolved.agent.id) throw errors.notFound();
   prisma.agent
     .update({ where: { id: resolved.agent.id }, data: { lastUsedAt: new Date() } })
-    .catch(() => {});
+    .catch((err: unknown) => log.warn("lastUsedAt update failed", { agentId: resolved.agent.id, err: String(err) }));
   c.set("agent", resolved.agent);
   c.set("session", session);
   c.set("author", { kind: "agent", id: resolved.agent.id });

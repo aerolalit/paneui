@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import config from "../../config.js";
 import prisma from "../../db.js";
+import { log } from "../../log.js";
 import { dualAuth, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import { publish, waitForEvent } from "../broadcast.js";
@@ -91,7 +92,7 @@ events.post("/", async (c) => {
       },
       session.id,
       serialized,
-    ).catch(() => {});
+    ).catch((err: unknown) => log.warn("webhook delivery failed", { sessionId: session.id, eventId: serialized.id, err: String(err) }));
   }
 
   return c.json({ event: serialized }, 201);
