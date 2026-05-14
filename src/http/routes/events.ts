@@ -1,16 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
-import config from "../../config.js";
 import prisma from "../../db.js";
-import { log } from "../../log.js";
 import { dualAuth, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
-import { publish, waitForEvent } from "../broadcast.js";
+import { waitForEvent } from "../broadcast.js";
 import { serializeEvent } from "../serialize.js";
-import { validateEvent } from "../validation.js";
-import { fire, shouldFire } from "../webhook.js";
-import type { EventSchema } from "../../types.js";
+import { writeEvent } from "../../core/events.js";
 
 const events = new Hono<AuthEnv>();
 
@@ -26,9 +21,6 @@ const postBody = z.object({
 events.post("/", async (c) => {
   const session = c.get("session");
   const author = c.get("author");
-  if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
-    throw errors.gone();
-  }
 
   const body = await c.req.json().catch(() => null);
   const parsed = postBody.safeParse(body);
@@ -37,65 +29,17 @@ events.post("/", async (c) => {
   }
   const { type, data, causation_id, idempotency_key } = parsed.data;
 
-  if (Buffer.byteLength(JSON.stringify(data ?? null), "utf8") > config.MAX_EVENT_DATA_BYTES) {
-    throw errors.payloadTooLarge();
-  }
-
-  validateEvent({
-    sessionId: session.id,
-    schemaVersion: session.schemaVersion,
-    schema: session.eventSchema as unknown as EventSchema,
+  const { event, deduped } = await writeEvent(session, author, {
     type,
     data,
-    authorKind: author.kind,
+    causationId: causation_id ?? null,
+    idempotencyKey: idempotency_key ?? null,
   });
 
-  if (idempotency_key) {
-    const existing = await prisma.event.findUnique({
-      where: {
-        sessionId_authorId_idempotencyKey: {
-          sessionId: session.id,
-          authorId: author.id,
-          idempotencyKey: idempotency_key,
-        },
-      },
-    });
-    if (existing) {
-      return c.json({ event: serializeEvent(existing), deduped: true }, 200);
-    }
+  if (deduped) {
+    return c.json({ event, deduped: true }, 200);
   }
-
-  const event = await prisma.event.create({
-    data: {
-      sessionId: session.id,
-      authorKind: author.kind,
-      authorId: author.id,
-      type,
-      data: (data ?? null) as Prisma.InputJsonValue,
-      causationId: causation_id ?? null,
-      idempotencyKey: idempotency_key ?? null,
-    },
-  });
-  const serialized = serializeEvent(event);
-  publish(session.id, serialized);
-
-  if (
-    session.callbackUrl &&
-    session.callbackSecretEnc &&
-    shouldFire(type, session.callbackFilter as string[] | null)
-  ) {
-    fire(
-      {
-        url: session.callbackUrl,
-        secret: session.callbackSecretEnc,
-        filter: (session.callbackFilter as string[]) ?? [],
-      },
-      session.id,
-      serialized,
-    ).catch((err: unknown) => log.warn("webhook delivery failed", { sessionId: session.id, eventId: serialized.id, err: String(err) }));
-  }
-
-  return c.json({ event: serialized }, 201);
+  return c.json({ event }, 201);
 });
 
 events.get("/", async (c) => {

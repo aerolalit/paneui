@@ -1,17 +1,15 @@
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import { Prisma } from "@prisma/client";
 import config from "../config.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
 import { publish, subscribe } from "../http/broadcast.js";
-import { errors, ApiError } from "../http/errors.js";
+import { ApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
-import { validateEvent } from "../http/validation.js";
-import { fire, shouldFire } from "../http/webhook.js";
+import { writeEvent } from "../core/events.js";
 import { log } from "../log.js";
-import type { Author, EventSchema, SerializedEvent } from "../types.js";
+import type { Author } from "../types.js";
 import type { Participant, Session } from "@prisma/client";
 
 const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
@@ -110,7 +108,16 @@ async function handleUpgrade(
 
 function extractToken(req: IncomingMessage, url: URL): string | null {
   const q = url.searchParams.get("token");
-  if (q) return q;
+  if (q) {
+    // Strip the token from req.url so any downstream access log (Node http,
+    // reverse-proxy header forwarding, error traces) sees a redacted URL.
+    // Browsers can't set Authorization on `new WebSocket()`, so ?token= is the
+    // only viable browser path — we keep the value in memory, redact from the URL.
+    url.searchParams.delete("token");
+    url.searchParams.set("token", "***");
+    req.url = url.pathname + url.search;
+    return q;
+  }
   const auth = req.headers["authorization"];
   if (typeof auth === "string") {
     const m = /^Bearer\s+(.+)$/i.exec(auth);
@@ -193,7 +200,12 @@ async function handleConnection(
         },
       })
       .then((row) => publish(sessionId, serializeEvent(row)))
-      .catch(() => {});
+      .catch((err: unknown) =>
+        log.warn("participant.left event insert failed", {
+          sessionId,
+          err: String(err),
+        }),
+      );
   });
 }
 
@@ -226,6 +238,9 @@ async function handleFrame(
     sendJson(ws, { error: { code: "invalid_request", message: "type must be a non-empty string ≤64 chars" } });
     return;
   }
+
+  // Quick byte-cap check before we re-read the session — saves a round-trip on
+  // obviously oversize frames. writeEvent enforces the same cap authoritatively.
   if (
     Buffer.byteLength(JSON.stringify(f.data ?? null), "utf8") >
     config.MAX_EVENT_DATA_BYTES
@@ -234,80 +249,27 @@ async function handleFrame(
     return;
   }
 
-  // Re-read the session for the latest schema/status.
+  // Re-read the session so writeEvent sees the latest schema/status.
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
     sendJson(ws, { error: { code: "not_found" } });
     return;
   }
-  if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
-    sendJson(ws, { error: { code: "gone" } });
-    return;
-  }
 
   try {
-    validateEvent({
-      sessionId,
-      schemaVersion: session.schemaVersion,
-      schema: session.eventSchema as unknown as EventSchema,
+    const { event, deduped } = await writeEvent(session, author, {
       type: f.type,
       data: f.data,
-      authorKind: author.kind,
+      causationId: typeof f.causation_id === "string" ? f.causation_id : null,
+      idempotencyKey: typeof f.idempotency_key === "string" ? f.idempotency_key : null,
     });
+    sendJson(ws, { ack: event.id, deduped });
   } catch (err) {
     if (err instanceof ApiError) {
       sendJson(ws, { error: { code: err.code, message: err.message, details: err.details } });
       return;
     }
+    log.error("ws writeEvent failed", { sessionId, err: err instanceof Error ? err.message : String(err) });
     sendJson(ws, { error: { code: "internal" } });
-    return;
-  }
-
-  const idempotencyKey = typeof f.idempotency_key === "string" ? f.idempotency_key : null;
-  if (idempotencyKey) {
-    const existing = await prisma.event.findUnique({
-      where: {
-        sessionId_authorId_idempotencyKey: {
-          sessionId,
-          authorId: author.id,
-          idempotencyKey,
-        },
-      },
-    });
-    if (existing) {
-      sendJson(ws, { ack: String(existing.id), deduped: true });
-      return;
-    }
-  }
-
-  const event = await prisma.event.create({
-    data: {
-      sessionId,
-      authorKind: author.kind,
-      authorId: author.id,
-      type: f.type,
-      data: (f.data ?? null) as Prisma.InputJsonValue,
-      causationId: typeof f.causation_id === "string" ? f.causation_id : null,
-      idempotencyKey,
-    },
-  });
-  const serialized: SerializedEvent = serializeEvent(event);
-  publish(sessionId, serialized);
-  sendJson(ws, { ack: serialized.id, deduped: false });
-
-  if (
-    session.callbackUrl &&
-    session.callbackSecretEnc &&
-    shouldFire(f.type, session.callbackFilter as string[] | null)
-  ) {
-    fire(
-      {
-        url: session.callbackUrl,
-        secret: session.callbackSecretEnc,
-        filter: (session.callbackFilter as string[]) ?? [],
-      },
-      sessionId,
-      serialized,
-    ).catch(() => {});
   }
 }

@@ -162,23 +162,37 @@ describe("mergeSchemaAdditive", () => {
     expect(next.events["review.commentAdded"]).toBeDefined();
   });
 
-  it("rejects removing an existing event type", () => {
+  it("rejects re-declaring an existing event type", () => {
     const prev: EventSchema = {
       events: {
         "review.commentAdded": { payload: { type: "object" }, emittedBy: ["page"] },
         "review.approved": { payload: { type: "object" }, emittedBy: ["page"] },
       },
     };
-    // Patch omits review.approved; merge should still keep it (the merge is a union, not a replace).
-    // To actually test removal we'd need the patch to claim it removes a type. The current merge
-    // helper unions prev + patch and verifies prev's types are still present; a patch can't remove,
-    // so this test demonstrates the additive guarantee by attempting a no-op merge.
+    // Even an "identical" re-declaration is rejected — additive only.
+    expect(() =>
+      mergeSchemaAdditive(prev, {
+        events: {
+          "review.commentAdded": prev.events["review.commentAdded"]! as unknown as Record<string, unknown>,
+        },
+      }),
+    ).toThrow(/already exists/);
+  });
+
+  it("keeps prior types when the patch adds only new ones", () => {
+    const prev: EventSchema = {
+      events: {
+        "review.commentAdded": { payload: { type: "object" }, emittedBy: ["page"] },
+        "review.approved": { payload: { type: "object" }, emittedBy: ["page"] },
+      },
+    };
     const next = mergeSchemaAdditive(prev, {
       events: {
-        "review.commentAdded": prev.events["review.commentAdded"]! as unknown as Record<string, unknown>,
+        "review.rejected": { payload: { type: "object" }, emittedBy: ["page"] },
       },
     });
-    expect(next.events["review.approved"]).toBeDefined();
     expect(next.events["review.commentAdded"]).toBeDefined();
+    expect(next.events["review.approved"]).toBeDefined();
+    expect(next.events["review.rejected"]).toBeDefined();
   });
 });

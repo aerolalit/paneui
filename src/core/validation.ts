@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import type { ValidateFunction } from "ajv";
 import type { AuthorKind, EmittedBy, EventSchema } from "../types.js";
-import { errors } from "./errors.js";
+import { errors } from "../http/errors.js";
 
 // Ajv v8 ships as CJS; under "module": "NodeNext" the default import sometimes
 // resolves to the namespace, not the constructor. createRequire bypasses that.
@@ -132,18 +132,22 @@ export function validateSchemaShape(raw: unknown): EventSchema {
   return out;
 }
 
-// Additive merge: new schema must be a superset of the old one.
+// Additive merge: the patch may only ADD new event types. Re-declaring an
+// existing type (even with an identical payload schema) is rejected — clients
+// pinned to an older `schemaVersion` would break if the payload shape changed,
+// and we don't try to prove deep JSON-Schema compatibility here.
 export function mergeSchemaAdditive(
   prev: EventSchema,
   patch: { events?: Record<string, unknown> },
 ): EventSchema {
-  const merged: EventSchema = { events: { ...prev.events } };
-  const next = validateSchemaShape({ events: { ...prev.events, ...(patch.events ?? {}) } });
-  // Enforce: previously known types still present (additive).
-  for (const t of Object.keys(prev.events)) {
-    if (!next.events[t]) {
-      throw errors.invalidRequest(`schema.events.${t} cannot be removed (additive only)`);
+  const patchEvents = patch.events ?? {};
+  for (const t of Object.keys(patchEvents)) {
+    if (prev.events[t]) {
+      throw errors.invalidRequest(
+        `schema.events.${t} already exists; patch can only add new types (additive only)`,
+      );
     }
   }
-  return next;
+  // No overlap by construction; validate the shape of the combined schema.
+  return validateSchemaShape({ events: { ...prev.events, ...patchEvents } });
 }

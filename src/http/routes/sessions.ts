@@ -10,9 +10,11 @@ import {
   invalidateSchemaCache,
   mergeSchemaAdditive,
   validateSchemaShape,
-} from "../validation.js";
+} from "../../core/validation.js";
 import { publish } from "../broadcast.js";
 import { serializeEvent } from "../serialize.js";
+import { assertSafeArtifactUrl, assertSafeWebhookUrl } from "../ssrf.js";
+import { encryptSecret } from "../../crypto.js";
 import type { EventSchema } from "../../types.js";
 
 const sessions = new Hono<AuthEnv>();
@@ -75,14 +77,10 @@ sessions.post("/", requireAgent, async (c) => {
     throw errors.payloadTooLarge();
   }
   if (artifact.type === "html-ref") {
-    try {
-      const u = new URL(artifact.source);
-      if (u.protocol !== "http:" && u.protocol !== "https:") {
-        throw new Error("bad protocol");
-      }
-    } catch {
-      throw errors.invalidRequest("artifact.source must be an http(s) URL for html-ref");
-    }
+    // Same SSRF surface as webhook.url: the relay (or, in phase 3+, the shell
+    // page) will fetch this on the human's behalf. Block private/loopback/
+    // metadata/CGNAT targets up front.
+    await assertSafeArtifactUrl(artifact.source);
   }
 
   const requestedHumans = participants?.humans ?? 1;
@@ -90,6 +88,10 @@ sessions.post("/", requireAgent, async (c) => {
     throw errors.invalidRequest(
       `participants.humans must be <= ${config.MAX_PARTICIPANTS_PER_SESSION}`,
     );
+  }
+
+  if (callback) {
+    await assertSafeWebhookUrl(callback.url);
   }
 
   const eventSchema: EventSchema = validateSchemaShape(parsed.data.schema);
@@ -117,7 +119,7 @@ sessions.post("/", requireAgent, async (c) => {
       expiresAt,
       metadata: metadata ? (metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
       callbackUrl: callback?.url ?? null,
-      callbackSecretEnc: callback?.secret ?? null,
+      callbackSecretEnc: callback ? encryptSecret(callback.secret) : null,
       callbackFilter: callback?.events
         ? (callback.events as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,
@@ -249,6 +251,10 @@ sessions.delete("/:id", requireAgent, async (c) => {
     where: { id },
     data: { status: "closed", expiresAt: new Date() },
   });
+  // TODO(phase-4): the TTL sweeper should call invalidateSchemaCache too — the
+  // Ajv compiled-schema cache is otherwise unbounded for sessions that expire
+  // without an explicit DELETE.
+  invalidateSchemaCache(id);
   await appendSystemEvent(id, "system.session.expired", {});
   return c.body(null, 204);
 });
