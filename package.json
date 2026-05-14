@@ -19,6 +19,8 @@
     "generate": "prisma generate",
     "generate:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/node_modules/**'",
+    "test:e2e": "vitest run .e2e.test.ts .integration.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
