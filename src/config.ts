@@ -6,6 +6,7 @@ const schema = z.object({
   PUBLIC_URL: z.string().url().optional(),
   API_KEY: z.string().optional(),
   REGISTRATION_SECRET: z.string().optional(),
+  PANE_SECRET_KEY: z.string().optional(),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
@@ -31,6 +32,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
   const r: Record<string, unknown> = { ...c };
   if (r.API_KEY) r.API_KEY = "<set>";
   if (r.REGISTRATION_SECRET) r.REGISTRATION_SECRET = "<set>";
+  if (r.PANE_SECRET_KEY) r.PANE_SECRET_KEY = "<set>";
   if (typeof r.DATABASE_URL === "string") {
     r.DATABASE_URL = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
   }

@@ -1,13 +1,16 @@
-// prisma/schema.prisma
-// provider = "sqlite" for the self-host/default build; "postgresql" for the hosted build (build-time switch).
-// See docs/SPEC.md (Data model) and docs/architecture/phase-1-skeleton-and-data.md (Prisma schema section).
+// prisma/schema.postgres.prisma
+// Postgres variant for the hosted build and for CI cross-engine coverage.
+// Kept in sync with prisma/schema.prisma. Generation flow:
+//   npx prisma generate --schema prisma/schema.postgres.prisma
+//   npx prisma migrate dev --schema prisma/schema.postgres.prisma --name <name>
+// Migrations live in prisma/migrations-postgres/ (separate from the sqlite set).
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -72,11 +75,10 @@ model Participant {
 }
 
 model Event {
-  // SQLite quirk: only `INTEGER PRIMARY KEY` is a ROWID alias and auto-increments;
-  // `BIGINT PRIMARY KEY` does not. SQLite stores up to 64 bits in any
-  // integer-affinity column anyway, so declaring `Int` here is safe at the storage
-  // layer. The wire cursor is opaque (a string), so we can override to `@db.BigInt`
-  // on the Postgres build later without breaking clients.
+  // Keep `Int` on both engines so the generated client surface is identical
+  // (number, not bigint). Moving to @db.BigInt for the hosted Postgres build
+  // is a separate migration once we're closer to capacity — tracked in the
+  // project board.
   id              Int      @id @default(autoincrement())
   sessionId       String
   session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)

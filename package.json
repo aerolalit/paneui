@@ -14,20 +14,27 @@
     "start": "node dist/index.js",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
+    "migrate:postgres:deploy": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
     "studio": "prisma studio",
     "generate": "prisma generate",
+    "generate:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/node_modules/**'",
+    "test:e2e": "vitest run .e2e.test.ts .integration.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@prisma/client": "^6.19.0",
+    "ajv": "^8.20.0",
     "hono": "^4.6.0",
+    "ws": "^8.20.1",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "@types/ws": "^8.18.1",
     "prisma": "^6.19.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
