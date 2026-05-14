@@ -15,10 +15,41 @@ function publicWsBase(): string {
   return u.toString().replace(/\/$/, "");
 }
 
-// Safe inline JSON for embedding inside <script>. Neutralises `</` so a value
-// containing the literal `</script` cannot break out of the script context.
+// Belt-and-braces alongside the iframe sandbox. Disables every powerful API the
+// browser exposes by default. Listed explicitly rather than `*=()` because the
+// `Permissions-Policy` header has no "deny-all" shorthand.
+const PERMISSIONS_POLICY = [
+  "accelerometer=()",
+  "ambient-light-sensor=()",
+  "autoplay=()",
+  "battery=()",
+  "camera=()",
+  "display-capture=()",
+  "encrypted-media=()",
+  "fullscreen=()",
+  "geolocation=()",
+  "gyroscope=()",
+  "hid=()",
+  "magnetometer=()",
+  "microphone=()",
+  "midi=()",
+  "payment=()",
+  "picture-in-picture=()",
+  "publickey-credentials-get=()",
+  "screen-wake-lock=()",
+  "serial=()",
+  "usb=()",
+  "xr-spatial-tracking=()",
+].join(", ");
+
+// Safe inline JSON for embedding inside <script>. Neutralises two breakout
+// vectors in the HTML script-data parser:
+//   - `</`     can start a `</script>` end-tag.
+//   - `<!--`   enters "script data double escaped" state, after which a stray
+//              `</script>` further down can confuse parsing.
+// (`eventSchema` is operator-supplied today, but the cost of escaping is zero.)
 function safeJson(v: unknown): string {
-  return JSON.stringify(v).replace(/<\//g, "<\\/");
+  return JSON.stringify(v).replace(/<\//g, "<\\/").replace(/<!--/g, "<\\!--");
 }
 
 async function loadByToken(token: string) {
@@ -56,6 +87,7 @@ bridge.get("/:token", async (c) => {
   c.header("X-Frame-Options", "DENY");
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Cache-Control", "private, no-store");
   c.header("Content-Type", "text/html; charset=utf-8");
 
@@ -100,6 +132,7 @@ bridge.get("/:token/content", async (c) => {
     ].join("; "),
   );
   c.header("X-Content-Type-Options", "nosniff");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");
 
@@ -192,6 +225,12 @@ ${
     dot.className = "dot" + (cls ? " " + cls : "");
   }
 
+  // The iframe is sandboxed WITHOUT allow-same-origin, so its document.origin
+  // is the opaque "null" origin once it executes. To get strict targetOrigin
+  // matching (instead of using "*" and accepting any contentWindow), we pin
+  // every shell->iframe post to "null".
+  var IFRAME_ORIGIN = "null";
+
   function sendIframeInit() {
     if (!iframeReady || !replayDone || !frame) return;
     frame.contentWindow.postMessage({
@@ -200,13 +239,14 @@ ${
         session_id: CFG.sessionId,
         schema: CFG.schema,
         replay: replayBuffer.slice(),
+        shell_origin: window.location.origin,
       },
-    }, "*");
+    }, IFRAME_ORIGIN);
   }
 
   function pushToIframe(ev) {
     if (!iframeReady || !frame) return;
-    frame.contentWindow.postMessage({ __pane: 1, v: 1, kind: "event", payload: ev }, "*");
+    frame.contentWindow.postMessage({ __pane: 1, v: 1, kind: "event", payload: ev }, IFRAME_ORIGIN);
   }
 
   function connect() {
@@ -235,7 +275,7 @@ ${
             __pane: 1, v: 1, kind: "error",
             correlation_id: msg.correlation_id,
             error: msg.error,
-          }, "*");
+          }, IFRAME_ORIGIN);
         }
         return;
       }
@@ -246,11 +286,14 @@ ${
             correlation_id: msg.correlation_id,
             event_id: msg.ack,
             deduped: !!msg.deduped,
-          }, "*");
+          }, IFRAME_ORIGIN);
         }
         return;
       }
       if (msg && msg.id) {
+        // TODO(perf,phase-4): event ids are stringified on the wire; here we
+        // coerce back to Number, which silently loses precision above 2^53.
+        // Tracked alongside issue #23 (Postgres @db.BigInt migration).
         var n = Number(msg.id);
         if (isFinite(n) && n > lastEventId) lastEventId = n;
         if (!replayDone) {
@@ -284,7 +327,21 @@ ${
       return;
     }
     if (m.kind === "emit") {
-      if (typeof m.type !== "string" || !m.type.length || m.type.length > 64) return;
+      // The shim always attaches correlation_id, so any failure path here
+      // MUST reply with a synthetic error frame — otherwise pane.emit()'s
+      // Promise sits hanging until the 30s timeout fires.
+      function replyError(code, message) {
+        if (!m.correlation_id || !frame) return;
+        frame.contentWindow.postMessage({
+          __pane: 1, v: 1, kind: "error",
+          correlation_id: m.correlation_id,
+          error: { code: code, message: message },
+        }, IFRAME_ORIGIN);
+      }
+      if (typeof m.type !== "string" || !m.type.length || m.type.length > 64) {
+        replyError("invalid_request", "type must be a non-empty string within 64 chars");
+        return;
+      }
       var out = {
         type: m.type,
         data: m.data,
@@ -294,12 +351,8 @@ ${
       if (typeof m.correlation_id === "string") out.correlation_id = m.correlation_id;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(out));
-      } else if (m.correlation_id && frame) {
-        frame.contentWindow.postMessage({
-          __pane: 1, v: 1, kind: "error",
-          correlation_id: m.correlation_id,
-          error: { code: "disconnected", message: "WebSocket is not open" },
-        }, "*");
+      } else {
+        replyError("disconnected", "WebSocket is not open");
       }
       return;
     }

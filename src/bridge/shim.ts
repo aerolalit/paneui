@@ -19,6 +19,10 @@ export const PANE_SHIM_JS = `(function () {
   var schema = null;
   var sessionId = null;
   var nextCorr = 1;
+  // Shell origin is unknown until 'init' arrives — the very first 'ready'
+  // post is sent with target "*" (no secrets) and outbound posts after init
+  // are pinned to the shell origin learnt from the handshake.
+  var shellOrigin = "*";
 
   function notifyState() {
     stateSubscribers.forEach(function (fn) {
@@ -67,7 +71,7 @@ export const PANE_SHIM_JS = `(function () {
       if (typeof opts.causationId === "string") frame.causation_id = opts.causationId;
       if (typeof opts.idempotencyKey === "string") frame.idempotency_key = opts.idempotencyKey;
     }
-    parent.postMessage(frame, "*");
+    parent.postMessage(frame, shellOrigin);
     return new Promise(function (resolve, reject) {
       var timer = setTimeout(function () {
         if (pendingEmits.has(corr)) {
@@ -87,13 +91,17 @@ export const PANE_SHIM_JS = `(function () {
     if (m.kind === "init") {
       sessionId = m.payload && m.payload.session_id;
       schema = m.payload && m.payload.schema;
+      if (m.payload && typeof m.payload.shell_origin === "string") {
+        shellOrigin = m.payload.shell_origin;
+      }
+      // Replay each event through the normal ingest path so handlers
+      // registered before init still fire for historical events. Callers
+      // that registered pane.on(type, fn) on script-load reasonably expect
+      // the full stream, not only post-init events.
       var replay = (m.payload && m.payload.replay) || [];
       for (var i = 0; i < replay.length; i++) {
-        var ev = replay[i];
-        stateEvents.push(ev);
-        lastByType.set(ev.type, ev);
+        ingest(replay[i]);
       }
-      notifyState();
       return;
     }
     if (m.kind === "event") {
