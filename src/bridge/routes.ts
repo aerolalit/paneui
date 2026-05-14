@@ -253,6 +253,14 @@ ${
   // every shell->iframe post to "null".
   var IFRAME_ORIGIN = "null";
 
+  // Cap correlation_id everywhere it crosses the shell. The shim generates
+  // short strings ("c1", "c2", ...), so 128 chars is loose; the cap exists to
+  // stop a buggy or hostile artifact from forcing the relay to materialise a
+  // huge string into every ack/error response.
+  function validCid(v) {
+    return typeof v === "string" && v.length > 0 && v.length <= 128;
+  }
+
   function sendIframeInit() {
     if (!iframeReady || !replayDone || !frame) return;
     frame.contentWindow.postMessage({
@@ -292,7 +300,7 @@ ${
         return;
       }
       if (msg && msg.error) {
-        if (msg.correlation_id && iframeReady && frame) {
+        if (validCid(msg.correlation_id) && iframeReady && frame) {
           frame.contentWindow.postMessage({
             __pane: 1, v: 1, kind: "error",
             correlation_id: msg.correlation_id,
@@ -302,7 +310,7 @@ ${
         return;
       }
       if (msg && msg.ack !== undefined) {
-        if (msg.correlation_id && iframeReady && frame) {
+        if (validCid(msg.correlation_id) && iframeReady && frame) {
           frame.contentWindow.postMessage({
             __pane: 1, v: 1, kind: "ack",
             correlation_id: msg.correlation_id,
@@ -353,7 +361,7 @@ ${
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s
       // Promise sits hanging until the 30s timeout fires.
       function replyError(code, message) {
-        if (!m.correlation_id || !frame) return;
+        if (!validCid(m.correlation_id) || !frame) return;
         frame.contentWindow.postMessage({
           __pane: 1, v: 1, kind: "error",
           correlation_id: m.correlation_id,
@@ -368,9 +376,13 @@ ${
         type: m.type,
         data: m.data,
       };
-      if (typeof m.causation_id === "string") out.causation_id = m.causation_id;
-      if (typeof m.idempotency_key === "string") out.idempotency_key = m.idempotency_key;
-      if (typeof m.correlation_id === "string") out.correlation_id = m.correlation_id;
+      if (typeof m.causation_id === "string" && m.causation_id.length <= 64) {
+        out.causation_id = m.causation_id;
+      }
+      if (typeof m.idempotency_key === "string" && m.idempotency_key.length <= 128) {
+        out.idempotency_key = m.idempotency_key;
+      }
+      if (validCid(m.correlation_id)) out.correlation_id = m.correlation_id;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(out));
       } else {

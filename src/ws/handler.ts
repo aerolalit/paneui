@@ -235,7 +235,15 @@ async function handleFrame(
     idempotency_key?: unknown;
     correlation_id?: unknown;
   };
-  const cid = typeof f.correlation_id === "string" ? f.correlation_id : null;
+  // Cap correlation_id at 128 chars: the protocol is publicly documented, so a
+  // CLI / non-shim WS client could send a 10MB string that we'd otherwise echo
+  // back in every ack/error response. The shell shim already caps before
+  // forwarding (see bridge/routes.ts validCid); this is the defence-in-depth
+  // layer for direct WS callers.
+  const cid =
+    typeof f.correlation_id === "string" && f.correlation_id.length > 0 && f.correlation_id.length <= 128
+      ? f.correlation_id
+      : null;
   if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
     sendJson(ws, {
       error: { code: "invalid_request", message: "type must be a non-empty string within 64 chars" },
