@@ -52,7 +52,15 @@ function safeJson(v: unknown): string {
   return JSON.stringify(v).replace(/<\//g, "<\\/").replace(/<!--/g, "<\\!--");
 }
 
+// Participant tokens are `randomBytes(32).toString("base64url")` in keys.ts —
+// exactly 43 chars, base64url alphabet. Reject on shape before we hash so
+// pathological inputs (10 MB strings, control chars) can't force SHA-256 work
+// and a guaranteed-miss DB lookup. A real rate limiter belongs at the edge
+// (tracked in issue #6); this is the in-app first line of defence.
+const TOKEN_RX = /^[A-Za-z0-9_-]{40,50}$/;
+
 async function loadByToken(token: string) {
+  if (!TOKEN_RX.test(token)) throw errors.notFound();
   const participant = await prisma.participant.findUnique({ where: { tokenHash: hashKey(token) } });
   if (!participant || participant.revokedAt) throw errors.notFound();
   const session = await prisma.session.findUnique({ where: { id: participant.sessionId } });
@@ -74,8 +82,11 @@ bridge.get("/:token", async (c) => {
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      `script-src 'self' 'nonce-${nonce}'`,
-      `style-src 'self' 'nonce-${nonce}'`,
+      // Nonce-only on script/style: dropping 'self' means another same-origin
+      // endpoint that ever serves attacker-controlled content can't XSS the
+      // shell. The shell has exactly one nonced <script> + one nonced <style>.
+      `script-src 'nonce-${nonce}'`,
+      `style-src 'nonce-${nonce}'`,
       "img-src 'self' data:",
       "connect-src 'self'",
       "frame-src 'self'",
@@ -107,21 +118,32 @@ bridge.get("/:token/content", async (c) => {
   if (!token) throw errors.notFound();
   const { session } = await loadByToken(token);
 
+  // Gate the artifact body on the session being live. The shell page renders
+  // a "closed" banner instead of the iframe (see L70), but a client that
+  // bookmarked /content directly would otherwise still receive the artifact
+  // (and any sensitive data baked into it) until the participant is revoked.
+  // Mirrors the WS upgrade behaviour.
+  if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
+    throw errors.gone();
+  }
+
   let artifactBody: string;
   if (session.artifactType === "html-inline") {
     artifactBody = session.artifactSource;
   } else {
-    // html-ref: v1 stub. Fetch + cache support is deferred.
+    // html-ref: v1 stub. Fetch + cache support is deferred (issue #24).
     artifactBody = "<!-- artifact.type=html-ref is not implemented in v1 -->";
   }
-
-  const nonce = randomBytes(16).toString("base64url");
 
   c.header(
     "Content-Security-Policy",
     [
       "default-src 'none'",
-      `script-src 'unsafe-inline' 'nonce-${nonce}'`,
+      // 'unsafe-inline' only — no nonce. CSP3 browsers ignore 'unsafe-inline'
+      // when a nonce is present, which would block the agent's own inline
+      // <script> tags inside artifactBody. The shim is just another inline
+      // script under the same sandbox; both are covered by 'unsafe-inline'.
+      "script-src 'unsafe-inline'",
       "style-src 'unsafe-inline'",
       "img-src data: blob:",
       "font-src data:",
@@ -141,7 +163,7 @@ bridge.get("/:token/content", async (c) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script nonce="${nonce}">${PANE_SHIM_JS}</script>
+<script>${PANE_SHIM_JS}</script>
 </head>
 <body>
 ${artifactBody}
