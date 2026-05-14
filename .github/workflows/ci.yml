@@ -6,17 +6,46 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-sqlite:
+    name: test (sqlite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # Cache the resolved node_modules tree so subsequent runs skip `npm ci`
+      # when package-lock.json hasn't changed. Falls through to `npm ci` if miss.
+      - id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+
+      - if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      # The Prisma engine binary download (~30 MB) is keyed by the prisma
+      # version line in package-lock so it survives across runs.
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.prisma
+          key: prisma-${{ runner.os }}-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
+
+      - run: npx prisma generate
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+  test-postgres:
+    name: test (postgres)
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        engine: [sqlite, postgres]
-
     services:
-      # Only runs when matrix.engine == postgres because we only USE it then,
-      # but GitHub Actions always starts declared services. Cheap to leave it.
       postgres:
         image: postgres:16
         env:
@@ -27,9 +56,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U pane"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -39,24 +68,24 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - run: npm ci
+      - id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
 
-      - name: Generate Prisma client (sqlite)
-        if: matrix.engine == 'sqlite'
-        run: npx prisma generate
+      - if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
 
-      - name: Generate Prisma client (postgres)
-        if: matrix.engine == 'postgres'
-        run: npx prisma generate --schema prisma/schema.postgres.prisma
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.prisma
+          key: prisma-pg-${{ runner.os }}-${{ hashFiles('prisma/schema.postgres.prisma', 'package-lock.json') }}
+
+      - run: npx prisma generate --schema prisma/schema.postgres.prisma
 
       - run: npm run typecheck
 
-      - name: Tests (sqlite)
-        if: matrix.engine == 'sqlite'
-        run: npm test
-
-      - name: Tests (postgres)
-        if: matrix.engine == 'postgres'
+      - run: npm test
         env:
           DATABASE_URL: postgresql://pane:pane@localhost:5432/pane_test
-        run: npm test
