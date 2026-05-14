@@ -9,8 +9,11 @@
     "node": ">=20"
   },
   "scripts": {
+    "build:client": "tsc -p tsconfig.client.json",
+    "build:server": "tsc",
+    "build": "npm run build:client && npm run build:server",
+    "predev": "npm run build:client",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
     "start": "node dist/index.js",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
@@ -18,10 +21,14 @@
     "studio": "prisma studio",
     "generate": "prisma generate",
     "generate:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
+    "pretest": "npm run build:client",
     "test": "vitest run",
+    "pretest:unit": "npm run build:client",
     "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/node_modules/**'",
+    "pretest:e2e": "npm run build:client",
     "test:e2e": "vitest run .e2e.test.ts .integration.test.ts",
     "test:watch": "vitest",
+    "pretypecheck": "npm run build:client",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
