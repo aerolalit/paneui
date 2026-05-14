@@ -1,54 +1,31 @@
-// Integration test for writeEvent against a real SQLite DB.
+// Integration test for writeEvent. Runs against whatever engine DATABASE_URL
+// points at (sqlite file or postgres) — the CI matrix exercises both.
 //
 // We exercise the full pipeline (validate -> insert-or-dedupe -> publish ->
 // webhook fire) end-to-end because the previous "unit test the leaves" approach
 // missed a TOCTOU race between findUnique and create that survived two PR
 // review passes. Concurrent dedupe is the centrepiece of the suite.
-//
-// Module imports happen *after* DATABASE_URL is set in the test setup so the
-// singleton prisma in src/db.ts opens our per-test SQLite file. This matches
-// the pattern in src/bootstrap.integration.test.ts.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { PrismaClient, Session } from "@prisma/client";
 import type { Author } from "../types.js";
+import { setupTestDb, type TestDb } from "../test-helpers/db.js";
 
-function findInitMigrationSql(): string {
-  const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
-  if (entries.length === 0) throw new Error("no migrations found");
-  entries.sort();
-  return join(dir, entries[entries.length - 1]!, "migration.sql");
-}
-
-async function applyMigration(prisma: PrismaClient): Promise<void> {
-  const raw = readFileSync(findInitMigrationSql(), "utf8");
-  const cleaned = raw.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-  const statements = cleaned.split(";").map((s) => s.trim()).filter((s) => s.length > 0);
-  for (const stmt of statements) {
-    await prisma.$executeRawUnsafe(stmt);
-  }
-}
-
-const tmpDir = mkdtempSync(join(tmpdir(), "pane-events-test-"));
-const dbPath = join(tmpDir, "events.db");
-process.env.DATABASE_URL = `file:${dbPath}`;
-process.env.LOG_LEVEL = "error";
-process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-
-// Lazy module bindings — populated in beforeAll once env is set.
+let testDb: TestDb;
 let writeEvent: typeof import("./events.js").writeEvent;
 let prisma: PrismaClient;
 let encryptSecret: typeof import("../crypto.js").encryptSecret;
 let _resetKeyCacheForTests: typeof import("../crypto.js")._resetKeyCacheForTests;
 
 beforeAll(async () => {
-  // Reset Prisma singleton so the import below opens a fresh client pointed at
-  // our tmp file rather than reusing a globalThis client from another suite.
+  testDb = await setupTestDb();
+  process.env.DATABASE_URL = testDb.dbUrl;
+  process.env.LOG_LEVEL = "error";
+  process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
+
+  // Reset the Prisma singleton so the dynamic import below opens a fresh
+  // client pointed at our isolated test DB.
   delete (globalThis as { prisma?: PrismaClient }).prisma;
 
   const cryptoMod = await import("../crypto.js");
@@ -58,14 +35,14 @@ beforeAll(async () => {
 
   const dbMod = await import("../db.js");
   prisma = dbMod.default;
-  await applyMigration(prisma);
+  await testDb.applyMigration(prisma);
 
   ({ writeEvent } = await import("./events.js"));
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
-  rmSync(tmpDir, { recursive: true, force: true });
+  await testDb.cleanup();
 });
 
 interface SeedOptions {
@@ -121,11 +98,7 @@ const humanAuthor = (id: string): Author => ({ kind: "human", id });
 
 describe("writeEvent (integration, real SQLite)", () => {
   beforeEach(async () => {
-    // Per-test isolation — every test seeds its own session(s).
-    await prisma.event.deleteMany();
-    await prisma.participant.deleteMany();
-    await prisma.session.deleteMany();
-    await prisma.agent.deleteMany();
+    await testDb.truncateAll(prisma);
   });
 
   it("happy path: persists, returns serialized event, not deduped", async () => {

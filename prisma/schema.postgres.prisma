@@ -1,0 +1,95 @@
+// prisma/schema.postgres.prisma
+// Postgres variant for the hosted build and for CI cross-engine coverage.
+// Kept in sync with prisma/schema.prisma. Generation flow:
+//   npx prisma generate --schema prisma/schema.postgres.prisma
+//   npx prisma migrate dev --schema prisma/schema.postgres.prisma --name <name>
+// Migrations live in prisma/migrations-postgres/ (separate from the sqlite set).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id         String    @id @default(cuid())
+  name       String
+  keyHash    String    @unique
+  keyPrefix  String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  rateLimit  Int?
+  sessions   Session[]
+
+  @@index([keyHash])
+}
+
+model Session {
+  id              String        @id
+  agentId         String
+  agent           Agent         @relation(fields: [agentId], references: [id])
+
+  // Artifact: the HTML/JS the agent wants rendered.
+  artifactType    String
+  artifactSource  String
+  artifactVersion Int           @default(1)
+
+  // Schema: the per-session event vocabulary.
+  eventSchema     Json
+  schemaVersion   Int           @default(1)
+
+  status          String        @default("open")
+  createdAt       DateTime      @default(now())
+  expiresAt       DateTime
+  metadata        Json?
+
+  // Webhook callback (best-effort, signed; durable delivery is /ee/).
+  callbackUrl       String?
+  callbackSecretEnc String?
+  callbackFilter    Json?
+
+  participants    Participant[]
+  events          Event[]
+
+  @@index([agentId])
+  @@index([expiresAt])
+}
+
+model Participant {
+  id           String    @id @default(cuid())
+  sessionId    String
+  session      Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind         String
+  identityId   String
+  tokenHash    String    @unique
+  tokenPrefix  String
+  joinedAt     DateTime?
+  revokedAt    DateTime?
+
+  @@index([sessionId])
+  @@index([tokenHash])
+}
+
+model Event {
+  // Keep `Int` on both engines so the generated client surface is identical
+  // (number, not bigint). Moving to @db.BigInt for the hosted Postgres build
+  // is a separate migration once we're closer to capacity — tracked in the
+  // project board.
+  id              Int      @id @default(autoincrement())
+  sessionId       String
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  authorKind      String
+  authorId        String
+  type            String
+  data            Json
+  causationId     String?
+  idempotencyKey  String?
+  ts              DateTime @default(now())
+
+  @@index([sessionId, id])
+  @@unique([sessionId, authorId, idempotencyKey])
+}

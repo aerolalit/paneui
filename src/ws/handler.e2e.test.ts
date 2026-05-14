@@ -6,40 +6,17 @@
 //   - schema-violating frame -> error frame (no ack)
 //   - idempotency dedupe on the WS path
 //   - participant.joined / participant.left system events
-// Catches bugs in the upgrade handler + frame parser that writeEvent unit
-// tests cannot see.
+// DB engine follows DATABASE_URL (sqlite or postgres) — CI matrix runs both.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import WebSocket from "ws";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
+import { setupTestDb, type TestDb } from "../test-helpers/db.js";
 
-function findInitMigrationSql(): string {
-  const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
-  entries.sort();
-  return join(dir, entries[entries.length - 1]!, "migration.sql");
-}
-
-async function applyMigration(prisma: PrismaClient): Promise<void> {
-  const raw = readFileSync(findInitMigrationSql(), "utf8");
-  const cleaned = raw.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-  for (const stmt of cleaned.split(";").map((s) => s.trim()).filter(Boolean)) {
-    await prisma.$executeRawUnsafe(stmt);
-  }
-}
-
-const tmpDir = mkdtempSync(join(tmpdir(), "pane-ws-e2e-"));
-const dbPath = join(tmpDir, "ws.db");
-process.env.DATABASE_URL = `file:${dbPath}`;
-process.env.LOG_LEVEL = "error";
-process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-
+let testDb: TestDb;
 let prisma: PrismaClient;
 let app: Hono;
 let server: Server;
@@ -48,9 +25,14 @@ let hashKey: typeof import("../keys.js").hashKey;
 let keyPrefix: typeof import("../keys.js").keyPrefix;
 
 beforeAll(async () => {
+  testDb = await setupTestDb();
+  process.env.DATABASE_URL = testDb.dbUrl;
+  process.env.LOG_LEVEL = "error";
+  process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
+
   delete (globalThis as { prisma?: PrismaClient }).prisma;
   ({ default: prisma } = await import("../db.js"));
-  await applyMigration(prisma);
+  await testDb.applyMigration(prisma);
   ({ hashKey, keyPrefix } = await import("../keys.js"));
 
   const { buildApp } = await import("../http/app.js");
@@ -96,7 +78,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await prisma.$disconnect();
-  rmSync(tmpDir, { recursive: true, force: true });
+  await testDb.cleanup();
 });
 
 async function seedAgent(): Promise<{ id: string; apiKey: string }> {
@@ -204,10 +186,7 @@ function waitOpen(ws: WebSocket, timeoutMs = 1500): Promise<void> {
 
 describe("WS e2e", () => {
   beforeEach(async () => {
-    await prisma.event.deleteMany();
-    await prisma.participant.deleteMany();
-    await prisma.session.deleteMany();
-    await prisma.agent.deleteMany();
+    await testDb.truncateAll(prisma);
   });
 
   it("rejects upgrade with no token (401)", async () => {

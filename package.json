@@ -14,8 +14,10 @@
     "start": "node dist/index.js",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
+    "migrate:postgres:deploy": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
     "studio": "prisma studio",
     "generate": "prisma generate",
+    "generate:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

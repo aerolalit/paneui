@@ -8,6 +8,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [sqlite, postgres]
+
+    services:
+      # Only runs when matrix.engine == postgres because we only USE it then,
+      # but GitHub Actions always starts declared services. Cheap to leave it.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pane
+          POSTGRES_PASSWORD: pane
+          POSTGRES_DB: pane_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pane"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,8 +41,22 @@ jobs:
 
       - run: npm ci
 
-      - run: npx prisma generate
+      - name: Generate Prisma client (sqlite)
+        if: matrix.engine == 'sqlite'
+        run: npx prisma generate
+
+      - name: Generate Prisma client (postgres)
+        if: matrix.engine == 'postgres'
+        run: npx prisma generate --schema prisma/schema.postgres.prisma
 
       - run: npm run typecheck
 
-      - run: npm test
+      - name: Tests (sqlite)
+        if: matrix.engine == 'sqlite'
+        run: npm test
+
+      - name: Tests (postgres)
+        if: matrix.engine == 'postgres'
+        env:
+          DATABASE_URL: postgresql://pane:pane@localhost:5432/pane_test
+        run: npm test

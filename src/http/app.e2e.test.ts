@@ -1,47 +1,29 @@
 // End-to-end test for the HTTP transport: drives requests through the real
-// Hono app (auth middleware → routes → writeEvent → DB) against a real SQLite
-// file. Catches regressions in wiring (status codes, response shapes, auth
-// rejection) that the writeEvent unit tests do not see.
+// Hono app (auth middleware → routes → writeEvent → DB). DB engine follows
+// DATABASE_URL (sqlite file or postgres) — CI matrix runs both.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
+import { setupTestDb, type TestDb } from "../test-helpers/db.js";
 
-function findInitMigrationSql(): string {
-  const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
-  entries.sort();
-  return join(dir, entries[entries.length - 1]!, "migration.sql");
-}
-
-async function applyMigration(prisma: PrismaClient): Promise<void> {
-  const raw = readFileSync(findInitMigrationSql(), "utf8");
-  const cleaned = raw.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-  for (const stmt of cleaned.split(";").map((s) => s.trim()).filter(Boolean)) {
-    await prisma.$executeRawUnsafe(stmt);
-  }
-}
-
-const tmpDir = mkdtempSync(join(tmpdir(), "pane-app-e2e-"));
-const dbPath = join(tmpDir, "app.db");
-process.env.DATABASE_URL = `file:${dbPath}`;
-process.env.LOG_LEVEL = "error";
-process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-process.env.PUBLIC_URL = "http://localhost:3000";
-
+let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
 let hashKey: typeof import("../keys.js").hashKey;
 let keyPrefix: typeof import("../keys.js").keyPrefix;
 
 beforeAll(async () => {
+  testDb = await setupTestDb();
+  process.env.DATABASE_URL = testDb.dbUrl;
+  process.env.LOG_LEVEL = "error";
+  process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
+  process.env.PUBLIC_URL = "http://localhost:3000";
+
   delete (globalThis as { prisma?: PrismaClient }).prisma;
   ({ default: prisma } = await import("../db.js"));
-  await applyMigration(prisma);
+  await testDb.applyMigration(prisma);
   ({ hashKey, keyPrefix } = await import("../keys.js"));
   const { buildApp } = await import("./app.js");
   app = buildApp();
@@ -49,7 +31,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.$disconnect();
-  rmSync(tmpDir, { recursive: true, force: true });
+  await testDb.cleanup();
 });
 
 async function seedAgent(): Promise<{ id: string; apiKey: string }> {
@@ -84,10 +66,7 @@ const minimalSchema = {
 
 describe("HTTP e2e", () => {
   beforeEach(async () => {
-    await prisma.event.deleteMany();
-    await prisma.participant.deleteMany();
-    await prisma.session.deleteMany();
-    await prisma.agent.deleteMany();
+    await testDb.truncateAll(prisma);
   });
 
   describe("session lifecycle", () => {

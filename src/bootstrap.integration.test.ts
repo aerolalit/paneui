@@ -1,29 +1,15 @@
-// Integration test for runBootstrap against a real SQLite DB.
-// Spins up a fresh tmpdir per test, applies the init migration in-process,
-// then exercises the three bootstrap branches against actual rows. Verifies the
-// acceptance criteria from docs/architecture/phase-1-skeleton-and-data.md
-// (idempotency under repeated API_KEY runs; mint-and-print exactly once when
-// the DB is empty; no-op when agents already exist).
+// Integration test for runBootstrap against a real DB. Engine is whatever
+// DATABASE_URL points at (sqlite file or postgres) — the CI matrix runs both.
+// Verifies the acceptance criteria from
+// docs/architecture/phase-1-skeleton-and-data.md (idempotency under repeated
+// API_KEY runs; mint-and-print exactly once on empty; no-op with agents).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { runBootstrap } from "./bootstrap.js";
 import { hashKey } from "./keys.js";
 import type { Config } from "./config.js";
-
-function findInitMigrationSql(): string {
-  const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
-  if (entries.length === 0) throw new Error("no migrations found");
-  // There's only ever one migration in v1; if multiple, pick the latest.
-  entries.sort();
-  return join(dir, entries[entries.length - 1]!, "migration.sql");
-}
-
-const MIGRATION_SQL_PATH = findInitMigrationSql();
+import { setupTestDb, type TestDb } from "./test-helpers/db.js";
 
 const baseConfig: Config = {
   DATABASE_URL: "",
@@ -41,35 +27,25 @@ const baseConfig: Config = {
   publicUrl: "http://localhost:3000",
 };
 
-async function applyMigration(prisma: PrismaClient): Promise<void> {
-  const raw = readFileSync(MIGRATION_SQL_PATH, "utf8");
-  // Strip `-- ...` line comments first; otherwise a leading `-- CreateTable`
-  // makes the whole statement start with `--` after `;`-split.
-  const cleaned = raw
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("--"))
-    .join("\n");
-  const statements = cleaned
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  for (const stmt of statements) {
-    await prisma.$executeRawUnsafe(stmt);
-  }
-}
-
-describe("bootstrap (integration, real SQLite)", () => {
-  let dir: string;
+describe("bootstrap (integration, real DB)", () => {
+  let testDb: TestDb;
   let prisma: PrismaClient;
   let stdoutSpy: ReturnType<typeof vi.spyOn>;
   let stdoutBuffer: string;
 
-  beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), "pane-test-"));
-    const dbUrl = `file:${join(dir, "test.db")}`;
-    prisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
-    await applyMigration(prisma);
+  beforeAll(async () => {
+    testDb = await setupTestDb();
+    prisma = new PrismaClient({ datasourceUrl: testDb.dbUrl });
+    await testDb.applyMigration(prisma);
+  });
 
+  afterAll(async () => {
+    await prisma.$disconnect();
+    await testDb.cleanup();
+  });
+
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
     stdoutBuffer = "";
     stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
       stdoutBuffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
@@ -77,10 +53,8 @@ describe("bootstrap (integration, real SQLite)", () => {
     }) as typeof process.stdout.write);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     stdoutSpy.mockRestore();
-    await prisma.$disconnect();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   it("API_KEY set + empty DB: creates exactly one default agent", async () => {
