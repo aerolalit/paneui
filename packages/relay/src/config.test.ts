@@ -11,6 +11,8 @@ describe("config", () => {
     expect(c.DEFAULT_TTL_SECONDS).toBe(3600);
     expect(c.MAX_TTL_SECONDS).toBe(86_400);
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
+    expect(c.REGISTER_RATE_LIMIT).toBe(5);
+    expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(3600);
     expect(c.LOG_LEVEL).toBe("info");
     expect(c.DATABASE_URL).toBe("file:./data/pane.db");
     expect(c.publicUrl).toBe("http://localhost:3000");
@@ -33,11 +35,16 @@ describe("config", () => {
     expect(c.publicUrl).toBe("https://pane.example.com");
   });
 
-  it("redacts API_KEY and REGISTRATION_SECRET", () => {
-    const c = loadConfig({ API_KEY: "secret-key", REGISTRATION_SECRET: "secret-reg" });
+  it("redacts API_KEY", () => {
+    const c = loadConfig({ API_KEY: "secret-key" });
     const r = redactConfig(c);
     expect(r.API_KEY).toBe("<set>");
-    expect(r.REGISTRATION_SECRET).toBe("<set>");
+  });
+
+  it("coerces register rate-limit overrides; 0 disables", () => {
+    const c = loadConfig({ REGISTER_RATE_LIMIT: "0", REGISTER_RATE_WINDOW_SECONDS: "60" });
+    expect(c.REGISTER_RATE_LIMIT).toBe(0);
+    expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(60);
   });
 
   it("redacts creds in DATABASE_URL", () => {

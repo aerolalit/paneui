@@ -1,29 +1,29 @@
+// POST /v1/register — open agent self-registration.
+//
+// No secret, no bearer key: this is the call that *obtains* an API key.
+// Abuse is bounded by a per-IP sliding-window rate limit (see rate-limit.ts).
+
 import { Hono } from "hono";
 import { z } from "zod";
-import { timingSafeEqual } from "node:crypto";
-import config from "../../config.js";
 import prisma from "../../db.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 import { errors } from "../errors.js";
+import { enforceRegisterRateLimit } from "../rate-limit.js";
 
 const bodySchema = z.object({
   name: z.string().min(1).max(64).optional(),
-  registration_secret: z.string(),
 });
 
 const register = new Hono();
 
 register.post("/", async (c) => {
-  if (!config.REGISTRATION_SECRET) throw errors.notFound();
-  const body = await c.req.json().catch(() => null);
-  const parsed = bodySchema.safeParse(body);
-  if (!parsed.success) throw errors.invalidRequest("invalid body", parsed.error.flatten());
+  enforceRegisterRateLimit(c);
 
-  const expected = Buffer.from(config.REGISTRATION_SECRET);
-  const provided = Buffer.from(parsed.data.registration_secret);
-  if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
-    throw errors.unauthorized();
-  }
+  // Body is optional — a bare `pane register` sends none. Treat missing /
+  // empty / non-JSON body as {} so the only failure path is a malformed name.
+  const raw = await c.req.json().catch(() => null);
+  const parsed = bodySchema.safeParse(raw ?? {});
+  if (!parsed.success) throw errors.invalidRequest("invalid body", parsed.error.flatten());
 
   const key = generateApiKey();
   const agent = await prisma.agent.create({

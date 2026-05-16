@@ -22,10 +22,14 @@ question, just ask in text; `pane` only wins on the rich slice.
 
 ## Setup
 
-Two environment variables (or `--url` / `--api-key` flags on any command):
+You need the relay base URL and an agent API key:
 
 - `PANE_URL` — the relay base URL, e.g. `https://pane.example.com`
-- `PANE_API_KEY` — your agent key
+- `PANE_API_KEY` — your agent key. This is **either** pre-provided by the
+  operator, **or** obtained yourself via `pane register` (see "Registering"
+  below). Once registered, you don't need `PANE_API_KEY` at all.
+
+Both can also be passed as `--url` / `--api-key` flags on any command.
 
 Output is JSON on stdout. Errors are `{"error":{"code","message"}}` on stderr
 with a non-zero exit.
@@ -44,6 +48,27 @@ argument, and default:
 If a command errors or you are unsure of an option name, **run `--help`
 instead of guessing** — the CLI is self-documenting and the help text reflects
 the installed version, which this skill may not.
+
+## Registering
+
+If you weren't handed an API key, provision one yourself — **once** — with:
+
+```sh
+pane register --url "$PANE_URL"
+```
+
+Registration is open — no secret, no operator-shared value. This calls the
+relay's `POST /v1/register`, mints an agent + API key, and saves the key and
+URL to the CLI config file
+(`${XDG_CONFIG_HOME:-~/.config}/pane/config.json`, mode 0600). After that,
+every other command picks the key up from that file automatically — so all
+later commands need only `PANE_URL` set (or nothing, since the URL is saved
+too).
+
+- The key is not printed by default. Pass `--print-key` if you need it echoed.
+- Run it just once; re-running mints a fresh agent each time.
+- The relay rate-limits `/v1/register` per IP; if you hit it, `pane register`
+  fails with `rate_limited` — wait and retry.
 
 ## The four commands
 
