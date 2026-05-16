@@ -8,6 +8,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./test/browser",
   testMatch: "**/*.pwspec.ts",
+  // Regenerate the SQLite-targeted Prisma client before any test runs. The relay
+  // has two Prisma schemas generating to the same client; the browser harness
+  // needs the SQLite one. Makes the suite deterministic even via `npx playwright
+  // test` (which bypasses the npm `pretest:browser` hook). See global-setup.ts.
+  globalSetup: "./test/browser/global-setup.ts",
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],
