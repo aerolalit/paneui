@@ -28,7 +28,22 @@ Two environment variables (or `--url` / `--api-key` flags on any command):
 - `PANE_API_KEY` — your agent key
 
 Output is JSON on stdout. Errors are `{"error":{"code","message"}}` on stderr
-with a non-zero exit. Run `pane --help` or `pane <command> --help` anytime.
+with a non-zero exit.
+
+## Discover the CLI with `--help`
+
+**Before using a command, run its help.** This skill summarizes the workflow,
+but `--help` is the authoritative, always-current reference for every flag,
+argument, and default:
+
+- `pane --help` — the command list and global options.
+- `pane <command> --help` — every flag and option for that command, e.g.
+  `pane create --help`, `pane watch --help`, `pane send --help`,
+  `pane register --help`.
+
+If a command errors or you are unsure of an option name, **run `--help`
+instead of guessing** — the CLI is self-documenting and the help text reflects
+the installed version, which this skill may not.
 
 ## The four commands
 
@@ -264,6 +279,9 @@ you with the result.
   connection is awkward.
 
 ## Typical round trip
+
+> Tip: run `pane <command> --help` first if you're unsure of any flag below —
+> the help text is authoritative.
 
 ```sh
 # 1. create the session
