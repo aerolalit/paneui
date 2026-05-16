@@ -23,3 +23,8 @@ data/
 # logs / os
 *.log
 .DS_Store
+
+# playwright browser-test artifacts
+test-results/
+playwright-report/
+.playwright/

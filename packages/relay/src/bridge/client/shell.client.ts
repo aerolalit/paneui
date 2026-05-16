@@ -53,6 +53,17 @@ interface SerializedEvent {
   let lastEventId = 0;
   let ws: WebSocket | null = null;
   let backoff = 1000;
+  // Guards against overlapping connections. `connect()` can be reached from two
+  // places — the initial call and the close-handler's reconnect timer — and a
+  // browser WebSocket killed by an idle-reaping proxy reconnects on a tight
+  // cadence. Without these guards a slow `open` plus a queued reconnect could
+  // leave two live sockets, each with its own close handler each scheduling
+  // its own reconnect: the connection count doubles every cycle and the relay
+  // sees a storm of participant.joined/left pairs. `connecting` blocks a second
+  // connect() while one is already in flight; `reconnectTimer` ensures only one
+  // reconnect is ever queued.
+  let connecting = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function setStatus(t: string, cls?: "up" | "dn"): void {
     statusEl.textContent = t;
@@ -210,19 +221,62 @@ interface SerializedEvent {
     );
   }
 
+  // Schedule exactly one reconnect attempt. Coalesces: if a timer is already
+  // pending (e.g. a stray second close fired) we do not stack another.
+  function scheduleReconnect(): void {
+    if (CFG.isClosed || reconnectTimer !== null) return;
+    setStatus("reconnecting in " + Math.round(backoff / 1000) + "s...", "dn");
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      backoff = Math.min(backoff * 2, 30000);
+      connect();
+    }, backoff);
+  }
+
+  // Tear down the current socket so it can never fire another close/message
+  // into the app after we've moved on. We strip its listeners first so the old
+  // socket's close event can't trigger a second reconnect.
+  function teardownWs(): void {
+    if (!ws) return;
+    const old = ws;
+    ws = null;
+    old.onopen = null;
+    old.onmessage = null;
+    old.onclose = null;
+    old.onerror = null;
+    try {
+      old.close();
+    } catch {
+      /* already closing */
+    }
+  }
+
   function connect(): void {
     if (CFG.isClosed) return;
+    // Never run two connections at once. If one is already opening or open,
+    // bail — whatever triggered this call (a stale close, a double-invoke)
+    // would otherwise spawn a parallel socket.
+    if (connecting) return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    teardownWs();
+    connecting = true;
     setStatus("connecting...");
     let qs = "?token=" + encodeURIComponent(CFG.token);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
-    ws = new WebSocket(CFG.wsUrl + qs);
+    const sock = new WebSocket(CFG.wsUrl + qs);
+    ws = sock;
 
-    ws.addEventListener("open", () => {
+    sock.addEventListener("open", () => {
+      if (ws !== sock) return; // superseded
+      connecting = false;
       backoff = 1000;
       setStatus("connected", "up");
     });
 
-    ws.addEventListener("message", (evt: MessageEvent) => {
+    sock.addEventListener("message", (evt: MessageEvent) => {
+      if (ws !== sock) return; // superseded socket — ignore late frames
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg && msg["kind"] === "system.replay.complete") {
@@ -271,16 +325,19 @@ interface SerializedEvent {
       }
     });
 
-    ws.addEventListener("close", () => {
-      setStatus("reconnecting in " + Math.round(backoff / 1000) + "s...", "dn");
-      setTimeout(() => {
-        backoff = Math.min(backoff * 2, 30000);
-        connect();
-      }, backoff);
+    sock.addEventListener("close", () => {
+      // Ignore a close from a socket we already replaced — only the live
+      // socket's close should drive a reconnect, otherwise a stale socket
+      // closing late would queue an extra (parallel) reconnect.
+      if (ws !== sock) return;
+      ws = null;
+      connecting = false;
+      scheduleReconnect();
     });
 
-    ws.addEventListener("error", () => {
-      // close handler retries
+    sock.addEventListener("error", () => {
+      // The close event always follows an error and is where the reconnect is
+      // scheduled — nothing to do here.
     });
   }
 
