@@ -24,11 +24,25 @@ This matters most for agents that live **outside a GUI host app**: cron agents, 
 
 ## Distribution
 
-Ships as: a standalone HTTP API + an MCP server (`create_pane_session` / `await_pane_result` tools, zero-friction for MCP agents) + (later) a LangChain tool. Single Docker container, SQLite by default: `docker run` and it works.
+The repo is an npm-workspaces monorepo with three packages:
+
+- **`@pane/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
+- **`@pane/relay`** — the relay server. Ships as a single Docker container, SQLite by default: `docker build -f packages/relay/Dockerfile -t pane .` then `docker run` and it works.
+- **`pane-cli`** — the `pane` command-line tool. `npm i -g pane-cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
+
+The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process-monitoring tool, with nothing to install but one binary. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands; pipe it into whatever supervises your agent. A LangChain tool wrapper may come later (v2).
+
+```sh
+# create a session, hand the URL to a human, wait for the answer
+pane create --artifact ./form.html --schema ./schema.json --ttl 600
+pane watch ses_xxxx --type form.submitted   # one JSON line per event; exits on the submit
+```
+
+Config is `PANE_URL` + `PANE_API_KEY` (env), overridable with `--url` / `--api-key`. Run `pane --help` or `pane <command> --help` for details.
 
 ## Stack
 
-TypeScript. Runtime: Node 20+ (Bun fine too). Web: Hono (tiny, fast, container/edge-friendly). ORM: Prisma. SQLite for self-host (default), PostgreSQL for the hosted build. MCP server via the official `@modelcontextprotocol/sdk`. See `docs/SPEC.md`.
+TypeScript. Runtime: Node 20+ (Bun fine too). Web: Hono (tiny, fast, container/edge-friendly). ORM: Prisma. SQLite for self-host (default), PostgreSQL for the hosted build. npm workspaces for the monorepo. See `docs/SPEC.md`.
 
 ## Business model
 
@@ -38,6 +52,6 @@ Open-core. MIT core (this repo, minus the `/ee/` directory) + a managed hosted v
 
 - [`docs/SPEC.md`](docs/SPEC.md): technical design (architecture, API, data model, bridge, auth, open/closed split)
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): v1 scope, later phases, strategy notes
-- [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the bridge shim, the MCP tools)
+- [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the bridge shim, the CLI)
 - Prior art / landscape: MCP Apps (`blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/`), mcp-ui (`github.com/MCP-UI-Org/mcp-ui`), AG-UI (`copilotkit.ai`), A2UI (Google), Thesys C1
 - Motivating read: Thariq, "Using Claude Code: The Unreasonable Effectiveness of HTML" (`simonwillison.net/2026/May/8/unreasonable-effectiveness-of-html/`)

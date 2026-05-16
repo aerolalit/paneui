@@ -1,0 +1,28 @@
+# Build context for the relay image is the MONOREPO ROOT (see Dockerfile).
+# Docker 23+ reads `<dockerfile>.dockerignore` first, then `<context>/.dockerignore`.
+# This file is named to match: rename to `Dockerfile.dockerignore` is unnecessary
+# because Docker also resolves `<dockerfile-dir>/.dockerignore` for `-f` builds.
+**/node_modules
+**/dist
+**/build
+**/coverage
+data
+**/prisma/data
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+.git
+.gitignore
+**/.env
+**/.env.*
+**/*.log
+.DS_Store
+docs
+README.md
+LICENSE
+skill
+packages/cli
+packages/core
+**/.dockerignore
+**/Dockerfile

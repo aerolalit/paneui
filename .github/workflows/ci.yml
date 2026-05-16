@@ -6,10 +6,9 @@ on:
   pull_request:
 
 jobs:
-  # Fast unit suite — runs on every push. Sub-30s feedback signal on broken
-  # leaves (validation, crypto, ssrf, config, serialize, keys, webhook).
-  unit:
-    name: unit
+  # Build + typecheck every workspace package (core, relay, cli).
+  build:
+    name: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,23 +18,31 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - id: cache-node-modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
 
-      - if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-
-      - uses: actions/cache@v4
-        with:
-          path: node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
-
-      - run: npx prisma generate
+      - run: npm run generate
 
       - run: npm run typecheck
+
+      - run: npm run build
+
+  # Fast unit suite — runs on every push. Sub-30s feedback signal on broken
+  # leaves (validation, crypto, ssrf, config, serialize, keys, webhook).
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run generate
 
       - run: npm run test:unit
 
@@ -52,21 +59,9 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - id: cache-node-modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
 
-      - if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-
-      - uses: actions/cache@v4
-        with:
-          path: node_modules/.prisma
-          key: prisma-sqlite-${{ runner.os }}-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
-
-      - run: npx prisma generate
+      - run: npm run generate
 
       - run: npm run test:e2e
 
@@ -100,21 +95,9 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - id: cache-node-modules
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
 
-      - if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-
-      - uses: actions/cache@v4
-        with:
-          path: node_modules/.prisma
-          key: prisma-pg-${{ runner.os }}-${{ hashFiles('prisma/schema.postgres.prisma', 'package-lock.json') }}
-
-      - run: npx prisma generate --schema prisma/schema.postgres.prisma
+      - run: npm run generate:postgres --workspace @pane/relay
 
       - run: npm run test:e2e
         env:
