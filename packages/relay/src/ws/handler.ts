@@ -4,15 +4,35 @@ import { WebSocketServer, type WebSocket } from "ws";
 import config from "../config.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
+import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { writeEvent } from "../core/events.js";
+import { addConnection, agentCount, removeConnection } from "./presence.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
+import type { SerializedEvent } from "../types.js";
 import type { Participant, Session } from "@prisma/client";
 
 const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
+
+// Heartbeat interval. The relay pings every open socket on this cadence; any
+// socket that has not answered a ping with a pong since the previous tick is
+// considered dead and terminated. This is the ONLY thing that detects a
+// half-open connection (NAT/proxy/OS silently dropped it) — without it a dead
+// socket lingers forever, and on the browser side a connection killed by an
+// idle-reaping intermediary just looks like a close, which the shell answers
+// with an immediate reconnect, producing a connect/close churn loop. A live
+// ping/pong keeps the path warm so intermediaries don't reap it, and cleanly
+// reaps the genuinely-dead ones instead of leaving them as ghosts.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+// `ws` does not surface "did this socket pong recently" — we track it ourselves
+// on the socket object via this symbol-ish property.
+interface AliveWs extends WebSocket {
+  isAlive?: boolean;
+}
 
 // Server type is loose because @hono/node-server may return an http.Server,
 // https.Server, or Http2Server; all expose the same `upgrade` event we need.
@@ -21,6 +41,30 @@ export function attachWs(server: { on(event: "upgrade", listener: (req: Incoming
   server.on("upgrade", (req, socket, head) => {
     void handleUpgrade(wss, req, socket, head);
   });
+
+  // Server-side ping/pong heartbeat. Every tick: terminate any socket that
+  // missed the previous ping's pong, then ping the rest. Browsers answer a
+  // protocol-level ping automatically (no app code needed), so this both keeps
+  // browser connections warm and detects dead peers.
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      const ws = client as AliveWs;
+      if (ws.isAlive === false) {
+        log.debug("ws heartbeat: terminating unresponsive socket");
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        /* socket already closing — next tick's terminate() handles it */
+      }
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  heartbeat.unref?.();
+  wss.on("close", () => clearInterval(heartbeat));
+
   return wss;
 }
 
@@ -137,13 +181,48 @@ function sendUpgradeError(socket: Duplex, status: number): void {
   socket.destroy();
 }
 
+// Decorate a participant.joined/left event with the CURRENT live agent socket
+// count before broadcasting. The persisted Event row is left untouched — this
+// `agentCountLive` only rides the in-memory broadcast so shells that receive it
+// AFTER `system.replay.complete` learn the exact present-tense agent count.
+// Replayed (historical) rows never carry it, so the shell knows not to trust
+// it for events seen during replay.
+function withLiveCount(e: SerializedEvent, sessionId: string): SerializedEvent {
+  const data = e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
+  return { ...e, data: { ...data, agentCountLive: agentCount(sessionId) } };
+}
+
 async function handleConnection(
   ws: WebSocket,
   sessionId: string,
   author: Author,
   sinceCursor: number | null,
 ): Promise<void> {
+  const openedAt = Date.now();
+  // Heartbeat bookkeeping: a fresh socket starts alive, and every pong the peer
+  // sends (browsers answer the server ping automatically) re-arms it. The
+  // heartbeat interval in attachWs() flips this to false on each ping and
+  // terminates the socket if it's still false on the next tick.
+  const alive = ws as AliveWs;
+  alive.isAlive = true;
+  ws.on("pong", () => {
+    alive.isAlive = true;
+  });
+
+  log.info("ws connected", { sessionId, authorKind: author.kind, authorId: author.id });
+
+  ws.on("error", (err: Error) => {
+    log.warn("ws error", { sessionId, authorKind: author.kind, error: err.message });
+  });
+
+  // Register this socket in the live presence registry BEFORE we compute the
+  // joined event's agentCountLive, so the count reflects this connection too.
+  const connId = randomUUID();
+  addConnection(sessionId, connId, author.kind === "agent" ? "agent" : "human");
+
   // 1) Append + broadcast a participant.joined system event so other peers see us.
+  //    The persisted row is exactly as before; only the broadcast copy carries
+  //    the live agent count.
   const joinEvent = await prisma.event.create({
     data: {
       sessionId,
@@ -153,8 +232,7 @@ async function handleConnection(
       data: { author: { kind: author.kind, id: author.id } } as object,
     },
   });
-  const joinSerialized = serializeEvent(joinEvent);
-  publish(sessionId, joinSerialized);
+  publish(sessionId, withLiveCount(serializeEvent(joinEvent), sessionId));
 
   // 2) Replay every event since `sinceCursor` (or from the start).
   const replayWhere: { sessionId: string; id?: { gt: number } } = { sessionId };
@@ -187,8 +265,19 @@ async function handleConnection(
     await handleFrame(ws, sessionId, author, msg);
   });
 
-  ws.on("close", () => {
+  ws.on("close", (code: number, reason: Buffer) => {
+    log.info("ws closed", {
+      sessionId,
+      authorKind: author.kind,
+      authorId: author.id,
+      code,
+      reason: reason.toString().slice(0, 200),
+      openMs: Date.now() - openedAt,
+    });
     unsub();
+    // Deregister from the live presence registry FIRST so the participant.left
+    // event's agentCountLive reflects this socket already being gone.
+    removeConnection(sessionId, connId);
     void prisma.event
       .create({
         data: {
@@ -199,7 +288,7 @@ async function handleConnection(
           data: { author: { kind: author.kind, id: author.id } } as object,
         },
       })
-      .then((row) => publish(sessionId, serializeEvent(row)))
+      .then((row) => publish(sessionId, withLiveCount(serializeEvent(row), sessionId)))
       .catch((err: unknown) =>
         log.warn("participant.left event insert failed", {
           sessionId,

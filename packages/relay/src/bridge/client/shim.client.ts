@@ -6,9 +6,12 @@
 //   iframe -> shell: { __pane:1, v:1, kind:"ready" | "emit", ... }
 //   shell  -> iframe: { __pane:1, v:1, kind:"init" | "event" | "ack" | "error", ... }
 //
-// The whole module body is wrapped in an IIFE so it's safe to inline into a
-// <script> tag (no top-level imports, no module scope leaks).
-
+// The whole body is wrapped in an IIFE so it's safe to inline into a
+// <script> tag (no top-level scope leaks).
+//
+// `export {}` makes this a module (needed for the `declare global` below and
+// TS file scoping). The relay's loadClient() strips it before inlining —
+// `export` is a SyntaxError in the classic <script> the file is injected into.
 export {};
 
 interface SerializedEvent {

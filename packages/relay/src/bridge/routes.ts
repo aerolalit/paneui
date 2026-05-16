@@ -6,6 +6,7 @@ import config from "../config.js";
 import prisma from "../db.js";
 import { hashKey } from "../keys.js";
 import { errors } from "../http/errors.js";
+import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 
 const bridge = new Hono();
@@ -17,7 +18,18 @@ const bridge = new Hono();
 // node-from-dist, so we resolve a single absolute path from the project root.
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function loadClient(name: string): string {
-  return readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
+  let js = readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
+  // The client TS files are modules (`export {}` for file scoping + the shim's
+  // `declare global`), but they're injected inline as a classic <script>, where
+  // any `import`/`export` is a SyntaxError that aborts the whole script. Each
+  // file is self-contained (IIFE-wrapped), so the module markers carry no
+  // runtime meaning — strip the `export {};` tsc emits.
+  js = js.replace(/^\s*export\s*\{\s*\}\s*;?\s*$/gm, "");
+  // The result is embedded as `<script>${js}</script>`. A literal `</script>`
+  // anywhere in the file (e.g. in a comment) would close the tag early and dump
+  // the remainder as page text. `<\/script>` is identical JS — the `\` is an
+  // ignored escape — but the HTML parser no longer sees a tag close.
+  return js.replace(/<\/(script)/gi, "<\\/$1");
 }
 const SHIM_JS = loadClient("shim.client.js");
 const SHELL_JS = loadClient("shell.client.js");
@@ -71,10 +83,54 @@ async function loadByToken(token: string) {
   return { participant, session };
 }
 
+// The shell shows an "agent presence" pill. Presence is LIVE runtime state,
+// so it is computed from three present-tense signals — NOT by replaying the
+// persisted `system.participant.*` log (a `left` event can be lost, which
+// would leave a stale `joined` claiming an agent is connected forever):
+//  1) agentLive        — an agent WebSocket is open on this session right now.
+//  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
+//  3) agentLastUsedAt  — the owning agent's last authenticated request.
+// Shared by the `/:token` route (seeds the shell config once) and the
+// `/:token/presence` route (the shell polls this to keep the pill fresh) so
+// the two never diverge.
+interface AgentPresence {
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
+}
+
+async function computeAgentPresence(session: {
+  id: string;
+  agentId: string;
+}): Promise<AgentPresence> {
+  const agent = await prisma.agent.findUnique({
+    where: { id: session.agentId },
+    select: { lastUsedAt: true },
+  });
+  const agentLastUsedAt = agent?.lastUsedAt ? agent.lastUsedAt.toISOString() : null;
+
+  const lastAgentEvent = await prisma.event.findFirst({
+    where: { sessionId: session.id, authorKind: "agent" },
+    orderBy: { ts: "desc" },
+    select: { ts: true },
+  });
+  const agentLastEventAt = lastAgentEvent ? lastAgentEvent.ts.toISOString() : null;
+
+  const agentLive = agentCount(session.id) > 0;
+
+  return { agentLive, agentLastEventAt, agentLastUsedAt };
+}
+
 bridge.get("/:token", async (c) => {
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
   const { session } = await loadByToken(token);
+
+  // Live agent-presence facts that SEED the shell's pill — see
+  // computeAgentPresence. The shell then keeps them fresh by polling
+  // /:token/presence (a polling agent never opens a WebSocket, so the seed
+  // would otherwise go stale within ~30s).
+  const { agentLive, agentLastEventAt, agentLastUsedAt } = await computeAgentPresence(session);
 
   const isClosed = session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
@@ -97,7 +153,10 @@ bridge.get("/:token", async (c) => {
       `script-src 'nonce-${nonce}'`,
       `style-src 'nonce-${nonce}'`,
       "img-src 'self' data:",
-      "connect-src 'self'",
+      // 'self' covers same-origin HTTP fetches but NOT the ws:/wss: scheme —
+      // CSP treats a WebSocket as a distinct scheme and would block the shell's
+      // connection to /v1/sessions/:id/stream. Allow the relay's own ws origin.
+      `connect-src 'self' ${publicWsBase()}`,
       "frame-src 'self'",
       "base-uri 'none'",
       "form-action 'none'",
@@ -111,7 +170,19 @@ bridge.get("/:token", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Content-Type", "text/html; charset=utf-8");
 
-  return c.body(renderShell({ nonce, token, sessionId: session.id, schema, wsUrl, isClosed }));
+  return c.body(
+    renderShell({
+      nonce,
+      token,
+      sessionId: session.id,
+      schema,
+      wsUrl,
+      isClosed,
+      agentLive,
+      agentLastEventAt,
+      agentLastUsedAt,
+    }),
+  );
 });
 
 bridge.get("/:token/content", async (c) => {
@@ -172,6 +243,26 @@ ${artifactBody}
   return c.body(wrapped);
 });
 
+// Lightweight presence endpoint. The shell polls this every ~10s so the
+// agent-presence pill reflects a polling agent (one that monitors via
+// `pane state` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// keeps advancing server-side but the page-load config seed cannot see it.
+//
+// Trust model: the URL token IS the auth, identical to the shell page
+// (`/:token`) it accompanies. No extra credential is required. The body is a
+// tiny JSON object and is cheap to recompute on every poll.
+bridge.get("/:token/presence", async (c) => {
+  const token = c.req.param("token");
+  if (!token) throw errors.notFound();
+  const { session } = await loadByToken(token);
+
+  const presence = await computeAgentPresence(session);
+
+  c.header("Content-Type", "application/json; charset=utf-8");
+  c.header("Cache-Control", "no-store");
+  return c.body(JSON.stringify(presence));
+});
+
 interface ShellArgs {
   nonce: string;
   token: string;
@@ -179,6 +270,11 @@ interface ShellArgs {
   schema: EventSchema;
   wsUrl: string;
   isClosed: boolean;
+  // Live agent-presence facts, computed at request time. See the /s/:token
+  // handler for what each signal means.
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
 }
 
 function renderShell(args: ShellArgs): string {
@@ -188,6 +284,9 @@ function renderShell(args: ShellArgs): string {
     token: args.token,
     wsUrl: args.wsUrl,
     isClosed: args.isClosed,
+    agentLive: args.agentLive,
+    agentLastEventAt: args.agentLastEventAt,
+    agentLastUsedAt: args.agentLastUsedAt,
   };
   // `<script type="application/json">` is parsed as raw text by the HTML
   // script-data state machine — `</script>` is the only terminator. We
@@ -209,12 +308,19 @@ function renderShell(args: ShellArgs): string {
   }
   header {
     padding: 9px 14px; border-bottom: 1px solid #1f2633;
-    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6477; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    background: #141a26; border: 1px solid #1f2633;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6477; flex: none; }
   .dot.up { background: #7CE3B1; }
   .dot.dn { background: #f07178; }
+  .dot.amber { background: #f7c66a; }
   .info { color: #8a93a6; }
+  .spacer { flex: 1; }
   iframe { border: 0; flex: 1; width: 100%; background: white; display: block; }
   .closed {
     flex: 1; display: flex; align-items: center; justify-content: center;
@@ -224,9 +330,14 @@ function renderShell(args: ShellArgs): string {
 </head>
 <body>
 <header>
-  <span id="dot" class="dot"></span>
-  <span id="status" class="info">connecting...</span>
-  <span class="info">${args.isClosed ? "&middot; session closed" : ""}</span>
+  <span class="pill">
+    <span id="dot" class="dot"></span>
+    <span id="status" class="info">connecting...</span>
+  </span>
+  <span class="pill">
+    <span id="agent-dot" class="dot"></span>
+    <span id="agent-status" class="info">${args.isClosed ? "session closed" : "no agent yet"}</span>
+  </span>
 </header>
 ${
   args.isClosed

@@ -7,7 +7,10 @@
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
 // That keeps the only attack surface in routes.ts (which already neutralises
 // `</script>` in the JSON via JSON.stringify behaviour for `<` inside strings).
-
+//
+// `export {}` makes this a module (needed for TS file scoping). The relay's
+// loadClient() strips it before inlining — `export` is a SyntaxError in the
+// classic <script> the file is injected into.
 export {};
 
 interface ShellCfg {
@@ -16,6 +19,15 @@ interface ShellCfg {
   token: string;
   wsUrl: string;
   isClosed: boolean;
+  // Live agent-presence facts, computed by the relay at request time. These
+  // SEED the agent-presence pill; the shell then keeps it live from events
+  // received after `system.replay.complete` (see the presence section below).
+  //  - agentLive: an agent WebSocket was open on this session at request time.
+  //  - agentLastEventAt: ISO ts of the most recent agent-authored event.
+  //  - agentLastUsedAt: ISO ts of the owning agent's last authenticated request.
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
 }
 
 interface SerializedEvent {
@@ -32,6 +44,8 @@ interface SerializedEvent {
 
   const dot = document.getElementById("dot")!;
   const statusEl = document.getElementById("status")!;
+  const agentDot = document.getElementById("agent-dot")!;
+  const agentStatusEl = document.getElementById("agent-status")!;
   const frame = document.getElementById("frame") as HTMLIFrameElement | null;
   let iframeReady = false;
   let replayDone = false;
@@ -39,17 +53,207 @@ interface SerializedEvent {
   let lastEventId = 0;
   let ws: WebSocket | null = null;
   let backoff = 1000;
+  // Guards against overlapping connections. `connect()` can be reached from two
+  // places — the initial call and the close-handler's reconnect timer — and a
+  // browser WebSocket killed by an idle-reaping proxy reconnects on a tight
+  // cadence. Without these guards a slow `open` plus a queued reconnect could
+  // leave two live sockets, each with its own close handler each scheduling
+  // its own reconnect: the connection count doubles every cycle and the relay
+  // sees a storm of participant.joined/left pairs. `connecting` blocks a second
+  // connect() while one is already in flight; `reconnectTimer` ensures only one
+  // reconnect is ever queued.
+  let connecting = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function setStatus(t: string, cls?: "up" | "dn"): void {
     statusEl.textContent = t;
     dot.className = "dot" + (cls ? " " + cls : "");
   }
 
-  // The iframe is sandboxed WITHOUT allow-same-origin, so its document.origin
-  // is the opaque "null" origin once it executes. To get strict targetOrigin
-  // matching (instead of "*" and accepting any contentWindow), we pin every
-  // shell->iframe post to "null".
-  const IFRAME_ORIGIN = "null";
+  // --- Agent presence -------------------------------------------------------
+  // Presence is LIVE runtime state. It is NOT reconstructed by replaying the
+  // persisted `system.participant.joined`/`left` log — a `left` event is
+  // written fire-and-forget by the relay and can be lost, which would leave a
+  // stale `joined` claiming an agent is connected forever. So:
+  //
+  //  - Before `system.replay.complete`: trust ONLY the seed facts from CFG
+  //    (agentLive / agentLastEventAt / agentLastUsedAt), which the relay
+  //    computed from present-tense signals at request time.
+  //  - After `system.replay.complete`: trust the live agent socket count that
+  //    the relay stamps onto every participant.joined/left event as
+  //    `data.agentCountLive`. Replayed (historical) events also carry that
+  //    field, but its value reflected the past — so we IGNORE agentCountLive
+  //    until replay completes, then read it from every live participant event.
+  //
+  // Two pieces of state drive the pill:
+  //  1) agentLiveCount — number of agent sockets open right now. Seeded from
+  //     CFG.agentLive, then kept exact from post-replay `agentCountLive`.
+  //  2) lastAgentActiveMs — the most recent moment an agent touched the
+  //     session (sent an event or pulled events). Seeded from the max of
+  //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
+  //     agent-authored event.
+  const RECENT_WINDOW_MS = 5 * 60 * 1000;
+  // Green-from-recent-activity window. An agent that MONITORS a session by
+  // polling `pane state` (HTTP GET .../events?since=... every few seconds)
+  // never opens a WebSocket, yet is just as present as one holding a stream.
+  // Every authenticated agent request stamps `Agent.lastUsedAt` server-side,
+  // so an agent polling on a few-second cadence keeps `lastUsedAt` well within
+  // this window. The shell learns the fresh value by polling /presence.
+  const ACTIVE_WINDOW_MS = 30 * 1000;
+  // Grace window: an agent monitor often reconnects in short `pane watch`
+  // cycles (connect -> get event -> exit -> harness re-runs). The live socket
+  // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
+  // would flap green -> amber -> green. So once a live agent socket has been
+  // seen, keep showing "agent active" (green) for this long after it drops —
+  // brief reconnection gaps stay green; only a sustained absence falls to amber.
+  const LIVE_GRACE_MS = 45 * 1000;
+  let agentLiveCount = CFG.agentLive ? 1 : 0;
+  // Timestamp of the most recent moment an agent socket was open. Set whenever
+  // agentLiveCount is > 0; the grace window is measured from it.
+  let lastAgentLiveMs: number | null = CFG.agentLive ? Date.now() : null;
+  let lastAgentActiveMs: number | null = null;
+  let sawAnyAgentActivity = false;
+  for (const iso of [CFG.agentLastEventAt, CFG.agentLastUsedAt]) {
+    if (!iso) continue;
+    const t = Date.parse(iso);
+    if (isFinite(t)) {
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
+      sawAnyAgentActivity = true;
+    }
+  }
+  if (CFG.agentLive) sawAnyAgentActivity = true;
+
+  // Relative time, scoped to the 5-minute RECENT_WINDOW — no buckets beyond
+  // what that window can ever display.
+  function relTime(ms: number): string {
+    const d = Math.max(0, Date.now() - ms);
+    if (d < 60000) return "just now";
+    return Math.floor(d / 60000) + "m ago";
+  }
+
+  function renderAgentPresence(): void {
+    if (CFG.isClosed) {
+      agentStatusEl.textContent = "session closed";
+      agentDot.className = "dot";
+      return;
+    }
+    // GREEN — an agent is actively present right now, via EITHER mechanism:
+    //  1) a live WebSocket is open, or within the grace window after one
+    //     closed (short reconnection gaps in a monitor loop don't flap), OR
+    //  2) the owning agent made an authenticated request — or an
+    //     agent-authored event arrived — within ACTIVE_WINDOW_MS (30s). This
+    //     covers a monitor that polls `pane state` and never opens a socket;
+    //     the shell keeps lastAgentActiveMs fresh by polling /presence.
+    if (
+      agentLiveCount > 0 ||
+      (lastAgentLiveMs !== null && Date.now() - lastAgentLiveMs <= LIVE_GRACE_MS)
+    ) {
+      agentStatusEl.textContent = "agent active";
+      agentDot.className = "dot up";
+      return;
+    }
+    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= ACTIVE_WINDOW_MS) {
+      agentStatusEl.textContent = "agent active";
+      agentDot.className = "dot up";
+      return;
+    }
+    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= RECENT_WINDOW_MS) {
+      agentStatusEl.textContent = "agent active " + relTime(lastAgentActiveMs);
+      agentDot.className = "dot amber";
+      return;
+    }
+    agentStatusEl.textContent = sawAnyAgentActivity ? "agent away" : "no agent yet";
+    agentDot.className = "dot";
+  }
+
+  // Fold a single LIVE (post-replay-complete) event into presence state.
+  // Replayed events are NOT passed here — historical participant events carry a
+  // stale `agentCountLive` and a stale `joined` with no matching `left` would
+  // corrupt the count.
+  function trackLiveAgentPresence(ev: SerializedEvent): void {
+    if (ev.type === "system.participant.joined" || ev.type === "system.participant.left") {
+      // The relay stamps the exact current agent socket count onto every
+      // participant event it broadcasts — trust it verbatim.
+      const n = (ev.data as { agentCountLive?: unknown } | null)?.agentCountLive;
+      if (typeof n === "number" && isFinite(n) && n >= 0) {
+        agentLiveCount = n;
+        if (n > 0) {
+          sawAnyAgentActivity = true;
+          // Stamp the moment a socket is confirmed open — the grace window
+          // (see renderAgentPresence) is measured from this.
+          lastAgentLiveMs = Date.now();
+        }
+      }
+      return;
+    }
+    // Any non-system event authored by an agent proves recent activity.
+    const evAuthor = (ev as { author?: { kind?: unknown } }).author;
+    if (evAuthor && evAuthor.kind === "agent") {
+      lastAgentActiveMs = Date.now();
+      sawAnyAgentActivity = true;
+    }
+  }
+
+  // Poll the relay's /presence endpoint to keep the pill fresh for a polling
+  // agent. Such an agent monitors via `pane state` HTTP polls and never opens
+  // a WebSocket, so the live-socket count and post-replay events never see it
+  // — but every authenticated request stamps `Agent.lastUsedAt` server-side.
+  // The page-load config seed captures `lastUsedAt` once and then goes stale;
+  // without this poll the pill would wrongly fall to amber ~30s later even
+  // though the agent is still actively polling.
+  //
+  // 10s cadence: comfortably inside the 30s ACTIVE_WINDOW_MS, so a green pill
+  // is refreshed ~3x before it could expire — yet light enough for a polled,
+  // unauthenticated-beyond-the-token JSON endpoint.
+  const PRESENCE_POLL_MS = 10000;
+
+  // Same-origin: the shell is served by the relay, so /presence sits under the
+  // relay origin. connect-src 'self' in the shell-page CSP already covers it.
+  const presenceUrl = window.location.origin + "/s/" + encodeURIComponent(CFG.token) + "/presence";
+
+  async function pollPresence(): Promise<void> {
+    if (CFG.isClosed) return;
+    let body: { agentLive?: unknown; agentLastEventAt?: unknown; agentLastUsedAt?: unknown };
+    try {
+      const res = await fetch(presenceUrl, { cache: "no-store" });
+      if (!res.ok) return; // skip this tick — never break the pill
+      body = await res.json();
+    } catch {
+      return; // network blip — skip quietly, try again next tick
+    }
+    // A live agent socket seen by the relay counts as a fresh sighting, the
+    // same as a post-replay participant.joined would.
+    if (body.agentLive === true) {
+      lastAgentLiveMs = Date.now();
+      sawAnyAgentActivity = true;
+    }
+    for (const iso of [body.agentLastEventAt, body.agentLastUsedAt]) {
+      if (typeof iso !== "string") continue;
+      const t = Date.parse(iso);
+      if (!isFinite(t)) continue;
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
+      sawAnyAgentActivity = true;
+    }
+    renderAgentPresence();
+  }
+
+  renderAgentPresence();
+  // "active 2m ago" must advance on its own even when no events arrive.
+  setInterval(renderAgentPresence, 20000);
+  // Keep the seed facts live (see pollPresence). This interval also re-renders
+  // the pill via pollPresence's renderAgentPresence() call.
+  setInterval(() => void pollPresence(), PRESENCE_POLL_MS);
+  void pollPresence();
+
+  // The iframe is sandboxed WITHOUT allow-same-origin, so it runs at the opaque
+  // "null" origin. postMessage does NOT accept the literal string "null" as a
+  // targetOrigin (it throws "Invalid target origin"), and an opaque origin has
+  // no concrete value to pin to — so the only valid choice is "*".
+  // This is not a broadcast: every post below targets `frame.contentWindow`
+  // directly, so the message only ever reaches that one sandboxed iframe.
+  // "*" only relaxes the recipient-origin check, which an opaque iframe would
+  // fail anyway. The trust boundary is the sandbox + the contentWindow ref.
+  const IFRAME_ORIGIN = "*";
 
   // Cap correlation_id everywhere it crosses the shell. The shim generates
   // short strings ("c1", "c2", ...). The cap exists to stop a buggy or
@@ -80,19 +284,62 @@ interface SerializedEvent {
     );
   }
 
+  // Schedule exactly one reconnect attempt. Coalesces: if a timer is already
+  // pending (e.g. a stray second close fired) we do not stack another.
+  function scheduleReconnect(): void {
+    if (CFG.isClosed || reconnectTimer !== null) return;
+    setStatus("reconnecting in " + Math.round(backoff / 1000) + "s...", "dn");
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      backoff = Math.min(backoff * 2, 30000);
+      connect();
+    }, backoff);
+  }
+
+  // Tear down the current socket so it can never fire another close/message
+  // into the app after we've moved on. We strip its listeners first so the old
+  // socket's close event can't trigger a second reconnect.
+  function teardownWs(): void {
+    if (!ws) return;
+    const old = ws;
+    ws = null;
+    old.onopen = null;
+    old.onmessage = null;
+    old.onclose = null;
+    old.onerror = null;
+    try {
+      old.close();
+    } catch {
+      /* already closing */
+    }
+  }
+
   function connect(): void {
     if (CFG.isClosed) return;
+    // Never run two connections at once. If one is already opening or open,
+    // bail — whatever triggered this call (a stale close, a double-invoke)
+    // would otherwise spawn a parallel socket.
+    if (connecting) return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    teardownWs();
+    connecting = true;
     setStatus("connecting...");
     let qs = "?token=" + encodeURIComponent(CFG.token);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
-    ws = new WebSocket(CFG.wsUrl + qs);
+    const sock = new WebSocket(CFG.wsUrl + qs);
+    ws = sock;
 
-    ws.addEventListener("open", () => {
+    sock.addEventListener("open", () => {
+      if (ws !== sock) return; // superseded
+      connecting = false;
       backoff = 1000;
       setStatus("connected", "up");
     });
 
-    ws.addEventListener("message", (evt: MessageEvent) => {
+    sock.addEventListener("message", (evt: MessageEvent) => {
+      if (ws !== sock) return; // superseded socket — ignore late frames
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg && msg["kind"] === "system.replay.complete") {
@@ -128,23 +375,32 @@ interface SerializedEvent {
         const n = Number(msg["id"]);
         if (isFinite(n) && n > lastEventId) lastEventId = n;
         if (!replayDone) {
+          // Replayed (historical) events do NOT update presence: a lost `left`
+          // would leave a stale `joined` claiming an agent is connected. Live
+          // presence comes only from CFG (seed) + post-replay events below.
           replayBuffer.push(msg as unknown as SerializedEvent);
         } else {
+          // Live event — fold it into presence and re-render the pill.
+          trackLiveAgentPresence(msg as unknown as SerializedEvent);
+          renderAgentPresence();
           pushToIframe(msg as unknown as SerializedEvent);
         }
       }
     });
 
-    ws.addEventListener("close", () => {
-      setStatus("reconnecting in " + Math.round(backoff / 1000) + "s...", "dn");
-      setTimeout(() => {
-        backoff = Math.min(backoff * 2, 30000);
-        connect();
-      }, backoff);
+    sock.addEventListener("close", () => {
+      // Ignore a close from a socket we already replaced — only the live
+      // socket's close should drive a reconnect, otherwise a stale socket
+      // closing late would queue an extra (parallel) reconnect.
+      if (ws !== sock) return;
+      ws = null;
+      connecting = false;
+      scheduleReconnect();
     });
 
-    ws.addEventListener("error", () => {
-      // close handler retries
+    sock.addEventListener("error", () => {
+      // The close event always follows an error and is where the reconnect is
+      // scheduled — nothing to do here.
     });
   }
 
