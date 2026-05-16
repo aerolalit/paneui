@@ -9,6 +9,7 @@ import { runCreate, createHelp } from "./commands/create.js";
 import { runState, stateHelp } from "./commands/state.js";
 import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
+import { runRegister, registerHelp } from "./commands/register.js";
 
 const VERSION = "0.0.1";
 
@@ -18,6 +19,8 @@ Usage:
   pane <command> [options]
 
 Commands:
+  register          Provision an agent API key (POST /v1/register) and save it
+                    to the CLI config file. Run this once before other commands.
   create            Create a session (POST /v1/sessions). Prints session_id,
                     urls, tokens, expires_at.
   state <id>        Non-blocking snapshot: session metadata + event log.
@@ -30,6 +33,9 @@ Run \`pane <command> --help\` for command-specific options.
 Config:
   PANE_URL          Relay base URL.        Override: --url <url>
   PANE_API_KEY      Agent API key.         Override: --api-key <key>
+  'pane register' provisions the API key and saves it (with the URL) to
+  \${XDG_CONFIG_HOME:-~/.config}/pane/config.json — afterwards commands need
+  only PANE_URL (or nothing) set.
 
 Global flags:
   -h, --help        Show help.
@@ -42,7 +48,7 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 // (JSON is currently the only output mode): accepting `--json` as a no-op bool
 // means a future `--text`/`--json` toggle won't break existing invocations. It
 // is intentionally undocumented in --help.
-const BOOLEAN_FLAGS = new Set(["json", "once", "help", "version"]);
+const BOOLEAN_FLAGS = new Set(["json", "once", "help", "version", "print-key"]);
 
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
@@ -75,6 +81,7 @@ async function main(): Promise<void> {
   }
 
   const helps: Record<string, string> = {
+    register: registerHelp,
     create: createHelp,
     state: stateHelp,
     send: sendHelp,
@@ -96,6 +103,9 @@ async function main(): Promise<void> {
   }
 
   switch (command) {
+    case "register":
+      await runRegister(args);
+      break;
     case "create":
       await runCreate(args);
       break;

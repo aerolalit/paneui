@@ -7,6 +7,9 @@ export type { ClientOptions, RelayResponse } from "./client.js";
 export { openStream } from "./stream.js";
 export type { OpenStreamOptions, StreamHandlers, StreamHandle } from "./stream.js";
 
+export { registerAgent } from "./register.js";
+export type { RegisterAgentOptions, RegisterAgentResult } from "./register.js";
+
 export {
   artifactSchema,
   callbackSchema,
