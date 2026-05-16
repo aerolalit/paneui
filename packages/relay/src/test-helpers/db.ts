@@ -119,7 +119,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "Event", "Participant", "Session", "Agent" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "events", "participants", "sessions", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

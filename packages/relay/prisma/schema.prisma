@@ -14,61 +14,64 @@ datasource db {
 model Agent {
   id         String    @id @default(cuid())
   name       String
-  keyHash    String    @unique
-  keyPrefix  String
-  createdAt  DateTime  @default(now())
-  lastUsedAt DateTime?
-  revokedAt  DateTime?
-  rateLimit  Int?
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  rateLimit  Int?      @map("rate_limit")
   sessions   Session[]
 
   @@index([keyHash])
+  @@map("agents")
 }
 
 model Session {
   id              String        @id
-  agentId         String
+  agentId         String        @map("agent_id")
   agent           Agent         @relation(fields: [agentId], references: [id])
 
   // Artifact: the HTML/JS the agent wants rendered.
-  artifactType    String
-  artifactSource  String
-  artifactVersion Int           @default(1)
+  artifactType    String        @map("artifact_type")
+  artifactSource  String        @map("artifact_source")
+  artifactVersion Int           @default(1) @map("artifact_version")
 
   // Schema: the per-session event vocabulary.
-  eventSchema     Json
-  schemaVersion   Int           @default(1)
+  eventSchema     Json          @map("event_schema")
+  schemaVersion   Int           @default(1) @map("schema_version")
 
   status          String        @default("open")
-  createdAt       DateTime      @default(now())
-  expiresAt       DateTime
+  createdAt       DateTime      @default(now()) @map("created_at")
+  expiresAt       DateTime      @map("expires_at")
   metadata        Json?
 
   // Webhook callback (best-effort, signed; durable delivery is /ee/).
-  callbackUrl       String?
-  callbackSecretEnc String?
-  callbackFilter    Json?
+  callbackUrl       String?     @map("callback_url")
+  callbackSecretEnc String?     @map("callback_secret_enc")
+  callbackFilter    Json?       @map("callback_filter")
 
   participants    Participant[]
   events          Event[]
 
   @@index([agentId])
   @@index([expiresAt])
+  @@map("sessions")
 }
 
 model Participant {
   id           String    @id @default(cuid())
-  sessionId    String
+  sessionId    String    @map("session_id")
   session      Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   kind         String
-  identityId   String
-  tokenHash    String    @unique
-  tokenPrefix  String
-  joinedAt     DateTime?
-  revokedAt    DateTime?
+  identityId   String    @map("identity_id")
+  tokenHash    String    @unique @map("token_hash")
+  tokenPrefix  String    @map("token_prefix")
+  joinedAt     DateTime? @map("joined_at")
+  revokedAt    DateTime? @map("revoked_at")
 
   @@index([sessionId])
   @@index([tokenHash])
+  @@map("participants")
 }
 
 model Event {
@@ -78,16 +81,17 @@ model Event {
   // layer. The wire cursor is opaque (a string), so we can override to `@db.BigInt`
   // on the Postgres build later without breaking clients.
   id              Int      @id @default(autoincrement())
-  sessionId       String
+  sessionId       String   @map("session_id")
   session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  authorKind      String
-  authorId        String
+  authorKind      String   @map("author_kind")
+  authorId        String   @map("author_id")
   type            String
   data            Json
-  causationId     String?
-  idempotencyKey  String?
+  causationId     String?  @map("causation_id")
+  idempotencyKey  String?  @map("idempotency_key")
   ts              DateTime @default(now())
 
   @@index([sessionId, id])
   @@unique([sessionId, authorId, idempotencyKey])
+  @@map("events")
 }
