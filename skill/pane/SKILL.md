@@ -28,7 +28,22 @@ Two environment variables (or `--url` / `--api-key` flags on any command):
 - `PANE_API_KEY` — your agent key
 
 Output is JSON on stdout. Errors are `{"error":{"code","message"}}` on stderr
-with a non-zero exit. Run `pane --help` or `pane <command> --help` anytime.
+with a non-zero exit.
+
+## Discover the CLI with `--help`
+
+**Before using a command, run its help.** This skill summarizes the workflow,
+but `--help` is the authoritative, always-current reference for every flag,
+argument, and default:
+
+- `pane --help` — the command list and global options.
+- `pane <command> --help` — every flag and option for that command, e.g.
+  `pane create --help`, `pane watch --help`, `pane send --help`,
+  `pane register --help`.
+
+If a command errors or you are unsure of an option name, **run `--help`
+instead of guessing** — the CLI is self-documenting and the help text reflects
+the installed version, which this skill may not.
 
 ## The four commands
 
@@ -40,26 +55,163 @@ pane create --artifact ./form.html --schema ./schema.json --ttl 600
 
 - `--artifact <v>` — the HTML UI. A file path, or inline HTML. For a remote
   URL, add `--artifact-type html-ref`.
-- `--schema <v>` — the per-session event vocabulary. A `.json` file or inline
-  JSON. Each event type declares a `payload` shape and an `emittedBy` list
-  (`"page"` = the human's UI, `"agent"` = you).
+- `--schema <v>` — the per-session event vocabulary (see **The schema** below).
+  A `.json` file or inline JSON.
 - Optional: `--ttl <seconds>`, `--participants <n>`, `--metadata <path|json>`,
   `--callback <path|json>`.
 
 Prints `{ session_id, urls, tokens, expires_at }`. **Deliver `urls.humans[0]`
 to the human** over whatever channel you already have (Telegram, Slack, email).
-Keep `session_id`.
+Keep `session_id`. `tokens` are per-participant auth already baked into the
+`urls` — you don't normally use them directly; the CLI authenticates with
+`PANE_API_KEY`.
 
-A minimal schema:
+## The schema
+
+The schema is the contract for *every* event on the session. The relay
+**rejects any event that violates it** — a wrong `data` shape, or the wrong
+author. Get this right or the round trip silently fails.
+
+Each entry under `events` declares:
+
+- `payload` — a **JSON Schema** for the event's `data`. `{}` means "any
+  object". Be as strict as you can: the relay validates `pane.emit(...)` /
+  `pane send` data against it and rejects mismatches.
+- `emittedBy` — who may emit this type: `"page"` (the human's UI, via the
+  `pane.emit` bridge) and/or `"agent"` (you, via `pane send`). Emitting a
+  type your side isn't listed in fails with `author_not_allowed`.
 
 ```json
 {
   "events": {
-    "form.submitted": { "payload": {}, "emittedBy": ["page"] },
-    "agent.hint":      { "payload": {}, "emittedBy": ["agent"] }
+    "form.submitted": {
+      "payload": {
+        "type": "object",
+        "properties": { "name": { "type": "string" },
+                         "rating": { "type": "integer" } },
+        "required": ["name", "rating"]
+      },
+      "emittedBy": ["page"]
+    },
+    "assistant.reply": {
+      "payload": {
+        "type": "object",
+        "properties": { "title": { "type": "string" },
+                         "message": { "type": "string" } },
+        "required": ["title", "message"]
+      },
+      "emittedBy": ["agent"]
+    }
   }
 }
 ```
+
+## Writing the artifact
+
+The artifact is the HTML page the human sees. **It does not run like a normal
+web page** — the relay serves it inside a locked-down sandboxed iframe with no
+network access. Ordinary `<form action>`, `fetch()`, or `XMLHttpRequest` will
+**not** work and the human's answer will never reach you.
+
+Instead, the relay injects a global `window.pane` bridge. The artifact talks to
+the session *only* through it:
+
+- `pane.emit(type, data?, opts?)` → `Promise<{ id, deduped }>` — send an event.
+  `type` must exist in the schema with `"page"` in `emittedBy`; `data` must
+  satisfy its `payload`. This is how the human's answer reaches you.
+- `pane.on(type, handler)` → `unsubscribe` — react to events (e.g. an
+  `assistant.reply` you sent via `pane send`).
+- `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
+
+### What a handler receives — the event envelope
+
+`pane.on(type, handler)` calls `handler(ev)` with **one argument: the event
+envelope**, *not* the bare payload. The envelope shape is:
+
+```js
+{ id, session_id, author, ts, type, data, causation_id, idempotency_key }
+```
+
+The payload — the object you passed to `pane.emit(...)` or to
+`pane send --data` — is in **`ev.data`**. So an event sent with
+`pane send --type assistant.reply --data '{"title":"...","message":"..."}'`
+arrives at the handler as `ev`, and the content is `ev.data.title` /
+`ev.data.message`.
+
+Two things to know:
+
+- **Handlers also fire for replayed history.** When the iframe connects, every
+  prior event is replayed through your `pane.on` handlers — including events
+  sent *before* the artifact loaded. A handler registered in an inline
+  `<script>` still receives an `assistant.reply` that was sent earlier, so you
+  don't need to race the agent.
+- `pane.state.last(type)` returns the most recent envelope of that type (or the
+  most recent of any type if you omit `type`) — use it to render "whatever the
+  latest reply is" without wiring a handler.
+
+A minimal working artifact for the schema above:
+
+```html
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  #reply-msg { white-space: pre-wrap; }
+</style>
+<form id="f">
+  <input name="name" placeholder="Your name" required />
+  <input name="rating" type="number" min="1" max="5" required />
+  <button>Submit</button>
+</form>
+<p id="status"></p>
+
+<!-- The agent's reply renders here -->
+<section id="reply" hidden>
+  <h2 id="reply-title"></h2>
+  <p id="reply-msg"></p>
+</section>
+
+<script>
+  // The agent pushes a rich reply with
+  //   pane send --type assistant.reply --data '{"title":"…","message":"…"}'
+  // `ev` is the envelope; the payload is `ev.data`.
+  pane.on("assistant.reply", (ev) => {
+    const { title, message } = ev.data;
+    // .textContent — never .innerHTML — so agent text can't inject markup.
+    document.getElementById("reply-title").textContent = title;
+    // `white-space: pre-wrap` (above) keeps `\n` in `message` as line breaks.
+    document.getElementById("reply-msg").textContent = message;
+    document.getElementById("reply").hidden = false;
+  });
+
+  document.getElementById("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    // Emit the terminal event — this is what `pane watch --type` waits for.
+    await pane.emit("form.submitted", {
+      name: e.target.name.value,
+      rating: Number(e.target.rating.value),
+    });
+    document.getElementById("status").textContent = "Sent — thank you.";
+  });
+</script>
+```
+
+**DON'T render the raw envelope.** Never `JSON.stringify(ev)` (or `ev.data`)
+onto the page, and never use the envelope as a fallback display when a handler
+isn't sure what to do. If a handler doesn't recognize an event, ignore it — the
+page should only ever show specific `ev.data` fields it understands, rendered
+into real DOM. The whole point of Pane is a proper UI; a JSON dump is a bug.
+
+Rules of thumb when authoring the artifact:
+
+- The event type you `pane.emit` for the human's final action **must match**
+  the `--type` you later `pane watch` for. Above: `form.submitted`.
+- A handler's argument is the **envelope** — read the payload from `ev.data`,
+  and render its individual fields with `.textContent` into real elements.
+- `pane` is ready by the time inline `<script>` runs — no need to wait for an
+  init event.
+- No external assets that need the network (CDN scripts, remote fonts/images):
+  the sandbox CSP blocks them. Inline everything, or use data URIs.
+- Keep the artifact self-contained — it's one HTML document.
 
 ### `pane watch <id>` — wait for the answer
 
@@ -74,9 +226,22 @@ pane watch ses_xxxx --type form.submitted
 - `--type <t>` — exit 0 after the first event of that type. Use this to wait
   for the human's terminal action.
 - `--once` — exit 0 after the very first event.
+- `--timeout <seconds>` — exit if no event arrives within the window (fails
+  with code `ws_timeout`). Use it so you don't wait forever for a human who
+  never opens the URL.
 - bare — stream until interrupted (`SIGINT`).
 
-On session close it prints a final `{"type":"_closed"}` line and exits 0.
+**Outcomes — branch on these:**
+
+- An event of your `--type` lands → its JSON line is printed, exit 0. The
+  human answered; act on the event's `data`.
+- The session expires or closes first → a final `{"type":"_closed"}` line is
+  printed, exit 0. The human did **not** answer (TTL elapsed). Do not treat a
+  `_closed` line as the answer — handle it as "no response".
+- `--timeout` elapses → `{"error":{"code":"ws_timeout"}}` on stderr, non-zero
+  exit.
+- The relay drops the connection abnormally → `ws_closed_abnormally` on
+  stderr, non-zero exit (distinct from a clean `_closed`).
 
 ### `pane state <id>` — non-blocking snapshot
 
@@ -91,7 +256,8 @@ a one-off check, or poll it with `--since <next_cursor>` instead of `watch`.
 ### `pane send <id>` — emit your own event
 
 ```sh
-pane send ses_xxxx --type agent.hint --data '{"text":"try the second option"}'
+pane send ses_xxxx --type assistant.reply \
+  --data '{"title":"Got it","message":"Thanks — your rating is recorded."}'
 ```
 
 `--data` is a file path or inline JSON. The event type must exist in the schema
@@ -113,6 +279,9 @@ you with the result.
   connection is awkward.
 
 ## Typical round trip
+
+> Tip: run `pane <command> --help` first if you're unsure of any flag below —
+> the help text is authoritative.
 
 ```sh
 # 1. create the session
