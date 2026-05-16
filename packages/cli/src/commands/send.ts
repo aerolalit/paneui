@@ -24,7 +24,6 @@ Options:
   --idempotency-key <k>  Dedup key — a repeat send with the same key is a no-op.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
-  --json              Output JSON (default).
   -h, --help          Show this help.
 
 Output (stdout, JSON):

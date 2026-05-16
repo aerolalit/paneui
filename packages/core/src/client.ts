@@ -94,13 +94,38 @@ export class PaneClient {
     }
     let data: unknown = null;
     if (res.status !== 204) {
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
+      const text = await res.text().catch(() => "");
+      if (text !== "") {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          // Body was not JSON (HTML error page, plain-text proxy error, …).
+          // Don't discard it — surface the raw text so callers can diagnose.
+          const snippet = text.length > 500 ? text.slice(0, 500) + "…" : text;
+          data = {
+            error: {
+              code: "non_json_response",
+              message: `relay returned a non-JSON body (status ${res.status})`,
+              details: { body: snippet },
+            },
+          };
+        }
       }
     }
     return { ok: res.ok, status: res.status, data };
+  }
+
+  /** Assert a 2xx body is a non-null object before treating it as typed JSON. */
+  private asObject<T>(r: RelayResponse): T {
+    if (r.data === null || typeof r.data !== "object" || Array.isArray(r.data)) {
+      throw new PaneApiError(
+        r.status,
+        "invalid_response",
+        `relay returned a ${r.status} with a non-object body`,
+        { body: r.data },
+      );
+    }
+    return r.data as T;
   }
 
   /** Throw a PaneApiError from a failed RelayResponse. */
@@ -126,14 +151,14 @@ export class PaneClient {
       callback: req.callback,
     });
     if (!r.ok) this.fail(r);
-    return r.data as CreateSessionResponse;
+    return this.asObject<CreateSessionResponse>(r);
   }
 
   /** GET /v1/sessions/:id — non-blocking session metadata. */
   async getSession(sessionId: string): Promise<SessionState> {
     const r = await this.call("GET", `/v1/sessions/${encodeURIComponent(sessionId)}`);
     if (!r.ok) this.fail(r);
-    return r.data as SessionState;
+    return this.asObject<SessionState>(r);
   }
 
   /**
@@ -156,7 +181,7 @@ export class PaneClient {
       `/v1/sessions/${encodeURIComponent(sessionId)}/events${qs ? "?" + qs : ""}`,
     );
     if (!r.ok) this.fail(r);
-    return r.data as EventsPage;
+    return this.asObject<EventsPage>(r);
   }
 
   /** POST /v1/sessions/:id/events — append an agent event. */
@@ -171,7 +196,7 @@ export class PaneClient {
       idempotency_key: ev.idempotencyKey,
     });
     if (!r.ok) this.fail(r);
-    const body = r.data as { event: PaneEvent; deduped?: boolean };
+    const body = this.asObject<{ event: PaneEvent; deduped?: boolean }>(r);
     return { event: body.event, deduped: body.deduped ?? false };
   }
 }

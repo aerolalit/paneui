@@ -16,7 +16,6 @@ Options:
   --since <cursor>    Only return events after this opaque cursor.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
-  --json              Output JSON (default).
   -h, --help          Show this help.
 
 Output (stdout, JSON):

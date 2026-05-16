@@ -5,6 +5,9 @@
 // re-declared here rather than imported from @pane/relay so that @pane/core
 // stays pure and framework-free — no Prisma, no Hono, no server deps.
 
+import type { z } from "zod";
+import type { createSessionSchema } from "./schemas.js";
+
 export type AuthorKind = "human" | "agent" | "system";
 
 /** A single event envelope as emitted by the relay. */
@@ -19,11 +22,14 @@ export interface PaneEvent {
   idempotency_key: string | null;
 }
 
-/** An artifact: either inline HTML or a URL reference. */
-export interface Artifact {
-  type: "html-inline" | "html-ref";
-  source: string;
-}
+/**
+ * An artifact: discriminated on `type`. `html-inline` carries raw HTML in
+ * `source`; `html-ref` carries a URL the relay/shell fetches on the human's
+ * behalf. The discriminant keeps the type↔source coupling explicit.
+ */
+export type Artifact =
+  | { type: "html-inline"; source: string }
+  | { type: "html-ref"; source: string };
 
 /** Optional webhook callback config. */
 export interface Callback {
@@ -32,17 +38,11 @@ export interface Callback {
   secret: string;
 }
 
-/** Request body for POST /v1/sessions. */
-export interface CreateSessionRequest {
-  artifact: Artifact;
-  /** Per-session event schema (opaque object validated by the relay). */
-  schema: unknown;
-  participants?: { humans: number };
-  /** TTL in seconds. */
-  ttl?: number;
-  metadata?: Record<string, unknown>;
-  callback?: Callback;
-}
+/**
+ * Request body for POST /v1/sessions. Derived from `createSessionSchema` so the
+ * runtime validator and the static type cannot drift.
+ */
+export type CreateSessionRequest = z.infer<typeof createSessionSchema>;
 
 /** Response from POST /v1/sessions. */
 export interface CreateSessionResponse {
@@ -58,7 +58,7 @@ export interface SessionState {
   status: string;
   schema_version: number;
   artifact_version: number;
-  metadata: unknown;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   expires_at: string;
 }

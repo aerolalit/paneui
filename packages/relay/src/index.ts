@@ -23,9 +23,14 @@ function startTtlSweeper(): void {
         log.warn("ttl sweep error", {
           error: e instanceof Error ? e.message : String(e),
         }),
-      );
+      )
+      // Recursive setTimeout (not setInterval) so each tick gets fresh jitter,
+      // rather than a single fixed phase offset baked in at startup.
+      .finally(() => {
+        setTimeout(tick, intervalSec * 1000 + jitter());
+      });
   };
-  setInterval(tick, intervalSec * 1000 + jitter());
+  setTimeout(tick, intervalSec * 1000 + jitter());
   log.info("ttl sweeper started", { intervalSeconds: intervalSec });
 }
 

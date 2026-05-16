@@ -82,7 +82,7 @@ On session close it prints a final `{"type":"_closed"}` line and exits 0.
 
 ```sh
 pane state ses_xxxx
-pane state ses_xxxx --since 42
+pane state ses_xxxx --since <next_cursor>
 ```
 
 Prints `{ meta, events, next_cursor }` without holding a connection. Use it for
@@ -118,7 +118,7 @@ you with the result.
 # 1. create the session
 OUT=$(pane create --artifact ./review.html --schema ./review-schema.json --ttl 900)
 SID=$(echo "$OUT" | jq -r .session_id)
-URL=$(echo "$OUT" | jq -r .urls.humans[0])
+URL=$(echo "$OUT" | jq -r '.urls.humans[0]')
 
 # 2. deliver $URL to the human over your own channel (Telegram/Slack/email)
 

@@ -7,6 +7,11 @@
 //   - each frame is a JSON object: either a PaneEvent envelope, the replay
 //     marker, an `{ ack, deduped }` for frames we sent, or an `{ error }`.
 //
+// Note: `system.participant.joined` / `system.participant.left` (and other
+// `system.*` events) arrive as ordinary `PaneEvent` envelopes — they are not a
+// distinct frame kind, and may be interleaved with the initial replay stream
+// just like any other event.
+//
 // `openStream` exposes this as a typed event emitter over the `ws` package.
 
 import { WebSocket } from "ws";
@@ -64,13 +69,27 @@ export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): S
   });
 
   socket.on("message", (raw) => {
+    const text = raw.toString();
     let msg: unknown;
     try {
-      msg = JSON.parse(raw.toString());
-    } catch {
+      msg = JSON.parse(text);
+    } catch (e) {
+      // A malformed frame must never be silently dropped — a dropped event
+      // makes `watch --type X` hang forever. Surface it as a transport error.
+      const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
+      handlers.onError?.(
+        new Error(
+          `failed to parse stream frame as JSON (${
+            e instanceof Error ? e.message : String(e)
+          }): ${snippet}`,
+        ),
+      );
       return;
     }
-    if (!msg || typeof msg !== "object") return;
+    if (!msg || typeof msg !== "object") {
+      handlers.onError?.(new Error(`unexpected non-object stream frame: ${text.slice(0, 200)}`));
+      return;
+    }
     const obj = msg as Record<string, unknown>;
 
     if (obj["kind"] === "system.replay.complete") {
@@ -89,7 +108,12 @@ export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): S
     }
     if (typeof obj["id"] === "string" && typeof obj["type"] === "string") {
       handlers.onEvent?.(obj as unknown as PaneEvent);
+      return;
     }
+    // Unrecognized frame shape — route to onError rather than dropping it.
+    handlers.onError?.(
+      new Error(`unrecognized stream frame: ${JSON.stringify(obj).slice(0, 200)}`),
+    );
   });
 
   socket.on("close", (code, reason) => {
@@ -102,9 +126,12 @@ export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): S
 
   return {
     send(frame) {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(frame));
+      if (socket.readyState !== WebSocket.OPEN) {
+        throw new Error(
+          `cannot send frame: stream socket is not open (readyState=${socket.readyState})`,
+        );
       }
+      socket.send(JSON.stringify(frame));
     },
     close() {
       try {

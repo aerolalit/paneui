@@ -27,9 +27,10 @@ Modes:
 
 Options:
   --since <cursor>    Replay only events after this opaque cursor.
+  --timeout <secs>    Fail with code ws_timeout if no frame (not even the
+                      replay-complete marker) arrives within this window.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
-  --json              Output JSON-lines (default; the only mode).
   -h, --help          Show this help.
 
 Each line is one event envelope: { id, session_id, author, ts, type, data,
@@ -47,12 +48,21 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   const waitType = args.flags.get("type") ?? null;
   const once = args.bools.has("once");
 
+  let timeoutSec: number | null = null;
+  const timeoutRaw = args.flags.get("timeout");
+  if (timeoutRaw !== undefined) {
+    const t = Number(timeoutRaw);
+    if (!Number.isFinite(t) || t <= 0) fail("--timeout must be a positive number", "invalid_args");
+    timeoutSec = t;
+  }
+
   const client = new PaneClient({ url: cfg.url, apiKey: cfg.apiKey });
 
   let exited = false;
   const finish = (code: number): void => {
     if (exited) return;
     exited = true;
+    if (timer) clearTimeout(timer);
     process.exit(code);
   };
 
@@ -66,13 +76,36 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
     finish(0);
   };
 
+  // Track whether the relay told us the session expired before the socket
+  // closed — a 1006/1008/1011 close after that is still a clean shutdown.
+  let sawSessionExpired = false;
+
+  // Connection timeout: fail if no frame at all arrives within the window.
+  let timer: NodeJS.Timeout | undefined;
+  if (timeoutSec !== null) {
+    timer = setTimeout(() => {
+      fail(`no stream frame within ${timeoutSec}s`, "ws_timeout");
+    }, timeoutSec * 1000);
+  }
+  const sawFrame = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
   const handle = openStream(
     { wsBaseUrl: client.wsBaseUrl, sessionId: sessionId!, token: cfg.apiKey, since },
     {
+      onReplayComplete: () => {
+        sawFrame();
+      },
       onEvent: (event: PaneEvent) => {
+        sawFrame();
         printJsonLine(event);
         // A system.session.expired event means the session is closing.
         if (event.type === "system.session.expired") {
+          sawSessionExpired = true;
           emitClosed();
           return;
         }
@@ -84,9 +117,20 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
           finish(0);
         }
       },
-      onClose: () => {
-        // Socket closed (session gone, relay restart, etc.) — terminal.
-        emitClosed();
+      onClose: ({ code, reason }) => {
+        // A clean close is 1000 (normal) or 1001 (going away). Any other code
+        // — 1006 abnormal, 1008 policy/auth, 1011 server error — is a failure
+        // UNLESS we already saw system.session.expired, which means the relay
+        // closed us on purpose after a clean session end.
+        if (code === 1000 || code === 1001 || sawSessionExpired) {
+          emitClosed();
+          return;
+        }
+        fail(
+          `stream closed abnormally (code ${code})${reason ? ": " + reason : ""}`,
+          "ws_closed_abnormally",
+          { code, reason },
+        );
       },
       onRelayError: (err) => {
         fail(err.message ?? "relay error", err.code ?? "relay_error", err.details);

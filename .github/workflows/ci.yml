@@ -26,8 +26,9 @@ jobs:
 
       - run: npm run build
 
-  # Fast unit suite — runs on every push. Sub-30s feedback signal on broken
-  # leaves (validation, crypto, ssrf, config, serialize, keys, webhook).
+  # Fast unit suite — runs on every push across all workspaces (core, cli,
+  # relay). Sub-30s feedback signal on broken leaves (validation, crypto,
+  # ssrf, config, serialize, keys, webhook, the client + argv + input units).
   unit:
     name: unit
     runs-on: ubuntu-latest
@@ -43,6 +44,10 @@ jobs:
       - run: npm ci
 
       - run: npm run generate
+
+      # pane-cli's unit tests import @pane/core's compiled output; build all
+      # workspaces first so the import resolves.
+      - run: npm run build
 
       - run: npm run test:unit
 

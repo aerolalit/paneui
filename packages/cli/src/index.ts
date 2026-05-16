@@ -4,7 +4,7 @@
 // Config: PANE_URL and PANE_API_KEY (env), overridable with --url / --api-key.
 // Output is JSON by default. Every command self-documents via --help.
 
-import { parseArgs } from "./argv.js";
+import { parseArgs, ArgvError } from "./argv.js";
 import { runCreate, createHelp } from "./commands/create.js";
 import { runState, stateHelp } from "./commands/state.js";
 import { runSend, sendHelp } from "./commands/send.js";
@@ -32,14 +32,16 @@ Config:
   PANE_API_KEY      Agent API key.         Override: --api-key <key>
 
 Global flags:
-  --json            JSON output (default).
   -h, --help        Show help.
   -v, --version     Print version.
 
 Output: stdout is machine-readable JSON; errors go to stderr as
 {"error":{"code","message"}} with a non-zero exit.`;
 
-// Flags that never take a value.
+// Flags that never take a value. `json` is kept here purely for forward-compat
+// (JSON is currently the only output mode): accepting `--json` as a no-op bool
+// means a future `--text`/`--json` toggle won't break existing invocations. It
+// is intentionally undocumented in --help.
 const BOOLEAN_FLAGS = new Set(["json", "once", "help", "version"]);
 
 async function main(): Promise<void> {
@@ -59,7 +61,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  const args = parseArgs(rest, BOOLEAN_FLAGS);
+  let args;
+  try {
+    args = parseArgs(rest, BOOLEAN_FLAGS);
+  } catch (e) {
+    if (e instanceof ArgvError) {
+      process.stderr.write(
+        JSON.stringify({ error: { code: "invalid_args", message: e.message } }) + "\n",
+      );
+      process.exit(1);
+    }
+    throw e;
+  }
 
   const helps: Record<string, string> = {
     create: createHelp,

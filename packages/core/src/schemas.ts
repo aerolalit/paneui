@@ -4,10 +4,12 @@
 
 import { z } from "zod";
 
-export const artifactSchema = z.object({
-  type: z.enum(["html-inline", "html-ref"]),
-  source: z.string().min(1),
-});
+// Discriminated on `type`: `html-ref`'s `source` is a URL, `html-inline`'s is
+// raw HTML. Both require a non-empty `source`; the relay enforces URL safety.
+export const artifactSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("html-inline"), source: z.string().min(1) }),
+  z.object({ type: z.literal("html-ref"), source: z.string().min(1) }),
+]);
 
 export const callbackSchema = z.object({
   url: z.string().url(),
@@ -24,4 +26,5 @@ export const createSessionSchema = z.object({
   callback: callbackSchema.optional(),
 });
 
+/** @deprecated use `CreateSessionRequest` from ./types.js (same type). */
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;

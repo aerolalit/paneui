@@ -14,8 +14,8 @@
   "scripts": {
     "build": "npm run build --workspace @pane/core && npm run build --workspace @pane/relay && npm run build --workspace pane-cli",
     "typecheck": "npm run build --workspace @pane/core && npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspace @pane/relay",
-    "test:unit": "npm run test:unit --workspace @pane/relay",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspace @pane/relay",
     "dev": "npm run dev --workspace @pane/relay",
     "start": "npm run start --workspace @pane/relay",

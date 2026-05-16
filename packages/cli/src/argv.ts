@@ -10,6 +10,14 @@ export interface ParsedArgs {
   bools: Set<string>;
 }
 
+/** Thrown when a value-flag is given with no argument (e.g. trailing `--url`). */
+export class ArgvError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ArgvError";
+  }
+}
+
 /**
  * Parse argv tokens. `booleanFlags` lists flags that never consume a value
  * (e.g. --json, --once, --help); everything else with a `--name` form
@@ -39,9 +47,9 @@ export function parseArgs(tokens: string[], booleanFlags: Set<string>): ParsedAr
       }
       const next = tokens[i + 1];
       if (next === undefined || next.startsWith("--")) {
-        // No value follows — treat as a boolean to avoid swallowing the next flag.
-        bools.add(body);
-        continue;
+        // A value-flag with no argument is a user error — don't silently
+        // demote it to a boolean (which hides the mistake).
+        throw new ArgvError(`--${body} requires a value`);
       }
       flags.set(body, next);
       i++;

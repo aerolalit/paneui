@@ -1,14 +1,26 @@
 // Helpers for reading CLI inputs that may be either a file path or an inline
 // literal (JSON, or raw text for an HTML artifact body).
 
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
-/** True if `value` names an existing readable file. */
+/**
+ * True if `value` names an existing file. Only a missing path (ENOENT) is
+ * treated as "not a file" — any other fs error (EACCES, ELOOP, …) propagates
+ * with a labeled message rather than being misreported as inline content.
+ */
 function isFilePath(value: string): boolean {
   try {
-    return existsSync(value) && statSync(value).isFile();
-  } catch {
-    return false;
+    return statSync(value).isFile();
+  } catch (e) {
+    if (e && typeof e === "object" && (e as { code?: string }).code === "ENOENT") {
+      return false;
+    }
+    const code = e && typeof e === "object" ? (e as { code?: string }).code : undefined;
+    throw new Error(
+      `cannot stat '${value}'${code ? ` (${code})` : ""}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
   }
 }
 

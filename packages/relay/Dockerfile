@@ -50,4 +50,7 @@ VOLUME ["/app/data"]
 EXPOSE 3000
 
 # Apply migrations on every boot (idempotent), then start the relay.
+# `prisma` is a runtime dependency (see packages/relay/package.json), so it is
+# present in node_modules after `npm ci --omit=dev` — `npx` resolves the local
+# binary instead of downloading it on every boot.
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
