@@ -106,4 +106,19 @@ test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips e
   // Final guard: still exactly one stable socket after the emit round-trip.
   expect(wsOpened).toBe(1);
   expect(wsClosed).toBe(0);
+
+  // (5) The /presence endpoint the shell polls returns JSON with the three
+  // agent-presence facts. The token is the last path segment of the shell URL.
+  const token = new URL(session.humanUrl).pathname.split("/").filter(Boolean).pop()!;
+  const presenceRes = await page.request.get(`${relay.baseUrl}/s/${token}/presence`);
+  expect(presenceRes.status()).toBe(200);
+  expect(presenceRes.headers()["content-type"]).toContain("application/json");
+  const presence = (await presenceRes.json()) as {
+    agentLive: boolean;
+    agentLastEventAt: string | null;
+    agentLastUsedAt: unknown;
+  };
+  expect(typeof presence.agentLive).toBe("boolean");
+  expect("agentLastEventAt" in presence).toBe(true);
+  expect("agentLastUsedAt" in presence).toBe(true);
 });

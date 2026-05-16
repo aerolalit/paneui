@@ -83,18 +83,26 @@ async function loadByToken(token: string) {
   return { participant, session };
 }
 
-bridge.get("/:token", async (c) => {
-  const token = c.req.param("token");
-  if (!token) throw errors.notFound();
-  const { session } = await loadByToken(token);
+// The shell shows an "agent presence" pill. Presence is LIVE runtime state,
+// so it is computed from three present-tense signals — NOT by replaying the
+// persisted `system.participant.*` log (a `left` event can be lost, which
+// would leave a stale `joined` claiming an agent is connected forever):
+//  1) agentLive        — an agent WebSocket is open on this session right now.
+//  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
+//  3) agentLastUsedAt  — the owning agent's last authenticated request.
+// Shared by the `/:token` route (seeds the shell config once) and the
+// `/:token/presence` route (the shell polls this to keep the pill fresh) so
+// the two never diverge.
+interface AgentPresence {
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
+}
 
-  // The shell shows an "agent presence" pill. Presence is LIVE runtime state,
-  // so it is computed here from three present-tense signals — NOT by replaying
-  // the persisted `system.participant.*` log (a `left` event can be lost, which
-  // would leave a stale `joined` claiming an agent is connected forever):
-  //  1) agentLive       — an agent WebSocket is open on this session right now.
-  //  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
-  //  3) agentLastUsedAt  — the owning agent's last authenticated request.
+async function computeAgentPresence(session: {
+  id: string;
+  agentId: string;
+}): Promise<AgentPresence> {
   const agent = await prisma.agent.findUnique({
     where: { id: session.agentId },
     select: { lastUsedAt: true },
@@ -109,6 +117,20 @@ bridge.get("/:token", async (c) => {
   const agentLastEventAt = lastAgentEvent ? lastAgentEvent.ts.toISOString() : null;
 
   const agentLive = agentCount(session.id) > 0;
+
+  return { agentLive, agentLastEventAt, agentLastUsedAt };
+}
+
+bridge.get("/:token", async (c) => {
+  const token = c.req.param("token");
+  if (!token) throw errors.notFound();
+  const { session } = await loadByToken(token);
+
+  // Live agent-presence facts that SEED the shell's pill — see
+  // computeAgentPresence. The shell then keeps them fresh by polling
+  // /:token/presence (a polling agent never opens a WebSocket, so the seed
+  // would otherwise go stale within ~30s).
+  const { agentLive, agentLastEventAt, agentLastUsedAt } = await computeAgentPresence(session);
 
   const isClosed = session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
@@ -219,6 +241,26 @@ ${artifactBody}
 </body>
 </html>`;
   return c.body(wrapped);
+});
+
+// Lightweight presence endpoint. The shell polls this every ~10s so the
+// agent-presence pill reflects a polling agent (one that monitors via
+// `pane state` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// keeps advancing server-side but the page-load config seed cannot see it.
+//
+// Trust model: the URL token IS the auth, identical to the shell page
+// (`/:token`) it accompanies. No extra credential is required. The body is a
+// tiny JSON object and is cheap to recompute on every poll.
+bridge.get("/:token/presence", async (c) => {
+  const token = c.req.param("token");
+  if (!token) throw errors.notFound();
+  const { session } = await loadByToken(token);
+
+  const presence = await computeAgentPresence(session);
+
+  c.header("Content-Type", "application/json; charset=utf-8");
+  c.header("Cache-Control", "no-store");
+  return c.body(JSON.stringify(presence));
 });
 
 interface ShellArgs {

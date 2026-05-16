@@ -93,6 +93,13 @@ interface SerializedEvent {
   //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
   //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
+  // Green-from-recent-activity window. An agent that MONITORS a session by
+  // polling `pane state` (HTTP GET .../events?since=... every few seconds)
+  // never opens a WebSocket, yet is just as present as one holding a stream.
+  // Every authenticated agent request stamps `Agent.lastUsedAt` server-side,
+  // so an agent polling on a few-second cadence keeps `lastUsedAt` well within
+  // this window. The shell learns the fresh value by polling /presence.
+  const ACTIVE_WINDOW_MS = 30 * 1000;
   // Grace window: an agent monitor often reconnects in short `pane watch`
   // cycles (connect -> get event -> exit -> harness re-runs). The live socket
   // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
@@ -130,13 +137,22 @@ interface SerializedEvent {
       agentDot.className = "dot";
       return;
     }
-    // Green while a socket is open, OR within the grace window after the last
-    // one closed — so short reconnection gaps in an agent's monitor loop don't
-    // flap the pill to amber.
+    // GREEN — an agent is actively present right now, via EITHER mechanism:
+    //  1) a live WebSocket is open, or within the grace window after one
+    //     closed (short reconnection gaps in a monitor loop don't flap), OR
+    //  2) the owning agent made an authenticated request — or an
+    //     agent-authored event arrived — within ACTIVE_WINDOW_MS (30s). This
+    //     covers a monitor that polls `pane state` and never opens a socket;
+    //     the shell keeps lastAgentActiveMs fresh by polling /presence.
     if (
       agentLiveCount > 0 ||
       (lastAgentLiveMs !== null && Date.now() - lastAgentLiveMs <= LIVE_GRACE_MS)
     ) {
+      agentStatusEl.textContent = "agent active";
+      agentDot.className = "dot up";
+      return;
+    }
+    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= ACTIVE_WINDOW_MS) {
       agentStatusEl.textContent = "agent active";
       agentDot.className = "dot up";
       return;
@@ -178,9 +194,56 @@ interface SerializedEvent {
     }
   }
 
+  // Poll the relay's /presence endpoint to keep the pill fresh for a polling
+  // agent. Such an agent monitors via `pane state` HTTP polls and never opens
+  // a WebSocket, so the live-socket count and post-replay events never see it
+  // — but every authenticated request stamps `Agent.lastUsedAt` server-side.
+  // The page-load config seed captures `lastUsedAt` once and then goes stale;
+  // without this poll the pill would wrongly fall to amber ~30s later even
+  // though the agent is still actively polling.
+  //
+  // 10s cadence: comfortably inside the 30s ACTIVE_WINDOW_MS, so a green pill
+  // is refreshed ~3x before it could expire — yet light enough for a polled,
+  // unauthenticated-beyond-the-token JSON endpoint.
+  const PRESENCE_POLL_MS = 10000;
+
+  // Same-origin: the shell is served by the relay, so /presence sits under the
+  // relay origin. connect-src 'self' in the shell-page CSP already covers it.
+  const presenceUrl = window.location.origin + "/s/" + encodeURIComponent(CFG.token) + "/presence";
+
+  async function pollPresence(): Promise<void> {
+    if (CFG.isClosed) return;
+    let body: { agentLive?: unknown; agentLastEventAt?: unknown; agentLastUsedAt?: unknown };
+    try {
+      const res = await fetch(presenceUrl, { cache: "no-store" });
+      if (!res.ok) return; // skip this tick — never break the pill
+      body = await res.json();
+    } catch {
+      return; // network blip — skip quietly, try again next tick
+    }
+    // A live agent socket seen by the relay counts as a fresh sighting, the
+    // same as a post-replay participant.joined would.
+    if (body.agentLive === true) {
+      lastAgentLiveMs = Date.now();
+      sawAnyAgentActivity = true;
+    }
+    for (const iso of [body.agentLastEventAt, body.agentLastUsedAt]) {
+      if (typeof iso !== "string") continue;
+      const t = Date.parse(iso);
+      if (!isFinite(t)) continue;
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
+      sawAnyAgentActivity = true;
+    }
+    renderAgentPresence();
+  }
+
   renderAgentPresence();
   // "active 2m ago" must advance on its own even when no events arrive.
   setInterval(renderAgentPresence, 20000);
+  // Keep the seed facts live (see pollPresence). This interval also re-renders
+  // the pill via pollPresence's renderAgentPresence() call.
+  setInterval(() => void pollPresence(), PRESENCE_POLL_MS);
+  void pollPresence();
 
   // The iframe is sandboxed WITHOUT allow-same-origin, so it runs at the opaque
   // "null" origin. postMessage does NOT accept the literal string "null" as a
