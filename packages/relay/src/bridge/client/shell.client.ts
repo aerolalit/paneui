@@ -19,6 +19,10 @@ interface ShellCfg {
   token: string;
   wsUrl: string;
   isClosed: boolean;
+  // ISO timestamp of the owning agent's last authenticated request, or null if
+  // the agent has never touched the relay. Seeds the agent-presence pill; the
+  // replayed `system.participant.*` events then keep presence live.
+  agentLastActiveAt: string | null;
 }
 
 interface SerializedEvent {
@@ -35,6 +39,8 @@ interface SerializedEvent {
 
   const dot = document.getElementById("dot")!;
   const statusEl = document.getElementById("status")!;
+  const agentDot = document.getElementById("agent-dot")!;
+  const agentStatusEl = document.getElementById("agent-status")!;
   const frame = document.getElementById("frame") as HTMLIFrameElement | null;
   let iframeReady = false;
   let replayDone = false;
@@ -47,6 +53,79 @@ interface SerializedEvent {
     statusEl.textContent = t;
     dot.className = "dot" + (cls ? " " + cls : "");
   }
+
+  // --- Agent presence -------------------------------------------------------
+  // Two independent signals combine into one honest label:
+  //  1) liveAgents — ids of agent-kind participants currently joined. Driven by
+  //     `system.participant.joined`/`left` events (replayed AND live). A
+  //     non-empty set means an agent stream is open right now.
+  //  2) lastAgentActiveMs — the most recent moment an agent touched the
+  //     session. Seeded from cfg.agentLastActiveAt, bumped to now() whenever an
+  //     agent-authored event arrives.
+  // "agent active" is claimed ONLY when liveAgents is non-empty.
+  const RECENT_WINDOW_MS = 5 * 60 * 1000;
+  const liveAgents = new Set<string>();
+  let lastAgentActiveMs: number | null = null;
+  let sawAnyAgentActivity = false;
+  if (CFG.agentLastActiveAt) {
+    const t = Date.parse(CFG.agentLastActiveAt);
+    if (isFinite(t)) {
+      lastAgentActiveMs = t;
+      sawAnyAgentActivity = true;
+    }
+  }
+
+  function relTime(ms: number): string {
+    const d = Math.max(0, Date.now() - ms);
+    if (d < 10000) return "just now";
+    if (d < 60000) return Math.floor(d / 1000) + "s ago";
+    if (d < 3600000) return Math.floor(d / 60000) + "m ago";
+    if (d < 86400000) return Math.floor(d / 3600000) + "h ago";
+    return Math.floor(d / 86400000) + "d ago";
+  }
+
+  function renderAgentPresence(): void {
+    if (CFG.isClosed) {
+      agentStatusEl.textContent = "session closed";
+      agentDot.className = "dot";
+      return;
+    }
+    if (liveAgents.size > 0) {
+      agentStatusEl.textContent = "agent active";
+      agentDot.className = "dot up";
+      return;
+    }
+    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= RECENT_WINDOW_MS) {
+      agentStatusEl.textContent = "agent active " + relTime(lastAgentActiveMs);
+      agentDot.className = "dot amber";
+      return;
+    }
+    agentStatusEl.textContent = sawAnyAgentActivity ? "agent away" : "no agent yet";
+    agentDot.className = "dot";
+  }
+
+  // Fold a single event into agent-presence state. Called for replayed and live
+  // events alike (the shell makes no distinction).
+  function trackAgentPresence(ev: SerializedEvent): void {
+    const author = (ev.data as { author?: { kind?: unknown; id?: unknown } } | null)?.author;
+    if (ev.type === "system.participant.joined" || ev.type === "system.participant.left") {
+      if (author && author.kind === "agent" && typeof author.id === "string") {
+        if (ev.type === "system.participant.joined") liveAgents.add(author.id);
+        else liveAgents.delete(author.id);
+      }
+      return;
+    }
+    // Any non-system event authored by an agent proves recent activity.
+    const evAuthor = (ev as { author?: { kind?: unknown } }).author;
+    if (evAuthor && evAuthor.kind === "agent") {
+      lastAgentActiveMs = Date.now();
+      sawAnyAgentActivity = true;
+    }
+  }
+
+  renderAgentPresence();
+  // "active 2m ago" must advance on its own even when no events arrive.
+  setInterval(renderAgentPresence, 20000);
 
   // The iframe is sandboxed WITHOUT allow-same-origin, so it runs at the opaque
   // "null" origin. postMessage does NOT accept the literal string "null" as a
@@ -134,6 +213,11 @@ interface SerializedEvent {
         // Tracked alongside issue #23 (Postgres @db.BigInt migration).
         const n = Number(msg["id"]);
         if (isFinite(n) && n > lastEventId) lastEventId = n;
+        // Fold every event (replayed or live) into agent-presence state, then
+        // re-render the pill. Done before the iframe-buffering branch so a
+        // fresh connection's replay reconstructs current presence immediately.
+        trackAgentPresence(msg as unknown as SerializedEvent);
+        renderAgentPresence();
         if (!replayDone) {
           replayBuffer.push(msg as unknown as SerializedEvent);
         } else {

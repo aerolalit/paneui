@@ -87,6 +87,18 @@ bridge.get("/:token", async (c) => {
   if (!token) throw errors.notFound();
   const { session } = await loadByToken(token);
 
+  // The shell shows an "agent presence" pill. Its STARTING state is seeded from
+  // the owning agent's last authenticated-request timestamp; the shell then
+  // keeps presence live from replayed `system.participant.*` events. Those
+  // events ARE persisted (ws/handler.ts writes them as Event rows) and are part
+  // of the replay, so a fresh shell connection reconstructs current presence
+  // from replay alone — no server-side live-connection count is needed here.
+  const agent = await prisma.agent.findUnique({
+    where: { id: session.agentId },
+    select: { lastUsedAt: true },
+  });
+  const agentLastActiveAt = agent?.lastUsedAt ? agent.lastUsedAt.toISOString() : null;
+
   const isClosed = session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
   const schema = session.eventSchema as unknown as EventSchema;
@@ -125,7 +137,9 @@ bridge.get("/:token", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Content-Type", "text/html; charset=utf-8");
 
-  return c.body(renderShell({ nonce, token, sessionId: session.id, schema, wsUrl, isClosed }));
+  return c.body(
+    renderShell({ nonce, token, sessionId: session.id, schema, wsUrl, isClosed, agentLastActiveAt }),
+  );
 });
 
 bridge.get("/:token/content", async (c) => {
@@ -193,6 +207,7 @@ interface ShellArgs {
   schema: EventSchema;
   wsUrl: string;
   isClosed: boolean;
+  agentLastActiveAt: string | null;
 }
 
 function renderShell(args: ShellArgs): string {
@@ -202,6 +217,7 @@ function renderShell(args: ShellArgs): string {
     token: args.token,
     wsUrl: args.wsUrl,
     isClosed: args.isClosed,
+    agentLastActiveAt: args.agentLastActiveAt,
   };
   // `<script type="application/json">` is parsed as raw text by the HTML
   // script-data state machine — `</script>` is the only terminator. We
@@ -223,12 +239,19 @@ function renderShell(args: ShellArgs): string {
   }
   header {
     padding: 9px 14px; border-bottom: 1px solid #1f2633;
-    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    display: flex; align-items: center; gap: 10px; font-size: 13px;
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6477; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    background: #141a26; border: 1px solid #1f2633;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6477; flex: none; }
   .dot.up { background: #7CE3B1; }
   .dot.dn { background: #f07178; }
+  .dot.amber { background: #f7c66a; }
   .info { color: #8a93a6; }
+  .spacer { flex: 1; }
   iframe { border: 0; flex: 1; width: 100%; background: white; display: block; }
   .closed {
     flex: 1; display: flex; align-items: center; justify-content: center;
@@ -238,9 +261,14 @@ function renderShell(args: ShellArgs): string {
 </head>
 <body>
 <header>
-  <span id="dot" class="dot"></span>
-  <span id="status" class="info">connecting...</span>
-  <span class="info">${args.isClosed ? "&middot; session closed" : ""}</span>
+  <span class="pill">
+    <span id="dot" class="dot"></span>
+    <span id="status" class="info">connecting...</span>
+  </span>
+  <span class="pill">
+    <span id="agent-dot" class="dot"></span>
+    <span id="agent-status" class="info">${args.isClosed ? "session closed" : "no agent yet"}</span>
+  </span>
 </header>
 ${
   args.isClosed
