@@ -82,7 +82,17 @@ interface SerializedEvent {
   //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
   //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
+  // Grace window: an agent monitor often reconnects in short `pane watch`
+  // cycles (connect -> get event -> exit -> harness re-runs). The live socket
+  // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
+  // would flap green -> amber -> green. So once a live agent socket has been
+  // seen, keep showing "agent active" (green) for this long after it drops —
+  // brief reconnection gaps stay green; only a sustained absence falls to amber.
+  const LIVE_GRACE_MS = 45 * 1000;
   let agentLiveCount = CFG.agentLive ? 1 : 0;
+  // Timestamp of the most recent moment an agent socket was open. Set whenever
+  // agentLiveCount is > 0; the grace window is measured from it.
+  let lastAgentLiveMs: number | null = CFG.agentLive ? Date.now() : null;
   let lastAgentActiveMs: number | null = null;
   let sawAnyAgentActivity = false;
   for (const iso of [CFG.agentLastEventAt, CFG.agentLastUsedAt]) {
@@ -109,7 +119,13 @@ interface SerializedEvent {
       agentDot.className = "dot";
       return;
     }
-    if (agentLiveCount > 0) {
+    // Green while a socket is open, OR within the grace window after the last
+    // one closed — so short reconnection gaps in an agent's monitor loop don't
+    // flap the pill to amber.
+    if (
+      agentLiveCount > 0 ||
+      (lastAgentLiveMs !== null && Date.now() - lastAgentLiveMs <= LIVE_GRACE_MS)
+    ) {
       agentStatusEl.textContent = "agent active";
       agentDot.className = "dot up";
       return;
@@ -134,7 +150,12 @@ interface SerializedEvent {
       const n = (ev.data as { agentCountLive?: unknown } | null)?.agentCountLive;
       if (typeof n === "number" && isFinite(n) && n >= 0) {
         agentLiveCount = n;
-        if (n > 0) sawAnyAgentActivity = true;
+        if (n > 0) {
+          sawAnyAgentActivity = true;
+          // Stamp the moment a socket is confirmed open — the grace window
+          // (see renderAgentPresence) is measured from this.
+          lastAgentLiveMs = Date.now();
+        }
       }
       return;
     }
