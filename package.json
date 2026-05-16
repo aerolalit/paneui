@@ -8,43 +8,17 @@
   "engines": {
     "node": ">=20"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build:client": "tsc -p tsconfig.client.json",
-    "build:server": "tsc",
-    "build": "npm run build:client && npm run build:server",
-    "predev": "npm run build:client",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
-    "migrate:dev": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
-    "migrate:postgres:deploy": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
-    "studio": "prisma studio",
-    "generate": "prisma generate",
-    "generate:postgres": "prisma generate --schema prisma/schema.postgres.prisma",
-    "pretest": "npm run build:client",
-    "test": "vitest run",
-    "pretest:unit": "npm run build:client",
-    "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/node_modules/**'",
-    "pretest:e2e": "npm run build:client",
-    "test:e2e": "vitest run .e2e.test.ts .integration.test.ts",
-    "test:watch": "vitest",
-    "pretypecheck": "npm run build:client",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@hono/node-server": "^1.13.0",
-    "@prisma/client": "^6.19.0",
-    "ajv": "^8.20.0",
-    "hono": "^4.6.0",
-    "ws": "^8.20.1",
-    "zod": "^3.23.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.7.0",
-    "@types/ws": "^8.18.1",
-    "prisma": "^6.19.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "build": "npm run build --workspace @pane/core && npm run build --workspace @pane/relay && npm run build --workspace pane-cli",
+    "typecheck": "npm run build --workspace @pane/core && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspace @pane/relay",
+    "dev": "npm run dev --workspace @pane/relay",
+    "start": "npm run start --workspace @pane/relay",
+    "generate": "npm run generate --workspace @pane/relay"
   }
 }

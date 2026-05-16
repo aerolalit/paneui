@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+// pane — command-line client for the Pane relay.
+//
+// Config: PANE_URL and PANE_API_KEY (env), overridable with --url / --api-key.
+// Output is JSON by default. Every command self-documents via --help.
+
+import { parseArgs, ArgvError } from "./argv.js";
+import { runCreate, createHelp } from "./commands/create.js";
+import { runState, stateHelp } from "./commands/state.js";
+import { runSend, sendHelp } from "./commands/send.js";
+import { runWatch, watchHelp } from "./commands/watch.js";
+
+const VERSION = "0.0.1";
+
+const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
+
+Usage:
+  pane <command> [options]
+
+Commands:
+  create            Create a session (POST /v1/sessions). Prints session_id,
+                    urls, tokens, expires_at.
+  state <id>        Non-blocking snapshot: session metadata + event log.
+  send <id>         Emit an agent event into a session.
+  watch <id>        Stream a session's events as JSON-lines on stdout
+                    (long-lived; the building block for pipe-readers).
+
+Run \`pane <command> --help\` for command-specific options.
+
+Config:
+  PANE_URL          Relay base URL.        Override: --url <url>
+  PANE_API_KEY      Agent API key.         Override: --api-key <key>
+
+Global flags:
+  -h, --help        Show help.
+  -v, --version     Print version.
+
+Output: stdout is machine-readable JSON; errors go to stderr as
+{"error":{"code","message"}} with a non-zero exit.`;
+
+// Flags that never take a value. `json` is kept here purely for forward-compat
+// (JSON is currently the only output mode): accepting `--json` as a no-op bool
+// means a future `--text`/`--json` toggle won't break existing invocations. It
+// is intentionally undocumented in --help.
+const BOOLEAN_FLAGS = new Set(["json", "once", "help", "version"]);
+
+async function main(): Promise<void> {
+  const rawArgv = process.argv.slice(2);
+
+  // Version: handle before anything else.
+  if (rawArgv[0] === "-v" || rawArgv[0] === "--version") {
+    process.stdout.write(VERSION + "\n");
+    return;
+  }
+
+  const command = rawArgv[0];
+  const rest = rawArgv.slice(1);
+
+  if (command === undefined || command === "-h" || command === "--help" || command === "help") {
+    process.stdout.write(ROOT_HELP + "\n");
+    return;
+  }
+
+  let args;
+  try {
+    args = parseArgs(rest, BOOLEAN_FLAGS);
+  } catch (e) {
+    if (e instanceof ArgvError) {
+      process.stderr.write(
+        JSON.stringify({ error: { code: "invalid_args", message: e.message } }) + "\n",
+      );
+      process.exit(1);
+    }
+    throw e;
+  }
+
+  const helps: Record<string, string> = {
+    create: createHelp,
+    state: stateHelp,
+    send: sendHelp,
+    watch: watchHelp,
+  };
+
+  if (!(command in helps)) {
+    process.stderr.write(
+      JSON.stringify({
+        error: { code: "unknown_command", message: `unknown command '${command}' — run 'pane --help'` },
+      }) + "\n",
+    );
+    process.exit(1);
+  }
+
+  if (args.bools.has("help")) {
+    process.stdout.write(helps[command]! + "\n");
+    return;
+  }
+
+  switch (command) {
+    case "create":
+      await runCreate(args);
+      break;
+    case "state":
+      await runState(args);
+      break;
+    case "send":
+      await runSend(args);
+      break;
+    case "watch":
+      await runWatch(args);
+      break;
+  }
+}
+
+main().catch((err) => {
+  process.stderr.write(
+    JSON.stringify({
+      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+    }) + "\n",
+  );
+  process.exit(1);
+});
