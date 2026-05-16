@@ -307,18 +307,40 @@ function renderShell(args: ShellArgs): string {
     display: flex; flex-direction: column;
   }
   header {
-    padding: 9px 14px; border-bottom: 1px solid #1f2633;
-    display: flex; align-items: center; gap: 10px; font-size: 13px;
+    padding: 9px 14px; font-size: 13px;
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(180deg, #10141d 0%, #0b0e14 100%);
+    border-bottom: 1px solid #1f2633;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 7px;
+    user-select: none;
+  }
+  .brand-logo { display: block; flex: none; }
+  .brand-name {
+    font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
+    color: #e7ecf3;
   }
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 3px 9px 3px 7px; border-radius: 999px;
+    padding: 3px 9px 3px 8px; border-radius: 999px;
     background: #141a26; border: 1px solid #1f2633;
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6477; flex: none; }
-  .dot.up { background: #7CE3B1; }
+  .pill-icon { display: block; flex: none; color: #8a93a6; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #5b6477; flex: none;
+  }
+  .dot.up {
+    background: #7CE3B1;
+    animation: pulse 2s ease-in-out infinite;
+  }
   .dot.dn { background: #f07178; }
   .dot.amber { background: #f7c66a; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(124, 227, 177, 0.45); }
+    50%      { box-shadow: 0 0 0 4px rgba(124, 227, 177, 0); }
+  }
   .info { color: #8a93a6; }
   .spacer { flex: 1; }
   iframe { border: 0; flex: 1; width: 100%; background: white; display: block; }
@@ -330,11 +352,36 @@ function renderShell(args: ShellArgs): string {
 </head>
 <body>
 <header>
+  <span class="brand">
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="17" height="17" rx="4" fill="none" stroke="#2b3445" stroke-width="1.5"/>
+      <rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="#7CE3B1"/>
+      <rect x="10.5" y="4.5" width="5" height="5" rx="1" fill="#4a5670"/>
+      <rect x="4.5" y="10.5" width="5" height="5" rx="1" fill="#4a5670"/>
+      <rect x="10.5" y="10.5" width="5" height="5" rx="1" fill="#4a5670"/>
+    </svg>
+    <span class="brand-name">Pane</span>
+  </span>
+  <span class="spacer"></span>
   <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+      <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
+      <line x1="8" y1="12" x2="16" y2="12"/>
+    </svg>
     <span id="dot" class="dot"></span>
     <span id="status" class="info">connecting...</span>
   </span>
   <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="4" y="9" width="16" height="11" rx="2.5"/>
+      <path d="M12 9V5"/>
+      <circle cx="12" cy="3.5" r="1.6"/>
+      <line x1="9" y1="14" x2="9" y2="14.5"/>
+      <line x1="15" y1="14" x2="15" y2="14.5"/>
+    </svg>
     <span id="agent-dot" class="dot"></span>
     <span id="agent-status" class="info">${args.isClosed ? "session closed" : "no agent yet"}</span>
   </span>
