@@ -19,10 +19,15 @@ interface ShellCfg {
   token: string;
   wsUrl: string;
   isClosed: boolean;
-  // ISO timestamp of the owning agent's last authenticated request, or null if
-  // the agent has never touched the relay. Seeds the agent-presence pill; the
-  // replayed `system.participant.*` events then keep presence live.
-  agentLastActiveAt: string | null;
+  // Live agent-presence facts, computed by the relay at request time. These
+  // SEED the agent-presence pill; the shell then keeps it live from events
+  // received after `system.replay.complete` (see the presence section below).
+  //  - agentLive: an agent WebSocket was open on this session at request time.
+  //  - agentLastEventAt: ISO ts of the most recent agent-authored event.
+  //  - agentLastUsedAt: ISO ts of the owning agent's last authenticated request.
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
 }
 
 interface SerializedEvent {
@@ -55,33 +60,47 @@ interface SerializedEvent {
   }
 
   // --- Agent presence -------------------------------------------------------
-  // Two independent signals combine into one honest label:
-  //  1) liveAgents — ids of agent-kind participants currently joined. Driven by
-  //     `system.participant.joined`/`left` events (replayed AND live). A
-  //     non-empty set means an agent stream is open right now.
+  // Presence is LIVE runtime state. It is NOT reconstructed by replaying the
+  // persisted `system.participant.joined`/`left` log — a `left` event is
+  // written fire-and-forget by the relay and can be lost, which would leave a
+  // stale `joined` claiming an agent is connected forever. So:
+  //
+  //  - Before `system.replay.complete`: trust ONLY the seed facts from CFG
+  //    (agentLive / agentLastEventAt / agentLastUsedAt), which the relay
+  //    computed from present-tense signals at request time.
+  //  - After `system.replay.complete`: trust the live agent socket count that
+  //    the relay stamps onto every participant.joined/left event as
+  //    `data.agentCountLive`. Replayed (historical) events also carry that
+  //    field, but its value reflected the past — so we IGNORE agentCountLive
+  //    until replay completes, then read it from every live participant event.
+  //
+  // Two pieces of state drive the pill:
+  //  1) agentLiveCount — number of agent sockets open right now. Seeded from
+  //     CFG.agentLive, then kept exact from post-replay `agentCountLive`.
   //  2) lastAgentActiveMs — the most recent moment an agent touched the
-  //     session. Seeded from cfg.agentLastActiveAt, bumped to now() whenever an
-  //     agent-authored event arrives.
-  // "agent active" is claimed ONLY when liveAgents is non-empty.
+  //     session (sent an event or pulled events). Seeded from the max of
+  //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
+  //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
-  const liveAgents = new Set<string>();
+  let agentLiveCount = CFG.agentLive ? 1 : 0;
   let lastAgentActiveMs: number | null = null;
   let sawAnyAgentActivity = false;
-  if (CFG.agentLastActiveAt) {
-    const t = Date.parse(CFG.agentLastActiveAt);
+  for (const iso of [CFG.agentLastEventAt, CFG.agentLastUsedAt]) {
+    if (!iso) continue;
+    const t = Date.parse(iso);
     if (isFinite(t)) {
-      lastAgentActiveMs = t;
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
       sawAnyAgentActivity = true;
     }
   }
+  if (CFG.agentLive) sawAnyAgentActivity = true;
 
+  // Relative time, scoped to the 5-minute RECENT_WINDOW — no buckets beyond
+  // what that window can ever display.
   function relTime(ms: number): string {
     const d = Math.max(0, Date.now() - ms);
-    if (d < 10000) return "just now";
-    if (d < 60000) return Math.floor(d / 1000) + "s ago";
-    if (d < 3600000) return Math.floor(d / 60000) + "m ago";
-    if (d < 86400000) return Math.floor(d / 3600000) + "h ago";
-    return Math.floor(d / 86400000) + "d ago";
+    if (d < 60000) return "just now";
+    return Math.floor(d / 60000) + "m ago";
   }
 
   function renderAgentPresence(): void {
@@ -90,7 +109,7 @@ interface SerializedEvent {
       agentDot.className = "dot";
       return;
     }
-    if (liveAgents.size > 0) {
+    if (agentLiveCount > 0) {
       agentStatusEl.textContent = "agent active";
       agentDot.className = "dot up";
       return;
@@ -104,14 +123,18 @@ interface SerializedEvent {
     agentDot.className = "dot";
   }
 
-  // Fold a single event into agent-presence state. Called for replayed and live
-  // events alike (the shell makes no distinction).
-  function trackAgentPresence(ev: SerializedEvent): void {
-    const author = (ev.data as { author?: { kind?: unknown; id?: unknown } } | null)?.author;
+  // Fold a single LIVE (post-replay-complete) event into presence state.
+  // Replayed events are NOT passed here — historical participant events carry a
+  // stale `agentCountLive` and a stale `joined` with no matching `left` would
+  // corrupt the count.
+  function trackLiveAgentPresence(ev: SerializedEvent): void {
     if (ev.type === "system.participant.joined" || ev.type === "system.participant.left") {
-      if (author && author.kind === "agent" && typeof author.id === "string") {
-        if (ev.type === "system.participant.joined") liveAgents.add(author.id);
-        else liveAgents.delete(author.id);
+      // The relay stamps the exact current agent socket count onto every
+      // participant event it broadcasts — trust it verbatim.
+      const n = (ev.data as { agentCountLive?: unknown } | null)?.agentCountLive;
+      if (typeof n === "number" && isFinite(n) && n >= 0) {
+        agentLiveCount = n;
+        if (n > 0) sawAnyAgentActivity = true;
       }
       return;
     }
@@ -213,14 +236,15 @@ interface SerializedEvent {
         // Tracked alongside issue #23 (Postgres @db.BigInt migration).
         const n = Number(msg["id"]);
         if (isFinite(n) && n > lastEventId) lastEventId = n;
-        // Fold every event (replayed or live) into agent-presence state, then
-        // re-render the pill. Done before the iframe-buffering branch so a
-        // fresh connection's replay reconstructs current presence immediately.
-        trackAgentPresence(msg as unknown as SerializedEvent);
-        renderAgentPresence();
         if (!replayDone) {
+          // Replayed (historical) events do NOT update presence: a lost `left`
+          // would leave a stale `joined` claiming an agent is connected. Live
+          // presence comes only from CFG (seed) + post-replay events below.
           replayBuffer.push(msg as unknown as SerializedEvent);
         } else {
+          // Live event — fold it into presence and re-render the pill.
+          trackLiveAgentPresence(msg as unknown as SerializedEvent);
+          renderAgentPresence();
           pushToIframe(msg as unknown as SerializedEvent);
         }
       }

@@ -4,12 +4,15 @@ import { WebSocketServer, type WebSocket } from "ws";
 import config from "../config.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
+import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { writeEvent } from "../core/events.js";
+import { addConnection, agentCount, removeConnection } from "./presence.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
+import type { SerializedEvent } from "../types.js";
 import type { Participant, Session } from "@prisma/client";
 
 const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
@@ -137,13 +140,31 @@ function sendUpgradeError(socket: Duplex, status: number): void {
   socket.destroy();
 }
 
+// Decorate a participant.joined/left event with the CURRENT live agent socket
+// count before broadcasting. The persisted Event row is left untouched — this
+// `agentCountLive` only rides the in-memory broadcast so shells that receive it
+// AFTER `system.replay.complete` learn the exact present-tense agent count.
+// Replayed (historical) rows never carry it, so the shell knows not to trust
+// it for events seen during replay.
+function withLiveCount(e: SerializedEvent, sessionId: string): SerializedEvent {
+  const data = e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
+  return { ...e, data: { ...data, agentCountLive: agentCount(sessionId) } };
+}
+
 async function handleConnection(
   ws: WebSocket,
   sessionId: string,
   author: Author,
   sinceCursor: number | null,
 ): Promise<void> {
+  // Register this socket in the live presence registry BEFORE we compute the
+  // joined event's agentCountLive, so the count reflects this connection too.
+  const connId = randomUUID();
+  addConnection(sessionId, connId, author.kind === "agent" ? "agent" : "human");
+
   // 1) Append + broadcast a participant.joined system event so other peers see us.
+  //    The persisted row is exactly as before; only the broadcast copy carries
+  //    the live agent count.
   const joinEvent = await prisma.event.create({
     data: {
       sessionId,
@@ -153,8 +174,7 @@ async function handleConnection(
       data: { author: { kind: author.kind, id: author.id } } as object,
     },
   });
-  const joinSerialized = serializeEvent(joinEvent);
-  publish(sessionId, joinSerialized);
+  publish(sessionId, withLiveCount(serializeEvent(joinEvent), sessionId));
 
   // 2) Replay every event since `sinceCursor` (or from the start).
   const replayWhere: { sessionId: string; id?: { gt: number } } = { sessionId };
@@ -189,6 +209,9 @@ async function handleConnection(
 
   ws.on("close", () => {
     unsub();
+    // Deregister from the live presence registry FIRST so the participant.left
+    // event's agentCountLive reflects this socket already being gone.
+    removeConnection(sessionId, connId);
     void prisma.event
       .create({
         data: {
@@ -199,7 +222,7 @@ async function handleConnection(
           data: { author: { kind: author.kind, id: author.id } } as object,
         },
       })
-      .then((row) => publish(sessionId, serializeEvent(row)))
+      .then((row) => publish(sessionId, withLiveCount(serializeEvent(row), sessionId)))
       .catch((err: unknown) =>
         log.warn("participant.left event insert failed", {
           sessionId,

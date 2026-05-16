@@ -6,6 +6,7 @@ import config from "../config.js";
 import prisma from "../db.js";
 import { hashKey } from "../keys.js";
 import { errors } from "../http/errors.js";
+import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 
 const bridge = new Hono();
@@ -87,17 +88,27 @@ bridge.get("/:token", async (c) => {
   if (!token) throw errors.notFound();
   const { session } = await loadByToken(token);
 
-  // The shell shows an "agent presence" pill. Its STARTING state is seeded from
-  // the owning agent's last authenticated-request timestamp; the shell then
-  // keeps presence live from replayed `system.participant.*` events. Those
-  // events ARE persisted (ws/handler.ts writes them as Event rows) and are part
-  // of the replay, so a fresh shell connection reconstructs current presence
-  // from replay alone — no server-side live-connection count is needed here.
+  // The shell shows an "agent presence" pill. Presence is LIVE runtime state,
+  // so it is computed here from three present-tense signals — NOT by replaying
+  // the persisted `system.participant.*` log (a `left` event can be lost, which
+  // would leave a stale `joined` claiming an agent is connected forever):
+  //  1) agentLive       — an agent WebSocket is open on this session right now.
+  //  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
+  //  3) agentLastUsedAt  — the owning agent's last authenticated request.
   const agent = await prisma.agent.findUnique({
     where: { id: session.agentId },
     select: { lastUsedAt: true },
   });
-  const agentLastActiveAt = agent?.lastUsedAt ? agent.lastUsedAt.toISOString() : null;
+  const agentLastUsedAt = agent?.lastUsedAt ? agent.lastUsedAt.toISOString() : null;
+
+  const lastAgentEvent = await prisma.event.findFirst({
+    where: { sessionId: session.id, authorKind: "agent" },
+    orderBy: { ts: "desc" },
+    select: { ts: true },
+  });
+  const agentLastEventAt = lastAgentEvent ? lastAgentEvent.ts.toISOString() : null;
+
+  const agentLive = agentCount(session.id) > 0;
 
   const isClosed = session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
@@ -138,7 +149,17 @@ bridge.get("/:token", async (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
 
   return c.body(
-    renderShell({ nonce, token, sessionId: session.id, schema, wsUrl, isClosed, agentLastActiveAt }),
+    renderShell({
+      nonce,
+      token,
+      sessionId: session.id,
+      schema,
+      wsUrl,
+      isClosed,
+      agentLive,
+      agentLastEventAt,
+      agentLastUsedAt,
+    }),
   );
 });
 
@@ -207,7 +228,11 @@ interface ShellArgs {
   schema: EventSchema;
   wsUrl: string;
   isClosed: boolean;
-  agentLastActiveAt: string | null;
+  // Live agent-presence facts, computed at request time. See the /s/:token
+  // handler for what each signal means.
+  agentLive: boolean;
+  agentLastEventAt: string | null;
+  agentLastUsedAt: string | null;
 }
 
 function renderShell(args: ShellArgs): string {
@@ -217,7 +242,9 @@ function renderShell(args: ShellArgs): string {
     token: args.token,
     wsUrl: args.wsUrl,
     isClosed: args.isClosed,
-    agentLastActiveAt: args.agentLastActiveAt,
+    agentLive: args.agentLive,
+    agentLastEventAt: args.agentLastEventAt,
+    agentLastUsedAt: args.agentLastUsedAt,
   };
   // `<script type="application/json">` is parsed as raw text by the HTML
   // script-data state machine — `</script>` is the only terminator. We
