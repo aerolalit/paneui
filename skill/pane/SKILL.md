@@ -78,9 +78,13 @@ Each entry under `events` declares:
       },
       "emittedBy": ["page"]
     },
-    "agent.hint": {
-      "payload": { "type": "object",
-                   "properties": { "text": { "type": "string" } } },
+    "assistant.reply": {
+      "payload": {
+        "type": "object",
+        "properties": { "title": { "type": "string" },
+                         "message": { "type": "string" } },
+        "required": ["title", "message"]
+      },
       "emittedBy": ["agent"]
     }
   }
@@ -101,25 +105,67 @@ the session *only* through it:
   `type` must exist in the schema with `"page"` in `emittedBy`; `data` must
   satisfy its `payload`. This is how the human's answer reaches you.
 - `pane.on(type, handler)` → `unsubscribe` — react to events (e.g. an
-  `agent.hint` you sent via `pane send`). Handlers also fire for replayed
-  history.
-- `pane.state` — `.events` (the log so far), `.last`, `.subscribe(fn)`.
+  `assistant.reply` you sent via `pane send`).
+- `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
+
+### What a handler receives — the event envelope
+
+`pane.on(type, handler)` calls `handler(ev)` with **one argument: the event
+envelope**, *not* the bare payload. The envelope shape is:
+
+```js
+{ id, session_id, author, ts, type, data, causation_id, idempotency_key }
+```
+
+The payload — the object you passed to `pane.emit(...)` or to
+`pane send --data` — is in **`ev.data`**. So an event sent with
+`pane send --type assistant.reply --data '{"title":"...","message":"..."}'`
+arrives at the handler as `ev`, and the content is `ev.data.title` /
+`ev.data.message`.
+
+Two things to know:
+
+- **Handlers also fire for replayed history.** When the iframe connects, every
+  prior event is replayed through your `pane.on` handlers — including events
+  sent *before* the artifact loaded. A handler registered in an inline
+  `<script>` still receives an `assistant.reply` that was sent earlier, so you
+  don't need to race the agent.
+- `pane.state.last(type)` returns the most recent envelope of that type (or the
+  most recent of any type if you omit `type`) — use it to render "whatever the
+  latest reply is" without wiring a handler.
 
 A minimal working artifact for the schema above:
 
 ```html
 <!doctype html>
 <meta charset="utf-8" />
+<style>
+  #reply-msg { white-space: pre-wrap; }
+</style>
 <form id="f">
   <input name="name" placeholder="Your name" required />
   <input name="rating" type="number" min="1" max="5" required />
   <button>Submit</button>
 </form>
 <p id="status"></p>
+
+<!-- The agent's reply renders here -->
+<section id="reply" hidden>
+  <h2 id="reply-title"></h2>
+  <p id="reply-msg"></p>
+</section>
+
 <script>
-  // Live updates the agent pushes with `pane send --type agent.hint`.
-  pane.on("agent.hint", (ev) => {
-    document.getElementById("status").textContent = ev.data.text;
+  // The agent pushes a rich reply with
+  //   pane send --type assistant.reply --data '{"title":"…","message":"…"}'
+  // `ev` is the envelope; the payload is `ev.data`.
+  pane.on("assistant.reply", (ev) => {
+    const { title, message } = ev.data;
+    // .textContent — never .innerHTML — so agent text can't inject markup.
+    document.getElementById("reply-title").textContent = title;
+    // `white-space: pre-wrap` (above) keeps `\n` in `message` as line breaks.
+    document.getElementById("reply-msg").textContent = message;
+    document.getElementById("reply").hidden = false;
   });
 
   document.getElementById("f").addEventListener("submit", async (e) => {
@@ -134,10 +180,18 @@ A minimal working artifact for the schema above:
 </script>
 ```
 
+**DON'T render the raw envelope.** Never `JSON.stringify(ev)` (or `ev.data`)
+onto the page, and never use the envelope as a fallback display when a handler
+isn't sure what to do. If a handler doesn't recognize an event, ignore it — the
+page should only ever show specific `ev.data` fields it understands, rendered
+into real DOM. The whole point of Pane is a proper UI; a JSON dump is a bug.
+
 Rules of thumb when authoring the artifact:
 
 - The event type you `pane.emit` for the human's final action **must match**
   the `--type` you later `pane watch` for. Above: `form.submitted`.
+- A handler's argument is the **envelope** — read the payload from `ev.data`,
+  and render its individual fields with `.textContent` into real elements.
 - `pane` is ready by the time inline `<script>` runs — no need to wait for an
   init event.
 - No external assets that need the network (CDN scripts, remote fonts/images):
@@ -187,7 +241,8 @@ a one-off check, or poll it with `--since <next_cursor>` instead of `watch`.
 ### `pane send <id>` — emit your own event
 
 ```sh
-pane send ses_xxxx --type agent.hint --data '{"text":"try the second option"}'
+pane send ses_xxxx --type assistant.reply \
+  --data '{"title":"Got it","message":"Thanks — your rating is recorded."}'
 ```
 
 `--data` is a file path or inline JSON. The event type must exist in the schema
