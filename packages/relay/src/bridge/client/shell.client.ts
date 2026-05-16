@@ -7,7 +7,10 @@
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
 // That keeps the only attack surface in routes.ts (which already neutralises
 // `</script>` in the JSON via JSON.stringify behaviour for `<` inside strings).
-
+//
+// `export {}` makes this a module (needed for TS file scoping). The relay's
+// loadClient() strips it before inlining — `export` is a SyntaxError in the
+// classic <script> the file is injected into.
 export {};
 
 interface ShellCfg {
@@ -45,11 +48,15 @@ interface SerializedEvent {
     dot.className = "dot" + (cls ? " " + cls : "");
   }
 
-  // The iframe is sandboxed WITHOUT allow-same-origin, so its document.origin
-  // is the opaque "null" origin once it executes. To get strict targetOrigin
-  // matching (instead of "*" and accepting any contentWindow), we pin every
-  // shell->iframe post to "null".
-  const IFRAME_ORIGIN = "null";
+  // The iframe is sandboxed WITHOUT allow-same-origin, so it runs at the opaque
+  // "null" origin. postMessage does NOT accept the literal string "null" as a
+  // targetOrigin (it throws "Invalid target origin"), and an opaque origin has
+  // no concrete value to pin to — so the only valid choice is "*".
+  // This is not a broadcast: every post below targets `frame.contentWindow`
+  // directly, so the message only ever reaches that one sandboxed iframe.
+  // "*" only relaxes the recipient-origin check, which an opaque iframe would
+  // fail anyway. The trust boundary is the sandbox + the contentWindow ref.
+  const IFRAME_ORIGIN = "*";
 
   // Cap correlation_id everywhere it crosses the shell. The shim generates
   // short strings ("c1", "c2", ...). The cap exists to stop a buggy or

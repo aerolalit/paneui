@@ -17,7 +17,18 @@ const bridge = new Hono();
 // node-from-dist, so we resolve a single absolute path from the project root.
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function loadClient(name: string): string {
-  return readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
+  let js = readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
+  // The client TS files are modules (`export {}` for file scoping + the shim's
+  // `declare global`), but they're injected inline as a classic <script>, where
+  // any `import`/`export` is a SyntaxError that aborts the whole script. Each
+  // file is self-contained (IIFE-wrapped), so the module markers carry no
+  // runtime meaning — strip the `export {};` tsc emits.
+  js = js.replace(/^\s*export\s*\{\s*\}\s*;?\s*$/gm, "");
+  // The result is embedded as `<script>${js}</script>`. A literal `</script>`
+  // anywhere in the file (e.g. in a comment) would close the tag early and dump
+  // the remainder as page text. `<\/script>` is identical JS — the `\` is an
+  // ignored escape — but the HTML parser no longer sees a tag close.
+  return js.replace(/<\/(script)/gi, "<\\/$1");
 }
 const SHIM_JS = loadClient("shim.client.js");
 const SHELL_JS = loadClient("shell.client.js");
@@ -97,7 +108,10 @@ bridge.get("/:token", async (c) => {
       `script-src 'nonce-${nonce}'`,
       `style-src 'nonce-${nonce}'`,
       "img-src 'self' data:",
-      "connect-src 'self'",
+      // 'self' covers same-origin HTTP fetches but NOT the ws:/wss: scheme —
+      // CSP treats a WebSocket as a distinct scheme and would block the shell's
+      // connection to /v1/sessions/:id/stream. Allow the relay's own ws origin.
+      `connect-src 'self' ${publicWsBase()}`,
       "frame-src 'self'",
       "base-uri 'none'",
       "form-action 'none'",
