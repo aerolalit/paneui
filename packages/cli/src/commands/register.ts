@@ -1,27 +1,23 @@
 // `pane register` — self-provision an agent API key from the relay.
 //
 // This is the one command that needs no API key: it is the call that obtains
-// one. On success the key (and relay URL) are persisted to the CLI config
-// file, so every later command works with only PANE_URL (or nothing) set.
+// one. Registration is open — no secret. On success the key (and relay URL)
+// are persisted to the CLI config file, so every later command works with
+// only PANE_URL (or nothing) set.
 
 import { registerAgent, PaneApiError } from "@pane/core";
 import type { ParsedArgs } from "../argv.js";
 import { printJson, fail } from "../output.js";
 import { readStore, writeStore } from "../store.js";
 
-export const registerHelp = `pane register — provision an agent API key
+export const registerHelp = `pane register — register this agent with the relay and save the key locally
 
 Usage:
-  pane register --secret <registration-secret> [options]
+  pane register [options]
 
-The relay must have been started with REGISTRATION_SECRET set; the operator
-shares that secret with you. This command calls POST /v1/register, then saves
-the returned API key (and relay URL) to the CLI config file — so afterwards
-every other command works with only PANE_URL set (no PANE_API_KEY needed).
-
-Required:
-  --secret <s>        Registration secret. Falls back to the
-                      PANE_REGISTRATION_SECRET environment variable.
+Calls POST /v1/register (an open endpoint — no secret needed), then saves the
+returned API key (and relay URL) to the CLI config file — so afterwards every
+other command works with only PANE_URL set (no PANE_API_KEY needed).
 
 Options:
   --name <n>          Agent display name. The relay defaults it if omitted.
@@ -46,34 +42,21 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
     );
   }
 
-  const secret =
-    args.flags.get("secret") ?? process.env.PANE_REGISTRATION_SECRET ?? "";
-  if (!secret) {
-    fail(
-      "missing registration secret: pass --secret <s> or set PANE_REGISTRATION_SECRET",
-      "config_error",
-    );
-  }
-
   const name = args.flags.get("name");
 
   let result;
   try {
     result = await registerAgent({
       url: url.replace(/\/$/, ""),
-      registrationSecret: secret,
       ...(name !== undefined ? { name } : {}),
     });
   } catch (e) {
     if (e instanceof PaneApiError) {
-      if (e.status === 404) {
+      if (e.status === 429) {
         fail(
-          "relay has registration disabled (no REGISTRATION_SECRET configured server-side)",
-          "registration_disabled",
+          "registration rate limit exceeded — try again later",
+          "rate_limited",
         );
-      }
-      if (e.status === 401) {
-        fail("registration secret rejected by the relay", "unauthorized");
       }
       fail(e.message, e.code, e.details);
     }

@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import config from "../config.js";
 import { ApiError } from "./errors.js";
 import { log } from "../log.js";
 import register from "./routes/register.js";
@@ -32,7 +31,7 @@ export function buildApp(): Hono {
     if (err instanceof ApiError) {
       return c.json(
         { error: { code: err.code, message: err.message, details: err.details } },
-        err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 500,
+        err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 500,
       );
     }
     if (err instanceof ZodError) {
@@ -47,10 +46,9 @@ export function buildApp(): Hono {
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-  // /v1/register is conditionally mounted; off when REGISTRATION_SECRET is unset.
-  if (config.REGISTRATION_SECRET) {
-    app.route("/v1/register", register);
-  }
+  // /v1/register is open (no secret); abuse is bounded by a per-IP rate limit
+  // applied inside the route module.
+  app.route("/v1/register", register);
   app.route("/v1/sessions", sessions);
   app.route("/v1/sessions/:id/events", events);
   app.route("/v1/keys", keys);

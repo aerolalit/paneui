@@ -1,16 +1,15 @@
 // Standalone agent self-registration: POST /v1/register.
 //
 // Unlike PaneClient operations this needs no bearer API key — registration is
-// the call that *obtains* one. It is gated server-side on the relay having a
-// REGISTRATION_SECRET configured (404 if it does not).
+// the call that *obtains* one. The relay endpoint is open: no secret. Abuse
+// is bounded server-side by a per-IP rate limit (a 429 surfaces here as a
+// PaneApiError with status 429).
 
 import { PaneApiError } from "./client.js";
 
 export interface RegisterAgentOptions {
   /** Relay base URL, e.g. https://pane.example.com. Trailing slash is trimmed. */
   url: string;
-  /** Shared registration secret the relay was started with. */
-  registrationSecret: string;
   /** Optional agent display name; the relay defaults it if omitted. */
   name?: string;
   /** Optional fetch override (defaults to global fetch). */
@@ -31,7 +30,7 @@ export interface RegisterAgentResult {
 export async function registerAgent(opts: RegisterAgentOptions): Promise<RegisterAgentResult> {
   const base = opts.url.replace(/\/$/, "");
   const fetchImpl = opts.fetch ?? fetch;
-  const body: Record<string, unknown> = { registration_secret: opts.registrationSecret };
+  const body: Record<string, unknown> = {};
   if (opts.name !== undefined) body["name"] = opts.name;
 
   let res: Response;

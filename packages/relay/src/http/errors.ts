@@ -17,6 +17,7 @@ export const errors = {
   invalidRequest: (message?: string, details?: unknown) =>
     new ApiError(400, "invalid_request", message, details),
   payloadTooLarge: () => new ApiError(413, "payload_too_large"),
+  tooManyRequests: (message?: string) => new ApiError(429, "rate_limited", message),
   conflict: (message?: string) => new ApiError(409, "conflict", message),
   gone: (message = "session is closed") => new ApiError(410, "gone", message),
   schemaViolation: (code: string, details?: unknown) =>

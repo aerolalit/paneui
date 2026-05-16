@@ -39,22 +39,21 @@ with a non-zero exit. Run `pane --help` or `pane <command> --help` anytime.
 If you weren't handed an API key, provision one yourself — **once** — with:
 
 ```sh
-pane register --secret "$PANE_REGISTRATION_SECRET" --url "$PANE_URL"
+pane register --url "$PANE_URL"
 ```
 
-This calls the relay's `POST /v1/register`, mints an agent + API key, and
-saves the key and URL to the CLI config file
+Registration is open — no secret, no operator-shared value. This calls the
+relay's `POST /v1/register`, mints an agent + API key, and saves the key and
+URL to the CLI config file
 (`${XDG_CONFIG_HOME:-~/.config}/pane/config.json`, mode 0600). After that,
 every other command picks the key up from that file automatically — so all
 later commands need only `PANE_URL` set (or nothing, since the URL is saved
 too).
 
-- The operator must have started the relay with `REGISTRATION_SECRET` set and
-  shared that secret with you (pass it via `--secret` or
-  `PANE_REGISTRATION_SECRET`). If the relay has no `REGISTRATION_SECRET`,
-  `pane register` fails with `registration_disabled`.
 - The key is not printed by default. Pass `--print-key` if you need it echoed.
 - Run it just once; re-running mints a fresh agent each time.
+- The relay rate-limits `/v1/register` per IP; if you hit it, `pane register`
+  fails with `rate_limited` — wait and retry.
 
 ## The four commands
 
