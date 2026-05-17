@@ -9,6 +9,7 @@ import {
   recordError,
   recordHttpDuration,
 } from "../telemetry/metrics.js";
+import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
 import events from "./routes/events.js";
@@ -49,6 +50,11 @@ export function buildApp(): Hono {
   });
 
   app.onError((err, c) => {
+    // Enrich the active HTTP span (created by the OTel HTTP instrumentation)
+    // with the exception so Application Insights surfaces it as an exception
+    // on the request trace. No-op when no span is active (e.g. prometheus
+    // mode, or a 4xx ApiError which is still a legitimate "error" to record).
+    recordExceptionOnActiveSpan(err);
     if (err instanceof ApiError) {
       // Count the error exactly once, here, by its low-cardinality `code`.
       recordError(err.code);

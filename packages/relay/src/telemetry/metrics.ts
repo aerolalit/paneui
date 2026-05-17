@@ -7,21 +7,20 @@
 //   - "prometheus": a PrometheusExporter whose serialized text is served by the
 //     existing Hono app at GET /metrics (see http/app.ts). Self-host friendly:
 //     one port, scrape-on-demand.
+//   - "azure": an AzureMonitorMetricExporter (Application Insights) on a
+//     PeriodicExportingMetricReader. The Azure SDK is an OPTIONAL dependency
+//     (see telemetry/azure-exporter.ts) loaded via dynamic import — the OSS
+//     core does not require it. GET /metrics is not mounted in azure mode.
 //   - "none": metrics collection is disabled entirely.
 //
-// FUTURE (issue #33, the hosted Azure deploy): an "azure" exporter would push
-// to Application Insights via @opentelemetry/exporter-... + the Azure Monitor
-// OTel exporter. That package pulls the Azure SDK in, so it is deliberately
-// NOT a dependency of the OSS core. Adding it later is a localised change: add
-// "azure" to the METRICS_EXPORTER enum in config.ts and a branch in initTelemetry()
-// that constructs a PeriodicExportingMetricReader around the Azure exporter.
+// Tracing lives in a sibling module (telemetry/tracing.ts) and follows the
+// same exporter switch. Both providers share telemetry/resource.ts so every
+// signal agrees on service.name / service.version.
 //
 // Every call site uses the exported helper functions (recordSessionCreated(),
 // recordEventWritten(), …) — they never touch the OTel API directly. When
 // metrics are disabled the helpers are cheap no-ops and nothing throws.
 
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import {
   metrics,
   type Counter,
@@ -29,20 +28,22 @@ import {
   type Meter,
   type MeterProvider as ApiMeterProvider,
 } from "@opentelemetry/api";
-import { MeterProvider, type MetricReader } from "@opentelemetry/sdk-metrics";
+import {
+  MeterProvider,
+  PeriodicExportingMetricReader,
+  type MetricReader,
+  type PushMetricExporter,
+} from "@opentelemetry/sdk-metrics";
 import {
   PrometheusExporter,
   PrometheusSerializer,
 } from "@opentelemetry/exporter-prometheus";
-import { resourceFromAttributes } from "@opentelemetry/resources";
-import {
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_VERSION,
-} from "@opentelemetry/semantic-conventions";
 import type { Config } from "../config.js";
 import prisma from "../db.js";
 import { log } from "../log.js";
 import { totalConnections } from "../ws/presence.js";
+import { buildResource } from "./resource.js";
+import { loadAzureExporter } from "./azure-exporter.js";
 
 // --- module state -----------------------------------------------------------
 
@@ -60,26 +61,15 @@ let httpDuration: Histogram | undefined;
 /** Author kinds an event can be attributed to — kept as a low-cardinality label. */
 export type EventKind = "agent" | "human" | "system";
 
-function readRelayVersion(): string {
-  // rootDir is `src`, so package.json cannot be imported as a module — read it
-  // at runtime from the package root and fall back gracefully.
-  try {
-    const pkgPath = path.resolve(process.cwd(), "package.json");
-    const raw = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-      version?: string;
-    };
-    return raw.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
 /**
  * Initialise the metrics subsystem. Idempotent: safe to call once per process;
  * subsequent calls are no-ops. Must be called before buildApp() so the
  * instruments exist when routes/middleware register.
+ *
+ * Async because the "azure" exporter is loaded via dynamic import (it is an
+ * optional dependency). The prometheus/none paths resolve synchronously.
  */
-export function initTelemetry(config: Config): void {
+export async function initTelemetry(config: Config): Promise<void> {
   if (provider !== null) return; // already initialised — keep the singleton
 
   if (!config.METRICS_ENABLED || config.METRICS_EXPORTER === "none") {
@@ -90,10 +80,7 @@ export function initTelemetry(config: Config): void {
     return;
   }
 
-  const resource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: "pane-relay",
-    [ATTR_SERVICE_VERSION]: readRelayVersion(),
-  });
+  const resource = buildResource();
 
   const readers: MetricReader[] = [];
   if (config.METRICS_EXPORTER === "prometheus") {
@@ -102,6 +89,17 @@ export function initTelemetry(config: Config): void {
     // served by the existing Hono app at GET /metrics instead.
     prometheusExporter = new PrometheusExporter({ preventServerStart: true });
     readers.push(prometheusExporter);
+  } else if (config.METRICS_EXPORTER === "azure") {
+    // Push model: the Azure Monitor metric exporter periodically flushes to
+    // Application Insights. The Azure package is an OPTIONAL dependency loaded
+    // via dynamic import — a missing package yields a clear, actionable error.
+    const azure = await loadAzureExporter();
+    const azureExporter = new azure.AzureMonitorMetricExporter({
+      connectionString: config.APPLICATIONINSIGHTS_CONNECTION_STRING as string,
+    }) as unknown as PushMetricExporter;
+    readers.push(
+      new PeriodicExportingMetricReader({ exporter: azureExporter }),
+    );
   }
 
   provider = new MeterProvider({ resource, readers });

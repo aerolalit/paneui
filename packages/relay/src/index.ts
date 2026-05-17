@@ -1,3 +1,7 @@
+// IMPORTANT: telemetry/bootstrap MUST be the first import. It registers the
+// HTTP auto-instrumentation, which monkey-patches Node's `http` module — that
+// patch must be installed before `@hono/node-server` (below) loads `http`.
+import "./telemetry/bootstrap.js";
 import { serve } from "@hono/node-server";
 import config, { redactConfig } from "./config.js";
 import prisma from "./db.js";
@@ -6,6 +10,7 @@ import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
+import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 
 function startTtlSweeper(): void {
   const intervalSec = config.TTL_SWEEP_SECONDS;
@@ -42,8 +47,13 @@ async function main(): Promise<void> {
   await runBootstrap(prisma, config);
 
   // Initialise telemetry before buildApp() so the metric instruments exist
-  // when routes/middleware register. No-op when METRICS_ENABLED=false.
-  initTelemetry(config);
+  // when routes/middleware register. initTelemetry is async because the azure
+  // exporter is dynamically imported; no-op when METRICS_ENABLED=false.
+  await initTelemetry(config);
+  // Wire the TracerProvider + span exporter. Only does anything in azure mode
+  // (prometheus has no trace ingestion story). The HTTP instrumentation itself
+  // was already registered by ./telemetry/bootstrap.js, imported first above.
+  await initTracing(config);
 
   const app = buildApp();
 
@@ -57,7 +67,9 @@ async function main(): Promise<void> {
   // just exits — but a flush lets the last scrape window's data settle.
   for (const sig of ["SIGTERM", "SIGINT"] as const) {
     process.once(sig, () => {
-      void shutdownTelemetry().finally(() => process.exit(0));
+      void Promise.allSettled([shutdownTelemetry(), shutdownTracing()]).finally(
+        () => process.exit(0),
+      );
     });
   }
 }

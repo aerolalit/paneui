@@ -29,11 +29,17 @@ const schema = z.object({
     .enum(["true", "false", "1", "0"])
     .default("true")
     .transform((v) => v === "true" || v === "1"),
-  // Selects the metrics exporter. "prometheus" exposes GET /metrics in the
-  // Prometheus text format on the existing Hono app; "none" collects no
-  // metrics. An "azure" exporter (App Insights via @azure/monitor-opentelemetry-exporter)
-  // is a planned future addition for the hosted deploy — see telemetry/metrics.ts.
-  METRICS_EXPORTER: z.enum(["prometheus", "none"]).default("prometheus"),
+  // Selects the metrics/traces exporter. "prometheus" exposes GET /metrics in
+  // the Prometheus text format on the existing Hono app; "azure" pushes
+  // metrics, traces and exceptions to Azure Application Insights via the
+  // optional @azure/monitor-opentelemetry-exporter package; "none" (the
+  // default) collects no telemetry and mounts nothing — operators opt in.
+  // See telemetry/metrics.ts and telemetry/tracing.ts.
+  METRICS_EXPORTER: z.enum(["prometheus", "azure", "none"]).default("none"),
+  // Azure Application Insights connection string. Standard env var name used by
+  // Azure Monitor tooling — kept verbatim so portal/CLI conventions line up.
+  // REQUIRED when METRICS_EXPORTER=azure (validated below); ignored otherwise.
+  APPLICATIONINSIGHTS_CONNECTION_STRING: z.string().optional(),
 });
 
 export type RawConfig = z.infer<typeof schema>;
@@ -46,6 +52,19 @@ export function loadConfig(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): Config {
   const parsed = schema.parse(env);
+  // Fail fast: the azure exporter cannot push anywhere without a connection
+  // string. Catch the misconfiguration at startup with a clear message rather
+  // than letting the exporter construction fail opaquely later.
+  if (
+    parsed.METRICS_ENABLED &&
+    parsed.METRICS_EXPORTER === "azure" &&
+    !parsed.APPLICATIONINSIGHTS_CONNECTION_STRING
+  ) {
+    throw new Error(
+      "METRICS_EXPORTER=azure requires APPLICATIONINSIGHTS_CONNECTION_STRING to be set " +
+        "(the Application Insights connection string).",
+    );
+  }
   const publicUrl = (
     parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`
   ).replace(/\/$/, "");
@@ -56,6 +75,10 @@ export function redactConfig(c: Config): Record<string, unknown> {
   const r: Record<string, unknown> = { ...c };
   if (r.API_KEY) r.API_KEY = "<set>";
   if (r.PANE_SECRET_KEY) r.PANE_SECRET_KEY = "<set>";
+  if (r.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+    // Connection string embeds an InstrumentationKey — never log it.
+    r.APPLICATIONINSIGHTS_CONNECTION_STRING = "<set>";
+  }
   if (typeof r.DATABASE_URL === "string") {
     r.DATABASE_URL = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
   }

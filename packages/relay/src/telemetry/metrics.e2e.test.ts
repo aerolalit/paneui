@@ -33,7 +33,7 @@ beforeAll(async () => {
 
   const { loadConfig } = await import("../config.js");
   const { initTelemetry } = await import("./metrics.js");
-  initTelemetry(loadConfig(process.env));
+  await initTelemetry(loadConfig(process.env));
 
   const { buildApp } = await import("../http/app.js");
   app = buildApp();
