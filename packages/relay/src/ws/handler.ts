@@ -10,6 +10,7 @@ import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { writeEvent } from "../core/events.js";
 import { addConnection, agentCount, removeConnection } from "./presence.js";
+import { recordEventWritten } from "../telemetry/metrics.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
@@ -250,6 +251,7 @@ async function handleConnection(
       data: { author: { kind: author.kind, id: author.id } } as object,
     },
   });
+  recordEventWritten("system");
   publish(sessionId, withLiveCount(serializeEvent(joinEvent), sessionId));
 
   // 2) Replay every event since `sinceCursor` (or from the start).
@@ -309,9 +311,10 @@ async function handleConnection(
           data: { author: { kind: author.kind, id: author.id } } as object,
         },
       })
-      .then((row) =>
-        publish(sessionId, withLiveCount(serializeEvent(row), sessionId)),
-      )
+      .then((row) => {
+        recordEventWritten("system");
+        publish(sessionId, withLiveCount(serializeEvent(row), sessionId));
+      })
       .catch((err: unknown) =>
         log.warn("participant.left event insert failed", {
           sessionId,

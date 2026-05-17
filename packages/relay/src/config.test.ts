@@ -55,4 +55,53 @@ describe("config", () => {
     const r = redactConfig(c);
     expect(r.DATABASE_URL).toBe("postgresql://<redacted>@host/db");
   });
+
+  it("defaults METRICS_EXPORTER to none", () => {
+    expect(loadConfig({}).METRICS_EXPORTER).toBe("none");
+  });
+
+  it("accepts METRICS_EXPORTER=prometheus explicitly", () => {
+    expect(
+      loadConfig({ METRICS_EXPORTER: "prometheus" }).METRICS_EXPORTER,
+    ).toBe("prometheus");
+  });
+
+  it("rejects an unknown METRICS_EXPORTER", () => {
+    expect(() => loadConfig({ METRICS_EXPORTER: "datadog" })).toThrow();
+  });
+
+  it("fails fast when METRICS_EXPORTER=azure has no connection string", () => {
+    expect(() => loadConfig({ METRICS_EXPORTER: "azure" })).toThrow(
+      /APPLICATIONINSIGHTS_CONNECTION_STRING/,
+    );
+  });
+
+  it("accepts METRICS_EXPORTER=azure with a connection string", () => {
+    const c = loadConfig({
+      METRICS_EXPORTER: "azure",
+      APPLICATIONINSIGHTS_CONNECTION_STRING:
+        "InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    });
+    expect(c.METRICS_EXPORTER).toBe("azure");
+    expect(c.APPLICATIONINSIGHTS_CONNECTION_STRING).toContain(
+      "InstrumentationKey=",
+    );
+  });
+
+  it("does not require a connection string when azure is disabled via METRICS_ENABLED=false", () => {
+    const c = loadConfig({
+      METRICS_EXPORTER: "azure",
+      METRICS_ENABLED: "false",
+    });
+    expect(c.METRICS_ENABLED).toBe(false);
+  });
+
+  it("redacts APPLICATIONINSIGHTS_CONNECTION_STRING", () => {
+    const c = loadConfig({
+      METRICS_EXPORTER: "azure",
+      APPLICATIONINSIGHTS_CONNECTION_STRING:
+        "InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    });
+    expect(redactConfig(c).APPLICATIONINSIGHTS_CONNECTION_STRING).toBe("<set>");
+  });
 });

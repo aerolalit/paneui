@@ -61,6 +61,42 @@ starting point):
 | `DEFAULT_TTL_SECONDS` / `MAX_TTL_SECONDS` | `3600` / `86400` | Default and maximum session lifetime. |
 | `TTL_SWEEP_SECONDS` | `60` | Expired-session sweep interval. `0` disables the in-process sweeper. |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `METRICS_ENABLED` | `true` | Enables the OpenTelemetry SDK. `false` makes the instruments no-ops and unmounts `GET /metrics`. |
+| `METRICS_EXPORTER` | `none` | `none` (no telemetry exported), `prometheus` (exposes `GET /metrics`), or `azure` (App Insights). |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Azure Application Insights connection string. Required only when `METRICS_EXPORTER=azure`. |
+
+### Observability
+
+The relay is instrumented with the vendor-neutral
+[OpenTelemetry](https://opentelemetry.io/) SDK. `METRICS_EXPORTER` selects
+where telemetry goes; there are three modes:
+
+**`none` (default)** — no telemetry is exported. The instrument helpers are
+cheap no-ops, no exporter is constructed, no tracer provider is created, and
+`GET /metrics` is not mounted (it returns 404). Operators opt in to one of the
+modes below.
+
+**`prometheus`** — `GET /metrics` serves the current metrics in the Prometheus
+text exposition format on the relay's normal port; point a Prometheus scrape
+at it. Exposed instruments include `pane_sessions_created_total`,
+`pane_events_written_total`, `pane_registrations_total`, `pane_errors_total`,
+`pane_ws_connections_active`, `pane_sessions_open`, and
+`pane_http_request_duration_seconds`. `/metrics` is unauthenticated, which is
+the norm for a Prometheus scrape target — if the relay is publicly reachable,
+**firewall the endpoint** (or restrict it at a reverse proxy) so only your
+monitoring stack can reach it. Prometheus has no trace ingestion, so no spans
+are produced in this mode.
+
+**`azure`** — pushes metrics, distributed traces (HTTP request spans plus DB
+dependency spans), handled exceptions and application logs to [Azure
+Application
+Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview).
+This mode requires the **optional** `@azure/monitor-opentelemetry-exporter`
+package (`npm install @azure/monitor-opentelemetry-exporter` — it is *not* a
+hard dependency of the open-source core) and the
+`APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable. The relay fails
+fast at startup with a clear error if the connection string is missing or the
+package is not installed. `GET /metrics` is not mounted in `azure` mode.
 
 ### The encryption key (`PANE_SECRET_KEY`)
 

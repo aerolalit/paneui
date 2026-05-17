@@ -8,6 +8,7 @@ import { errors } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { fire, shouldFire } from "../http/webhook.js";
 import { log } from "../log.js";
+import { recordEventWritten } from "../telemetry/metrics.js";
 import type { Author, EventSchema, SerializedEvent } from "../types.js";
 import { validateEvent } from "./validation.js";
 
@@ -96,6 +97,9 @@ export async function writeEvent(
 
   const serialized = serializeEvent(row);
   if (!deduped) {
+    // Count only freshly-persisted events — a deduped idempotency replay does
+    // not write a new row, so it must not bump the counter.
+    recordEventWritten(author.kind);
     publish(session.id, serialized);
     fireWebhook(session, input.type, serialized);
   }

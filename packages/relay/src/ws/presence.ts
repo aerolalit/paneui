@@ -54,3 +54,19 @@ export function humanCount(sessionId: string): number {
   for (const kind of perSession.values()) if (kind === "human") n++;
   return n;
 }
+
+// Total open WebSocket connections across every session, optionally filtered
+// by author kind. Backs the `pane_ws_connections_active` ObservableGauge — the
+// telemetry layer reads this on each metrics collection rather than wiring
+// counter increments into the connect/close paths.
+export function totalConnections(kind?: ConnKind): number {
+  let n = 0;
+  for (const perSession of connections.values()) {
+    if (kind === undefined) {
+      n += perSession.size;
+    } else {
+      for (const k of perSession.values()) if (k === kind) n++;
+    }
+  }
+  return n;
+}
