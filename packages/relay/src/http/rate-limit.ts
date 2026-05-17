@@ -1,7 +1,9 @@
-// In-memory sliding-window rate limiter, keyed by client IP.
+// In-memory sliding-window rate limiter, keyed by client IP (and optionally
+// token).
 //
-// Used to bound abuse of the open POST /v1/register endpoint. No external
-// dependency: state is a plain Map of IP -> recent request timestamps (ms).
+// Used to bound abuse of the open POST /v1/register endpoint and every other
+// /v1 + /s route. No external dependency: state is a plain Map of key ->
+// recent request timestamps (ms).
 //
 // NOTE: this is single-process only. Each relay instance keeps its own map,
 // so behind a multi-process / multi-instance deployment the effective limit
@@ -9,37 +11,67 @@
 // strict global limit. For Pane's current single-process relay this is fine.
 
 import { getConnInfo } from "@hono/node-server/conninfo";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import config from "../config.js";
 import { errors } from "./errors.js";
 
 /**
  * Resolve the client IP for a request.
  *
- * The relay sits behind a proxy on Azure, so honor `x-forwarded-for` (taking
- * the first hop — the original client) when present. Otherwise fall back to
- * the raw connection's remote address. Returns "unknown" if neither is
- * available, which buckets all such requests together (fail-closed-ish).
+ * `X-Forwarded-For` is attacker-controlled: any direct client can set it to
+ * an arbitrary value. We therefore only honor it when the socket peer (the
+ * machine that actually opened the TCP connection) is a configured
+ * `TRUSTED_PROXY`. In that case the XFF chain looks like
+ * `client, proxy1, proxy2, ...` and we take the *last untrusted hop* — the
+ * right-most entry that is not itself one of our trusted proxies — which is
+ * the closest address our trusted edge actually observed.
+ *
+ * When the socket peer is NOT a trusted proxy (a direct client), XFF is
+ * ignored entirely and the raw socket address is used, so a spoofed header
+ * cannot move the caller into a different rate-limit bucket.
+ *
+ * Returns "unknown" if no address is available (e.g. under app.fetch() in
+ * tests, where there is no socket), which buckets all such requests together.
+ *
+ * `trustedProxies` defaults to the configured `TRUSTED_PROXY` list; it is a
+ * parameter purely so unit tests can exercise the trust logic directly.
  */
-export function clientIp(c: Context): string {
-  const xff = c.req.header("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  // getConnInfo reads the Node socket off c.env; under app.fetch() (tests,
-  // edge runtimes) there is no socket — fall back to "unknown" rather than
-  // throwing. In that case all such requests share one bucket.
+export function clientIp(
+  c: Context,
+  trustedProxies: readonly string[] = config.TRUSTED_PROXY,
+): string {
+  let socketAddr: string | null = null;
   try {
-    return getConnInfo(c).remote.address ?? "unknown";
+    socketAddr = getConnInfo(c).remote.address ?? null;
   } catch {
-    return "unknown";
+    socketAddr = null;
   }
+
+  const xff = c.req.header("x-forwarded-for");
+  const trusted = trustedProxies;
+
+  // Honor XFF only when we can confirm the socket peer is a trusted proxy.
+  if (xff && socketAddr && trusted.includes(socketAddr)) {
+    const hops = xff
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    // Walk from the right (closest to our edge) and skip any hop that is
+    // itself a trusted proxy. The first non-trusted hop is the real client
+    // as seen by our outermost trusted proxy.
+    for (let i = hops.length - 1; i >= 0; i--) {
+      const hop = hops[i]!;
+      if (!trusted.includes(hop)) return hop;
+    }
+    // Whole chain was trusted proxies — fall through to the socket address.
+  }
+
+  return socketAddr ?? "unknown";
 }
 
 interface SlidingWindowLimiter {
   /** Returns true if the request is allowed, false if it exceeds the limit. */
-  check(ip: string): boolean;
+  check(key: string): boolean;
 }
 
 /**
@@ -54,29 +86,29 @@ export function createRateLimiter(
 
   // Drop timestamps older than the window for a single key; delete the key
   // entirely if nothing recent remains, so the map can't grow unbounded.
-  function prune(ip: string, now: number): number[] {
+  function prune(key: string, now: number): number[] {
     const cutoff = now - windowMs;
-    const recent = (hits.get(ip) ?? []).filter((t) => t > cutoff);
-    if (recent.length === 0) hits.delete(ip);
-    else hits.set(ip, recent);
+    const recent = (hits.get(key) ?? []).filter((t) => t > cutoff);
+    if (recent.length === 0) hits.delete(key);
+    else hits.set(key, recent);
     return recent;
   }
 
   return {
-    check(ip: string): boolean {
+    check(key: string): boolean {
       if (limit <= 0) return true; // disabled
       const now = Date.now();
 
-      // Opportunistic global sweep: prune every key occasionally so idle IPs
+      // Opportunistic global sweep: prune every key occasionally so idle keys
       // don't linger forever. Cheap because the map is small in practice.
       if (hits.size > 0 && Math.random() < 0.05) {
-        for (const key of [...hits.keys()]) prune(key, now);
+        for (const k of [...hits.keys()]) prune(k, now);
       }
 
-      const recent = prune(ip, now);
+      const recent = prune(key, now);
       if (recent.length >= limit) return false;
       recent.push(now);
-      hits.set(ip, recent);
+      hits.set(key, recent);
       return true;
     },
   };
@@ -97,3 +129,41 @@ export function enforceRegisterRateLimit(c: Context): void {
     throw errors.tooManyRequests("registration rate limit exceeded");
   }
 }
+
+// General-purpose limiter covering every /v1 + /s route. Keyed per-IP, and —
+// when the caller presents a bearer/participant token — additionally per
+// token, so one IP rotating tokens (or one token roaming IPs) is still bound.
+const generalLimiter = createRateLimiter(
+  config.RATE_LIMIT,
+  config.RATE_LIMIT_WINDOW_SECONDS * 1000,
+);
+
+/**
+ * Extract a stable, low-cardinality token fingerprint from the Authorization
+ * header for rate-limiting purposes. We never log or store the raw token —
+ * a short prefix is enough to bucket a single credential.
+ */
+function tokenKey(c: Context): string | null {
+  const auth = c.req.header("authorization");
+  if (!auth) return null;
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!m) return null;
+  return "tok:" + m[1]!.trim().slice(0, 16);
+}
+
+/**
+ * Hono middleware enforcing the general per-IP + per-token rate limit. Applied
+ * to all /v1/* and /s/* routes. Throws ApiError(429) when either the caller's
+ * IP or its bearer token has exceeded the configured limit within the window.
+ */
+export const generalRateLimit: MiddlewareHandler = async (c, next) => {
+  const ip = clientIp(c);
+  if (!generalLimiter.check("ip:" + ip)) {
+    throw errors.tooManyRequests("rate limit exceeded");
+  }
+  const tok = tokenKey(c);
+  if (tok && !generalLimiter.check(tok)) {
+    throw errors.tooManyRequests("rate limit exceeded");
+  }
+  await next();
+};

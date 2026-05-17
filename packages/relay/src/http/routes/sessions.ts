@@ -84,6 +84,21 @@ sessions.post("/", requireAgent, async (c) => {
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
   const agent = c.get("agent");
+
+  // Per-agent session cap: bound how many open sessions a single agent can
+  // hold so a compromised/abusive key cannot exhaust storage. Closed/expired
+  // sessions do not count — they are reclaimed by the TTL sweeper.
+  if (config.MAX_SESSIONS_PER_AGENT > 0) {
+    const openCount = await prisma.session.count({
+      where: { agentId: agent.id, status: "open" },
+    });
+    if (openCount >= config.MAX_SESSIONS_PER_AGENT) {
+      throw errors.tooManyRequests(
+        `open session cap reached (max ${config.MAX_SESSIONS_PER_AGENT} per agent); close an existing session before creating a new one`,
+      );
+    }
+  }
+
   const sessionId = generateSessionId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
     generateToken(),

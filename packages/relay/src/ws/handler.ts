@@ -14,7 +14,12 @@ import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
-import { addConnection, agentCount, removeConnection } from "./presence.js";
+import {
+  addConnection,
+  agentCount,
+  connectionCount,
+  removeConnection,
+} from "./presence.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
@@ -134,6 +139,17 @@ async function handleUpgrade(
       return;
     }
 
+    // Per-session WebSocket connection cap. Bounds how many concurrent sockets
+    // a single session/token can hold open, so an abusive client cannot
+    // exhaust file descriptors / memory by opening connections in a loop.
+    if (
+      config.MAX_WS_CONNECTIONS_PER_SESSION > 0 &&
+      connectionCount(sessionId) >= config.MAX_WS_CONNECTIONS_PER_SESSION
+    ) {
+      sendUpgradeError(socket, 429);
+      return;
+    }
+
     if (participant && !participant.joinedAt) {
       await prisma.participant.update({
         where: { id: participant.id },
@@ -188,6 +204,7 @@ function sendUpgradeError(socket: Duplex, status: number): void {
     401: "Unauthorized",
     404: "Not Found",
     410: "Gone",
+    429: "Too Many Requests",
   };
   const text = statusText[status] ?? "Bad Request";
   socket.write(

@@ -72,6 +72,21 @@ export async function writeEvent(
     throw errors.payloadTooLarge();
   }
 
+  // Per-session event cap: bound unbounded event accumulation on a single
+  // session so an abusive client cannot exhaust storage. System events
+  // (participant join/leave, schema/artifact updates) count toward the cap —
+  // the cap is a hard ceiling on rows per session, deliberately generous.
+  if (config.MAX_EVENTS_PER_SESSION > 0) {
+    const count = await prisma.event.count({
+      where: { sessionId: session.id },
+    });
+    if (count >= config.MAX_EVENTS_PER_SESSION) {
+      throw errors.tooManyRequests(
+        `session event cap reached (max ${config.MAX_EVENTS_PER_SESSION}); create a new session to continue`,
+      );
+    }
+  }
+
   validateEvent({
     sessionId: session.id,
     schemaVersion: session.schemaVersion,

@@ -13,6 +13,12 @@ describe("config", () => {
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
     expect(c.REGISTER_RATE_LIMIT).toBe(5);
     expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(3600);
+    expect(c.RATE_LIMIT).toBe(120);
+    expect(c.RATE_LIMIT_WINDOW_SECONDS).toBe(60);
+    expect(c.TRUSTED_PROXY).toEqual([]);
+    expect(c.MAX_WS_CONNECTIONS_PER_SESSION).toBe(16);
+    expect(c.MAX_SESSIONS_PER_AGENT).toBe(50);
+    expect(c.MAX_EVENTS_PER_SESSION).toBe(10_000);
     expect(c.LOG_LEVEL).toBe("info");
     expect(c.DATABASE_URL).toBe("file:./data/pane.db");
     expect(c.publicUrl).toBe("http://localhost:3000");
@@ -48,6 +54,26 @@ describe("config", () => {
     });
     expect(c.REGISTER_RATE_LIMIT).toBe(0);
     expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(60);
+  });
+
+  it("parses TRUSTED_PROXY into a trimmed, non-empty list", () => {
+    const c = loadConfig({ TRUSTED_PROXY: " 10.0.0.1 , 10.0.0.2 ,," });
+    expect(c.TRUSTED_PROXY).toEqual(["10.0.0.1", "10.0.0.2"]);
+  });
+
+  it("coerces general rate-limit + abuse-cap overrides; 0 disables", () => {
+    const c = loadConfig({
+      RATE_LIMIT: "0",
+      RATE_LIMIT_WINDOW_SECONDS: "30",
+      MAX_WS_CONNECTIONS_PER_SESSION: "0",
+      MAX_SESSIONS_PER_AGENT: "0",
+      MAX_EVENTS_PER_SESSION: "0",
+    });
+    expect(c.RATE_LIMIT).toBe(0);
+    expect(c.RATE_LIMIT_WINDOW_SECONDS).toBe(30);
+    expect(c.MAX_WS_CONNECTIONS_PER_SESSION).toBe(0);
+    expect(c.MAX_SESSIONS_PER_AGENT).toBe(0);
+    expect(c.MAX_EVENTS_PER_SESSION).toBe(0);
   });
 
   it("redacts creds in DATABASE_URL", () => {

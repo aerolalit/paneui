@@ -55,6 +55,12 @@ starting point):
 | `PANE_SECRET_KEY` | auto-generated | Encryption master key (see below). |
 | `REGISTER_RATE_LIMIT` | `5` | Per-IP rate limit for the open `POST /v1/register` endpoint. `0` disables the limiter. |
 | `REGISTER_RATE_WINDOW_SECONDS` | `3600` | Window for the registration rate limit. |
+| `RATE_LIMIT` | `120` | General per-IP **and** per-token rate limit applied to every `/v1/*` and `/s/*` route. `0` disables it. |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Window for the general rate limit. |
+| `TRUSTED_PROXY` | — | Comma-separated proxy IPs the relay sits directly behind. `X-Forwarded-For` is honored **only** when the socket peer is one of these (the last untrusted hop is used). Empty means XFF is never trusted and the raw socket address is used. |
+| `MAX_WS_CONNECTIONS_PER_SESSION` | `16` | Max concurrent WebSocket connections per session/token. `0` disables the cap. |
+| `MAX_SESSIONS_PER_AGENT` | `50` | Max open sessions a single agent may hold. `0` disables the cap. |
+| `MAX_EVENTS_PER_SESSION` | `10000` | Max events a single session may accumulate. `0` disables the cap. |
 | `MAX_ARTIFACT_BYTES` | `2000000` | Largest artifact a session may carry. |
 | `MAX_EVENT_DATA_BYTES` | `65536` | Largest `data` payload per event. |
 | `MAX_PARTICIPANTS_PER_SESSION` | `32` | Participant cap per session. |

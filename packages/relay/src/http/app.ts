@@ -15,6 +15,7 @@ import sessions from "./routes/sessions.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import bridge from "../bridge/routes.js";
+import { generalRateLimit } from "./rate-limit.js";
 
 export function buildApp(): Hono {
   const app = new Hono();
@@ -107,6 +108,16 @@ export function buildApp(): Hono {
       });
     });
   }
+
+  // General per-IP + per-token rate limit on every API/bridge route. /healthz
+  // and /metrics are registered above so they stay unmetered (load balancers
+  // and Prometheus scrapers poll them). The rate-limit middleware runs after
+  // the request-id/duration middleware (app.use("*", ...) above) so rejected
+  // (429) requests are still logged and traced. The open /v1/register
+  // endpoint additionally has its own stricter per-IP limiter applied inside
+  // the route module.
+  app.use("/v1/*", generalRateLimit);
+  app.use("/s/*", generalRateLimit);
 
   // /v1/register is open (no secret); abuse is bounded by a per-IP rate limit
   // applied inside the route module.

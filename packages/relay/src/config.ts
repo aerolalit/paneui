@@ -14,6 +14,31 @@ const schema = z.object({
     .int()
     .positive()
     .default(3600),
+  // General per-IP rate limit applied to every /v1/* and /s/* route.
+  // RATE_LIMIT=0 disables the general limiter entirely (unlimited).
+  RATE_LIMIT: z.coerce.number().int().min(0).default(120),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // Comma-separated list of proxy IPs the relay sits directly behind. Only
+  // when the socket peer is one of these is the `X-Forwarded-For` header
+  // honored (taking the last untrusted hop). Empty = never trust XFF.
+  TRUSTED_PROXY: z
+    .string()
+    .default("")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0),
+    ),
+  // Max concurrent WebSocket connections per session/token.
+  // MAX_WS_CONNECTIONS_PER_SESSION=0 disables the cap.
+  MAX_WS_CONNECTIONS_PER_SESSION: z.coerce.number().int().min(0).default(16),
+  // Max number of open (non-closed) sessions a single agent may hold.
+  // MAX_SESSIONS_PER_AGENT=0 disables the cap.
+  MAX_SESSIONS_PER_AGENT: z.coerce.number().int().min(0).default(50),
+  // Max number of events a single session may accumulate.
+  // MAX_EVENTS_PER_SESSION=0 disables the cap.
+  MAX_EVENTS_PER_SESSION: z.coerce.number().int().min(0).default(10_000),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
   // Caps on the agent-supplied per-session JSON Schema. The schema is compiled
