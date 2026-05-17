@@ -43,7 +43,18 @@ export interface RedisLike {
   publish(channel: string, message: string): Promise<number>;
   subscribe(...channels: string[]): Promise<unknown>;
   unsubscribe(...channels: string[]): Promise<unknown>;
+  // PATTERN subscribe — required for the `pane:events:*` wildcard. A plain
+  // `subscribe("pane:events:*")` treats the `*` as a literal channel name and
+  // never receives anything; only `psubscribe` does glob matching.
+  psubscribe(...patterns: string[]): Promise<unknown>;
+  punsubscribe(...patterns: string[]): Promise<unknown>;
   on(event: "message", cb: (channel: string, message: string) => void): void;
+  // Pattern-subscription deliveries arrive on `pmessage` with the matched
+  // pattern as the first argument.
+  on(
+    event: "pmessage",
+    cb: (pattern: string, channel: string, message: string) => void,
+  ): void;
   on(event: "error", cb: (err: Error) => void): void;
   on(event: "connect" | "ready" | "close" | "end", cb: () => void): void;
   // Sorted-set + hash + key commands used by rate-limit.ts and presence.ts.

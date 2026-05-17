@@ -57,10 +57,13 @@ function ensureRedisSubscription(): void {
   subscriptionWired = true;
   const sub = redisSub();
 
-  // ioredis delivers PATTERN-subscription payloads via the `pmessage` event;
-  // we use a plain SUBSCRIBE on the literal pattern channel instead and route
-  // by the `message` event, keyed on the channel suffix.
-  sub.on("message", (channel: string, payload: string) => {
+  // Each session publishes to its own channel `pane:events:<sessionId>`, so we
+  // PATTERN-subscribe to `pane:events:*` with a single PSUBSCRIBE. A plain
+  // SUBSCRIBE would treat `*` as a literal channel name and receive nothing —
+  // glob matching requires PSUBSCRIBE, whose payloads arrive on `pmessage`
+  // (pattern, channel, payload). Routing by the channel suffix means adding a
+  // session never needs another subscribe call.
+  sub.on("pmessage", (_pattern: string, channel: string, payload: string) => {
     if (!channel.startsWith(CHANNEL_PREFIX)) return;
     const sessionId = channel.slice(CHANNEL_PREFIX.length);
     try {
@@ -76,10 +79,8 @@ function ensureRedisSubscription(): void {
     }
   });
 
-  // ioredis supports a glob pattern in `psubscribe`; we instead psubscribe via
-  // the `subscribe` helper on the prefixed pattern and rely on `message`.
-  void sub.subscribe(CHANNEL_PATTERN).catch((err: unknown) => {
-    log.error("broadcast: redis subscribe failed", {
+  void sub.psubscribe(CHANNEL_PATTERN).catch((err: unknown) => {
+    log.error("broadcast: redis psubscribe failed", {
       error: err instanceof Error ? err.message : String(err),
     });
   });
