@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import prisma from "../../db.js";
 import { dualAuth, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import { openWaiter } from "../broadcast.js";
@@ -24,6 +23,8 @@ const postBody = z.object({
 });
 
 events.post("/", async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
   const session = c.get("session");
   const author = c.get("author");
 
@@ -38,12 +39,17 @@ events.post("/", async (c) => {
   }
   const { type, data, causation_id, idempotency_key } = parsed.data;
 
-  const { event, deduped } = await writeEvent(session, author, {
-    type,
-    data,
-    causationId: causation_id ?? null,
-    idempotencyKey: idempotency_key ?? null,
-  });
+  const { event, deduped } = await writeEvent(
+    { prisma, config },
+    session,
+    author,
+    {
+      type,
+      data,
+      causationId: causation_id ?? null,
+      idempotencyKey: idempotency_key ?? null,
+    },
+  );
 
   if (deduped) {
     return c.json({ event, deduped: true }, 200);
@@ -52,6 +58,7 @@ events.post("/", async (c) => {
 });
 
 events.get("/", async (c) => {
+  const prisma = c.get("prisma");
   const session = c.get("session");
   const sinceRaw = c.req.query("since");
   const waitRaw = c.req.query("wait");

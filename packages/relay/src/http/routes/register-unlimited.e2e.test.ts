@@ -1,14 +1,16 @@
 // Verifies REGISTER_RATE_LIMIT=0 disables the per-IP registration limiter.
 //
-// Separate file from register.e2e.test.ts because the rate limiter + config
-// are module singletons evaluated at import time — a fresh Vitest file gives
-// us a clean module registry to re-evaluate them with the limiter off.
+// With config injected via buildApp(), the disabled-limiter config is just
+// passed straight to loadConfig() — no module-singleton juggling required.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../../test-helpers/db.js";
+import { createPrismaClient } from "../../db.js";
+import { loadConfig } from "../../config.js";
+import { buildApp } from "../app.js";
 
 let testDb: TestDb;
 let app: Hono;
@@ -16,17 +18,19 @@ let prisma: PrismaClient;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
-  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-  process.env.PUBLIC_URL = "http://localhost:3000";
-  process.env.REGISTER_RATE_LIMIT = "0"; // disabled
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  const { buildApp } = await import("../app.js");
-  app = buildApp();
+  app = buildApp(
+    loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      REGISTER_RATE_LIMIT: "0", // disabled
+    }),
+    prisma,
+  );
 });
 
 afterAll(async () => {

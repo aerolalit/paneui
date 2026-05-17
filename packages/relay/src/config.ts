@@ -145,12 +145,15 @@ export function redactConfig(c: Config): Record<string, unknown> {
   return r;
 }
 
-// Parsing happens at import time. A bad env var would otherwise throw a raw
-// ZodError before main()'s try/catch can run, so we format it here and exit
-// with a clear message for self-hosters.
-function loadConfigOrExit(): Config {
+// Wraps loadConfig with a friendly exit path: a bad env var prints a clear,
+// multi-line message and exits non-zero instead of stack-tracing a raw
+// ZodError. Callers invoke this explicitly at startup — there is no module
+// import-time singleton (the relay threads an explicit Config through buildApp).
+export function loadConfigOrExit(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): Config {
   try {
-    return loadConfig();
+    return loadConfig(env);
   } catch (err) {
     if (err instanceof ConfigError) {
       process.stderr.write(`${err.message}\n`);
@@ -159,6 +162,3 @@ function loadConfigOrExit(): Config {
     throw err;
   }
 }
-
-const config = loadConfigOrExit();
-export default config;

@@ -13,7 +13,7 @@
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
 import type { IncomingMessage } from "node:http";
-import config from "../config.js";
+import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
 
 /**
@@ -64,12 +64,14 @@ function resolveClientIp(
  * Returns "unknown" if no address is available (e.g. under app.fetch() in
  * tests, where there is no socket), which buckets all such requests together.
  *
- * `trustedProxies` defaults to the configured `TRUSTED_PROXY` list; it is a
- * parameter purely so unit tests can exercise the trust logic directly.
+ * `trustedProxies` is passed in by the caller — the relay's `TRUSTED_PROXY`
+ * config list, threaded through dependency injection (there is no config
+ * singleton to read). Callers on the Hono request path source it from
+ * `c.get("config").TRUSTED_PROXY`; unit tests pass a list directly.
  */
 export function clientIp(
   c: Context,
-  trustedProxies: readonly string[] = config.TRUSTED_PROXY,
+  trustedProxies: readonly string[],
 ): string {
   let socketAddr: string | null = null;
   try {
@@ -84,7 +86,7 @@ export function clientIp(
   );
 }
 
-interface SlidingWindowLimiter {
+export interface SlidingWindowLimiter {
   /** Returns true if the request is allowed, false if it exceeds the limit. */
   check(key: string): boolean;
 }
@@ -129,29 +131,18 @@ export function createRateLimiter(
   };
 }
 
-// Singleton limiter for the registration endpoint, configured from env.
-const registerLimiter = createRateLimiter(
-  config.REGISTER_RATE_LIMIT,
-  config.REGISTER_RATE_WINDOW_SECONDS * 1000,
-);
-
 /**
  * Enforce the per-IP registration rate limit. Throws ApiError(429) when the
- * caller's IP has exceeded the configured limit within the window.
+ * caller's IP has exceeded the configured limit within the window. The limiter
+ * itself is created once per app in buildApp() and read off the request
+ * context, so its sliding-window state is shared across requests.
  */
-export function enforceRegisterRateLimit(c: Context): void {
-  if (!registerLimiter.check(clientIp(c))) {
+export function enforceRegisterRateLimit(c: Context<AppEnv>): void {
+  const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
+  if (!c.get("registerLimiter").check(ip)) {
     throw errors.tooManyRequests("registration rate limit exceeded");
   }
 }
-
-// General-purpose limiter covering every /v1 + /s route. Keyed per-IP, and —
-// when the caller presents a bearer/participant token — additionally per
-// token, so one IP rotating tokens (or one token roaming IPs) is still bound.
-const generalLimiter = createRateLimiter(
-  config.RATE_LIMIT,
-  config.RATE_LIMIT_WINDOW_SECONDS * 1000,
-);
 
 /**
  * Extract a stable, low-cardinality token fingerprint from the Authorization
@@ -170,9 +161,15 @@ function tokenKey(c: Context): string | null {
  * Hono middleware enforcing the general per-IP + per-token rate limit. Applied
  * to all /v1/* and /s/* routes. Throws ApiError(429) when either the caller's
  * IP or its bearer token has exceeded the configured limit within the window.
+ *
+ * The general limiter is created once per app in buildApp() from the injected
+ * config and placed on the request context, so its sliding-window state is
+ * shared across requests — and, critically, with the WebSocket-upgrade path,
+ * which is handed the SAME limiter instance via `attachWs()`.
  */
-export const generalRateLimit: MiddlewareHandler = async (c, next) => {
-  const ip = clientIp(c);
+export const generalRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const generalLimiter = c.get("generalLimiter");
+  const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
   if (!generalLimiter.check("ip:" + ip)) {
     throw errors.tooManyRequests("rate limit exceeded");
   }
@@ -193,19 +190,26 @@ export const generalRateLimit: MiddlewareHandler = async (c, next) => {
  * per-session connection cap by rotating session ids / spraying invalid
  * tokens. Call this FIRST in the upgrade handler, before any DB work.
  *
- * Uses the SAME `generalLimiter` and the SAME `"ip:"` key as the HTTP path,
- * so a client's WS-upgrade attempts and HTTP requests share one IP bucket.
+ * The caller passes the SAME `generalLimiter` instance the Hono app uses (the
+ * one buildApp() created from config) and the SAME `"ip:"` key, so a client's
+ * WS-upgrade attempts and HTTP requests share one IP bucket. `trustedProxies`
+ * is the injected `TRUSTED_PROXY` config list. Both are threaded in via
+ * `attachWs()`'s deps — there is no module-level limiter or config singleton.
  *
  * Returns true if allowed, false if the IP has exceeded the limit. The caller
  * is a raw socket (pre-upgrade), so there is no `ApiError` to throw — the
  * handler responds with a bare HTTP 429.
  */
-export function checkWsUpgradeRateLimit(req: IncomingMessage): boolean {
+export function checkWsUpgradeRateLimit(
+  req: IncomingMessage,
+  generalLimiter: SlidingWindowLimiter,
+  trustedProxies: readonly string[],
+): boolean {
   const socketAddr = req.socket.remoteAddress ?? null;
   const xffRaw = req.headers["x-forwarded-for"];
   // node:http gives x-forwarded-for as string | string[]; normalise to one
   // comma-joined string for the shared resolver.
   const xff = Array.isArray(xffRaw) ? xffRaw.join(",") : xffRaw;
-  const ip = resolveClientIp(socketAddr, xff, config.TRUSTED_PROXY);
+  const ip = resolveClientIp(socketAddr, xff, trustedProxies);
   return generalLimiter.check("ip:" + ip);
 }

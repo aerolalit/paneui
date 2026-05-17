@@ -16,7 +16,7 @@
 // plus N human authors, and each may connect/disconnect repeatedly, so we
 // compare counts rather than assuming a single join.
 
-import prisma from "../db.js";
+import type { PrismaClient } from "@prisma/client";
 import { log } from "../log.js";
 
 interface AuthorRef {
@@ -37,7 +37,11 @@ function authorOf(data: unknown): AuthorRef | null {
 // matching `left`, across all still-open sessions. Returns the number of
 // synthetic events written. Best-effort: a failure is logged, not thrown, so a
 // reconciliation hiccup never blocks relay startup.
-export async function reconcileOrphanedParticipants(): Promise<number> {
+//
+// `prisma` is injected by the caller — there is no module-singleton client.
+export async function reconcileOrphanedParticipants(
+  prisma: PrismaClient,
+): Promise<number> {
   let written = 0;
   try {
     const openSessions = await prisma.session.findMany({

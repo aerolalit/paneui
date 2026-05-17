@@ -19,33 +19,39 @@ import { randomBytes } from "node:crypto";
 import type { PrismaClient, Session } from "@prisma/client";
 import type { Author } from "../types.js";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { createPrismaClient } from "../db.js";
+import { loadConfig, type Config } from "../config.js";
+import { encryptSecret, _resetKeyCacheForTests } from "../crypto.js";
+import {
+  writeEvent,
+  type WriteEventInput,
+  type WriteEventResult,
+} from "./events.js";
 
 let testDb: TestDb;
-let writeEvent: typeof import("./events.js").writeEvent;
 let prisma: PrismaClient;
-let encryptSecret: typeof import("../crypto.js").encryptSecret;
-let _resetKeyCacheForTests: typeof import("../crypto.js")._resetKeyCacheForTests;
+let config: Config;
+
+// Thin wrapper that binds writeEvent to the injected { prisma, config } deps so
+// the individual test bodies stay focused on session/author/input.
+function we(
+  session: Session,
+  author: Author,
+  input: WriteEventInput,
+): Promise<WriteEventResult> {
+  return writeEvent({ prisma, config }, session, author, input);
+}
 
 beforeAll(async () => {
   testDb = await setupTestDb();
-  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  // Reset the Prisma singleton so the dynamic import below opens a fresh
-  // client pointed at our isolated test DB.
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-
-  const cryptoMod = await import("../crypto.js");
-  encryptSecret = cryptoMod.encryptSecret;
-  _resetKeyCacheForTests = cryptoMod._resetKeyCacheForTests;
   _resetKeyCacheForTests();
 
-  const dbMod = await import("../db.js");
-  prisma = dbMod.default;
+  prisma = createPrismaClient(testDb.dbUrl);
+  config = loadConfig({ ...process.env, DATABASE_URL: testDb.dbUrl });
   await testDb.applyMigration(prisma);
-
-  ({ writeEvent } = await import("./events.js"));
 });
 
 afterAll(async () => {
@@ -119,7 +125,7 @@ describe("writeEvent (integration, real SQLite)", () => {
 
   it("happy path: persists, returns serialized event, not deduped", async () => {
     const { session, agentId } = await seedSession();
-    const { event, deduped } = await writeEvent(session, agentAuthor(agentId), {
+    const { event, deduped } = await we(session, agentAuthor(agentId), {
       type: "review.commentAdded",
       data: { body: "looks good" },
     });
@@ -137,7 +143,7 @@ describe("writeEvent (integration, real SQLite)", () => {
   it("rejects an event on a closed session as gone", async () => {
     const { session, agentId } = await seedSession({ status: "closed" });
     await expect(
-      writeEvent(session, agentAuthor(agentId), {
+      we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },
       }),
@@ -147,7 +153,7 @@ describe("writeEvent (integration, real SQLite)", () => {
   it("rejects an event on an expired session as gone", async () => {
     const { session, agentId } = await seedSession({ expiresInMs: -1000 });
     await expect(
-      writeEvent(session, agentAuthor(agentId), {
+      we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },
       }),
@@ -157,7 +163,7 @@ describe("writeEvent (integration, real SQLite)", () => {
   it("rejects an unknown event type via the schema validator", async () => {
     const { session, agentId } = await seedSession();
     await expect(
-      writeEvent(session, agentAuthor(agentId), {
+      we(session, agentAuthor(agentId), {
         type: "totally.unknown",
         data: {},
       }),
@@ -167,7 +173,7 @@ describe("writeEvent (integration, real SQLite)", () => {
   it("rejects a payload that fails the JSON Schema", async () => {
     const { session, agentId } = await seedSession();
     await expect(
-      writeEvent(session, agentAuthor(agentId), {
+      we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { wrongField: 1 },
       }),
@@ -196,7 +202,7 @@ describe("writeEvent (integration, real SQLite)", () => {
       },
     });
     await expect(
-      writeEvent(updated, agentAuthor("a1"), {
+      we(updated, agentAuthor("a1"), {
         type: "review.commentAdded",
         data: { body: "nope" },
       }),
@@ -222,7 +228,7 @@ describe("writeEvent (integration, real SQLite)", () => {
     });
     const huge = { blob: "x".repeat(70_000) };
     await expect(
-      writeEvent(updated, agentAuthor(agentId), {
+      we(updated, agentAuthor(agentId), {
         type: "big.payload",
         data: huge,
       }),
@@ -233,12 +239,12 @@ describe("writeEvent (integration, real SQLite)", () => {
     it("returns deduped=true when the same key is replayed sequentially", async () => {
       const { session, agentId } = await seedSession();
       const key = "idem-" + randomBytes(8).toString("hex");
-      const first = await writeEvent(session, agentAuthor(agentId), {
+      const first = await we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "v1" },
         idempotencyKey: key,
       });
-      const second = await writeEvent(session, agentAuthor(agentId), {
+      const second = await we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "v1" },
         idempotencyKey: key,
@@ -261,7 +267,7 @@ describe("writeEvent (integration, real SQLite)", () => {
       const key = "race-" + randomBytes(8).toString("hex");
       const results = await Promise.all(
         Array.from({ length: 5 }).map(() =>
-          writeEvent(session, agentAuthor(agentId), {
+          we(session, agentAuthor(agentId), {
             type: "review.commentAdded",
             data: { body: "x" },
             idempotencyKey: key,
@@ -294,12 +300,12 @@ describe("writeEvent (integration, real SQLite)", () => {
         },
       });
       const key = "shared-key";
-      const a = await writeEvent(session, agentAuthor(agentId), {
+      const a = await we(session, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "from agent" },
         idempotencyKey: key,
       });
-      const b = await writeEvent(session, humanAuthor("h_0"), {
+      const b = await we(session, humanAuthor("h_0"), {
         type: "review.commentAdded",
         data: { body: "from human" },
         idempotencyKey: key,
@@ -324,14 +330,10 @@ describe("writeEvent (integration, real SQLite)", () => {
           callbackFilter: ["review.*"],
         },
       });
-      const { event, deduped } = await writeEvent(
-        broken,
-        agentAuthor(agentId),
-        {
-          type: "review.commentAdded",
-          data: { body: "x" },
-        },
-      );
+      const { event, deduped } = await we(broken, agentAuthor(agentId), {
+        type: "review.commentAdded",
+        data: { body: "x" },
+      });
       expect(deduped).toBe(false);
       expect(event.type).toBe("review.commentAdded");
       const persisted = await prisma.event.findFirst({
@@ -353,12 +355,12 @@ describe("writeEvent (integration, real SQLite)", () => {
         .mockResolvedValue(new Response(null, { status: 200 }));
       try {
         const key = "dedupe-no-webhook";
-        await writeEvent(session, agentAuthor(agentId), {
+        await we(session, agentAuthor(agentId), {
           type: "review.commentAdded",
           data: { body: "x" },
           idempotencyKey: key,
         });
-        await writeEvent(session, agentAuthor(agentId), {
+        await we(session, agentAuthor(agentId), {
           type: "review.commentAdded",
           data: { body: "x" },
           idempotencyKey: key,

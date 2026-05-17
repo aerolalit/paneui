@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import prisma from "../../db.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 
@@ -20,6 +19,7 @@ keys.get("/", (c) => {
 });
 
 keys.delete("/:id", async (c) => {
+  const prisma = c.get("prisma");
   const me = c.get("agent");
   const id = c.req.param("id");
   if (id !== me.id) throw errors.forbidden();

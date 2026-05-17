@@ -1,7 +1,6 @@
 import { Prisma } from "@prisma/client";
-import type { Session } from "@prisma/client";
-import config from "../config.js";
-import prisma from "../db.js";
+import type { PrismaClient, Session } from "@prisma/client";
+import type { Config } from "../config.js";
 import { decryptSecret } from "../crypto.js";
 import { publish } from "../http/broadcast.js";
 import { errors } from "../http/errors.js";
@@ -24,14 +23,24 @@ export interface WriteEventResult {
   deduped: boolean;
 }
 
+// Injected dependencies for writeEvent — the Prisma client and config are
+// passed in rather than imported as module singletons.
+export interface WriteEventDeps {
+  prisma: PrismaClient;
+  config: Config;
+}
+
 // Append a system-authored event (authorKind/authorId = "system") to a session
 // and broadcast it to connected peers. Used for system.schema.updated,
 // system.artifact.updated, system.session.expired and system.participant.joined.
+//
+// `prisma` is injected by the caller — there is no module-singleton client.
 //
 // `decorate` lets a caller transform only the in-memory broadcast copy (the
 // persisted row is untouched) — the WS handler uses it to ride a live agent
 // count on participant.joined without persisting that count.
 export async function appendSystemEvent(
+  prisma: PrismaClient,
   sessionId: string,
   type: string,
   data: object,
@@ -57,10 +66,12 @@ export async function appendSystemEvent(
 // frame handler so the validation/dedupe/publish/webhook pipeline stays in lock
 // step across transports.
 export async function writeEvent(
+  deps: WriteEventDeps,
   session: Session,
   author: Author,
   input: WriteEventInput,
 ): Promise<WriteEventResult> {
+  const { prisma, config } = deps;
   if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }

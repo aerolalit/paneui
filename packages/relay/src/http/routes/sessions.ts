@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { artifactSchema, createSessionSchema } from "@pane/core";
-import config from "../../config.js";
-import prisma from "../../db.js";
+import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
   generateSessionId,
@@ -31,13 +30,15 @@ const sessions = new Hono<AuthEnv>();
 // relay imports them so the server-side validator and the client-facing
 // types can never drift. See packages/core/src/schemas.ts.
 
-function publicWsUrl(): string {
+function publicWsUrl(config: Config): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
 }
 
 sessions.post("/", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
   const body = await c.req.json().catch(() => null);
   const parsed = createSessionSchema.safeParse(body);
   if (!parsed.success) {
@@ -146,7 +147,7 @@ sessions.post("/", requireAgent, async (c) => {
 
   recordSessionCreated();
 
-  const wsBase = publicWsUrl();
+  const wsBase = publicWsUrl(config);
   return c.json(
     {
       session_id: sessionId,
@@ -165,6 +166,7 @@ sessions.post("/", requireAgent, async (c) => {
 });
 
 sessions.get("/:id", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
@@ -186,6 +188,8 @@ const patchSchemaBody = z.object({
 });
 
 sessions.patch("/:id/schema", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
@@ -219,7 +223,7 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
     },
   });
   invalidateSchemaCache(id);
-  await appendSystemEvent(id, "system.schema.updated", {
+  await appendSystemEvent(prisma, id, "system.schema.updated", {
     version: updated.schemaVersion,
     added,
   });
@@ -229,6 +233,8 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
 const patchArtifactBody = z.object({ artifact: artifactSchema });
 
 sessions.patch("/:id/artifact", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
@@ -257,7 +263,7 @@ sessions.patch("/:id/artifact", requireAgent, async (c) => {
       artifactVersion: { increment: 1 },
     },
   });
-  await appendSystemEvent(id, "system.artifact.updated", {
+  await appendSystemEvent(prisma, id, "system.artifact.updated", {
     version: updated.artifactVersion,
     type: updated.artifactType,
   });
@@ -265,6 +271,7 @@ sessions.patch("/:id/artifact", requireAgent, async (c) => {
 });
 
 sessions.delete("/:id", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
@@ -275,7 +282,7 @@ sessions.delete("/:id", requireAgent, async (c) => {
     data: { status: "closed", expiresAt: new Date() },
   });
   invalidateSchemaCache(id);
-  await appendSystemEvent(id, "system.session.expired", {});
+  await appendSystemEvent(prisma, id, "system.session.expired", {});
   return c.body(null, 204);
 });
 
