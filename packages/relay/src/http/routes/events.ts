@@ -3,7 +3,7 @@ import { z } from "zod";
 import prisma from "../../db.js";
 import { dualAuth, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
-import { waitForEvent } from "../broadcast.js";
+import { openWaiter } from "../broadcast.js";
 import { serializeEvent } from "../serialize.js";
 import { writeEvent } from "../../core/events.js";
 
@@ -90,12 +90,24 @@ events.get("/", async (c) => {
     };
   }
 
-  const first = await query();
-  if (first.events.length > 0 || waitSec === 0) {
-    return c.json(first);
+  if (waitSec === 0) {
+    return c.json(await query());
   }
-  await waitForEvent(session.id, waitSec * 1000);
-  return c.json(await query());
+
+  // Subscribe to the broadcast bus BEFORE the first query so that an event
+  // published during the query window is buffered rather than missed by both
+  // the query and the subsequent waiter (long-poll race, issue #49).
+  const waiter = openWaiter(session.id);
+  try {
+    const first = await query();
+    if (first.events.length > 0) {
+      return c.json(first);
+    }
+    await waiter.wait(waitSec * 1000);
+    return c.json(await query());
+  } finally {
+    waiter.close();
+  }
 });
 
 export default events;

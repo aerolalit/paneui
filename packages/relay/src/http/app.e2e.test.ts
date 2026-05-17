@@ -331,6 +331,45 @@ describe("HTTP e2e", () => {
       expect(res.status).toBe(422);
     });
 
+    it("long-poll delivers an event posted concurrently with the query window (#49)", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken, humanToken } =
+        await createOpenSession(apiKey);
+
+      // Start a long-poll GET with an empty event log. The handler subscribes
+      // to the broadcast bus before its first query, so an event published
+      // while the request is in flight must still land in the same response.
+      const get = app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}/events?since=0&wait=5`, {
+          headers: bearer(agentToken),
+        }),
+      );
+
+      // Race the publish against the query window: post immediately, no delay.
+      const post = await app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+          method: "POST",
+          headers: bearer(humanToken),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "raced" },
+          }),
+        }),
+      );
+      expect(post.status).toBe(201);
+      const postBody = (await post.json()) as { event: { id: string } };
+
+      const res = await get;
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        events: { id: string; data: { body: string } }[];
+        next_cursor: string | null;
+      };
+      expect(body.events).toHaveLength(1);
+      expect(body.events[0]!.id).toBe(postBody.event.id);
+      expect(body.events[0]!.data.body).toBe("raced");
+    });
+
     it("wrong-session participant token returns 404", async () => {
       const { apiKey } = await seedAgent();
       const a = await createOpenSession(apiKey);
