@@ -14,6 +14,7 @@ import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
+import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 
 // One TTL sweep pass: collect the expired session ids first, then deleteMany,
 // then drop each session's compiled-validator cache entry. Two queries (no
@@ -63,6 +64,12 @@ async function main(): Promise<void> {
   log.info("starting pane relay", { config: redactConfig(config) });
 
   await runBootstrap(prisma, config);
+
+  // Close out any orphaned `system.participant.joined` events from a previous
+  // process that crashed/restarted before writing the matching `left`. At this
+  // point no WebSocket is connected, so every unpaired `joined` is provably
+  // stale. See core/reconcile.ts.
+  await reconcileOrphanedParticipants();
 
   // Initialise telemetry before buildApp() so the metric instruments exist
   // when routes/middleware register. initTelemetry is async because the azure
