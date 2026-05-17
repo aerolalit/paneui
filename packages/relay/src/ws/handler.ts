@@ -9,6 +9,7 @@ import {
 } from "../limits.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
+import { checkWsUpgradeRateLimit } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
@@ -98,6 +99,14 @@ async function handleUpgrade(
       return;
     }
     const sessionId = m[1]!;
+
+    // Per-IP rate limit FIRST — before any token resolve or DB lookup — so a
+    // flood of upgrade attempts cannot drive DB work. The Hono `generalRateLimit`
+    // middleware does not cover the upgrade (it is handled off the Hono app).
+    if (!checkWsUpgradeRateLimit(req)) {
+      sendUpgradeError(socket, 429);
+      return;
+    }
 
     const token = extractToken(req, url);
     if (!token) {

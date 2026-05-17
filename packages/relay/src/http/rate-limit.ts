@@ -12,8 +12,39 @@
 
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
+import type { IncomingMessage } from "node:http";
 import config from "../config.js";
 import { errors } from "./errors.js";
+
+/**
+ * Core trusted-proxy IP resolution, shared by the Hono `clientIp()` and the
+ * raw-socket WebSocket-upgrade path. Given the socket peer address and the
+ * raw `X-Forwarded-For` header value, returns the IP to bucket on.
+ *
+ * XFF is honored ONLY when the socket peer is a configured trusted proxy;
+ * otherwise it is ignored and the socket address is used, so a direct client
+ * cannot spoof its bucket. See `clientIp()` for the full rationale.
+ */
+function resolveClientIp(
+  socketAddr: string | null,
+  xff: string | undefined,
+  trusted: readonly string[],
+): string {
+  if (xff && socketAddr && trusted.includes(socketAddr)) {
+    const hops = xff
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    // Walk from the right (closest to our edge); the first hop that is not
+    // itself a trusted proxy is the real client as our outermost proxy saw it.
+    for (let i = hops.length - 1; i >= 0; i--) {
+      const hop = hops[i]!;
+      if (!trusted.includes(hop)) return hop;
+    }
+    // Whole chain was trusted proxies — fall through to the socket address.
+  }
+  return socketAddr ?? "unknown";
+}
 
 /**
  * Resolve the client IP for a request.
@@ -46,27 +77,11 @@ export function clientIp(
   } catch {
     socketAddr = null;
   }
-
-  const xff = c.req.header("x-forwarded-for");
-  const trusted = trustedProxies;
-
-  // Honor XFF only when we can confirm the socket peer is a trusted proxy.
-  if (xff && socketAddr && trusted.includes(socketAddr)) {
-    const hops = xff
-      .split(",")
-      .map((v) => v.trim())
-      .filter((v) => v.length > 0);
-    // Walk from the right (closest to our edge) and skip any hop that is
-    // itself a trusted proxy. The first non-trusted hop is the real client
-    // as seen by our outermost trusted proxy.
-    for (let i = hops.length - 1; i >= 0; i--) {
-      const hop = hops[i]!;
-      if (!trusted.includes(hop)) return hop;
-    }
-    // Whole chain was trusted proxies — fall through to the socket address.
-  }
-
-  return socketAddr ?? "unknown";
+  return resolveClientIp(
+    socketAddr,
+    c.req.header("x-forwarded-for"),
+    trustedProxies,
+  );
 }
 
 interface SlidingWindowLimiter {
@@ -167,3 +182,30 @@ export const generalRateLimit: MiddlewareHandler = async (c, next) => {
   }
   await next();
 };
+
+/**
+ * Per-IP rate limit for the WebSocket upgrade (`WS /v1/sessions/:id/stream`).
+ *
+ * The upgrade is handled out-of-band by the `server.on("upgrade")` listener,
+ * NOT through the Hono app — so `generalRateLimit` middleware never runs for
+ * it. Without this an attacker could hammer the upgrade endpoint (each upgrade
+ * does a token resolve + DB lookups) with no per-IP bound, sidestepping the
+ * per-session connection cap by rotating session ids / spraying invalid
+ * tokens. Call this FIRST in the upgrade handler, before any DB work.
+ *
+ * Uses the SAME `generalLimiter` and the SAME `"ip:"` key as the HTTP path,
+ * so a client's WS-upgrade attempts and HTTP requests share one IP bucket.
+ *
+ * Returns true if allowed, false if the IP has exceeded the limit. The caller
+ * is a raw socket (pre-upgrade), so there is no `ApiError` to throw — the
+ * handler responds with a bare HTTP 429.
+ */
+export function checkWsUpgradeRateLimit(req: IncomingMessage): boolean {
+  const socketAddr = req.socket.remoteAddress ?? null;
+  const xffRaw = req.headers["x-forwarded-for"];
+  // node:http gives x-forwarded-for as string | string[]; normalise to one
+  // comma-joined string for the shared resolver.
+  const xff = Array.isArray(xffRaw) ? xffRaw.join(",") : xffRaw;
+  const ip = resolveClientIp(socketAddr, xff, config.TRUSTED_PROXY);
+  return generalLimiter.check("ip:" + ip);
+}

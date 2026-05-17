@@ -38,6 +38,10 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.MAX_WS_CONNECTIONS_PER_SESSION = String(CAP);
+  // This file exercises the per-session connection cap by opening many
+  // upgrades from one (loopback) IP. Disable the general per-IP rate limiter
+  // so it doesn't fire first — RATE_LIMIT is covered by its own test.
+  process.env.RATE_LIMIT = "0";
 
   delete (globalThis as { prisma?: PrismaClient }).prisma;
   ({ default: prisma } = await import("../db.js"));
