@@ -354,6 +354,34 @@ interface SerializedEvent {
     }
   }
 
+  // Mint a fresh single-use WebSocket ticket. The shell holds the real
+  // participant token, but a long-lived token in the WS URL leaks into proxy
+  // access logs — so the browser path exchanges the token for a short-lived
+  // ticket (30s TTL, single-use) and puts the TICKET in the WS URL instead.
+  // A fresh ticket is minted before EVERY connect (incl. reconnects) because a
+  // ticket is single-use and expires after 30s. See relay issue #8.
+  const ticketUrl =
+    window.location.origin +
+    "/v1/sessions/" +
+    encodeURIComponent(CFG.sessionId) +
+    "/ws-ticket";
+
+  async function mintTicket(): Promise<string> {
+    const res = await fetch(ticketUrl, {
+      method: "POST",
+      headers: { authorization: "Bearer " + CFG.token },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      throw new Error("ws-ticket mint failed: " + res.status);
+    }
+    const body = (await res.json()) as { ticket?: unknown };
+    if (typeof body.ticket !== "string" || body.ticket.length === 0) {
+      throw new Error("ws-ticket mint returned no ticket");
+    }
+    return body.ticket;
+  }
+
   function connect(): void {
     if (CFG.isClosed) return;
     // Never run two connections at once. If one is already opening or open,
@@ -368,9 +396,34 @@ interface SerializedEvent {
       return;
     }
     teardownWs();
+    // `connecting` is held across the async ticket mint AND the socket open,
+    // so a queued reconnect or double-invoke cannot start a parallel attempt
+    // while the mint is in flight.
     connecting = true;
     setStatus("connecting...");
-    let qs = "?token=" + encodeURIComponent(CFG.token);
+    void openWithTicket();
+  }
+
+  // Mint a ticket, then open the socket with `?ticket=`. Kept separate from
+  // connect() so connect() stays a synchronous guard. A mint failure (network
+  // blip, expired session) is treated like a connection failure: clear the
+  // in-flight flag and schedule a backed-off reconnect.
+  async function openWithTicket(): Promise<void> {
+    let ticket: string;
+    try {
+      ticket = await mintTicket();
+    } catch {
+      connecting = false;
+      scheduleReconnect();
+      return;
+    }
+    // The session may have closed, or a newer connect superseded us, while the
+    // mint was in flight — bail rather than open a doomed socket.
+    if (CFG.isClosed) {
+      connecting = false;
+      return;
+    }
+    let qs = "?ticket=" + encodeURIComponent(ticket);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
     const sock = new WebSocket(CFG.wsUrl + qs);
     ws = sock;
