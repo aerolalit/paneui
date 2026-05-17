@@ -1,7 +1,5 @@
 # Pane
 
-_Working title (not final. The bare-word domain is taken across .com/.dev/.io; revisit before launch). Earlier name in notes: "Agent Relay"._
-
 **A round-trip UI channel between agents and humans.** An agent hands a human a rich interactive UI by URL (no GUI host app needed on either side), captures the human's interactions as structured data, and feeds that data back to the agent (WS, poll, or webhook).
 
 Status: design sketch. No code yet. Full design notes also live in the personal vault at `wiki/projects/pane/pane.md`.
