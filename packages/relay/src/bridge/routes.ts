@@ -21,8 +21,16 @@ const PROJECT_ROOT = resolve(
   "..",
   "..",
 );
-function loadClient(name: string): string {
-  let js = readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
+export function loadClient(name: string): string {
+  const path = resolve(PROJECT_ROOT, "dist", "client", name);
+  let js: string;
+  try {
+    js = readFileSync(path, "utf8");
+  } catch {
+    throw new Error(
+      `pane relay: client bundle missing at ${path} — run \`npm run build:client\` first`,
+    );
+  }
   // The client TS files are modules (`export {}` for file scoping + the shim's
   // `declare global`), but they're injected inline as a classic <script>, where
   // any `import`/`export` is a SyntaxError that aborts the whole script. Each
