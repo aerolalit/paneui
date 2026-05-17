@@ -24,6 +24,34 @@ export interface WriteEventResult {
   deduped: boolean;
 }
 
+// Append a system-authored event (authorKind/authorId = "system") to a session
+// and broadcast it to connected peers. Used for system.schema.updated,
+// system.artifact.updated, system.session.expired and system.participant.joined.
+//
+// `decorate` lets a caller transform only the in-memory broadcast copy (the
+// persisted row is untouched) — the WS handler uses it to ride a live agent
+// count on participant.joined without persisting that count.
+export async function appendSystemEvent(
+  sessionId: string,
+  type: string,
+  data: object,
+  decorate?: (e: SerializedEvent) => SerializedEvent,
+): Promise<SerializedEvent> {
+  const event = await prisma.event.create({
+    data: {
+      sessionId,
+      authorKind: "system",
+      authorId: "system",
+      type,
+      data: data as Prisma.InputJsonValue,
+    },
+  });
+  recordEventWritten("system");
+  const serialized = serializeEvent(event);
+  publish(sessionId, decorate ? decorate(serialized) : serialized);
+  return serialized;
+}
+
 // Single source of truth for "an authenticated participant or agent emits an
 // event on a session." Used by both POST /v1/sessions/:id/events and the WS
 // frame handler so the validation/dedupe/publish/webhook pipeline stays in lock

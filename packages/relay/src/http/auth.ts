@@ -84,47 +84,58 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
 // Dual auth for the events endpoints + WS upgrade.
 // Accepts either the agent's bearer (when it matches session.agentId) OR a
 // participant token (when it matches a Participant row for this session).
+//
+// Agent resolution is tried FIRST: a hit there skips the participant lookup
+// entirely (one fewer DB round trip per agent-authenticated call). Only on an
+// agent miss do we fall back to the participant lookup.
 export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const token = parseBearer(c);
   const sessionId = c.req.param("id");
   if (!sessionId) throw errors.notFound();
-  const resolved = await resolveBearer(token);
-  if (!resolved) throw errors.notFound();
+  const hash = hashKey(token);
 
-  if (resolved.kind === "participant") {
-    if (resolved.participant.sessionId !== sessionId) throw errors.notFound();
-    if (!resolved.participant.joinedAt) {
-      await prisma.participant.update({
-        where: { id: resolved.participant.id },
-        data: { joinedAt: new Date() },
-      });
-    }
-    c.set("session", resolved.session);
-    c.set("participant", resolved.participant);
-    c.set("author", {
-      kind: resolved.participant.kind === "agent" ? "agent" : "human",
-      id: resolved.participant.identityId,
+  // Agent path: must own the session.
+  const agent = await prisma.agent.findUnique({ where: { keyHash: hash } });
+  if (agent && !agent.revokedAt) {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
     });
+    if (!session || session.agentId !== agent.id) throw errors.notFound();
+    prisma.agent
+      .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
+      .catch((err: unknown) =>
+        log.warn("lastUsedAt update failed", {
+          agentId: agent.id,
+          error: String(err),
+        }),
+      );
+    c.set("agent", agent);
+    c.set("session", session);
+    c.set("author", { kind: "agent", id: agent.id });
     return next();
   }
 
-  // Agent path: must own the session.
-  const session = await prisma.session.findUnique({ where: { id: sessionId } });
-  if (!session || session.agentId !== resolved.agent.id)
-    throw errors.notFound();
-  prisma.agent
-    .update({
-      where: { id: resolved.agent.id },
-      data: { lastUsedAt: new Date() },
-    })
-    .catch((err: unknown) =>
-      log.warn("lastUsedAt update failed", {
-        agentId: resolved.agent.id,
-        error: String(err),
-      }),
-    );
-  c.set("agent", resolved.agent);
+  // Participant fallback.
+  const participant = await prisma.participant.findUnique({
+    where: { tokenHash: hash },
+  });
+  if (!participant || participant.revokedAt) throw errors.notFound();
+  if (participant.sessionId !== sessionId) throw errors.notFound();
+  const session = await prisma.session.findUnique({
+    where: { id: participant.sessionId },
+  });
+  if (!session) throw errors.notFound();
+  if (!participant.joinedAt) {
+    await prisma.participant.update({
+      where: { id: participant.id },
+      data: { joinedAt: new Date() },
+    });
+  }
   c.set("session", session);
-  c.set("author", { kind: "agent", id: resolved.agent.id });
+  c.set("participant", participant);
+  c.set("author", {
+    kind: participant.kind === "agent" ? "agent" : "human",
+    id: participant.identityId,
+  });
   await next();
 };

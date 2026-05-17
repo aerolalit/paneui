@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadConfig, redactConfig } from "./config.js";
+import { ConfigError, loadConfig, redactConfig } from "./config.js";
 
 describe("config", () => {
   it("accepts an empty env and applies defaults", () => {
@@ -103,5 +103,52 @@ describe("config", () => {
         "InstrumentationKey=00000000-0000-0000-0000-000000000000",
     });
     expect(redactConfig(c).APPLICATIONINSIGHTS_CONNECTION_STRING).toBe("<set>");
+  });
+
+  it("redacts a password-bearing query param in DATABASE_URL", () => {
+    const c = loadConfig({
+      DATABASE_URL: "postgresql://host/db?sslmode=require&password=s3cret",
+    });
+    const r = redactConfig(c);
+    expect(r.DATABASE_URL).toBe(
+      "postgresql://host/db?sslmode=require&password=<redacted>",
+    );
+  });
+
+  it("redacts both inline userinfo and a password query param", () => {
+    const c = loadConfig({
+      DATABASE_URL: "postgresql://user:pass@host/db?pwd=other",
+    });
+    const r = redactConfig(c);
+    expect(r.DATABASE_URL).toBe(
+      "postgresql://<redacted>@host/db?pwd=<redacted>",
+    );
+  });
+
+  it("throws a ConfigError with a friendly message on a bad PORT", () => {
+    let err: unknown;
+    try {
+      loadConfig({ PORT: "999999" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as ConfigError).message).toContain(
+      "invalid relay configuration",
+    );
+    expect((err as ConfigError).message).toContain("PORT");
+  });
+
+  it("lists every invalid field in the ConfigError message", () => {
+    let err: unknown;
+    try {
+      loadConfig({ PORT: "not-a-port", LOG_LEVEL: "verbose" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ConfigError);
+    const msg = (err as ConfigError).message;
+    expect(msg).toContain("PORT");
+    expect(msg).toContain("LOG_LEVEL");
   });
 });
