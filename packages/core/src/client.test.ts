@@ -98,6 +98,47 @@ describe("PaneClient typed operations", () => {
     });
   });
 
+  it("populates hint/retryable/docsUrl from the relay error envelope", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 429,
+        ok: false,
+        body: JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "slow down",
+            hint: "wait and retry",
+            retryable: true,
+            docs_url: "https://example.test/docs#rate",
+          },
+        }),
+      }),
+    );
+    const err = await c.getSession("ses_x").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PaneApiError);
+    const e = err as PaneApiError;
+    expect(e.code).toBe("rate_limited");
+    expect(e.hint).toBe("wait and retry");
+    expect(e.retryable).toBe(true);
+    expect(e.docsUrl).toBe("https://example.test/docs#rate");
+  });
+
+  it("leaves the new fields undefined when the relay omits them", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 404,
+        ok: false,
+        body: JSON.stringify({ error: { code: "not_found" } }),
+      }),
+    );
+    const err = (await c
+      .getSession("ses_x")
+      .catch((e: unknown) => e)) as PaneApiError;
+    expect(err.hint).toBeUndefined();
+    expect(err.retryable).toBeUndefined();
+    expect(err.docsUrl).toBeUndefined();
+  });
+
   it("throws invalid_response when a 2xx body is not an object", async () => {
     const c = clientWith(async () => res({ status: 200, body: "null" }));
     await expect(c.getSession("ses_x")).rejects.toBeInstanceOf(PaneApiError);

@@ -71,7 +71,11 @@ sessions.post("/", requireAgent, async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = createBody.safeParse(body);
   if (!parsed.success) {
-    throw errors.invalidRequest("invalid body", parsed.error.flatten());
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
   }
 
   const { artifact, participants, ttl, metadata, callback } = parsed.data;
@@ -196,7 +200,11 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = patchSchemaBody.safeParse(body);
   if (!parsed.success) {
-    throw errors.invalidRequest("invalid body", parsed.error.flatten());
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
   }
 
   const current = session.eventSchema as unknown as EventSchema;
@@ -231,7 +239,11 @@ sessions.patch("/:id/artifact", requireAgent, async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = patchArtifactBody.safeParse(body);
   if (!parsed.success) {
-    throw errors.invalidRequest("invalid body", parsed.error.flatten());
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
   }
   const a = parsed.data.artifact;
   if (Buffer.byteLength(a.source, "utf8") > config.MAX_ARTIFACT_BYTES) {

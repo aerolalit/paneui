@@ -25,7 +25,11 @@ events.post("/", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = postBody.safeParse(body);
   if (!parsed.success) {
-    throw errors.invalidRequest("invalid body", parsed.error.flatten());
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
   }
   const { type, data, causation_id, idempotency_key } = parsed.data;
 

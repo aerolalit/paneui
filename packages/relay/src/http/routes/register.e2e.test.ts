@@ -88,8 +88,19 @@ describe("POST /v1/register (open registration)", () => {
     }
     const over = await register("10.1.1.1");
     expect(over.status).toBe(429);
-    const body = (await over.json()) as { error: { code: string } };
+    const body = (await over.json()) as {
+      error: {
+        code: string;
+        hint?: string;
+        retryable?: boolean;
+        docs_url?: string;
+      };
+    };
     expect(body.error.code).toBe("rate_limited");
+    // A 429 is the one retryable error class — an agent should back off + retry.
+    expect(body.error.retryable).toBe(true);
+    expect(body.error.hint).toMatch(/wait|retry/i);
+    expect(body.error.docs_url).toContain("docs/SPEC.md#");
   });
 
   it("rate-limits each IP independently", async () => {
