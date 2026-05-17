@@ -4,17 +4,9 @@
 // `serve()` adapter (not raw node:http) so the browser path is exercised end
 // to end exactly as it ships.
 
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Server } from "node:http";
+import { setupTestDb } from "../../src/test-helpers/db.js";
 
 export interface RelayHandle {
   baseUrl: string;
@@ -23,22 +15,18 @@ export interface RelayHandle {
   stop(): Promise<void>;
 }
 
-function migrationsSql(): string {
-  const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter((e) =>
-    statSync(join(dir, e)).isDirectory(),
-  );
-  entries.sort();
-  const last = entries[entries.length - 1];
-  if (!last) throw new Error("no migrations found");
-  return readFileSync(join(dir, last, "migration.sql"), "utf8");
-}
-
 export async function startRelay(): Promise<RelayHandle> {
-  const dir = mkdtempSync(join(tmpdir(), "pane-pw-"));
   const port = 4000 + Math.floor(Math.random() * 1000);
 
-  process.env.DATABASE_URL = "file:" + join(dir, "pane.db");
+  // DB setup + migration application — shared with the vitest e2e suite via
+  // src/test-helpers/db.ts, so the migration loader lives in exactly one place.
+  // The browser smoke test is hardwired to SQLite (pretest:browser generates
+  // the SQLite Prisma client), so force the sqlite branch by clearing any
+  // ambient DATABASE_URL the developer's `.env` may have exported — otherwise
+  // setupTestDb() would pick Postgres from it and the SQLite client rejects it.
+  delete process.env.DATABASE_URL;
+  const testDb = await setupTestDb();
+  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "warn";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.PORT = String(port);
@@ -49,16 +37,7 @@ export async function startRelay(): Promise<RelayHandle> {
   // Apply the migration before importing src/db.ts (which reads DATABASE_URL).
   const { PrismaClient } = await import("@prisma/client");
   const prisma = new PrismaClient();
-  const raw = migrationsSql()
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("--"))
-    .join("\n");
-  for (const stmt of raw
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    await prisma.$executeRawUnsafe(stmt);
-  }
+  await testDb.applyMigration(prisma);
 
   const { serve } = await import("@hono/node-server");
   const { buildApp } = await import("../../src/http/app.js");
@@ -78,11 +57,7 @@ export async function startRelay(): Promise<RelayHandle> {
     async stop(): Promise<void> {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await prisma.$disconnect();
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        /* best effort */
-      }
+      await testDb.cleanup();
     },
   };
 }
