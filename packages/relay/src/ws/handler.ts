@@ -6,7 +6,7 @@ import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
 import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
-import { ApiError } from "../http/errors.js";
+import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { writeEvent } from "../core/events.js";
 import { addConnection, agentCount, removeConnection } from "./presence.js";
@@ -279,7 +279,7 @@ async function handleConnection(
       msg = JSON.parse(raw.toString());
     } catch {
       sendJson(ws, {
-        error: { code: "invalid_request", message: "invalid JSON" },
+        error: serializeApiError(errors.invalidRequest("invalid JSON")),
       });
       return;
     }
@@ -340,7 +340,9 @@ async function handleFrame(
 ): Promise<void> {
   if (!msg || typeof msg !== "object") {
     sendJson(ws, {
-      error: { code: "invalid_request", message: "frame must be an object" },
+      error: serializeApiError(
+        errors.invalidRequest("frame must be an object"),
+      ),
     });
     return;
   }
@@ -364,10 +366,11 @@ async function handleFrame(
       : null;
   if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
     sendJson(ws, {
-      error: {
-        code: "invalid_request",
-        message: "type must be a non-empty string within 64 chars",
-      },
+      error: serializeApiError(
+        errors.invalidRequest(
+          "type must be a non-empty string within 64 chars",
+        ),
+      ),
       ...(cid ? { correlation_id: cid } : {}),
     });
     return;
@@ -380,7 +383,7 @@ async function handleFrame(
     config.MAX_EVENT_DATA_BYTES
   ) {
     sendJson(ws, {
-      error: { code: "payload_too_large" },
+      error: serializeApiError(errors.payloadTooLarge()),
       ...(cid ? { correlation_id: cid } : {}),
     });
     return;
@@ -392,7 +395,7 @@ async function handleFrame(
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
     sendJson(ws, {
-      error: { code: "not_found" },
+      error: serializeApiError(errors.notFound()),
       ...(cid ? { correlation_id: cid } : {}),
     });
     return;
@@ -414,7 +417,7 @@ async function handleFrame(
   } catch (err) {
     if (err instanceof ApiError) {
       sendJson(ws, {
-        error: { code: err.code, message: err.message, details: err.details },
+        error: serializeApiError(err),
         ...(cid ? { correlation_id: cid } : {}),
       });
       return;

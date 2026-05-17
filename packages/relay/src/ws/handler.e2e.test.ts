@@ -261,8 +261,19 @@ describe("WS e2e", () => {
     ws.send(
       JSON.stringify({ type: "review.commentAdded", data: { wrongField: 1 } }),
     );
-    const frame = (await q.next()) as { error?: { code: string } };
+    const frame = (await q.next()) as {
+      error?: {
+        code: string;
+        hint?: string;
+        retryable?: boolean;
+        docs_url?: string;
+      };
+    };
     expect(frame.error?.code).toBe("schema_violation");
+    // The WS error frame carries the same agent-friendly fields as HTTP.
+    expect(frame.error?.retryable).toBe(false);
+    expect(frame.error?.hint).toBeTruthy();
+    expect(frame.error?.docs_url).toContain("docs/SPEC.md#");
 
     const rows = await prisma.event.findMany({
       where: { sessionId, type: "review.commentAdded" },

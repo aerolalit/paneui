@@ -34,18 +34,28 @@ export class PaneApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details: unknown;
+  /** Agent-friendly remediation hint, when the relay supplies one. */
+  readonly hint?: string;
+  /** Whether retrying the same request may succeed (e.g. 429). */
+  readonly retryable?: boolean;
+  /** Documentation URL for this error class (mapped from the wire's `docs_url`). */
+  readonly docsUrl?: string;
 
   constructor(
     status: number,
     code: string,
     message: string,
     details?: unknown,
+    extra?: { hint?: string; retryable?: boolean; docsUrl?: string },
   ) {
     super(message);
     this.name = "PaneApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.hint = extra?.hint;
+    this.retryable = extra?.retryable;
+    this.docsUrl = extra?.docsUrl;
   }
 }
 
@@ -145,7 +155,14 @@ export class PaneClient {
   private fail(r: RelayResponse): never {
     const err = (
       r.data as {
-        error?: { code?: string; message?: string; details?: unknown };
+        error?: {
+          code?: string;
+          message?: string;
+          details?: unknown;
+          hint?: string;
+          retryable?: boolean;
+          docs_url?: string;
+        };
       } | null
     )?.error;
     throw new PaneApiError(
@@ -153,6 +170,11 @@ export class PaneClient {
       err?.code ?? "relay_error",
       err?.message ?? `relay returned ${r.status}`,
       err?.details,
+      {
+        hint: err?.hint,
+        retryable: err?.retryable,
+        docsUrl: err?.docs_url,
+      },
     );
   }
 

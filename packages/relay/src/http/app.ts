@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import { ApiError } from "./errors.js";
+import { ApiError, serializeApiError } from "./errors.js";
 import { log } from "../log.js";
 import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
@@ -35,10 +35,11 @@ export function buildApp(): Hono {
 
   app.onError((err, c) => {
     if (err instanceof ApiError) {
+      // Additive, agent-friendly error envelope. `code`/`message`/`details`
+      // are unchanged for existing clients; `hint`/`retryable`/`docs_url`
+      // (snake_case on the wire) are appended and omitted when undefined.
       return c.json(
-        {
-          error: { code: err.code, message: err.message, details: err.details },
-        },
+        { error: serializeApiError(err) },
         err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 500,
       );
     }
@@ -48,6 +49,8 @@ export function buildApp(): Hono {
           error: {
             code: "invalid_request",
             message: "invalid body",
+            hint: "the request body failed validation; see details for the failing fields",
+            retryable: false,
             details: err.flatten(),
           },
         },

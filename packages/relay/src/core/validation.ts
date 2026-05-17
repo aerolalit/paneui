@@ -59,7 +59,11 @@ const TYPE_RX = /^[a-z][a-zA-Z0-9.]*[a-zA-Z0-9]$/;
 export function validateEvent(args: ValidateEventArgs): void {
   const entry = args.schema.events[args.type];
   if (!entry) {
-    throw errors.schemaViolation("unknown_event_type", { type: args.type });
+    throw errors.schemaViolation(
+      "unknown_event_type",
+      { type: args.type },
+      `event type '${args.type}' is not declared in the session schema; emit a declared type or PATCH the schema to add it`,
+    );
   }
 
   if (args.authorKind !== "system") {
@@ -68,6 +72,7 @@ export function validateEvent(args: ValidateEventArgs): void {
       throw errors.forbidden(
         "author_not_allowed",
         `${args.authorKind} cannot emit ${args.type}`,
+        `author kind '${args.authorKind}' is not in emittedBy for event type '${args.type}'; only the declared actor kinds may emit it`,
       );
     }
   }
@@ -79,7 +84,11 @@ export function validateEvent(args: ValidateEventArgs): void {
   );
   const validate = compilers.get(args.type)!;
   if (!validate(args.data)) {
-    throw errors.schemaViolation("schema_violation", validate.errors);
+    throw errors.schemaViolation(
+      "schema_violation",
+      validate.errors,
+      `event data does not validate against the payload schema for type '${args.type}'; see details for the failing JSON Schema paths`,
+    );
   }
 }
 

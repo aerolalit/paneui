@@ -74,4 +74,10 @@ export interface RelayError {
   code: string;
   message?: string;
   details?: unknown;
+  /** Agent-friendly remediation hint. */
+  hint?: string;
+  /** Whether retrying the same request may succeed. */
+  retryable?: boolean;
+  /** Documentation URL for this error class (snake_case on the wire). */
+  docs_url?: string;
 }

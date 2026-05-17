@@ -24,7 +24,11 @@ register.post("/", async (c) => {
   const raw = await c.req.json().catch(() => null);
   const parsed = bodySchema.safeParse(raw ?? {});
   if (!parsed.success)
-    throw errors.invalidRequest("invalid body", parsed.error.flatten());
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
 
   const key = generateApiKey();
   const agent = await prisma.agent.create({

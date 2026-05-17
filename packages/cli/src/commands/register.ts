@@ -56,9 +56,15 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
         fail(
           "registration rate limit exceeded — try again later",
           "rate_limited",
+          undefined,
+          { hint: e.hint, retryable: e.retryable, docs_url: e.docsUrl },
         );
       }
-      fail(e.message, e.code, e.details);
+      fail(e.message, e.code, e.details, {
+        hint: e.hint,
+        retryable: e.retryable,
+        docs_url: e.docsUrl,
+      });
     }
     fail(e instanceof Error ? e.message : String(e), "internal");
   }

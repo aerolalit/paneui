@@ -344,4 +344,152 @@ describe("HTTP e2e", () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe("agent-friendly error fields", () => {
+    interface ErrBody {
+      error: {
+        code: string;
+        message: string;
+        hint?: string;
+        retryable?: boolean;
+        docs_url?: string;
+        details?: unknown;
+      };
+    }
+
+    async function openSession(apiKey: string): Promise<{
+      sessionId: string;
+      agentToken: string;
+    }> {
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: { type: "html-inline", source: "<html></html>" },
+            schema: minimalSchema,
+            participants: { humans: 1 },
+          }),
+        }),
+      );
+      const body = (await res.json()) as {
+        session_id: string;
+        tokens: { agent: string };
+      };
+      return { sessionId: body.session_id, agentToken: body.tokens.agent };
+    }
+
+    it("401 is not retryable and carries a hint + docs_url", async () => {
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            artifact: { type: "html-inline", source: "<html></html>" },
+            schema: minimalSchema,
+          }),
+        }),
+      );
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("unauthorized");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.hint).toMatch(/bearer token/i);
+      expect(body.error.docs_url).toContain("docs/SPEC.md#");
+    });
+
+    it("404 is not retryable and has a hint", async () => {
+      const { apiKey } = await seedAgent();
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions/ses_does_not_exist", {
+          headers: bearer(apiKey),
+        }),
+      );
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("not_found");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.hint).toBeTruthy();
+    });
+
+    it("422 schema violation carries a specific hint", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await openSession(apiKey);
+      const res = await app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+          method: "POST",
+          headers: bearer(agentToken),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { wrongField: 1 },
+          }),
+        }),
+      );
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("schema_violation");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.hint).toMatch(/review\.commentAdded/);
+      expect(body.error.docs_url).toContain("docs/SPEC.md#");
+    });
+
+    it("422 unknown event type names the offending type in the hint", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await openSession(apiKey);
+      const res = await app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+          method: "POST",
+          headers: bearer(agentToken),
+          body: JSON.stringify({ type: "not.declared", data: {} }),
+        }),
+      );
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("unknown_event_type");
+      expect(body.error.hint).toMatch(/not\.declared/);
+    });
+
+    it("410 gone explains the session is closed and not retryable", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await openSession(apiKey);
+      await app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: bearer(apiKey),
+        }),
+      );
+      const res = await app.fetch(
+        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+          method: "POST",
+          headers: bearer(agentToken),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "hi" },
+          }),
+        }),
+      );
+      expect(res.status).toBe(410);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("gone");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.hint).toMatch(/closed|expired/i);
+    });
+
+    it("400 invalid body keeps Zod details and gains a hint", async () => {
+      const { apiKey } = await seedAgent();
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({ artifact: { type: "bogus" } }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("invalid_request");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.hint).toBeTruthy();
+      expect(body.error.details).toBeTruthy();
+    });
+  });
 });
