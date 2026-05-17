@@ -16,6 +16,11 @@ const schema = z.object({
     .default(3600),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
+  // Caps on the agent-supplied per-session JSON Schema. The schema is compiled
+  // by Ajv at session-create / schema-patch time; an oversized or
+  // pathologically-nested schema is a CPU sink, so both are bounded up front.
+  MAX_SCHEMA_BYTES: z.coerce.number().int().positive().default(65_536),
+  MAX_SCHEMA_DEPTH: z.coerce.number().int().positive().default(32),
   MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),

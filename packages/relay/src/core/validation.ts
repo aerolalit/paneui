@@ -121,6 +121,53 @@ export function validateEvent(args: ValidateEventArgs): void {
   }
 }
 
+// Compute the maximum nesting depth of a JSON value. Objects and arrays add one
+// level; primitives are depth 0. Used to reject pathologically-nested schemas
+// before Ajv compiles them. Bails out early once `limit` is exceeded so a
+// deeply-nested input can't itself drive unbounded recursion.
+function jsonDepth(value: unknown, limit: number): number {
+  if (value === null || typeof value !== "object") return 0;
+  let max = 0;
+  for (const child of Array.isArray(value)
+    ? value
+    : Object.values(value as Record<string, unknown>)) {
+    const d = 1 + jsonDepth(child, limit);
+    if (d > max) max = d;
+    if (max > limit) return max;
+  }
+  return max;
+}
+
+// Reject an agent-supplied schema that exceeds the configured byte size or
+// nesting depth, *before* it reaches Ajv. The serialized byte size guards
+// against large schemas; the depth limit guards against deeply-nested ones.
+// Both throw a 400 with a message naming the limit that was exceeded.
+export function assertSchemaWithinLimits(
+  raw: unknown,
+  limits: { maxBytes: number; maxDepth: number },
+): void {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(raw);
+  } catch {
+    throw errors.invalidRequest(
+      "schema must be JSON-serializable (no circular references)",
+    );
+  }
+  const bytes = serialized ? Buffer.byteLength(serialized, "utf8") : 0;
+  if (bytes > limits.maxBytes) {
+    throw errors.invalidRequest(
+      `schema is too large: ${bytes} bytes exceeds the MAX_SCHEMA_BYTES limit of ${limits.maxBytes} bytes`,
+    );
+  }
+  const depth = jsonDepth(raw, limits.maxDepth);
+  if (depth > limits.maxDepth) {
+    throw errors.invalidRequest(
+      `schema is too deeply nested: depth exceeds the MAX_SCHEMA_DEPTH limit of ${limits.maxDepth}`,
+    );
+  }
+}
+
 // Validate the *shape* of an event schema at session-create / schema-patch time.
 // (Each type's payload must be a valid JSON Schema; types must be namespaced;
 // emittedBy must be a non-empty subset of {page, agent}.)
