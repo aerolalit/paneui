@@ -25,6 +25,10 @@ beforeAll(async () => {
   // Small limit so the rate-limit case is cheap and deterministic.
   process.env.REGISTER_RATE_LIMIT = "3";
   process.env.REGISTER_RATE_WINDOW_SECONDS = "3600";
+  // Treat the simulated socket peer (127.0.0.1, see register()) as a trusted
+  // proxy so the X-Forwarded-For header is honored and each test IP gets its
+  // own rate-limit bucket.
+  process.env.TRUSTED_PROXY = "127.0.0.1";
 
   delete (globalThis as { prisma?: PrismaClient }).prisma;
   ({ default: prisma } = await import("../../db.js"));
@@ -38,14 +42,22 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-/** POST /v1/register from a given client IP (via x-forwarded-for). */
+/**
+ * POST /v1/register from a given client IP. The IP is presented via
+ * `x-forwarded-for`; the simulated socket peer is 127.0.0.1, which the test
+ * config marks as a TRUSTED_PROXY so the XFF value is honored.
+ */
 function register(ip: string, body?: unknown): Promise<Response> {
   const init: RequestInit = {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": ip },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
-  return app.fetch(new Request("http://t/v1/register", init));
+  // The second arg becomes Hono's `c.env`; getConnInfo reads the socket peer
+  // off `env.incoming.socket.remoteAddress`.
+  return app.fetch(new Request("http://t/v1/register", init), {
+    incoming: { socket: { remoteAddress: "127.0.0.1" } },
+  });
 }
 
 describe("POST /v1/register (open registration)", () => {

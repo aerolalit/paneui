@@ -9,12 +9,18 @@ import {
 } from "../limits.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
+import { checkWsUpgradeRateLimit } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
-import { addConnection, agentCount, removeConnection } from "./presence.js";
+import {
+  addConnection,
+  agentCount,
+  connectionCount,
+  removeConnection,
+} from "./presence.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
@@ -94,6 +100,14 @@ async function handleUpgrade(
     }
     const sessionId = m[1]!;
 
+    // Per-IP rate limit FIRST — before any token resolve or DB lookup — so a
+    // flood of upgrade attempts cannot drive DB work. The Hono `generalRateLimit`
+    // middleware does not cover the upgrade (it is handled off the Hono app).
+    if (!checkWsUpgradeRateLimit(req)) {
+      sendUpgradeError(socket, 429);
+      return;
+    }
+
     const token = extractToken(req, url);
     if (!token) {
       sendUpgradeError(socket, 401);
@@ -131,6 +145,17 @@ async function handleUpgrade(
 
     if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
       sendUpgradeError(socket, 410);
+      return;
+    }
+
+    // Per-session WebSocket connection cap. Bounds how many concurrent sockets
+    // a single session/token can hold open, so an abusive client cannot
+    // exhaust file descriptors / memory by opening connections in a loop.
+    if (
+      config.MAX_WS_CONNECTIONS_PER_SESSION > 0 &&
+      connectionCount(sessionId) >= config.MAX_WS_CONNECTIONS_PER_SESSION
+    ) {
+      sendUpgradeError(socket, 429);
       return;
     }
 
@@ -188,6 +213,7 @@ function sendUpgradeError(socket: Duplex, status: number): void {
     401: "Unauthorized",
     404: "Not Found",
     410: "Gone",
+    429: "Too Many Requests",
   };
   const text = statusText[status] ?? "Bad Request";
   socket.write(

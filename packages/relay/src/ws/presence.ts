@@ -46,6 +46,12 @@ export function agentCount(sessionId: string): number {
   return n;
 }
 
+// How many sockets (of any kind) are open on this session right now. Used to
+// enforce the per-session WebSocket connection cap at upgrade time.
+export function connectionCount(sessionId: string): number {
+  return connections.get(sessionId)?.size ?? 0;
+}
+
 // How many human-kind sockets are open on this session right now.
 export function humanCount(sessionId: string): number {
   const perSession = connections.get(sessionId);
