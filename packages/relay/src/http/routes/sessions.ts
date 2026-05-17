@@ -20,6 +20,10 @@ import { publish } from "../broadcast.js";
 import { serializeEvent } from "../serialize.js";
 import { assertSafeArtifactUrl, assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
+import {
+  recordEventWritten,
+  recordSessionCreated,
+} from "../../telemetry/metrics.js";
 import type { EventSchema } from "../../types.js";
 
 const sessions = new Hono<AuthEnv>();
@@ -64,6 +68,7 @@ async function appendSystemEvent(
       data: data as Prisma.InputJsonValue,
     },
   });
+  recordEventWritten("system");
   publish(sessionId, serializeEvent(event));
 }
 
@@ -150,6 +155,8 @@ sessions.post("/", requireAgent, async (c) => {
       },
     },
   });
+
+  recordSessionCreated();
 
   const wsBase = publicWsUrl();
   return c.json(

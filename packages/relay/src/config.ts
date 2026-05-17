@@ -21,6 +21,19 @@ const schema = z.object({
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  // OpenTelemetry metrics. The relay is instrumented once with the
+  // vendor-neutral OTel SDK; the exporter decides where telemetry goes.
+  // METRICS_ENABLED=false makes the instrument helpers no-ops, omits the
+  // MeterProvider, and unmounts GET /metrics.
+  METRICS_ENABLED: z
+    .enum(["true", "false", "1", "0"])
+    .default("true")
+    .transform((v) => v === "true" || v === "1"),
+  // Selects the metrics exporter. "prometheus" exposes GET /metrics in the
+  // Prometheus text format on the existing Hono app; "none" collects no
+  // metrics. An "azure" exporter (App Insights via @azure/monitor-opentelemetry-exporter)
+  // is a planned future addition for the hosted deploy — see telemetry/metrics.ts.
+  METRICS_EXPORTER: z.enum(["prometheus", "none"]).default("prometheus"),
 });
 
 export type RawConfig = z.infer<typeof schema>;

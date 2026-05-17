@@ -63,6 +63,29 @@ starting point):
 | `DEFAULT_TTL_SECONDS` / `MAX_TTL_SECONDS` | `3600` / `86400` | Default and maximum session lifetime. |
 | `TTL_SWEEP_SECONDS` | `60` | Expired-session sweep interval. `0` disables the in-process sweeper. |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `METRICS_ENABLED` | `true` | Enables OpenTelemetry metrics. `false` makes the instruments no-ops and unmounts `GET /metrics`. |
+| `METRICS_EXPORTER` | `prometheus` | `prometheus` (exposes `GET /metrics`) or `none` (no collection). |
+
+### Metrics (`GET /metrics`)
+
+The relay is instrumented with the vendor-neutral [OpenTelemetry](https://opentelemetry.io/)
+metrics SDK. With `METRICS_ENABLED=true` and `METRICS_EXPORTER=prometheus`
+(both defaults), `GET /metrics` serves the current metrics in the Prometheus
+text exposition format on the relay's normal port — point a Prometheus scrape
+at it. Exposed instruments include `pane_sessions_created_total`,
+`pane_events_written_total`, `pane_registrations_total`, `pane_errors_total`,
+`pane_ws_connections_active`, `pane_sessions_open`, and
+`pane_http_request_duration_seconds`.
+
+`/metrics` is unauthenticated, which is the norm for a Prometheus scrape
+target — if the relay is publicly reachable, **firewall the endpoint** (or
+restrict it at a reverse proxy) so only your monitoring stack can reach it.
+Set `METRICS_ENABLED=false` (or `METRICS_EXPORTER=none`) to turn metrics off
+entirely; `/metrics` then returns 404.
+
+The hosted/Azure deploy path — pushing metrics to Application Insights via an
+OpenTelemetry Azure Monitor exporter — is a planned future addition and is
+deliberately not bundled into the open-source core.
 
 ### The encryption key (`PANE_SECRET_KEY`)
 

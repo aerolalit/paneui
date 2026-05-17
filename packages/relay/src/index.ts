@@ -5,6 +5,7 @@ import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { attachWs } from "./ws/handler.js";
+import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 
 function startTtlSweeper(): void {
   const intervalSec = config.TTL_SWEEP_SECONDS;
@@ -40,6 +41,10 @@ async function main(): Promise<void> {
 
   await runBootstrap(prisma, config);
 
+  // Initialise telemetry before buildApp() so the metric instruments exist
+  // when routes/middleware register. No-op when METRICS_ENABLED=false.
+  initTelemetry(config);
+
   const app = buildApp();
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
@@ -47,6 +52,14 @@ async function main(): Promise<void> {
   });
   attachWs(server);
   startTtlSweeper();
+
+  // Flush metrics on a graceful shutdown signal. Minimal — the relay otherwise
+  // just exits — but a flush lets the last scrape window's data settle.
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    process.once(sig, () => {
+      void shutdownTelemetry().finally(() => process.exit(0));
+    });
+  }
 }
 
 main().catch((err) => {

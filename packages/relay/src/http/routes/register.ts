@@ -9,6 +9,7 @@ import prisma from "../../db.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 import { errors } from "../errors.js";
 import { enforceRegisterRateLimit } from "../rate-limit.js";
+import { recordRegistration } from "../../telemetry/metrics.js";
 
 const bodySchema = z.object({
   name: z.string().min(1).max(64).optional(),
@@ -38,6 +39,8 @@ register.post("/", async (c) => {
       keyPrefix: keyPrefix(key),
     },
   });
+
+  recordRegistration();
 
   return c.json(
     {
