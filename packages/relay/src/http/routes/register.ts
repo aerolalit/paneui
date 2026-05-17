@@ -5,8 +5,8 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
-import prisma from "../../db.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
+import type { AppEnv } from "../env.js";
 import { errors } from "../errors.js";
 import { enforceRegisterRateLimit } from "../rate-limit.js";
 import { recordRegistration } from "../../telemetry/metrics.js";
@@ -15,10 +15,11 @@ const bodySchema = z.object({
   name: z.string().min(1).max(64).optional(),
 });
 
-const register = new Hono();
+const register = new Hono<AppEnv>();
 
 register.post("/", async (c) => {
   enforceRegisterRateLimit(c);
+  const prisma = c.get("prisma");
 
   // Body is optional — a bare `pane register` sends none. Treat missing /
   // empty / non-JSON body as {} so the only failure path is a malformed name.

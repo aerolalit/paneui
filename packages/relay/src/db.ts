@@ -1,6 +1,5 @@
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
-import config from "./config.js";
 
 // SQLite path resolution gotcha: the Prisma CLI resolves `file:./...` URLs
 // relative to `schema.prisma`'s location (i.e. `prisma/`), while the runtime
@@ -14,14 +13,11 @@ function resolveSqliteUrl(url: string): string {
   return "file:" + path.resolve(schemaDir, rel);
 }
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({ datasourceUrl: resolveSqliteUrl(config.DATABASE_URL) });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+// Factory for a Prisma client bound to a specific database URL. The relay
+// constructs exactly one of these at startup (see src/index.ts) and threads it
+// through the app via dependency injection; tests construct their own against
+// an isolated database. There is intentionally no module-level singleton here
+// so the client is never an implicit ambient dependency.
+export function createPrismaClient(databaseUrl: string): PrismaClient {
+  return new PrismaClient({ datasourceUrl: resolveSqliteUrl(databaseUrl) });
 }
-
-export default prisma;

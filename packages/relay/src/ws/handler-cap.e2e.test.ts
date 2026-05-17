@@ -1,10 +1,9 @@
 // End-to-end test for the per-session WebSocket connection cap (abuse
 // control B2).
 //
-// MAX_WS_CONNECTIONS_PER_SESSION is read from a config module singleton
-// evaluated at import time, so it is set in beforeAll before the dynamic
-// imports. A dedicated test file gives a clean module registry to evaluate
-// it with a small cap.
+// MAX_WS_CONNECTIONS_PER_SESSION is supplied via the config injected into
+// buildApp()/attachWs(), so the small cap is just passed straight to
+// loadConfig() — no module-singleton juggling required.
 
 import {
   describe,
@@ -17,42 +16,50 @@ import {
 } from "vitest";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { Readable } from "node:stream";
 import WebSocket from "ws";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { createPrismaClient } from "../db.js";
+import { loadConfig } from "../config.js";
+import { hashKey, keyPrefix } from "../keys.js";
+import { buildApp } from "../http/app.js";
+import { createRateLimiter } from "../http/rate-limit.js";
+import { attachWs } from "./handler.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
 let app: Hono;
 let server: Server;
 let port: number;
-let hashKey: typeof import("../keys.js").hashKey;
-let keyPrefix: typeof import("../keys.js").keyPrefix;
 
 const CAP = 2;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
-  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-  process.env.MAX_WS_CONNECTIONS_PER_SESSION = String(CAP);
-  // This file exercises the per-session connection cap by opening many
-  // upgrades from one (loopback) IP. Disable the general per-IP rate limiter
-  // so it doesn't fire first — RATE_LIMIT is covered by its own test.
-  process.env.RATE_LIMIT = "0";
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  ({ hashKey, keyPrefix } = await import("../keys.js"));
 
-  const { buildApp } = await import("../http/app.js");
-  const { attachWs } = await import("./handler.js");
-  app = buildApp();
-
-  const { Readable } = await import("node:stream");
+  // This file exercises the per-session connection cap by opening many
+  // upgrades from one (loopback) IP. RATE_LIMIT=0 disables the general per-IP
+  // rate limiter so it doesn't fire first — RATE_LIMIT is covered by its own
+  // test.
+  const config = loadConfig({
+    DATABASE_URL: testDb.dbUrl,
+    MAX_WS_CONNECTIONS_PER_SESSION: String(CAP),
+    RATE_LIMIT: "0",
+  });
+  // The same shared general limiter the relay hands to both buildApp() and
+  // attachWs() — disabled here via RATE_LIMIT=0.
+  const generalLimiter = createRateLimiter(
+    config.RATE_LIMIT,
+    config.RATE_LIMIT_WINDOW_SECONDS * 1000,
+  );
+  app = buildApp(config, prisma, generalLimiter);
   server = createServer(async (req, res) => {
     const url = `http://localhost:${port}${req.url ?? "/"}`;
     const headers = new Headers();
@@ -76,7 +83,7 @@ beforeAll(async () => {
       res.end();
     }
   });
-  attachWs(server);
+  attachWs(server, { config, prisma, generalLimiter });
   await new Promise<void>((resolve) => {
     server.listen(0, () => {
       const addr = server.address();

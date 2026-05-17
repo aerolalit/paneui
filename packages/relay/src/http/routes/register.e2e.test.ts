@@ -1,16 +1,19 @@
 // End-to-end tests for POST /v1/register: open registration + per-IP rate
 // limiting. Drives requests through the real Hono app.
 //
-// The rate limiter and config are module singletons evaluated at import time,
-// so REGISTER_RATE_* env vars are set before the dynamic import below. The
-// disabled-limiter (REGISTER_RATE_LIMIT=0) case lives in its own test file
-// because each Vitest file gets a fresh module registry.
+// The rate limiter is built by buildApp() from the injected config, so the
+// REGISTER_RATE_* env vars just need to be set before loadConfig() runs. The
+// disabled-limiter (REGISTER_RATE_LIMIT=0) case lives in its own test file so
+// it can build a second app with a different config.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../../test-helpers/db.js";
+import { createPrismaClient } from "../../db.js";
+import { loadConfig } from "../../config.js";
+import { buildApp } from "../app.js";
 
 let testDb: TestDb;
 let app: Hono;
@@ -30,11 +33,10 @@ beforeAll(async () => {
   // own rate-limit bucket.
   process.env.TRUSTED_PROXY = "127.0.0.1";
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  const { buildApp } = await import("../app.js");
-  app = buildApp();
+  // loadConfig() reads the REGISTER_RATE_* env vars set just above.
+  app = buildApp(loadConfig(), prisma);
 });
 
 afterAll(async () => {

@@ -1,10 +1,13 @@
-import config from "./config.js";
+import { loadConfig } from "./config.js";
 import { emitLogRecord } from "./telemetry/logs.js";
 
 type Level = "debug" | "info" | "warn" | "error";
 
 const levels: Record<Level, number> = { debug: 0, info: 1, warn: 2, error: 3 };
-const threshold = levels[config.LOG_LEVEL];
+// The logger is process-wide and has no natural injection seam, so it reads
+// LOG_LEVEL straight from the environment (exactly what the old `config`
+// singleton did). Everything else takes config via dependency injection.
+const threshold = levels[loadConfig().LOG_LEVEL];
 
 function emit(level: Level, msg: string, meta?: Record<string, unknown>): void {
   if (levels[level] < threshold) return;

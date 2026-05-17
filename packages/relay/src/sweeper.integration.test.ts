@@ -37,10 +37,8 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-
-  const dbMod = await import("./db.js");
-  prisma = dbMod.default;
+  const { createPrismaClient } = await import("./db.js");
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
   ({ sweepExpiredSessions } = await import("./index.js"));
@@ -102,7 +100,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(true);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    const count = await sweepExpiredSessions();
+    const count = await sweepExpiredSessions(prisma);
     expect(count).toBe(1);
 
     // The expired session's compiled validators are gone; the live one stays.
@@ -118,7 +116,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     const liveId = await seedSession(3_600_000);
     warmCache(liveId);
 
-    const count = await sweepExpiredSessions();
+    const count = await sweepExpiredSessions(prisma);
     expect(count).toBe(0);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });

@@ -1,15 +1,17 @@
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import config from "../config.js";
+import type { Config } from "../config.js";
 import {
   MAX_EVENT_TYPE_LENGTH,
   MAX_CORRELATION_ID_LENGTH,
   MAX_CLOSE_REASON_LOG_LENGTH,
 } from "../limits.js";
-import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
-import { checkWsUpgradeRateLimit } from "../http/rate-limit.js";
+import {
+  checkWsUpgradeRateLimit,
+  type SlidingWindowLimiter,
+} from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
@@ -25,7 +27,21 @@ import { recordEventWritten } from "../telemetry/metrics.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
-import type { Participant, Session } from "@prisma/client";
+import type { Participant, PrismaClient, Session } from "@prisma/client";
+
+// Injected dependencies for the WebSocket transport. The WS upgrade path runs
+// outside the Hono request lifecycle, so config + the Prisma client are passed
+// to attachWs() and threaded down through the handler call chain.
+//
+// `generalLimiter` is the SAME instance the Hono app uses for /v1/* and /s/*
+// rate limiting (built once in index.ts and passed to both buildApp() and
+// attachWs()), so a client's WS-upgrade attempts and HTTP requests share one
+// per-IP bucket.
+export interface WsDeps {
+  config: Config;
+  prisma: PrismaClient;
+  generalLimiter: SlidingWindowLimiter;
+}
 
 const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
 
@@ -48,15 +64,18 @@ interface AliveWs extends WebSocket {
 
 // Server type is loose because @hono/node-server may return an http.Server,
 // https.Server, or Http2Server; all expose the same `upgrade` event we need.
-export function attachWs(server: {
-  on(
-    event: "upgrade",
-    listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void,
-  ): unknown;
-}): WebSocketServer {
+export function attachWs(
+  server: {
+    on(
+      event: "upgrade",
+      listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void,
+    ): unknown;
+  },
+  deps: WsDeps,
+): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
-    void handleUpgrade(wss, req, socket, head);
+    void handleUpgrade(wss, deps, req, socket, head);
   });
 
   // Server-side ping/pong heartbeat. Every tick: terminate any socket that
@@ -87,10 +106,12 @@ export function attachWs(server: {
 
 async function handleUpgrade(
   wss: WebSocketServer,
+  deps: WsDeps,
   req: IncomingMessage,
   socket: Duplex,
   head: Buffer,
 ): Promise<void> {
+  const { prisma, config, generalLimiter } = deps;
   try {
     const url = new URL(req.url ?? "", "http://localhost");
     const m = STREAM_RX.exec(url.pathname);
@@ -103,7 +124,8 @@ async function handleUpgrade(
     // Per-IP rate limit FIRST — before any token resolve or DB lookup — so a
     // flood of upgrade attempts cannot drive DB work. The Hono `generalRateLimit`
     // middleware does not cover the upgrade (it is handled off the Hono app).
-    if (!checkWsUpgradeRateLimit(req)) {
+    // Uses the injected shared limiter + TRUSTED_PROXY config.
+    if (!checkWsUpgradeRateLimit(req, generalLimiter, config.TRUSTED_PROXY)) {
       sendUpgradeError(socket, 429);
       return;
     }
@@ -113,7 +135,7 @@ async function handleUpgrade(
       sendUpgradeError(socket, 401);
       return;
     }
-    const resolved = await resolveBearer(token);
+    const resolved = await resolveBearer(prisma, token);
     if (!resolved) {
       sendUpgradeError(socket, 404);
       return;
@@ -174,7 +196,7 @@ async function handleUpgrade(
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleConnection(ws, sessionId, author, since);
+      void handleConnection(ws, deps, sessionId, author, since);
     });
   } catch (err) {
     log.error("ws upgrade failed", {
@@ -236,10 +258,12 @@ function withLiveCount(e: SerializedEvent, sessionId: string): SerializedEvent {
 
 async function handleConnection(
   ws: WebSocket,
+  deps: WsDeps,
   sessionId: string,
   author: Author,
   sinceCursor: number | null,
 ): Promise<void> {
+  const { prisma } = deps;
   const openedAt = Date.now();
   // Heartbeat bookkeeping: a fresh socket starts alive, and every pong the peer
   // sends (browsers answer the server ping automatically) re-arms it. The
@@ -274,6 +298,7 @@ async function handleConnection(
   //    The persisted row is exactly as before; `withLiveCount` decorates only
   //    the broadcast copy with the live agent count.
   await appendSystemEvent(
+    prisma,
     sessionId,
     "system.participant.joined",
     { author: { kind: author.kind, id: author.id } },
@@ -311,7 +336,7 @@ async function handleConnection(
       });
       return;
     }
-    await handleFrame(ws, sessionId, author, msg);
+    await handleFrame(ws, deps, sessionId, author, msg);
   });
 
   ws.on("close", (code: number, reason: Buffer) => {
@@ -363,10 +388,12 @@ function sendJson(ws: WebSocket, obj: unknown): void {
 
 async function handleFrame(
   ws: WebSocket,
+  deps: WsDeps,
   sessionId: string,
   author: Author,
   msg: unknown,
 ): Promise<void> {
+  const { config, prisma } = deps;
   if (!msg || typeof msg !== "object") {
     sendJson(ws, {
       error: serializeApiError(
@@ -435,13 +462,18 @@ async function handleFrame(
   }
 
   try {
-    const { event, deduped } = await writeEvent(session, author, {
-      type: f.type,
-      data: f.data,
-      causationId: typeof f.causation_id === "string" ? f.causation_id : null,
-      idempotencyKey:
-        typeof f.idempotency_key === "string" ? f.idempotency_key : null,
-    });
+    const { event, deduped } = await writeEvent(
+      { prisma, config },
+      session,
+      author,
+      {
+        type: f.type,
+        data: f.data,
+        causationId: typeof f.causation_id === "string" ? f.causation_id : null,
+        idempotencyKey:
+          typeof f.idempotency_key === "string" ? f.idempotency_key : null,
+      },
+    );
     sendJson(ws, {
       ack: event.id,
       deduped,

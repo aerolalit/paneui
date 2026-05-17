@@ -1,37 +1,40 @@
 // End-to-end test for the per-agent session cap (abuse control B3).
 //
-// MAX_SESSIONS_PER_AGENT is read from a config module singleton evaluated at
-// import time, so it is set in beforeAll before the dynamic imports. A
-// dedicated test file gives a clean module registry to evaluate it with.
+// MAX_SESSIONS_PER_AGENT is supplied via the config injected into buildApp(),
+// so the small cap is just passed straight to loadConfig() — no
+// module-singleton juggling required.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../../test-helpers/db.js";
+import { createPrismaClient } from "../../db.js";
+import { loadConfig } from "../../config.js";
+import { hashKey, keyPrefix } from "../../keys.js";
+import { buildApp } from "../app.js";
 
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
-let hashKey: typeof import("../../keys.js").hashKey;
-let keyPrefix: typeof import("../../keys.js").keyPrefix;
 
 const CAP = 3;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
-  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-  process.env.PUBLIC_URL = "http://localhost:3000";
-  process.env.MAX_SESSIONS_PER_AGENT = String(CAP);
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  ({ hashKey, keyPrefix } = await import("../../keys.js"));
-  const { buildApp } = await import("../app.js");
-  app = buildApp();
+  app = buildApp(
+    loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      MAX_SESSIONS_PER_AGENT: String(CAP),
+    }),
+    prisma,
+  );
 });
 
 afterAll(async () => {

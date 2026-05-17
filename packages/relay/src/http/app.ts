@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import config from "../config.js";
+import type { PrismaClient } from "@prisma/client";
+import type { Config } from "../config.js";
 import { ApiError, serializeApiError } from "./errors.js";
+import type { AppEnv } from "./env.js";
+import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
 import { log } from "../log.js";
 import {
   collectPrometheusMetrics,
@@ -17,8 +20,45 @@ import keys from "./routes/keys.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
 
-export function buildApp(): Hono {
-  const app = new Hono();
+// Build the Hono app with its dependencies injected. `config` and `prisma` are
+// placed on the request context by the first middleware so every route and
+// middleware reads them via `c.get(...)` instead of importing singletons.
+//
+// `generalLimiter` is the per-IP + per-token limiter for /v1/* and /s/* routes.
+// The relay (index.ts) constructs it once and passes the SAME instance to both
+// buildApp() and attachWs(), so HTTP requests and WebSocket-upgrade attempts
+// share one IP bucket. It is optional purely for tests that only exercise the
+// HTTP app: when omitted, buildApp() creates its own from config.
+export function buildApp(
+  config: Config,
+  prisma: PrismaClient,
+  generalLimiter?: SlidingWindowLimiter,
+): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  // One per-app limiter for the open /v1/register endpoint. Created here (not
+  // at module load) so its sliding-window state is owned by this app instance.
+  const registerLimiter = createRateLimiter(
+    config.REGISTER_RATE_LIMIT,
+    config.REGISTER_RATE_WINDOW_SECONDS * 1000,
+  );
+
+  // Fall back to an app-owned general limiter when the caller did not inject a
+  // shared one (HTTP-only tests). The relay always injects the shared instance.
+  const effectiveGeneralLimiter =
+    generalLimiter ??
+    createRateLimiter(
+      config.RATE_LIMIT,
+      config.RATE_LIMIT_WINDOW_SECONDS * 1000,
+    );
+
+  app.use("*", async (c, next) => {
+    c.set("config", config);
+    c.set("prisma", prisma);
+    c.set("registerLimiter", registerLimiter);
+    c.set("generalLimiter", effectiveGeneralLimiter);
+    await next();
+  });
 
   app.use("*", async (c, next) => {
     const start = Date.now();

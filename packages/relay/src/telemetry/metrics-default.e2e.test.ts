@@ -27,8 +27,11 @@ beforeAll(async () => {
   delete process.env.METRICS_EXPORTER;
   delete process.env.METRICS_ENABLED;
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../db.js"));
+  // Inject the Prisma client + config directly. Module imports stay dynamic
+  // here because initTelemetry() registers a PROCESS-GLOBAL MeterProvider — a
+  // fresh module registry keeps the unset-default path isolated.
+  const { createPrismaClient } = await import("../db.js");
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
   const { loadConfig } = await import("../config.js");
@@ -37,10 +40,10 @@ beforeAll(async () => {
   expect(config.METRICS_EXPORTER).toBe("none");
 
   const { initTelemetry } = await import("./metrics.js");
-  await initTelemetry(config);
+  await initTelemetry(config, prisma);
 
   const { buildApp } = await import("../http/app.js");
-  app = buildApp();
+  app = buildApp(config, prisma);
 });
 
 afterAll(async () => {

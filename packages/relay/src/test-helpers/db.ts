@@ -2,16 +2,16 @@
 // (file:./test.db in tmpdir) and postgresql (uses a fresh schema namespace per
 // test file so parallel test files don't collide on the same Postgres database).
 //
-// Usage from a test file (call BEFORE any `await import("../db.js")`):
+// Usage from a test file:
 //
-//   const { dbUrl, cleanup } = await setupTestDb();
-//   process.env.DATABASE_URL = dbUrl;
-//   const { default: prisma } = await import("../db.js");
+//   const testDb = await setupTestDb();
+//   const prisma = createPrismaClient(testDb.dbUrl);
+//   await testDb.applyMigration(prisma);
 //
-// Why this pattern instead of taking a prisma instance: the rest of the codebase
-// imports the singleton `prisma` from src/db.ts (~8 call sites). Refactoring to
-// dependency-inject prisma everywhere is a bigger change than env-vars; this
-// helper keeps the production code untouched.
+// The Prisma client and config are dependency-injected (createPrismaClient +
+// buildApp(config, prisma) / attachWs(server, { config, prisma })), so tests
+// just construct their own client against the isolated DB — no module-singleton
+// reset, no `delete globalThis.prisma`, no dynamic imports.
 
 import {
   mkdtempSync,

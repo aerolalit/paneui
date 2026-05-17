@@ -7,12 +7,14 @@ import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { createPrismaClient } from "../db.js";
+import { loadConfig } from "../config.js";
+import { hashKey, keyPrefix } from "../keys.js";
+import { buildApp } from "./app.js";
 
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
-let hashKey: typeof import("../keys.js").hashKey;
-let keyPrefix: typeof import("../keys.js").keyPrefix;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -21,12 +23,11 @@ beforeAll(async () => {
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.PUBLIC_URL = "http://localhost:3000";
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../db.js"));
+  // Inject the Prisma client + config directly — no module singleton, no
+  // `delete globalThis.prisma` dance, no dynamic imports.
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  ({ hashKey, keyPrefix } = await import("../keys.js"));
-  const { buildApp } = await import("./app.js");
-  app = buildApp();
+  app = buildApp(loadConfig(), prisma);
 });
 
 afterAll(async () => {

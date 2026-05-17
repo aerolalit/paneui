@@ -11,18 +11,23 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { Readable } from "node:stream";
 import WebSocket from "ws";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { createPrismaClient } from "../db.js";
+import { loadConfig } from "../config.js";
+import { hashKey, keyPrefix } from "../keys.js";
+import { buildApp } from "../http/app.js";
+import { createRateLimiter } from "../http/rate-limit.js";
+import { attachWs } from "./handler.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
 let app: Hono;
 let server: Server;
 let port: number;
-let hashKey: typeof import("../keys.js").hashKey;
-let keyPrefix: typeof import("../keys.js").keyPrefix;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -30,18 +35,20 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
-  ({ hashKey, keyPrefix } = await import("../keys.js"));
 
-  const { buildApp } = await import("../http/app.js");
-  const { attachWs } = await import("./handler.js");
-  app = buildApp();
+  const config = loadConfig();
+  // The shared general limiter the relay hands to both buildApp() and
+  // attachWs(), so HTTP and WS-upgrade attempts bucket against one per-IP map.
+  const generalLimiter = createRateLimiter(
+    config.RATE_LIMIT,
+    config.RATE_LIMIT_WINDOW_SECONDS * 1000,
+  );
+  app = buildApp(config, prisma, generalLimiter);
 
   // Adapt Hono's fetch handler to a node:http server. Simpler than @hono/node-server
   // for tests because we control listen()/close() directly.
-  const { Readable } = await import("node:stream");
   server = createServer(async (req, res) => {
     const url = `http://localhost:${port}${req.url ?? "/"}`;
     const headers = new Headers();
@@ -65,7 +72,7 @@ beforeAll(async () => {
       res.end();
     }
   });
-  attachWs(server);
+  attachWs(server, { config, prisma, generalLimiter });
   await new Promise<void>((resolve) => {
     server.listen(0, () => {
       const addr = server.address();

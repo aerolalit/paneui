@@ -38,8 +38,8 @@ import {
   PrometheusExporter,
   PrometheusSerializer,
 } from "@opentelemetry/exporter-prometheus";
+import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import prisma from "../db.js";
 import { log } from "../log.js";
 import { totalConnections } from "../ws/presence.js";
 import { buildResource } from "./resource.js";
@@ -68,8 +68,14 @@ export type EventKind = "agent" | "human" | "system";
  *
  * Async because the "azure" exporter is loaded via dynamic import (it is an
  * optional dependency). The prometheus/none paths resolve synchronously.
+ *
+ * `prisma` is injected (not a module singleton) so the pane_sessions_open
+ * ObservableGauge can count rows against the same client the app uses.
  */
-export async function initTelemetry(config: Config): Promise<void> {
+export async function initTelemetry(
+  config: Config,
+  prisma: PrismaClient,
+): Promise<void> {
   if (provider !== null) return; // already initialised — keep the singleton
 
   if (!config.METRICS_ENABLED || config.METRICS_EXPORTER === "none") {

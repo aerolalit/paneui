@@ -1,13 +1,13 @@
 import type { Context, MiddlewareHandler } from "hono";
-import type { Agent, Participant, Session } from "@prisma/client";
-import prisma from "../db.js";
+import type { Agent, Participant, PrismaClient, Session } from "@prisma/client";
 import { hashKey } from "../keys.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
+import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
 
-export type AuthEnv = {
-  Variables: {
+export type AuthEnv = AppEnv & {
+  Variables: AppEnv["Variables"] & {
     agent: Agent;
     author: Author;
     session: Session;
@@ -34,6 +34,7 @@ type ResolveKind = "agent" | "both";
 // so it's a wasted DB round trip on every agent-authenticated request. Callers
 // that genuinely accept either token (dualAuth, the WS upgrade) pass "both".
 export async function resolveBearer(
+  prisma: PrismaClient,
   token: string,
   kind: ResolveKind = "both",
 ): Promise<
@@ -63,9 +64,10 @@ export async function resolveBearer(
 }
 
 export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const prisma = c.get("prisma");
   const token = parseBearer(c);
   // Agent-only route — skip the participant lookup (a guaranteed miss here).
-  const resolved = await resolveBearer(token, "agent");
+  const resolved = await resolveBearer(prisma, token, "agent");
   if (!resolved || resolved.kind !== "agent") throw errors.unauthorized();
   const agent = resolved.agent;
   prisma.agent
@@ -89,6 +91,7 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
 // entirely (one fewer DB round trip per agent-authenticated call). Only on an
 // agent miss do we fall back to the participant lookup.
 export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
+  const prisma = c.get("prisma");
   const token = parseBearer(c);
   const sessionId = c.req.param("id");
   if (!sessionId) throw errors.notFound();

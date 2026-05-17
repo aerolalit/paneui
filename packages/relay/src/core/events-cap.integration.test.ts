@@ -1,8 +1,8 @@
 // Integration test for the per-session event cap (abuse control B3).
 //
-// MAX_EVENTS_PER_SESSION is read from a config module singleton evaluated at
-// import time, so it is set in beforeAll BEFORE the dynamic imports below.
-// A dedicated test file gives a clean module registry to evaluate it with.
+// MAX_EVENTS_PER_SESSION is supplied via the config injected into writeEvent()'s
+// deps, so the small cap is just passed straight to loadConfig() — no
+// module-singleton juggling required.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
@@ -10,24 +10,32 @@ import type { PrismaClient, Session } from "@prisma/client";
 import type { Author } from "../types.js";
 import { ApiError } from "../http/errors.js";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { createPrismaClient } from "../db.js";
+import { loadConfig, type Config } from "../config.js";
+import { writeEvent, type WriteEventInput } from "./events.js";
 
 let testDb: TestDb;
-let writeEvent: typeof import("./events.js").writeEvent;
 let prisma: PrismaClient;
+let config: Config;
 
 const CAP = 5;
 
+// Thin wrapper binding writeEvent to the injected { prisma, config } deps.
+function we(session: Session, author: Author, input: WriteEventInput) {
+  return writeEvent({ prisma, config }, session, author, input);
+}
+
 beforeAll(async () => {
   testDb = await setupTestDb();
-  process.env.DATABASE_URL = testDb.dbUrl;
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
-  process.env.MAX_EVENTS_PER_SESSION = String(CAP);
 
-  delete (globalThis as { prisma?: PrismaClient }).prisma;
-  ({ default: prisma } = await import("../db.js"));
+  prisma = createPrismaClient(testDb.dbUrl);
+  config = loadConfig({
+    DATABASE_URL: testDb.dbUrl,
+    MAX_EVENTS_PER_SESSION: String(CAP),
+  });
   await testDb.applyMigration(prisma);
-  ({ writeEvent } = await import("./events.js"));
 });
 
 afterAll(async () => {
@@ -70,10 +78,10 @@ describe("per-session event cap", () => {
   it("rejects events once the session reaches MAX_EVENTS_PER_SESSION", async () => {
     const session = await seedSession();
     for (let i = 0; i < CAP; i++) {
-      await writeEvent(session, author, { type: "ping", data: {} });
+      await we(session, author, { type: "ping", data: {} });
     }
     await expect(
-      writeEvent(session, author, { type: "ping", data: {} }),
+      we(session, author, { type: "ping", data: {} }),
     ).rejects.toMatchObject({ status: 429, code: "rate_limited" });
   });
 
@@ -81,13 +89,13 @@ describe("per-session event cap", () => {
     const a = await seedSession();
     const b = await seedSession();
     for (let i = 0; i < CAP; i++) {
-      await writeEvent(a, author, { type: "ping", data: {} });
+      await we(a, author, { type: "ping", data: {} });
     }
     await expect(
-      writeEvent(a, author, { type: "ping", data: {} }),
+      we(a, author, { type: "ping", data: {} }),
     ).rejects.toBeInstanceOf(ApiError);
     // Session b has its own independent count.
-    const { event } = await writeEvent(b, author, { type: "ping", data: {} });
+    const { event } = await we(b, author, { type: "ping", data: {} });
     expect(event.id).toBeTruthy();
   });
 });

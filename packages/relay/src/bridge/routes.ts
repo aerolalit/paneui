@@ -2,14 +2,15 @@ import { Hono } from "hono";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import config from "../config.js";
-import prisma from "../db.js";
+import type { PrismaClient } from "@prisma/client";
+import type { Config } from "../config.js";
 import { hashKey } from "../keys.js";
+import type { AppEnv } from "../http/env.js";
 import { errors } from "../http/errors.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 
-const bridge = new Hono();
+const bridge = new Hono<AppEnv>();
 
 // Compiled client bundles. Authored as real TS modules under
 // src/bridge/client/*.ts and compiled by `tsc -p tsconfig.client.json` (which
@@ -46,7 +47,7 @@ export function loadClient(name: string): string {
 const SHIM_JS = loadClient("shim.client.js");
 const SHELL_JS = loadClient("shell.client.js");
 
-function publicWsBase(): string {
+function publicWsBase(config: Config): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
@@ -86,7 +87,7 @@ const PERMISSIONS_POLICY = [
 // (tracked in issue #6); this is the in-app first line of defence.
 const TOKEN_RX = /^[A-Za-z0-9_-]{40,50}$/;
 
-async function loadByToken(token: string) {
+async function loadByToken(prisma: PrismaClient, token: string) {
   if (!TOKEN_RX.test(token)) throw errors.notFound();
   const participant = await prisma.participant.findUnique({
     where: { tokenHash: hashKey(token) },
@@ -115,10 +116,13 @@ interface AgentPresence {
   agentLastUsedAt: string | null;
 }
 
-async function computeAgentPresence(session: {
-  id: string;
-  agentId: string;
-}): Promise<AgentPresence> {
+async function computeAgentPresence(
+  prisma: PrismaClient,
+  session: {
+    id: string;
+    agentId: string;
+  },
+): Promise<AgentPresence> {
   const agent = await prisma.agent.findUnique({
     where: { id: session.agentId },
     select: { lastUsedAt: true },
@@ -142,20 +146,22 @@ async function computeAgentPresence(session: {
 }
 
 bridge.get("/:token", async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { session } = await loadByToken(token);
+  const { session } = await loadByToken(prisma, token);
 
   // Live agent-presence facts that SEED the shell's pill — see
   // computeAgentPresence. The shell then keeps them fresh by polling
   // /:token/presence (a polling agent never opens a WebSocket, so the seed
   // would otherwise go stale within ~30s).
   const { agentLive, agentLastEventAt, agentLastUsedAt } =
-    await computeAgentPresence(session);
+    await computeAgentPresence(prisma, session);
 
   const isClosed =
     session.status !== "open" || session.expiresAt.getTime() < Date.now();
-  const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
+  const wsUrl = publicWsBase(config) + "/v1/sessions/" + session.id + "/stream";
   const schema = session.eventSchema as unknown as EventSchema;
   // 16 bytes of entropy, base64url so the value is safe inside both CSP and
   // an HTML attribute without escaping.
@@ -178,7 +184,7 @@ bridge.get("/:token", async (c) => {
       // 'self' covers same-origin HTTP fetches but NOT the ws:/wss: scheme —
       // CSP treats a WebSocket as a distinct scheme and would block the shell's
       // connection to /v1/sessions/:id/stream. Allow the relay's own ws origin.
-      `connect-src 'self' ${publicWsBase()}`,
+      `connect-src 'self' ${publicWsBase(config)}`,
       "frame-src 'self'",
       "base-uri 'none'",
       "form-action 'none'",
@@ -208,9 +214,10 @@ bridge.get("/:token", async (c) => {
 });
 
 bridge.get("/:token/content", async (c) => {
+  const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { session } = await loadByToken(token);
+  const { session } = await loadByToken(prisma, token);
 
   // Gate the artifact body on the session being live. The shell page renders
   // a "closed" banner instead of the iframe, but a client that bookmarked
@@ -274,11 +281,12 @@ ${artifactBody}
 // (`/:token`) it accompanies. No extra credential is required. The body is a
 // tiny JSON object and is cheap to recompute on every poll.
 bridge.get("/:token/presence", async (c) => {
+  const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { session } = await loadByToken(token);
+  const { session } = await loadByToken(prisma, token);
 
-  const presence = await computeAgentPresence(session);
+  const presence = await computeAgentPresence(prisma, session);
 
   c.header("Content-Type", "application/json; charset=utf-8");
   c.header("Cache-Control", "no-store");
