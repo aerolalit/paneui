@@ -40,33 +40,35 @@ function migrationsDir(engine: Engine): string {
     : "prisma/migrations";
 }
 
-// Picks the highest-timestamp directory under the relevant migrations folder.
-// In v1 there is only one migration; this lets the harness keep working if the
-// schema evolves.
-function findInitMigrationSql(engine: Engine): string {
+// Lists every migration.sql under the relevant migrations folder, in
+// timestamp order. Applying them in sequence reproduces the full schema —
+// the harness keeps working as the schema evolves across multiple migrations.
+function findMigrationSqlFiles(engine: Engine): string[] {
   const dir = migrationsDir(engine);
   const entries = readdirSync(dir).filter((e) =>
     statSync(join(dir, e)).isDirectory(),
   );
   if (entries.length === 0) throw new Error(`no migrations found under ${dir}`);
   entries.sort();
-  return join(dir, entries[entries.length - 1]!, "migration.sql");
+  return entries.map((e) => join(dir, e, "migration.sql"));
 }
 
 async function applyMigration(
   prisma: PrismaClient,
   engine: Engine,
 ): Promise<void> {
-  const raw = readFileSync(findInitMigrationSql(engine), "utf8");
-  const cleaned = raw
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("--"))
-    .join("\n");
-  for (const stmt of cleaned
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    await prisma.$executeRawUnsafe(stmt);
+  for (const file of findMigrationSqlFiles(engine)) {
+    const raw = readFileSync(file, "utf8");
+    const cleaned = raw
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("--"))
+      .join("\n");
+    for (const stmt of cleaned
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      await prisma.$executeRawUnsafe(stmt);
+    }
   }
 }
 
