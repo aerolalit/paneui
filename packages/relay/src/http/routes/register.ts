@@ -23,7 +23,8 @@ register.post("/", async (c) => {
   // empty / non-JSON body as {} so the only failure path is a malformed name.
   const raw = await c.req.json().catch(() => null);
   const parsed = bodySchema.safeParse(raw ?? {});
-  if (!parsed.success) throw errors.invalidRequest("invalid body", parsed.error.flatten());
+  if (!parsed.success)
+    throw errors.invalidRequest("invalid body", parsed.error.flatten());
 
   const key = generateApiKey();
   const agent = await prisma.agent.create({

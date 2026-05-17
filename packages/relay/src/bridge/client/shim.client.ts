@@ -27,7 +27,11 @@ interface EmitOpts {
 }
 
 interface PaneApi {
-  emit(type: string, data?: unknown, opts?: EmitOpts): Promise<{ id: string; deduped: boolean }>;
+  emit(
+    type: string,
+    data?: unknown,
+    opts?: EmitOpts,
+  ): Promise<{ id: string; deduped: boolean }>;
   on(type: string, handler: (ev: SerializedEvent) => void): () => void;
   state: {
     readonly events: SerializedEvent[];
@@ -67,7 +71,11 @@ declare global {
 
   function notifyState(): void {
     stateSubscribers.forEach((fn) => {
-      try { fn(); } catch { /* swallow */ }
+      try {
+        fn();
+      } catch {
+        /* swallow */
+      }
     });
   }
 
@@ -77,32 +85,49 @@ declare global {
     notifyState();
     const hs = handlers.get(ev.type);
     if (hs) {
-      hs.forEach((h) => { try { h(ev); } catch { /* swallow */ } });
+      hs.forEach((h) => {
+        try {
+          h(ev);
+        } catch {
+          /* swallow */
+        }
+      });
     }
   }
 
   const state = Object.freeze({
-    get events(): SerializedEvent[] { return stateEvents.slice(); },
+    get events(): SerializedEvent[] {
+      return stateEvents.slice();
+    },
     last(type?: string): SerializedEvent | undefined {
       if (type === undefined) {
-        return stateEvents.length ? stateEvents[stateEvents.length - 1] : undefined;
+        return stateEvents.length
+          ? stateEvents[stateEvents.length - 1]
+          : undefined;
       }
       return lastByType.get(type);
     },
     subscribe(fn: () => void): () => void {
       stateSubscribers.add(fn);
-      return () => { stateSubscribers.delete(fn); };
+      return () => {
+        stateSubscribers.delete(fn);
+      };
     },
   });
 
-  function on(type: string, handler: (ev: SerializedEvent) => void): () => void {
+  function on(
+    type: string,
+    handler: (ev: SerializedEvent) => void,
+  ): () => void {
     let set = handlers.get(type);
     if (!set) {
       set = new Set();
       handlers.set(type, set);
     }
     set.add(handler);
-    return () => { set!.delete(handler); };
+    return () => {
+      set!.delete(handler);
+    };
   }
 
   function emit(
@@ -110,7 +135,7 @@ declare global {
     data?: unknown,
     opts?: EmitOpts,
   ): Promise<{ id: string; deduped: boolean }> {
-    const corr = "c" + (nextCorr++);
+    const corr = "c" + nextCorr++;
     const frame: Record<string, unknown> = {
       __pane: 1,
       v: 1,
@@ -120,8 +145,10 @@ declare global {
       data: data == null ? {} : data,
     };
     if (opts && typeof opts === "object") {
-      if (typeof opts.causationId === "string") frame["causation_id"] = opts.causationId;
-      if (typeof opts.idempotencyKey === "string") frame["idempotency_key"] = opts.idempotencyKey;
+      if (typeof opts.causationId === "string")
+        frame["causation_id"] = opts.causationId;
+      if (typeof opts.idempotencyKey === "string")
+        frame["idempotency_key"] = opts.idempotencyKey;
     }
     parent.postMessage(frame, shellOrigin);
     return new Promise((resolve, reject) => {
@@ -171,7 +198,9 @@ declare global {
         pendingEmits.delete(ecid);
         clearTimeout(pe.timer);
         const err: PaneError = new Error(
-          (m.error && m.error.message) || (m.error && m.error.code) || "emit failed",
+          (m.error && m.error.message) ||
+            (m.error && m.error.code) ||
+            "emit failed",
         );
         if (m.error) {
           err.code = m.error.code;

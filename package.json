@@ -19,6 +19,30 @@
     "test:e2e": "npm run test:e2e --workspace @pane/relay",
     "dev": "npm run dev --workspace @pane/relay",
     "start": "npm run start --workspace @pane/relay",
-    "generate": "npm run generate --workspace @pane/relay"
+    "generate": "npm run generate --workspace @pane/relay",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "prettier": "^3.8.3",
+    "typescript-eslint": "^8.59.3"
   }
 }

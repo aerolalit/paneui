@@ -6,6 +6,27 @@ on:
   pull_request:
 
 jobs:
+  # ESLint + Prettier check. Independent of build — runs in parallel and
+  # doesn't need the compiled output. The plain (non-type-checked)
+  # typescript-eslint rule set means the generated Prisma client isn't
+  # required either, so no `generate` step here.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run format:check
+
   # Build + typecheck every workspace package (core, relay, cli).
   build:
     name: build

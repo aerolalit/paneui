@@ -47,7 +47,10 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
 }
 
 function bearer(token: string): Record<string, string> {
-  return { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  return {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+  };
 }
 
 const minimalSchema = {
@@ -185,7 +188,10 @@ describe("HTTP e2e", () => {
         new Request(`http://t/v1/sessions/${session_id}/events`, {
           method: "POST",
           headers: bearer(tokens.agent),
-          body: JSON.stringify({ type: "review.commentAdded", data: { body: "late" } }),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "late" },
+          }),
         }),
       );
       expect(emit.status).toBe(410);
@@ -228,11 +234,16 @@ describe("HTTP e2e", () => {
         new Request(`http://t/v1/sessions/${sessionId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
-          body: JSON.stringify({ type: "review.commentAdded", data: { body: "hi" } }),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "hi" },
+          }),
         }),
       );
       expect(post.status).toBe(201);
-      const postBody = (await post.json()) as { event: { id: string; type: string } };
+      const postBody = (await post.json()) as {
+        event: { id: string; type: string };
+      };
       expect(postBody.event.type).toBe("review.commentAdded");
 
       const get = await app.fetch(
@@ -252,13 +263,17 @@ describe("HTTP e2e", () => {
 
     it("human can post via participant token; agent can read it back", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken, humanToken } = await createOpenSession(apiKey);
+      const { sessionId, agentToken, humanToken } =
+        await createOpenSession(apiKey);
 
       const post = await app.fetch(
         new Request(`http://t/v1/sessions/${sessionId}/events`, {
           method: "POST",
           headers: bearer(humanToken),
-          body: JSON.stringify({ type: "review.commentAdded", data: { body: "from human" } }),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "from human" },
+          }),
         }),
       );
       expect(post.status).toBe(201);
@@ -307,7 +322,10 @@ describe("HTTP e2e", () => {
         new Request(`http://t/v1/sessions/${sessionId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
-          body: JSON.stringify({ type: "review.commentAdded", data: { wrongField: 1 } }),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { wrongField: 1 },
+          }),
         }),
       );
       expect(res.status).toBe(422);

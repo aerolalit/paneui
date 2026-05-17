@@ -49,7 +49,8 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   // html-ref: the value is a URL, used verbatim. html-inline: file or literal.
   let source: string;
   try {
-    source = artifactType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
+    source =
+      artifactType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e), "invalid_args");
   }
@@ -80,7 +81,8 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const partRaw = args.flags.get("participants");
   if (partRaw !== undefined) {
     const humans = Number(partRaw);
-    if (!Number.isFinite(humans)) fail("--participants must be a number", "invalid_args");
+    if (!Number.isFinite(humans))
+      fail("--participants must be a number", "invalid_args");
     candidate["participants"] = { humans };
   }
 
@@ -105,7 +107,8 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const parsed = createSessionSchema.safeParse(candidate);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
-    const where = issue && issue.path.length > 0 ? issue.path.join(".") : "request";
+    const where =
+      issue && issue.path.length > 0 ? issue.path.join(".") : "request";
     fail(
       `invalid create request: ${where}: ${issue ? issue.message : "validation failed"}`,
       "invalid_args",

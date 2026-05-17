@@ -62,7 +62,12 @@ async function main(): Promise<void> {
   const command = rawArgv[0];
   const rest = rawArgv.slice(1);
 
-  if (command === undefined || command === "-h" || command === "--help" || command === "help") {
+  if (
+    command === undefined ||
+    command === "-h" ||
+    command === "--help" ||
+    command === "help"
+  ) {
     process.stdout.write(ROOT_HELP + "\n");
     return;
   }
@@ -73,7 +78,9 @@ async function main(): Promise<void> {
   } catch (e) {
     if (e instanceof ArgvError) {
       process.stderr.write(
-        JSON.stringify({ error: { code: "invalid_args", message: e.message } }) + "\n",
+        JSON.stringify({
+          error: { code: "invalid_args", message: e.message },
+        }) + "\n",
       );
       process.exit(1);
     }
@@ -91,7 +98,10 @@ async function main(): Promise<void> {
   if (!(command in helps)) {
     process.stderr.write(
       JSON.stringify({
-        error: { code: "unknown_command", message: `unknown command '${command}' — run 'pane --help'` },
+        error: {
+          code: "unknown_command",
+          message: `unknown command '${command}' — run 'pane --help'`,
+        },
       }) + "\n",
     );
     process.exit(1);
@@ -124,7 +134,10 @@ async function main(): Promise<void> {
 main().catch((err) => {
   process.stderr.write(
     JSON.stringify({
-      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+      error: {
+        code: "internal",
+        message: err instanceof Error ? err.message : String(err),
+      },
     }) + "\n",
   );
   process.exit(1);

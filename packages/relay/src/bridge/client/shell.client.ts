@@ -117,7 +117,8 @@ interface SerializedEvent {
     if (!iso) continue;
     const t = Date.parse(iso);
     if (isFinite(t)) {
-      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs)
+        lastAgentActiveMs = t;
       sawAnyAgentActivity = true;
     }
   }
@@ -146,23 +147,32 @@ interface SerializedEvent {
     //     the shell keeps lastAgentActiveMs fresh by polling /presence.
     if (
       agentLiveCount > 0 ||
-      (lastAgentLiveMs !== null && Date.now() - lastAgentLiveMs <= LIVE_GRACE_MS)
+      (lastAgentLiveMs !== null &&
+        Date.now() - lastAgentLiveMs <= LIVE_GRACE_MS)
     ) {
       agentStatusEl.textContent = "agent active";
       agentDot.className = "dot up";
       return;
     }
-    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= ACTIVE_WINDOW_MS) {
+    if (
+      lastAgentActiveMs !== null &&
+      Date.now() - lastAgentActiveMs <= ACTIVE_WINDOW_MS
+    ) {
       agentStatusEl.textContent = "agent active";
       agentDot.className = "dot up";
       return;
     }
-    if (lastAgentActiveMs !== null && Date.now() - lastAgentActiveMs <= RECENT_WINDOW_MS) {
+    if (
+      lastAgentActiveMs !== null &&
+      Date.now() - lastAgentActiveMs <= RECENT_WINDOW_MS
+    ) {
       agentStatusEl.textContent = "agent active " + relTime(lastAgentActiveMs);
       agentDot.className = "dot amber";
       return;
     }
-    agentStatusEl.textContent = sawAnyAgentActivity ? "agent away" : "no agent yet";
+    agentStatusEl.textContent = sawAnyAgentActivity
+      ? "agent away"
+      : "no agent yet";
     agentDot.className = "dot";
   }
 
@@ -171,10 +181,14 @@ interface SerializedEvent {
   // stale `agentCountLive` and a stale `joined` with no matching `left` would
   // corrupt the count.
   function trackLiveAgentPresence(ev: SerializedEvent): void {
-    if (ev.type === "system.participant.joined" || ev.type === "system.participant.left") {
+    if (
+      ev.type === "system.participant.joined" ||
+      ev.type === "system.participant.left"
+    ) {
       // The relay stamps the exact current agent socket count onto every
       // participant event it broadcasts — trust it verbatim.
-      const n = (ev.data as { agentCountLive?: unknown } | null)?.agentCountLive;
+      const n = (ev.data as { agentCountLive?: unknown } | null)
+        ?.agentCountLive;
       if (typeof n === "number" && isFinite(n) && n >= 0) {
         agentLiveCount = n;
         if (n > 0) {
@@ -209,11 +223,19 @@ interface SerializedEvent {
 
   // Same-origin: the shell is served by the relay, so /presence sits under the
   // relay origin. connect-src 'self' in the shell-page CSP already covers it.
-  const presenceUrl = window.location.origin + "/s/" + encodeURIComponent(CFG.token) + "/presence";
+  const presenceUrl =
+    window.location.origin +
+    "/s/" +
+    encodeURIComponent(CFG.token) +
+    "/presence";
 
   async function pollPresence(): Promise<void> {
     if (CFG.isClosed) return;
-    let body: { agentLive?: unknown; agentLastEventAt?: unknown; agentLastUsedAt?: unknown };
+    let body: {
+      agentLive?: unknown;
+      agentLastEventAt?: unknown;
+      agentLastUsedAt?: unknown;
+    };
     try {
       const res = await fetch(presenceUrl, { cache: "no-store" });
       if (!res.ok) return; // skip this tick — never break the pill
@@ -231,7 +253,8 @@ interface SerializedEvent {
       if (typeof iso !== "string") continue;
       const t = Date.parse(iso);
       if (!isFinite(t)) continue;
-      if (lastAgentActiveMs === null || t > lastAgentActiveMs) lastAgentActiveMs = t;
+      if (lastAgentActiveMs === null || t > lastAgentActiveMs)
+        lastAgentActiveMs = t;
       sawAnyAgentActivity = true;
     }
     renderAgentPresence();
@@ -265,15 +288,20 @@ interface SerializedEvent {
 
   function sendIframeInit(): void {
     if (!iframeReady || !replayDone || !frame || !frame.contentWindow) return;
-    frame.contentWindow.postMessage({
-      __pane: 1, v: 1, kind: "init",
-      payload: {
-        session_id: CFG.sessionId,
-        schema: CFG.schema,
-        replay: replayBuffer.slice(),
-        shell_origin: window.location.origin,
+    frame.contentWindow.postMessage(
+      {
+        __pane: 1,
+        v: 1,
+        kind: "init",
+        payload: {
+          session_id: CFG.sessionId,
+          schema: CFG.schema,
+          replay: replayBuffer.slice(),
+          shell_origin: window.location.origin,
+        },
       },
-    }, IFRAME_ORIGIN);
+      IFRAME_ORIGIN,
+    );
   }
 
   function pushToIframe(ev: SerializedEvent): void {
@@ -320,7 +348,11 @@ interface SerializedEvent {
     // bail — whatever triggered this call (a stale close, a double-invoke)
     // would otherwise spawn a parallel socket.
     if (connecting) return;
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    if (
+      ws &&
+      (ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
     teardownWs();
@@ -341,30 +373,54 @@ interface SerializedEvent {
     sock.addEventListener("message", (evt: MessageEvent) => {
       if (ws !== sock) return; // superseded socket — ignore late frames
       let msg: Record<string, unknown>;
-      try { msg = JSON.parse(evt.data); } catch { return; }
+      try {
+        msg = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
       if (msg && msg["kind"] === "system.replay.complete") {
         replayDone = true;
         sendIframeInit();
         return;
       }
       if (msg && msg["error"]) {
-        if (validCid(msg["correlation_id"]) && iframeReady && frame && frame.contentWindow) {
-          frame.contentWindow.postMessage({
-            __pane: 1, v: 1, kind: "error",
-            correlation_id: msg["correlation_id"],
-            error: msg["error"],
-          }, IFRAME_ORIGIN);
+        if (
+          validCid(msg["correlation_id"]) &&
+          iframeReady &&
+          frame &&
+          frame.contentWindow
+        ) {
+          frame.contentWindow.postMessage(
+            {
+              __pane: 1,
+              v: 1,
+              kind: "error",
+              correlation_id: msg["correlation_id"],
+              error: msg["error"],
+            },
+            IFRAME_ORIGIN,
+          );
         }
         return;
       }
       if (msg && msg["ack"] !== undefined) {
-        if (validCid(msg["correlation_id"]) && iframeReady && frame && frame.contentWindow) {
-          frame.contentWindow.postMessage({
-            __pane: 1, v: 1, kind: "ack",
-            correlation_id: msg["correlation_id"],
-            event_id: msg["ack"],
-            deduped: !!msg["deduped"],
-          }, IFRAME_ORIGIN);
+        if (
+          validCid(msg["correlation_id"]) &&
+          iframeReady &&
+          frame &&
+          frame.contentWindow
+        ) {
+          frame.contentWindow.postMessage(
+            {
+              __pane: 1,
+              v: 1,
+              kind: "ack",
+              correlation_id: msg["correlation_id"],
+              event_id: msg["ack"],
+              deduped: !!msg["deduped"],
+            },
+            IFRAME_ORIGIN,
+          );
         }
         return;
       }
@@ -418,15 +474,24 @@ interface SerializedEvent {
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s
       // Promise sits hanging until the 30s timeout fires.
       const replyError = (code: string, message: string): void => {
-        if (!validCid(m.correlation_id) || !frame || !frame.contentWindow) return;
-        frame.contentWindow.postMessage({
-          __pane: 1, v: 1, kind: "error",
-          correlation_id: m.correlation_id,
-          error: { code, message },
-        }, IFRAME_ORIGIN);
+        if (!validCid(m.correlation_id) || !frame || !frame.contentWindow)
+          return;
+        frame.contentWindow.postMessage(
+          {
+            __pane: 1,
+            v: 1,
+            kind: "error",
+            correlation_id: m.correlation_id,
+            error: { code, message },
+          },
+          IFRAME_ORIGIN,
+        );
       };
       if (typeof m.type !== "string" || !m.type.length || m.type.length > 64) {
-        replyError("invalid_request", "type must be a non-empty string within 64 chars");
+        replyError(
+          "invalid_request",
+          "type must be a non-empty string within 64 chars",
+        );
         return;
       }
       const out: Record<string, unknown> = {
@@ -436,7 +501,10 @@ interface SerializedEvent {
       if (typeof m.causation_id === "string" && m.causation_id.length <= 64) {
         out["causation_id"] = m.causation_id;
       }
-      if (typeof m.idempotency_key === "string" && m.idempotency_key.length <= 128) {
+      if (
+        typeof m.idempotency_key === "string" &&
+        m.idempotency_key.length <= 128
+      ) {
         out["idempotency_key"] = m.idempotency_key;
       }
       if (validCid(m.correlation_id)) out["correlation_id"] = m.correlation_id;

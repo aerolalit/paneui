@@ -132,7 +132,9 @@ describe("bridge /presence", () => {
   });
 
   it("404s on a bad token", async () => {
-    const res = await app.fetch(new Request("http://t/s/not-a-real-token/presence"));
+    const res = await app.fetch(
+      new Request("http://t/s/not-a-real-token/presence"),
+    );
     expect(res.status).toBe(404);
   });
 

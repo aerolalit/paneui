@@ -4,7 +4,16 @@
 // docs/architecture/phase-1-skeleton-and-data.md (idempotency under repeated
 // API_KEY runs; mint-and-print exactly once on empty; no-op with agents).
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterAll,
+  afterEach,
+  vi,
+} from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { runBootstrap } from "./bootstrap.js";
 import { hashKey } from "./keys.js";
@@ -48,8 +57,11 @@ describe("bootstrap (integration, real DB)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
     stdoutBuffer = "";
-    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
-      stdoutBuffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((
+      chunk: string | Uint8Array,
+    ) => {
+      stdoutBuffer +=
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
       return true;
     }) as typeof process.stdout.write);
   });

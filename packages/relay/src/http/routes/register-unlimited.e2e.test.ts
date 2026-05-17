@@ -41,7 +41,10 @@ describe("POST /v1/register with REGISTER_RATE_LIMIT=0", () => {
       const res = await app.fetch(
         new Request("http://t/v1/register", {
           method: "POST",
-          headers: { "content-type": "application/json", "x-forwarded-for": "10.9.9.9" },
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "10.9.9.9",
+          },
         }),
       );
       expect(res.status).toBe(201);

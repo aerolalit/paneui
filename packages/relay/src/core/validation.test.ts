@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { validateEvent, validateSchemaShape, mergeSchemaAdditive } from "./validation.js";
+import {
+  validateEvent,
+  validateSchemaShape,
+  mergeSchemaAdditive,
+} from "./validation.js";
 import type { EventSchema } from "../types.js";
 
 const exampleSchema: EventSchema = {
@@ -14,11 +18,19 @@ const exampleSchema: EventSchema = {
       emittedBy: ["page", "agent"],
     },
     "review.approved": {
-      payload: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
+      payload: {
+        type: "object",
+        properties: { who: { type: "string" } },
+        required: ["who"],
+      },
       emittedBy: ["page"],
     },
     "highlight.requested": {
-      payload: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+      payload: {
+        type: "object",
+        properties: { selector: { type: "string" } },
+        required: ["selector"],
+      },
       emittedBy: ["agent"],
     },
   },
@@ -57,7 +69,9 @@ describe("validateSchemaShape", () => {
   it("rejects an emittedBy with an unknown kind", () => {
     expect(() =>
       validateSchemaShape({
-        events: { "x.y": { payload: { type: "object" }, emittedBy: ["system"] } },
+        events: {
+          "x.y": { payload: { type: "object" }, emittedBy: ["system"] },
+        },
       }),
     ).toThrow(/'page' or 'agent'/);
   });
@@ -65,7 +79,9 @@ describe("validateSchemaShape", () => {
   it("rejects an invalid JSON Schema payload", () => {
     expect(() =>
       validateSchemaShape({
-        events: { "x.y": { payload: { type: "not-a-real-type" }, emittedBy: ["page"] } },
+        events: {
+          "x.y": { payload: { type: "not-a-real-type" }, emittedBy: ["page"] },
+        },
       }),
     ).toThrow();
   });
@@ -99,7 +115,12 @@ describe("validateEvent", () => {
 
   it("rejects an unknown event type", () => {
     expect(() =>
-      validateEvent({ ...args, type: "not.a.type", data: {}, authorKind: "human" }),
+      validateEvent({
+        ...args,
+        type: "not.a.type",
+        data: {},
+        authorKind: "human",
+      }),
     ).toThrow(/unknown_event_type|unknown event/);
   });
 
@@ -153,7 +174,10 @@ describe("mergeSchemaAdditive", () => {
     const next = mergeSchemaAdditive(exampleSchema, {
       events: {
         "review.rejected": {
-          payload: { type: "object", properties: { reason: { type: "string" } } },
+          payload: {
+            type: "object",
+            properties: { reason: { type: "string" } },
+          },
           emittedBy: ["page"],
         },
       },
@@ -165,7 +189,10 @@ describe("mergeSchemaAdditive", () => {
   it("rejects re-declaring an existing event type", () => {
     const prev: EventSchema = {
       events: {
-        "review.commentAdded": { payload: { type: "object" }, emittedBy: ["page"] },
+        "review.commentAdded": {
+          payload: { type: "object" },
+          emittedBy: ["page"],
+        },
         "review.approved": { payload: { type: "object" }, emittedBy: ["page"] },
       },
     };
@@ -173,7 +200,9 @@ describe("mergeSchemaAdditive", () => {
     expect(() =>
       mergeSchemaAdditive(prev, {
         events: {
-          "review.commentAdded": prev.events["review.commentAdded"]! as unknown as Record<string, unknown>,
+          "review.commentAdded": prev.events[
+            "review.commentAdded"
+          ]! as unknown as Record<string, unknown>,
         },
       }),
     ).toThrow(/already exists/);
@@ -182,7 +211,10 @@ describe("mergeSchemaAdditive", () => {
   it("keeps prior types when the patch adds only new ones", () => {
     const prev: EventSchema = {
       events: {
-        "review.commentAdded": { payload: { type: "object" }, emittedBy: ["page"] },
+        "review.commentAdded": {
+          payload: { type: "object" },
+          emittedBy: ["page"],
+        },
         "review.approved": { payload: { type: "object" }, emittedBy: ["page"] },
       },
     };

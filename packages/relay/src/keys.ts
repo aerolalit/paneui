@@ -19,5 +19,7 @@ export function hashKey(value: string): string {
 }
 
 export function keyPrefix(value: string): string {
-  return value.startsWith(API_KEY_PREFIX) ? value.slice(0, 11) : value.slice(0, 8);
+  return value.startsWith(API_KEY_PREFIX)
+    ? value.slice(0, 11)
+    : value.slice(0, 8);
 }

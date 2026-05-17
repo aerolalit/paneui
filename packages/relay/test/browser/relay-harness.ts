@@ -4,7 +4,13 @@
 // `serve()` adapter (not raw node:http) so the browser path is exercised end
 // to end exactly as it ships.
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -19,8 +25,8 @@ export interface RelayHandle {
 
 function migrationsSql(): string {
   const dir = "prisma/migrations";
-  const entries = readdirSync(dir).filter(
-    (e) => statSync(join(dir, e)).isDirectory(),
+  const entries = readdirSync(dir).filter((e) =>
+    statSync(join(dir, e)).isDirectory(),
   );
   entries.sort();
   const last = entries[entries.length - 1];
@@ -47,7 +53,10 @@ export async function startRelay(): Promise<RelayHandle> {
     .split("\n")
     .filter((l) => !l.trim().startsWith("--"))
     .join("\n");
-  for (const stmt of raw.split(";").map((s) => s.trim()).filter(Boolean)) {
+  for (const stmt of raw
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)) {
     await prisma.$executeRawUnsafe(stmt);
   }
 
@@ -58,7 +67,9 @@ export async function startRelay(): Promise<RelayHandle> {
   const app = buildApp();
   const server = serve({ fetch: app.fetch, port }) as unknown as Server;
   attachWs(server);
-  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  await new Promise<void>((resolve) =>
+    server.once("listening", () => resolve()),
+  );
 
   return {
     baseUrl: `http://localhost:${port}`,
@@ -96,20 +107,20 @@ export async function createSession(base: string): Promise<CreatedSession> {
     "<script>",
     'document.getElementById("emit-btn").addEventListener("click", function () {',
     '  window.pane.emit("ping", { ok: true })',
-    '    .then(function (r) {',
+    "    .then(function (r) {",
     '      var d = document.createElement("div");',
     '      d.id = "emit-result";',
     '      d.textContent = "EMIT_OK:" + r.id;',
     "      document.body.appendChild(d);",
     "    })",
-    '    .catch(function (e) {',
+    "    .catch(function (e) {",
     '      var d = document.createElement("div");',
     '      d.id = "emit-result";',
     '      d.textContent = "EMIT_ERR:" + e.message;',
     "      document.body.appendChild(d);",
     "    });",
     "});",
-    "<\/script>",
+    "</script>",
   ].join("\n");
 
   const created = (await (
@@ -122,7 +133,9 @@ export async function createSession(base: string): Promise<CreatedSession> {
       body: JSON.stringify({
         artifact: { type: "html-inline", source: artifact },
         schema: {
-          events: { ping: { payload: { type: "object" }, emittedBy: ["page"] } },
+          events: {
+            ping: { payload: { type: "object" }, emittedBy: ["page"] },
+          },
         },
       }),
     })

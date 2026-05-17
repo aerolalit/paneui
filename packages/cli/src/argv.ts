@@ -23,7 +23,10 @@ export class ArgvError extends Error {
  * (e.g. --json, --once, --help); everything else with a `--name` form
  * consumes the next token unless written as `--name=value`.
  */
-export function parseArgs(tokens: string[], booleanFlags: Set<string>): ParsedArgs {
+export function parseArgs(
+  tokens: string[],
+  booleanFlags: Set<string>,
+): ParsedArgs {
   const positionals: string[] = [];
   const flags = new Map<string, string>();
   const bools = new Set<string>();

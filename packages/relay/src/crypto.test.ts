@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
-import { encryptSecret, decryptSecret, secretFingerprint, _resetKeyCacheForTests } from "./crypto.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  secretFingerprint,
+  _resetKeyCacheForTests,
+} from "./crypto.js";
 
 describe("crypto envelope", () => {
   beforeEach(() => {

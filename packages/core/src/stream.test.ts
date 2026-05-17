@@ -65,14 +65,20 @@ describe("openStream frame routing", () => {
   it("fires onReplayComplete for the replay marker", () => {
     let done = false;
     const h = open({ onReplayComplete: () => (done = true) });
-    h.socket.emit("message", Buffer.from(JSON.stringify({ kind: "system.replay.complete" })));
+    h.socket.emit(
+      "message",
+      Buffer.from(JSON.stringify({ kind: "system.replay.complete" })),
+    );
     expect(done).toBe(true);
   });
 
   it("routes a relay error frame to onRelayError", () => {
     let code: string | undefined;
     const h = open({ onRelayError: (e) => (code = e.code) });
-    h.socket.emit("message", Buffer.from(JSON.stringify({ error: { code: "bad" } })));
+    h.socket.emit(
+      "message",
+      Buffer.from(JSON.stringify({ error: { code: "bad" } })),
+    );
     expect(code).toBe("bad");
   });
 });

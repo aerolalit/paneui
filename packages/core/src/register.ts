@@ -27,7 +27,9 @@ export interface RegisterAgentResult {
  * never-throw-raw style: network/parse failures and non-2xx responses are
  * surfaced as PaneApiError.
  */
-export async function registerAgent(opts: RegisterAgentOptions): Promise<RegisterAgentResult> {
+export async function registerAgent(
+  opts: RegisterAgentOptions,
+): Promise<RegisterAgentResult> {
   const base = opts.url.replace(/\/$/, "");
   const fetchImpl = opts.fetch ?? fetch;
   const body: Record<string, unknown> = {};
@@ -62,8 +64,11 @@ export async function registerAgent(opts: RegisterAgentOptions): Promise<Registe
   }
 
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string; details?: unknown } } | null)
-      ?.error;
+    const err = (
+      data as {
+        error?: { code?: string; message?: string; details?: unknown };
+      } | null
+    )?.error;
     throw new PaneApiError(
       res.status,
       err?.code ?? "relay_error",

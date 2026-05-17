@@ -18,7 +18,11 @@ export function printJsonLine(value: unknown): void {
 }
 
 /** Print an error envelope to stderr and exit non-zero. */
-export function fail(message: string, code = "error", details?: unknown): never {
+export function fail(
+  message: string,
+  code = "error",
+  details?: unknown,
+): never {
   const envelope: Record<string, unknown> = { error: { code, message } };
   if (details !== undefined) {
     (envelope["error"] as Record<string, unknown>)["details"] = details;

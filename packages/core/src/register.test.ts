@@ -42,7 +42,14 @@ describe("registerAgent", () => {
       fetch: async (url, init) => {
         seenUrl = String(url);
         seenInit = init;
-        return res({ status: 201, body: JSON.stringify({ agent_id: "a", api_key: "k", key_prefix: "p" }) });
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
       },
     });
     expect(seenUrl).toBe("https://relay.test/v1/register");
@@ -57,7 +64,14 @@ describe("registerAgent", () => {
       name: "ci-bot",
       fetch: async (_url, init) => {
         seenInit = init;
-        return res({ status: 201, body: JSON.stringify({ agent_id: "a", api_key: "k", key_prefix: "p" }) });
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
       },
     });
     expect(JSON.parse(seenInit!.body as string)).toEqual({ name: "ci-bot" });
@@ -71,7 +85,10 @@ describe("registerAgent", () => {
           res({
             status: 429,
             body: JSON.stringify({
-              error: { code: "rate_limited", message: "registration rate limit exceeded" },
+              error: {
+                code: "rate_limited",
+                message: "registration rate limit exceeded",
+              },
             }),
           }),
       });

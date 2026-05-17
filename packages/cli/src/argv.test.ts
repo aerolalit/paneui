@@ -47,7 +47,10 @@ describe("parseArgs", () => {
   });
 
   it("handles a mix of positionals, flags, and bools", () => {
-    const r = parseArgs(["watch", "ses_1", "--type", "form.submitted", "--once"], BOOLS);
+    const r = parseArgs(
+      ["watch", "ses_1", "--type", "form.submitted", "--once"],
+      BOOLS,
+    );
     expect(r.positionals).toEqual(["watch", "ses_1"]);
     expect(r.flags.get("type")).toBe("form.submitted");
     expect(r.bools.has("once")).toBe(true);

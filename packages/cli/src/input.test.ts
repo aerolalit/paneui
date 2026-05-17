@@ -29,11 +29,15 @@ describe("resolveJson", () => {
   });
 
   it("parses an inline JSON literal", () => {
-    expect(resolveJson('{"from":"inline"}', "--schema")).toEqual({ from: "inline" });
+    expect(resolveJson('{"from":"inline"}', "--schema")).toEqual({
+      from: "inline",
+    });
   });
 
   it("throws a labeled error on invalid JSON", () => {
-    expect(() => resolveJson("{not json", "--schema")).toThrow(/--schema: not valid JSON/);
+    expect(() => resolveJson("{not json", "--schema")).toThrow(
+      /--schema: not valid JSON/,
+    );
   });
 });
 
@@ -48,7 +52,9 @@ describe("resolveText", () => {
 
   it("treats a missing path as inline content (ENOENT → not a file)", () => {
     // A non-existent path is JSON-ish text, used verbatim.
-    expect(resolveText("/no/such/path/here.html")).toBe("/no/such/path/here.html");
+    expect(resolveText("/no/such/path/here.html")).toBe(
+      "/no/such/path/here.html",
+    );
   });
 });
 

@@ -3,7 +3,10 @@ import type { Config } from "./config.js";
 import { generateApiKey, hashKey, keyPrefix } from "./keys.js";
 import { log } from "./log.js";
 
-export async function runBootstrap(prisma: PrismaClient, config: Config): Promise<void> {
+export async function runBootstrap(
+  prisma: PrismaClient,
+  config: Config,
+): Promise<void> {
   if (config.API_KEY) {
     const hash = hashKey(config.API_KEY);
     await prisma.agent.upsert({

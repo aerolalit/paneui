@@ -19,7 +19,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const relayDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const relayDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 const SCHEMAS = {
   sqlite: "prisma/schema.prisma",
@@ -80,21 +83,27 @@ function main() {
       : url
         ? ".env file"
         : "default (DATABASE_URL unset)";
-    console.log(`[prisma-generate] DATABASE_URL via ${source} -> schema: ${key}`);
+    console.log(
+      `[prisma-generate] DATABASE_URL via ${source} -> schema: ${key}`,
+    );
   }
 
   const schema = SCHEMAS[key];
   const provider = key === "postgres" ? "postgresql" : "sqlite";
-  console.log(`[prisma-generate] generating client for provider "${provider}" (${schema})`);
-
-  const result = spawnSync(
-    "npx",
-    ["prisma", "generate", "--schema", schema],
-    { cwd: relayDir, stdio: "inherit", shell: process.platform === "win32" },
+  console.log(
+    `[prisma-generate] generating client for provider "${provider}" (${schema})`,
   );
 
+  const result = spawnSync("npx", ["prisma", "generate", "--schema", schema], {
+    cwd: relayDir,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
+
   if (result.error) {
-    console.error(`[prisma-generate] failed to run prisma: ${result.error.message}`);
+    console.error(
+      `[prisma-generate] failed to run prisma: ${result.error.message}`,
+    );
     process.exit(1);
   }
   process.exit(result.status ?? 0);

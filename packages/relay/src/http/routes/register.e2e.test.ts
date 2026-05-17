@@ -56,7 +56,11 @@ describe("POST /v1/register (open registration)", () => {
   it("mints a key with no body at all (201)", async () => {
     const res = await register("10.0.0.1");
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { agent_id: string; api_key: string; key_prefix: string };
+    const body = (await res.json()) as {
+      agent_id: string;
+      api_key: string;
+      key_prefix: string;
+    };
     expect(body.agent_id).toBeTruthy();
     expect(body.api_key).toMatch(/^pane_/);
     expect(body.api_key.startsWith(body.key_prefix)).toBe(true);
@@ -66,7 +70,9 @@ describe("POST /v1/register (open registration)", () => {
     const res = await register("10.0.0.2", { name: "ci-bot" });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { agent_id: string };
-    const agent = await prisma.agent.findUnique({ where: { id: body.agent_id } });
+    const agent = await prisma.agent.findUnique({
+      where: { id: body.agent_id },
+    });
     expect(agent?.name).toBe("ci-bot");
   });
 

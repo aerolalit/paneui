@@ -13,7 +13,13 @@
 // dependency-inject prisma everywhere is a bigger change than env-vars; this
 // helper keeps the production code untouched.
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,12 +29,15 @@ export type Engine = "sqlite" | "postgresql";
 
 function detectEngine(url: string | undefined): Engine {
   if (!url) return "sqlite";
-  if (url.startsWith("postgres://") || url.startsWith("postgresql://")) return "postgresql";
+  if (url.startsWith("postgres://") || url.startsWith("postgresql://"))
+    return "postgresql";
   return "sqlite";
 }
 
 function migrationsDir(engine: Engine): string {
-  return engine === "postgresql" ? "prisma/migrations-postgres" : "prisma/migrations";
+  return engine === "postgresql"
+    ? "prisma/migrations-postgres"
+    : "prisma/migrations";
 }
 
 // Picks the highest-timestamp directory under the relevant migrations folder.
@@ -36,19 +45,27 @@ function migrationsDir(engine: Engine): string {
 // schema evolves.
 function findInitMigrationSql(engine: Engine): string {
   const dir = migrationsDir(engine);
-  const entries = readdirSync(dir).filter((e) => statSync(join(dir, e)).isDirectory());
+  const entries = readdirSync(dir).filter((e) =>
+    statSync(join(dir, e)).isDirectory(),
+  );
   if (entries.length === 0) throw new Error(`no migrations found under ${dir}`);
   entries.sort();
   return join(dir, entries[entries.length - 1]!, "migration.sql");
 }
 
-async function applyMigration(prisma: PrismaClient, engine: Engine): Promise<void> {
+async function applyMigration(
+  prisma: PrismaClient,
+  engine: Engine,
+): Promise<void> {
   const raw = readFileSync(findInitMigrationSql(engine), "utf8");
   const cleaned = raw
     .split("\n")
     .filter((l) => !l.trim().startsWith("--"))
     .join("\n");
-  for (const stmt of cleaned.split(";").map((s) => s.trim()).filter(Boolean)) {
+  for (const stmt of cleaned
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)) {
     await prisma.$executeRawUnsafe(stmt);
   }
 }
@@ -124,7 +141,9 @@ export async function setupTestDb(): Promise<TestDb> {
     },
     cleanup: async () => {
       const cleanupAdmin = new PrismaClient({ datasourceUrl: base });
-      await cleanupAdmin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+      await cleanupAdmin.$executeRawUnsafe(
+        `DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`,
+      );
       await cleanupAdmin.$disconnect();
     },
   };

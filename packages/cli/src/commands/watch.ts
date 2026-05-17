@@ -52,7 +52,8 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   const timeoutRaw = args.flags.get("timeout");
   if (timeoutRaw !== undefined) {
     const t = Number(timeoutRaw);
-    if (!Number.isFinite(t) || t <= 0) fail("--timeout must be a positive number", "invalid_args");
+    if (!Number.isFinite(t) || t <= 0)
+      fail("--timeout must be a positive number", "invalid_args");
     timeoutSec = t;
   }
 
@@ -95,7 +96,12 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   };
 
   const handle = openStream(
-    { wsBaseUrl: client.wsBaseUrl, sessionId: sessionId!, token: cfg.apiKey, since },
+    {
+      wsBaseUrl: client.wsBaseUrl,
+      sessionId: sessionId!,
+      token: cfg.apiKey,
+      since,
+    },
     {
       onReplayComplete: () => {
         sawFrame();
@@ -133,7 +139,11 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
         );
       },
       onRelayError: (err) => {
-        fail(err.message ?? "relay error", err.code ?? "relay_error", err.details);
+        fail(
+          err.message ?? "relay error",
+          err.code ?? "relay_error",
+          err.details,
+        );
       },
       onError: (err) => {
         fail(err.message, "ws_error");

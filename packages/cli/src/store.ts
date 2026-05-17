@@ -4,12 +4,7 @@
 // later commands need no env vars. The file holds a secret — it is written
 // 0600. Tiny and synchronous; no deps.
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  chmodSync,
-} from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
@@ -37,7 +32,11 @@ export function readStore(): Store {
   }
   try {
     const parsed = JSON.parse(text);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
       return {};
     }
     const out: Store = {};
