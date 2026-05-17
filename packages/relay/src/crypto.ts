@@ -43,7 +43,17 @@ function loadOrCreateKey(envValue: string | undefined): Buffer {
   if (existsSync(KEY_FILE)) {
     return decodeKey(readFileSync(KEY_FILE, "utf8"));
   }
-  // First-boot self-host convenience: generate, persist 0600, warn.
+  // In production, never auto-generate. ACA (and any ephemeral-FS host) would
+  // mint a fresh key on every restart/replica, making all previously-encrypted
+  // webhook secrets permanently undecryptable. Fail loudly instead.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "PANE_SECRET_KEY must be set explicitly in production. Auto-generating it " +
+        "would lose all encrypted webhook secrets on the next restart. Generate a " +
+        "stable key with: openssl rand -base64 32  — see docs/DEPLOY.md.",
+    );
+  }
+  // First-boot self-host (dev) convenience: generate, persist 0600, warn.
   const key = randomBytes(32);
   writeFileSync(KEY_FILE, key.toString("base64") + "\n");
   try {
@@ -72,6 +82,15 @@ function getKey(): Buffer {
 // For tests only.
 export function _resetKeyCacheForTests(): void {
   cachedKey = null;
+}
+
+/**
+ * Eagerly resolve the master key so a missing PANE_SECRET_KEY in production
+ * fails at startup, not lazily on the first webhook-secret encryption.
+ * Call once at boot.
+ */
+export function ensureKeyLoaded(): void {
+  getKey();
 }
 
 export function encryptSecret(plain: string): string {

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { ConfigError, loadConfig, redactConfig } from "./config.js";
+import {
+  ConfigError,
+  loadConfig,
+  redactConfig,
+  validateProductionConfig,
+} from "./config.js";
 
 describe("config", () => {
   it("accepts an empty env and applies defaults", () => {
@@ -176,5 +181,55 @@ describe("config", () => {
     const msg = (err as ConfigError).message;
     expect(msg).toContain("PORT");
     expect(msg).toContain("LOG_LEVEL");
+  });
+
+  it("defaults NODE_ENV to development and isProduction to false", () => {
+    const c = loadConfig({});
+    expect(c.NODE_ENV).toBe("development");
+    expect(c.isProduction).toBe(false);
+  });
+
+  it("sets isProduction when NODE_ENV=production", () => {
+    const c = loadConfig({
+      NODE_ENV: "production",
+      PUBLIC_URL: "https://pane.example.com",
+    });
+    expect(c.isProduction).toBe(true);
+  });
+});
+
+describe("validateProductionConfig", () => {
+  it("is a no-op outside production", () => {
+    const c = loadConfig({}); // localhost publicUrl, dev
+    expect(() => validateProductionConfig(c)).not.toThrow();
+  });
+
+  it("throws in production when PUBLIC_URL is unset", () => {
+    const c = loadConfig({ NODE_ENV: "production" });
+    expect(() => validateProductionConfig(c)).toThrow(/PUBLIC_URL must be set/);
+  });
+
+  it("throws in production when PUBLIC_URL points at localhost", () => {
+    const c = loadConfig({
+      NODE_ENV: "production",
+      PUBLIC_URL: "http://localhost:3000",
+    });
+    expect(() => validateProductionConfig(c)).toThrow(/localhost/);
+  });
+
+  it("throws in production when PUBLIC_URL points at 127.0.0.1", () => {
+    const c = loadConfig({
+      NODE_ENV: "production",
+      PUBLIC_URL: "http://127.0.0.1:3000",
+    });
+    expect(() => validateProductionConfig(c)).toThrow(/localhost/);
+  });
+
+  it("accepts a real https PUBLIC_URL in production", () => {
+    const c = loadConfig({
+      NODE_ENV: "production",
+      PUBLIC_URL: "https://pane.example.com",
+    });
+    expect(() => validateProductionConfig(c)).not.toThrow();
   });
 });
