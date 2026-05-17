@@ -8,6 +8,10 @@ export interface WebhookConfig {
   filter: string[]; // glob patterns
 }
 
+// Per-attempt request timeout. A non-responsive target must not hang the
+// retry loop indefinitely; each attempt is aborted after this many ms.
+export const WEBHOOK_TIMEOUT_MS = 10_000;
+
 function escapeRx(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -58,6 +62,7 @@ export async function fire(
           "X-Pane-Signature": `sha256=${sig}`,
         },
         body,
+        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
       });
       if (res.ok) return;
       log.warn("webhook non-2xx", {
@@ -66,11 +71,19 @@ export async function fire(
         attempt: i + 1,
       });
     } catch (e) {
-      log.warn("webhook error", {
-        url: cfg.url,
-        error: e instanceof Error ? e.message : String(e),
-        attempt: i + 1,
-      });
+      if (e instanceof Error && e.name === "TimeoutError") {
+        log.warn("webhook timeout", {
+          url: cfg.url,
+          timeoutMs: WEBHOOK_TIMEOUT_MS,
+          attempt: i + 1,
+        });
+      } else {
+        log.warn("webhook error", {
+          url: cfg.url,
+          error: e instanceof Error ? e.message : String(e),
+          attempt: i + 1,
+        });
+      }
     }
   }
 }
