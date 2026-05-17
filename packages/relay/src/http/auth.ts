@@ -22,27 +22,41 @@ function parseBearer(c: Context): string {
   return match[1]!.trim();
 }
 
+// Which token kinds the caller is willing to accept. Agent-only routes pass
+// "agent" so resolveBearer can skip the always-miss participant lookup.
+type ResolveKind = "agent" | "both";
+
 // Resolve a raw token to either an agent or a (participant, session) pair.
 // Used by both the HTTP middlewares and the WebSocket upgrade.
+//
+// `kind` lets an agent-only caller (requireAgent) skip the participant
+// findUnique entirely — that lookup is a guaranteed miss for an agent token,
+// so it's a wasted DB round trip on every agent-authenticated request. Callers
+// that genuinely accept either token (dualAuth, the WS upgrade) pass "both".
 export async function resolveBearer(
   token: string,
+  kind: ResolveKind = "both",
 ): Promise<
   | { kind: "agent"; agent: Agent }
   | { kind: "participant"; participant: Participant; session: Session }
   | null
 > {
   const hash = hashKey(token);
-  const participant = await prisma.participant.findUnique({
-    where: { tokenHash: hash },
-  });
-  if (participant) {
-    if (participant.revokedAt) return null;
-    const session = await prisma.session.findUnique({
-      where: { id: participant.sessionId },
+
+  if (kind === "both") {
+    const participant = await prisma.participant.findUnique({
+      where: { tokenHash: hash },
     });
-    if (!session) return null;
-    return { kind: "participant", participant, session };
+    if (participant) {
+      if (participant.revokedAt) return null;
+      const session = await prisma.session.findUnique({
+        where: { id: participant.sessionId },
+      });
+      if (!session) return null;
+      return { kind: "participant", participant, session };
+    }
   }
+
   const agent = await prisma.agent.findUnique({ where: { keyHash: hash } });
   if (agent && !agent.revokedAt) return { kind: "agent", agent };
   return null;
@@ -50,7 +64,8 @@ export async function resolveBearer(
 
 export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const token = parseBearer(c);
-  const resolved = await resolveBearer(token);
+  // Agent-only route — skip the participant lookup (a guaranteed miss here).
+  const resolved = await resolveBearer(token, "agent");
   if (!resolved || resolved.kind !== "agent") throw errors.unauthorized();
   const agent = resolved.agent;
   prisma.agent
