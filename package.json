@@ -17,6 +17,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspace @pane/relay",
+    "test:redis": "npm run test:redis --workspace @pane/relay",
     "dev": "npm run dev --workspace @pane/relay",
     "start": "npm run start --workspace @pane/relay",
     "generate": "npm run generate --workspace @pane/relay",

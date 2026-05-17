@@ -51,6 +51,15 @@ const schema = z.object({
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  // Optional Redis connection string for multi-replica deployments. When set,
+  // the relay backs its cross-process state (event pub/sub, the rate limiter
+  // and the WebSocket presence registry) with Redis so multiple replicas stay
+  // correct behind an autoscaler. When UNSET, the relay uses its in-process
+  // implementations — correct for a single replica and required for the OSS
+  // self-host / local path, which must not depend on a paid Redis service.
+  // The `ioredis` package is an optionalDependency, loaded only when this is
+  // set; a relay started with REDIS_URL but without it installed fails fast.
+  REDIS_URL: z.string().optional(),
   // OpenTelemetry metrics. The relay is instrumented once with the
   // vendor-neutral OTel SDK; the exporter decides where telemetry goes.
   // METRICS_ENABLED=false makes the instrument helpers no-ops, omits the

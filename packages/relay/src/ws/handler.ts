@@ -21,6 +21,7 @@ import {
   addConnection,
   agentCount,
   connectionCount,
+  refreshSession,
   removeConnection,
 } from "./presence.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
@@ -57,9 +58,12 @@ const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // `ws` does not surface "did this socket pong recently" — we track it ourselves
-// on the socket object via this symbol-ish property.
+// on the socket object via this property. We also stash the socket's sessionId
+// so the heartbeat can refresh that session's Redis presence-hash TTL (the
+// ghost-cleanup mechanism — see ws/presence.ts).
 interface AliveWs extends WebSocket {
   isAlive?: boolean;
+  paneSessionId?: string;
 }
 
 // Server type is loose because @hono/node-server may return an http.Server,
@@ -83,6 +87,10 @@ export function attachWs(
   // protocol-level ping automatically (no app code needed), so this both keeps
   // browser connections warm and detects dead peers.
   const heartbeat = setInterval(() => {
+    // Sessions with at least one live socket on this replica — their Redis
+    // presence-hash TTL gets refreshed below so an active session never
+    // expires while a dead replica's sessions are left to lapse.
+    const liveSessions = new Set<string>();
     for (const client of wss.clients) {
       const ws = client as AliveWs;
       if (ws.isAlive === false) {
@@ -90,12 +98,18 @@ export function attachWs(
         ws.terminate();
         continue;
       }
+      if (ws.paneSessionId) liveSessions.add(ws.paneSessionId);
       ws.isAlive = false;
       try {
         ws.ping();
       } catch {
         /* socket already closing — next tick's terminate() handles it */
       }
+    }
+    // Refresh presence TTLs for every still-live session. No-op when Redis is
+    // off (the in-process Map has no TTL).
+    for (const sessionId of liveSessions) {
+      void refreshSession(sessionId);
     }
   }, HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();
@@ -124,8 +138,15 @@ async function handleUpgrade(
     // Per-IP rate limit FIRST — before any token resolve or DB lookup — so a
     // flood of upgrade attempts cannot drive DB work. The Hono `generalRateLimit`
     // middleware does not cover the upgrade (it is handled off the Hono app).
-    // Uses the injected shared limiter + TRUSTED_PROXY config.
-    if (!checkWsUpgradeRateLimit(req, generalLimiter, config.TRUSTED_PROXY)) {
+    // Uses the injected shared limiter + TRUSTED_PROXY config. The check is
+    // async because the limiter may be Redis-backed in multi-replica mode.
+    if (
+      !(await checkWsUpgradeRateLimit(
+        req,
+        generalLimiter,
+        config.TRUSTED_PROXY,
+      ))
+    ) {
       sendUpgradeError(socket, 429);
       return;
     }
@@ -175,7 +196,8 @@ async function handleUpgrade(
     // exhaust file descriptors / memory by opening connections in a loop.
     if (
       config.MAX_WS_CONNECTIONS_PER_SESSION > 0 &&
-      connectionCount(sessionId) >= config.MAX_WS_CONNECTIONS_PER_SESSION
+      (await connectionCount(sessionId)) >=
+        config.MAX_WS_CONNECTIONS_PER_SESSION
     ) {
       sendUpgradeError(socket, 429);
       return;
@@ -250,10 +272,16 @@ function sendUpgradeError(socket: Duplex, status: number): void {
 // AFTER `system.replay.complete` learn the exact present-tense agent count.
 // Replayed (historical) rows never carry it, so the shell knows not to trust
 // it for events seen during replay.
-function withLiveCount(e: SerializedEvent, sessionId: string): SerializedEvent {
+async function withLiveCount(
+  e: SerializedEvent,
+  sessionId: string,
+): Promise<SerializedEvent> {
   const data =
     e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
-  return { ...e, data: { ...data, agentCountLive: agentCount(sessionId) } };
+  return {
+    ...e,
+    data: { ...data, agentCountLive: await agentCount(sessionId) },
+  };
 }
 
 async function handleConnection(
@@ -271,6 +299,9 @@ async function handleConnection(
   // terminates the socket if it's still false on the next tick.
   const alive = ws as AliveWs;
   alive.isAlive = true;
+  // Stash the sessionId so the heartbeat can refresh this session's Redis
+  // presence-hash TTL (ghost cleanup — see ws/presence.ts).
+  alive.paneSessionId = sessionId;
   ws.on("pong", () => {
     alive.isAlive = true;
   });
@@ -292,7 +323,11 @@ async function handleConnection(
   // Register this socket in the live presence registry BEFORE we compute the
   // joined event's agentCountLive, so the count reflects this connection too.
   const connId = randomUUID();
-  addConnection(sessionId, connId, author.kind === "agent" ? "agent" : "human");
+  await addConnection(
+    sessionId,
+    connId,
+    author.kind === "agent" ? "agent" : "human",
+  );
 
   // 1) Append + broadcast a participant.joined system event so other peers see us.
   //    The persisted row is exactly as before; `withLiveCount` decorates only
@@ -349,29 +384,33 @@ async function handleConnection(
       openMs: Date.now() - openedAt,
     });
     unsub();
-    // Deregister from the live presence registry FIRST so the participant.left
-    // event's agentCountLive reflects this socket already being gone.
-    removeConnection(sessionId, connId);
-    void prisma.event
-      .create({
-        data: {
-          sessionId,
-          authorKind: "system",
-          authorId: "system",
-          type: "system.participant.left",
-          data: { author: { kind: author.kind, id: author.id } } as object,
-        },
-      })
-      .then((row) => {
+    // Deregister from the live presence registry FIRST (and await it, so the
+    // participant.left event's agentCountLive reflects this socket already
+    // being gone) THEN insert + broadcast the participant.left event. The
+    // whole sequence is async because the presence registry is async (it is
+    // Redis-backed in multi-replica mode); it is fire-and-forget from the
+    // close-event callback's perspective.
+    void (async () => {
+      try {
+        await removeConnection(sessionId, connId);
+        const row = await prisma.event.create({
+          data: {
+            sessionId,
+            authorKind: "system",
+            authorId: "system",
+            type: "system.participant.left",
+            data: { author: { kind: author.kind, id: author.id } } as object,
+          },
+        });
         recordEventWritten("system");
-        publish(sessionId, withLiveCount(serializeEvent(row), sessionId));
-      })
-      .catch((err: unknown) =>
+        publish(sessionId, await withLiveCount(serializeEvent(row), sessionId));
+      } catch (err) {
         log.warn("participant.left event insert failed", {
           sessionId,
           error: String(err),
-        }),
-      );
+        });
+      }
+    })();
   });
 }
 
