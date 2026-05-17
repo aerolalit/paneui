@@ -159,12 +159,23 @@ Two, interchangeable, same event shape.
 
 ```
 WS /v1/sessions/{id}/stream
-Header: Authorization: Bearer <participant_token>
+Auth: ?ticket=<ws_ticket>  (browser path, preferred)
+  or  Authorization: Bearer <token> / ?token=<token>  (non-browser clients)
 
 on open  → server replays event log from cursor=0
 server → { id, session_id, author, ts, type, data, causation_id, idempotency_key }
 client → { type, data, causation_id?, idempotency_key? }
 ```
+
+Browsers cannot set an `Authorization` header on `new WebSocket()`, so the WS
+URL must carry the credential as a query parameter. A long-lived token there
+leaks into upstream reverse-proxy access logs. The browser path therefore uses
+a **short-lived ticket**: the client first calls `POST /v1/sessions/{id}/ws-ticket`
+(authenticated with the real token), receives a single-use ticket with a 30s
+TTL bound to that (identity, session), then opens the WebSocket with
+`?ticket=<ticket>`. The ticket is consumed on upgrade. Non-browser clients
+(e.g. the agent CLI) may still pass the real token via `Authorization` or
+`?token=` directly.
 
 ### HTTP POST + cursor read (stateless fallback)
 
@@ -209,6 +220,7 @@ All agent endpoints require `Authorization: Bearer <api_key>` from `agents`.
 | `DELETE` | `/v1/sessions/{id}` | End session. |
 | `POST`   | `/v1/sessions/{id}/events` | Write one event. |
 | `GET`    | `/v1/sessions/{id}/events?since=<cur>&wait=<s>` | Read events. Long-poll. |
+| `POST`   | `/v1/sessions/{id}/ws-ticket` | Mint a short-lived (30s), single-use WebSocket upgrade ticket. |
 | `WS`     | `/v1/sessions/{id}/stream` | Bidirectional event stream. |
 | `GET`    | `/keys` | List the calling agent's keys. |
 | `DELETE` | `/keys/{id}` | Revoke. |

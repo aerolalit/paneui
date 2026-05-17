@@ -10,8 +10,9 @@ import {
   hashKey,
   keyPrefix,
 } from "../../keys.js";
-import { requireAgent, type AuthEnv } from "../auth.js";
+import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
+import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
   invalidateSchemaCache,
@@ -160,6 +161,36 @@ sessions.post("/", requireAgent, async (c) => {
         agent_stream: `${wsBase}/v1/sessions/${sessionId}/stream`,
       },
       expires_at: expiresAt.toISOString(),
+    },
+    201,
+  );
+});
+
+// Mint a short-lived, single-use WebSocket upgrade ticket.
+//
+// Browsers cannot set an Authorization header on `new WebSocket()`, so the WS
+// URL must carry a credential as a query parameter — and a long-lived token
+// there leaks into upstream proxy access logs. The browser flow is therefore:
+// authenticate HERE with the real token, get a ticket, then open the WS with
+// `?ticket=`. A leaked ticket is worthless (30s TTL, single-use, bound to one
+// identity + session). See src/ws/ticket.ts and issue #8.
+//
+// Auth is DUAL — agent OR participant — exactly like the events endpoints: a
+// participant holding a share-link token, or the owning agent, must both be
+// able to mint a ticket for THEIR session. `dualAuth` already enforces that
+// the `:id` path param matches the session the token authorizes (participant
+// .sessionId === :id; agent owns the session).
+sessions.post("/:id/ws-ticket", dualAuth, (c) => {
+  const session = c.get("session");
+  const author = c.get("author");
+  if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
+    throw errors.gone();
+  }
+  const ticket = issueTicket(author, session.id);
+  return c.json(
+    {
+      ticket,
+      expires_at: new Date(Date.now() + TICKET_TTL_MS).toISOString(),
     },
     201,
   );

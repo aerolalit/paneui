@@ -24,6 +24,7 @@ import {
   removeConnection,
 } from "./presence.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
+import { redeemTicket } from "./ticket.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
@@ -130,39 +131,74 @@ async function handleUpgrade(
       return;
     }
 
-    const token = extractToken(req, url);
-    if (!token) {
+    // Authentication accepts EITHER a short-lived ticket (preferred, the
+    // browser path — see src/ws/ticket.ts and issue #8) OR the real bearer
+    // token via `?token=`/`Authorization` (the existing agent/CLI path, kept
+    // for backward compatibility — an agent's own infra has no proxy-log
+    // concern). Precedence: a `?ticket=` present wins; otherwise fall back to
+    // the token path. Either way `extractCredential` strips the value from
+    // req.url so the relay's own access logs stay redacted.
+    const cred = extractCredential(req, url);
+    if (!cred) {
       sendUpgradeError(socket, 401);
-      return;
-    }
-    const resolved = await resolveBearer(prisma, token);
-    if (!resolved) {
-      sendUpgradeError(socket, 404);
       return;
     }
 
     let author: Author;
     let session: Session;
     let participant: Participant | null = null;
-    if (resolved.kind === "participant") {
-      if (resolved.participant.sessionId !== sessionId) {
-        sendUpgradeError(socket, 404);
+
+    if (cred.kind === "ticket") {
+      // The ticket replaces the AUTHENTICATION step only: redeeming it yields
+      // the bound Author directly (no resolveBearer DB call). The handler
+      // still needs the Session row (open/expiry check, passed downstream)
+      // and, for a participant, the participant row for the joinedAt update —
+      // so we load those below exactly as the token path does.
+      const redeemed = redeemTicket(cred.value, sessionId);
+      if (!redeemed) {
+        sendUpgradeError(socket, 401);
         return;
       }
-      participant = resolved.participant;
-      session = resolved.session;
-      author = {
-        kind: participant.kind === "agent" ? "agent" : "human",
-        id: participant.identityId,
-      };
-    } else {
+      author = redeemed;
       const s = await prisma.session.findUnique({ where: { id: sessionId } });
-      if (!s || s.agentId !== resolved.agent.id) {
+      if (!s) {
         sendUpgradeError(socket, 404);
         return;
       }
       session = s;
-      author = { kind: "agent", id: resolved.agent.id };
+      if (author.kind !== "agent" || author.id !== s.agentId) {
+        // A non-agent author, or an agent author that is not the session
+        // owner, is a participant — load its row for the joinedAt update.
+        participant = await prisma.participant.findFirst({
+          where: { sessionId, identityId: author.id },
+        });
+      }
+    } else {
+      const resolved = await resolveBearer(prisma, cred.value);
+      if (!resolved) {
+        sendUpgradeError(socket, 404);
+        return;
+      }
+      if (resolved.kind === "participant") {
+        if (resolved.participant.sessionId !== sessionId) {
+          sendUpgradeError(socket, 404);
+          return;
+        }
+        participant = resolved.participant;
+        session = resolved.session;
+        author = {
+          kind: participant.kind === "agent" ? "agent" : "human",
+          id: participant.identityId,
+        };
+      } else {
+        const s = await prisma.session.findUnique({ where: { id: sessionId } });
+        if (!s || s.agentId !== resolved.agent.id) {
+          sendUpgradeError(socket, 404);
+          return;
+        }
+        session = s;
+        author = { kind: "agent", id: resolved.agent.id };
+      }
     }
 
     if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
@@ -210,22 +246,40 @@ async function handleUpgrade(
   }
 }
 
-function extractToken(req: IncomingMessage, url: URL): string | null {
+// A WS-upgrade credential: either a short-lived ticket (`?ticket=`) or the
+// real bearer token (`?token=` / `Authorization`).
+type UpgradeCredential =
+  | { kind: "ticket"; value: string }
+  | { kind: "token"; value: string };
+
+function extractCredential(
+  req: IncomingMessage,
+  url: URL,
+): UpgradeCredential | null {
+  // A `?ticket=` always wins: the browser path mints a ticket precisely so the
+  // real token never touches the URL. Strip it from req.url so any downstream
+  // access log (Node http, reverse-proxy header forwarding, error traces) sees
+  // a redacted URL.
+  const ticket = url.searchParams.get("ticket");
+  if (ticket) {
+    url.searchParams.set("ticket", "***");
+    req.url = url.pathname + url.search;
+    return { kind: "ticket", value: ticket };
+  }
+  // Fallback — the real token. `?token=` is the only viable BROWSER path when
+  // no ticket is used, but it is still supported here for non-browser clients
+  // (the agent CLI), whose own infra has no proxy-log concern. Redact it from
+  // req.url all the same — we keep the value in memory only.
   const q = url.searchParams.get("token");
   if (q) {
-    // Strip the token from req.url so any downstream access log (Node http,
-    // reverse-proxy header forwarding, error traces) sees a redacted URL.
-    // Browsers can't set Authorization on `new WebSocket()`, so ?token= is the
-    // only viable browser path — we keep the value in memory, redact from the URL.
-    url.searchParams.delete("token");
     url.searchParams.set("token", "***");
     req.url = url.pathname + url.search;
-    return q;
+    return { kind: "token", value: q };
   }
   const auth = req.headers["authorization"];
   if (typeof auth === "string") {
     const m = /^Bearer\s+(.+)$/i.exec(auth);
-    if (m) return m[1]!.trim();
+    if (m) return { kind: "token", value: m[1]!.trim() };
   }
   return null;
 }

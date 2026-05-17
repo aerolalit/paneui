@@ -148,6 +148,27 @@ function connect(sessionId: string, token: string): WebSocket {
   );
 }
 
+function connectWithTicket(sessionId: string, ticket: string): WebSocket {
+  return new WebSocket(
+    `ws://localhost:${port}/v1/sessions/${sessionId}/stream?ticket=${ticket}`,
+  );
+}
+
+async function mintTicket(
+  sessionId: string,
+  token: string,
+): Promise<{ status: number; ticket?: string; expires_at?: string }> {
+  const res = await fetch(
+    `http://localhost:${port}/v1/sessions/${sessionId}/ws-ticket`,
+    { method: "POST", headers: { authorization: `Bearer ${token}` } },
+  );
+  const body = (await res.json().catch(() => ({}))) as {
+    ticket?: string;
+    expires_at?: string;
+  };
+  return { status: res.status, ...body };
+}
+
 // FrameQueue buffers every received message into a queue and exposes async
 // `next()` / `take(n)`. Avoids the listener-races in ad-hoc once/on patterns.
 class FrameQueue {
@@ -354,6 +375,94 @@ describe("WS e2e", () => {
     expect(replayed.map((f) => f.data.body)).toEqual(["one", "two"]);
     expect(
       frames.some(
+        (f) => (f as { kind?: string }).kind === "system.replay.complete",
+      ),
+    ).toBe(true);
+    ws.close();
+  });
+
+  it("mints a ws-ticket for an agent and a participant", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId, agentToken, humanToken } = await createSession(apiKey);
+
+    const agentT = await mintTicket(sessionId, agentToken);
+    expect(agentT.status).toBe(201);
+    expect(typeof agentT.ticket).toBe("string");
+    expect(typeof agentT.expires_at).toBe("string");
+
+    const humanT = await mintTicket(sessionId, humanToken);
+    expect(humanT.status).toBe(201);
+    expect(typeof humanT.ticket).toBe("string");
+  });
+
+  it("upgrades with a valid ?ticket= (participant) and replays", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId, humanToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(sessionId, humanToken);
+    const ws = connectWithTicket(sessionId, ticket!);
+    const q = new FrameQueue(ws);
+    await waitOpen(ws);
+    const initial = await q.take(2);
+    expect(
+      initial.some(
+        (f) => (f as { kind?: string }).kind === "system.replay.complete",
+      ),
+    ).toBe(true);
+    ws.close();
+  });
+
+  it("upgrades with a valid ?ticket= (agent) and can send a frame", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId, agentToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(sessionId, agentToken);
+    const ws = connectWithTicket(sessionId, ticket!);
+    const q = new FrameQueue(ws);
+    await waitOpen(ws);
+    await q.take(2);
+    ws.send(
+      JSON.stringify({ type: "review.commentAdded", data: { body: "hi" } }),
+    );
+    const echo = (await q.next()) as { type?: string };
+    expect(echo.type).toBe("review.commentAdded");
+    ws.close();
+  });
+
+  it("rejects an unknown ticket (401)", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId } = await createSession(apiKey);
+    const ws = connectWithTicket(sessionId, "not-a-real-ticket");
+    await expect(waitOpen(ws)).rejects.toThrow(/401/);
+  });
+
+  it("rejects a reused ticket — single-use (401 on second upgrade)", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId, agentToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(sessionId, agentToken);
+    const ws1 = connectWithTicket(sessionId, ticket!);
+    await waitOpen(ws1);
+    const ws2 = connectWithTicket(sessionId, ticket!);
+    await expect(waitOpen(ws2)).rejects.toThrow(/401/);
+    ws1.close();
+  });
+
+  it("rejects a ticket minted for a different session (401)", async () => {
+    const { apiKey } = await seedAgent();
+    const a = await createSession(apiKey);
+    const b = await createSession(apiKey);
+    const { ticket } = await mintTicket(a.sessionId, a.agentToken);
+    const ws = connectWithTicket(b.sessionId, ticket!);
+    await expect(waitOpen(ws)).rejects.toThrow(/401/);
+  });
+
+  it("still accepts the legacy ?token= upgrade path (regression)", async () => {
+    const { apiKey } = await seedAgent();
+    const { sessionId, agentToken } = await createSession(apiKey);
+    const ws = connect(sessionId, agentToken);
+    const q = new FrameQueue(ws);
+    await waitOpen(ws);
+    const initial = await q.take(2);
+    expect(
+      initial.some(
         (f) => (f as { kind?: string }).kind === "system.replay.complete",
       ),
     ).toBe(true);
