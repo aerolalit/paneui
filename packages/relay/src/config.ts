@@ -9,7 +9,11 @@ const schema = z.object({
   // Per-IP rate limit for the open POST /v1/register endpoint.
   // REGISTER_RATE_LIMIT=0 disables the limiter entirely (unlimited).
   REGISTER_RATE_LIMIT: z.coerce.number().int().min(0).default(5),
-  REGISTER_RATE_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
+  REGISTER_RATE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
@@ -25,9 +29,13 @@ export interface Config extends RawConfig {
   publicUrl: string;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): Config {
+export function loadConfig(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): Config {
   const parsed = schema.parse(env);
-  const publicUrl = (parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`).replace(/\/$/, "");
+  const publicUrl = (
+    parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`
+  ).replace(/\/$/, "");
   return Object.freeze({ ...parsed, publicUrl }) as Config;
 }
 

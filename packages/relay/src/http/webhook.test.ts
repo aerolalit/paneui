@@ -3,7 +3,9 @@ import { shouldFire } from "./webhook.js";
 
 describe("shouldFire (glob)", () => {
   it("exact literal match", () => {
-    expect(shouldFire("review.commentAdded", ["review.commentAdded"])).toBe(true);
+    expect(shouldFire("review.commentAdded", ["review.commentAdded"])).toBe(
+      true,
+    );
     expect(shouldFire("review.approved", ["review.commentAdded"])).toBe(false);
   });
 

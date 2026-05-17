@@ -12,7 +12,8 @@ function startTtlSweeper(): void {
     log.info("ttl sweeper disabled (TTL_SWEEP_SECONDS=0)");
     return;
   }
-  const jitter = () => Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const jitter = () =>
+    Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
   const tick = (): void => {
     void prisma.session
       .deleteMany({ where: { expiresAt: { lt: new Date() } } })

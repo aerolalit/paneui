@@ -6,12 +6,16 @@ import { errors } from "../http/errors.js";
 // Ajv v8 ships as CJS; under "module": "NodeNext" the default import sometimes
 // resolves to the namespace, not the constructor. createRequire bypasses that.
 const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+
 const AjvCtor: new (opts?: object) => {
   compile: (schema: object) => ValidateFunction;
 } = require("ajv");
 
-const ajv = new AjvCtor({ strict: false, allErrors: false, removeAdditional: false });
+const ajv = new AjvCtor({
+  strict: false,
+  allErrors: false,
+  removeAdditional: false,
+});
 
 const cache = new Map<string, Map<string, ValidateFunction>>();
 const cacheKey = (sessionId: string, schemaVersion: number): string =>
@@ -68,7 +72,11 @@ export function validateEvent(args: ValidateEventArgs): void {
     }
   }
 
-  const compilers = getCompilers(args.sessionId, args.schemaVersion, args.schema);
+  const compilers = getCompilers(
+    args.sessionId,
+    args.schemaVersion,
+    args.schema,
+  );
   const validate = compilers.get(args.type)!;
   if (!validate(args.data)) {
     throw errors.schemaViolation("schema_violation", validate.errors);
@@ -104,7 +112,9 @@ export function validateSchemaShape(raw: unknown): EventSchema {
     }
     const e = entryRaw as { payload?: unknown; emittedBy?: unknown };
     if (!e.payload || typeof e.payload !== "object") {
-      throw errors.invalidRequest(`schema.events.${type}.payload must be an object`);
+      throw errors.invalidRequest(
+        `schema.events.${type}.payload must be an object`,
+      );
     }
     if (!Array.isArray(e.emittedBy) || e.emittedBy.length === 0) {
       throw errors.invalidRequest(

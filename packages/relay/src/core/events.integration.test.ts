@@ -6,7 +6,15 @@
 // missed a TOCTOU race between findUnique and create that survived two PR
 // review passes. Concurrent dedupe is the centrepiece of the suite.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { randomBytes } from "node:crypto";
 import type { PrismaClient, Session } from "@prisma/client";
 import type { Author } from "../types.js";
@@ -54,7 +62,9 @@ interface SeedOptions {
   callbackFilter?: string[];
 }
 
-async function seedSession(opts: SeedOptions = {}): Promise<{ session: Session; agentId: string }> {
+async function seedSession(
+  opts: SeedOptions = {},
+): Promise<{ session: Session; agentId: string }> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -83,11 +93,17 @@ async function seedSession(opts: SeedOptions = {}): Promise<{ session: Session; 
       },
       status: opts.status ?? "open",
       expiresAt: new Date(Date.now() + (opts.expiresInMs ?? 3_600_000)),
-      callbackUrl: opts.withCallback ? (opts.callbackUrl ?? "https://example.com/webhook") : null,
-      callbackSecretEnc: opts.withCallback
-        ? encryptSecret(opts.callbackSecret ?? "whsec_" + randomBytes(8).toString("hex"))
+      callbackUrl: opts.withCallback
+        ? (opts.callbackUrl ?? "https://example.com/webhook")
         : null,
-      callbackFilter: opts.withCallback ? (opts.callbackFilter ?? ["review.*"]) : null,
+      callbackSecretEnc: opts.withCallback
+        ? encryptSecret(
+            opts.callbackSecret ?? "whsec_" + randomBytes(8).toString("hex"),
+          )
+        : null,
+      callbackFilter: opts.withCallback
+        ? (opts.callbackFilter ?? ["review.*"])
+        : null,
     },
   });
   return { session, agentId: agent.id };
@@ -111,7 +127,9 @@ describe("writeEvent (integration, real SQLite)", () => {
     expect(event.type).toBe("review.commentAdded");
     expect(event.data).toEqual({ body: "looks good" });
 
-    const persisted = await prisma.event.findMany({ where: { sessionId: session.id } });
+    const persisted = await prisma.event.findMany({
+      where: { sessionId: session.id },
+    });
     expect(persisted).toHaveLength(1);
     expect(persisted[0]!.idempotencyKey).toBeNull();
   });
@@ -166,7 +184,11 @@ describe("writeEvent (integration, real SQLite)", () => {
         eventSchema: {
           events: {
             "review.commentAdded": {
-              payload: { type: "object", properties: { body: { type: "string" } }, required: ["body"] },
+              payload: {
+                type: "object",
+                properties: { body: { type: "string" } },
+                required: ["body"],
+              },
               emittedBy: ["page"],
             },
           },
@@ -200,7 +222,10 @@ describe("writeEvent (integration, real SQLite)", () => {
     });
     const huge = { blob: "x".repeat(70_000) };
     await expect(
-      writeEvent(updated, agentAuthor(agentId), { type: "big.payload", data: huge }),
+      writeEvent(updated, agentAuthor(agentId), {
+        type: "big.payload",
+        data: huge,
+      }),
     ).rejects.toMatchObject({ code: "payload_too_large" });
   });
 
@@ -221,7 +246,9 @@ describe("writeEvent (integration, real SQLite)", () => {
       expect(first.deduped).toBe(false);
       expect(second.deduped).toBe(true);
       expect(second.event.id).toBe(first.event.id);
-      const rows = await prisma.event.findMany({ where: { sessionId: session.id } });
+      const rows = await prisma.event.findMany({
+        where: { sessionId: session.id },
+      });
       expect(rows).toHaveLength(1);
     });
 
@@ -249,7 +276,9 @@ describe("writeEvent (integration, real SQLite)", () => {
       const ids = new Set(results.map((r) => r.event.id));
       expect(ids.size).toBe(1);
       // And the DB really only has one row.
-      const rows = await prisma.event.findMany({ where: { sessionId: session.id } });
+      const rows = await prisma.event.findMany({
+        where: { sessionId: session.id },
+      });
       expect(rows).toHaveLength(1);
     });
 
@@ -295,13 +324,19 @@ describe("writeEvent (integration, real SQLite)", () => {
           callbackFilter: ["review.*"],
         },
       });
-      const { event, deduped } = await writeEvent(broken, agentAuthor(agentId), {
-        type: "review.commentAdded",
-        data: { body: "x" },
-      });
+      const { event, deduped } = await writeEvent(
+        broken,
+        agentAuthor(agentId),
+        {
+          type: "review.commentAdded",
+          data: { body: "x" },
+        },
+      );
       expect(deduped).toBe(false);
       expect(event.type).toBe("review.commentAdded");
-      const persisted = await prisma.event.findFirst({ where: { id: Number(event.id) } });
+      const persisted = await prisma.event.findFirst({
+        where: { id: Number(event.id) },
+      });
       expect(persisted).not.toBeNull();
     });
 
@@ -313,9 +348,9 @@ describe("writeEvent (integration, real SQLite)", () => {
         callbackUrl: "https://example.invalid/hook",
         callbackFilter: ["review.*"],
       });
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(null, { status: 200 }),
-      );
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 200 }));
       try {
         const key = "dedupe-no-webhook";
         await writeEvent(session, agentAuthor(agentId), {

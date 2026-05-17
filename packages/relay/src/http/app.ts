@@ -22,7 +22,13 @@ export function buildApp(): Hono {
       // Redact the session token in /s/<tok>/... paths if/when phase 3 adds them.
       const path = c.req.path.replace(/^\/s\/[^/]+/, "/s/***");
       if (path !== "/healthz") {
-        log.info("req", { reqId, method: c.req.method, path, status: c.res.status, ms });
+        log.info("req", {
+          reqId,
+          method: c.req.method,
+          path,
+          status: c.res.status,
+          ms,
+        });
       }
     }
   });
@@ -30,17 +36,27 @@ export function buildApp(): Hono {
   app.onError((err, c) => {
     if (err instanceof ApiError) {
       return c.json(
-        { error: { code: err.code, message: err.message, details: err.details } },
+        {
+          error: { code: err.code, message: err.message, details: err.details },
+        },
         err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 500,
       );
     }
     if (err instanceof ZodError) {
       return c.json(
-        { error: { code: "invalid_request", message: "invalid body", details: err.flatten() } },
+        {
+          error: {
+            code: "invalid_request",
+            message: "invalid body",
+            details: err.flatten(),
+          },
+        },
         400,
       );
     }
-    log.error("internal", { error: err instanceof Error ? err.message : String(err) });
+    log.error("internal", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return c.json({ error: { code: "internal" } }, 500);
   });
 

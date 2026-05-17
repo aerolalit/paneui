@@ -35,7 +35,11 @@ export interface StreamHandlers {
   /** Fired once when the initial replay finishes. */
   onReplayComplete?: () => void;
   /** Fired on a relay error frame. */
-  onRelayError?: (error: { code?: string; message?: string; details?: unknown }) => void;
+  onRelayError?: (error: {
+    code?: string;
+    message?: string;
+    details?: unknown;
+  }) => void;
   /** Fired when the socket closes (cleanly or otherwise). */
   onClose?: (info: { code: number; reason: string }) => void;
   /** Fired on a transport-level error. */
@@ -45,7 +49,12 @@ export interface StreamHandlers {
 /** A live handle to an open stream. */
 export interface StreamHandle {
   /** Send an event frame into the session. */
-  send(frame: { type: string; data?: unknown; causation_id?: string; idempotency_key?: string }): void;
+  send(frame: {
+    type: string;
+    data?: unknown;
+    causation_id?: string;
+    idempotency_key?: string;
+  }): void;
   /** Close the stream. */
   close(): void;
   /** The underlying ws socket (escape hatch). */
@@ -56,9 +65,14 @@ export interface StreamHandle {
  * Open a WebSocket stream to a Pane session. Replays on connect, then streams
  * live. Returns a handle for sending frames and closing.
  */
-export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): StreamHandle {
+export function openStream(
+  opts: OpenStreamOptions,
+  handlers: StreamHandlers,
+): StreamHandle {
   const base = opts.wsBaseUrl.replace(/\/$/, "");
-  const u = new URL(`${base}/v1/sessions/${encodeURIComponent(opts.sessionId)}/stream`);
+  const u = new URL(
+    `${base}/v1/sessions/${encodeURIComponent(opts.sessionId)}/stream`,
+  );
   if (opts.since != null && opts.since !== "") {
     u.searchParams.set("since", opts.since);
   }
@@ -87,7 +101,9 @@ export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): S
       return;
     }
     if (!msg || typeof msg !== "object") {
-      handlers.onError?.(new Error(`unexpected non-object stream frame: ${text.slice(0, 200)}`));
+      handlers.onError?.(
+        new Error(`unexpected non-object stream frame: ${text.slice(0, 200)}`),
+      );
       return;
     }
     const obj = msg as Record<string, unknown>;
@@ -112,7 +128,9 @@ export function openStream(opts: OpenStreamOptions, handlers: StreamHandlers): S
     }
     // Unrecognized frame shape — route to onError rather than dropping it.
     handlers.onError?.(
-      new Error(`unrecognized stream frame: ${JSON.stringify(obj).slice(0, 200)}`),
+      new Error(
+        `unrecognized stream frame: ${JSON.stringify(obj).slice(0, 200)}`,
+      ),
     );
   });
 

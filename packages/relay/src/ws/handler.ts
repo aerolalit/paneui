@@ -36,7 +36,12 @@ interface AliveWs extends WebSocket {
 
 // Server type is loose because @hono/node-server may return an http.Server,
 // https.Server, or Http2Server; all expose the same `upgrade` event we need.
-export function attachWs(server: { on(event: "upgrade", listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void): unknown }): WebSocketServer {
+export function attachWs(server: {
+  on(
+    event: "upgrade",
+    listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void,
+  ): unknown;
+}): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     void handleUpgrade(wss, req, socket, head);
@@ -141,7 +146,9 @@ async function handleUpgrade(
       void handleConnection(ws, sessionId, author, since);
     });
   } catch (err) {
-    log.error("ws upgrade failed", { error: err instanceof Error ? err.message : String(err) });
+    log.error("ws upgrade failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     try {
       socket.destroy();
     } catch {
@@ -177,7 +184,9 @@ function sendUpgradeError(socket: Duplex, status: number): void {
     410: "Gone",
   };
   const text = statusText[status] ?? "Bad Request";
-  socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.write(
+    `HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+  );
   socket.destroy();
 }
 
@@ -188,7 +197,8 @@ function sendUpgradeError(socket: Duplex, status: number): void {
 // Replayed (historical) rows never carry it, so the shell knows not to trust
 // it for events seen during replay.
 function withLiveCount(e: SerializedEvent, sessionId: string): SerializedEvent {
-  const data = e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
+  const data =
+    e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
   return { ...e, data: { ...data, agentCountLive: agentCount(sessionId) } };
 }
 
@@ -209,10 +219,18 @@ async function handleConnection(
     alive.isAlive = true;
   });
 
-  log.info("ws connected", { sessionId, authorKind: author.kind, authorId: author.id });
+  log.info("ws connected", {
+    sessionId,
+    authorKind: author.kind,
+    authorId: author.id,
+  });
 
   ws.on("error", (err: Error) => {
-    log.warn("ws error", { sessionId, authorKind: author.kind, error: err.message });
+    log.warn("ws error", {
+      sessionId,
+      authorKind: author.kind,
+      error: err.message,
+    });
   });
 
   // Register this socket in the live presence registry BEFORE we compute the
@@ -248,7 +266,8 @@ async function handleConnection(
 
   // 3) Subscribe to live broadcast. De-dupe vs replay: only forward events
   //    strictly newer than the last replayed id.
-  const lastReplayId = replay.length > 0 ? replay[replay.length - 1]!.id : sinceCursor ?? 0;
+  const lastReplayId =
+    replay.length > 0 ? replay[replay.length - 1]!.id : (sinceCursor ?? 0);
   const unsub = subscribe(sessionId, (e) => {
     const n = Number(e.id);
     if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, e);
@@ -259,7 +278,9 @@ async function handleConnection(
     try {
       msg = JSON.parse(raw.toString());
     } catch {
-      sendJson(ws, { error: { code: "invalid_request", message: "invalid JSON" } });
+      sendJson(ws, {
+        error: { code: "invalid_request", message: "invalid JSON" },
+      });
       return;
     }
     await handleFrame(ws, sessionId, author, msg);
@@ -288,7 +309,9 @@ async function handleConnection(
           data: { author: { kind: author.kind, id: author.id } } as object,
         },
       })
-      .then((row) => publish(sessionId, withLiveCount(serializeEvent(row), sessionId)))
+      .then((row) =>
+        publish(sessionId, withLiveCount(serializeEvent(row), sessionId)),
+      )
       .catch((err: unknown) =>
         log.warn("participant.left event insert failed", {
           sessionId,
@@ -303,7 +326,9 @@ function sendJson(ws: WebSocket, obj: unknown): void {
   try {
     ws.send(JSON.stringify(obj));
   } catch (e) {
-    log.warn("ws send failed", { error: e instanceof Error ? e.message : String(e) });
+    log.warn("ws send failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -314,7 +339,9 @@ async function handleFrame(
   msg: unknown,
 ): Promise<void> {
   if (!msg || typeof msg !== "object") {
-    sendJson(ws, { error: { code: "invalid_request", message: "frame must be an object" } });
+    sendJson(ws, {
+      error: { code: "invalid_request", message: "frame must be an object" },
+    });
     return;
   }
   const f = msg as {
@@ -330,12 +357,17 @@ async function handleFrame(
   // forwarding (see bridge/routes.ts validCid); this is the defence-in-depth
   // layer for direct WS callers.
   const cid =
-    typeof f.correlation_id === "string" && f.correlation_id.length > 0 && f.correlation_id.length <= 128
+    typeof f.correlation_id === "string" &&
+    f.correlation_id.length > 0 &&
+    f.correlation_id.length <= 128
       ? f.correlation_id
       : null;
   if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
     sendJson(ws, {
-      error: { code: "invalid_request", message: "type must be a non-empty string within 64 chars" },
+      error: {
+        code: "invalid_request",
+        message: "type must be a non-empty string within 64 chars",
+      },
       ...(cid ? { correlation_id: cid } : {}),
     });
     return;
@@ -359,7 +391,10 @@ async function handleFrame(
   // so we don't double-check that here.)
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
-    sendJson(ws, { error: { code: "not_found" }, ...(cid ? { correlation_id: cid } : {}) });
+    sendJson(ws, {
+      error: { code: "not_found" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
     return;
   }
 
@@ -368,9 +403,14 @@ async function handleFrame(
       type: f.type,
       data: f.data,
       causationId: typeof f.causation_id === "string" ? f.causation_id : null,
-      idempotencyKey: typeof f.idempotency_key === "string" ? f.idempotency_key : null,
+      idempotencyKey:
+        typeof f.idempotency_key === "string" ? f.idempotency_key : null,
     });
-    sendJson(ws, { ack: event.id, deduped, ...(cid ? { correlation_id: cid } : {}) });
+    sendJson(ws, {
+      ack: event.id,
+      deduped,
+      ...(cid ? { correlation_id: cid } : {}),
+    });
   } catch (err) {
     if (err instanceof ApiError) {
       sendJson(ws, {
@@ -379,7 +419,13 @@ async function handleFrame(
       });
       return;
     }
-    log.error("ws writeEvent failed", { sessionId, err: err instanceof Error ? err.message : String(err) });
-    sendJson(ws, { error: { code: "internal" }, ...(cid ? { correlation_id: cid } : {}) });
+    log.error("ws writeEvent failed", {
+      sessionId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    sendJson(ws, {
+      error: { code: "internal" },
+      ...(cid ? { correlation_id: cid } : {}),
+    });
   }
 }

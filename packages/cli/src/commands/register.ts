@@ -63,7 +63,10 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
     fail(e instanceof Error ? e.message : String(e), "internal");
   }
 
-  const savedTo = writeStore({ url: url.replace(/\/$/, ""), apiKey: result.api_key });
+  const savedTo = writeStore({
+    url: url.replace(/\/$/, ""),
+    apiKey: result.api_key,
+  });
 
   const out: Record<string, unknown> = {
     agent_id: result.agent_id,

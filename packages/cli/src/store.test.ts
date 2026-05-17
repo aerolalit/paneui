@@ -2,7 +2,13 @@
 // fallback. Each test points XDG_CONFIG_HOME at a fresh temp dir.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStore, writeStore, storePath } from "./store.js";
@@ -35,7 +41,11 @@ afterEach(() => {
 });
 
 function emptyArgs(flags: Record<string, string> = {}): ParsedArgs {
-  return { positionals: [], flags: new Map(Object.entries(flags)), bools: new Set() };
+  return {
+    positionals: [],
+    flags: new Map(Object.entries(flags)),
+    bools: new Set(),
+  };
 }
 
 describe("store", () => {
@@ -56,13 +66,19 @@ describe("store", () => {
   it("writeStore round-trips url + apiKey", () => {
     const path = writeStore({ url: "https://relay.test", apiKey: "pk_abc" });
     expect(path).toBe(storePath());
-    expect(readStore()).toEqual({ url: "https://relay.test", apiKey: "pk_abc" });
+    expect(readStore()).toEqual({
+      url: "https://relay.test",
+      apiKey: "pk_abc",
+    });
   });
 
   it("writeStore merges into the existing file", () => {
     writeStore({ url: "https://relay.test" });
     writeStore({ apiKey: "pk_abc" });
-    expect(readStore()).toEqual({ url: "https://relay.test", apiKey: "pk_abc" });
+    expect(readStore()).toEqual({
+      url: "https://relay.test",
+      apiKey: "pk_abc",
+    });
   });
 
   it("writeStore creates the dir and writes mode 0600", () => {
@@ -96,7 +112,9 @@ describe("resolveConfig store fallback", () => {
     process.env.PANE_URL = "https://env.test";
     process.env.PANE_API_KEY = "pk_env";
     expect(
-      resolveConfig(emptyArgs({ url: "https://flag.test", "api-key": "pk_flag" })),
+      resolveConfig(
+        emptyArgs({ url: "https://flag.test", "api-key": "pk_flag" }),
+      ),
     ).toEqual({ url: "https://flag.test", apiKey: "pk_flag" });
   });
 });

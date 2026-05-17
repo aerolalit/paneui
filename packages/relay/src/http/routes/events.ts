@@ -51,18 +51,24 @@ events.get("/", async (c) => {
   if (sinceRaw !== undefined) {
     const n = Number(sinceRaw);
     if (!Number.isInteger(n) || n < 0) {
-      throw errors.invalidRequest("?since must be a non-negative integer string");
+      throw errors.invalidRequest(
+        "?since must be a non-negative integer string",
+      );
     }
     sinceId = n;
   }
   let waitSec = 0;
   if (waitRaw !== undefined) {
     const n = Number(waitRaw);
-    if (!Number.isFinite(n)) throw errors.invalidRequest("?wait must be a number");
+    if (!Number.isFinite(n))
+      throw errors.invalidRequest("?wait must be a number");
     waitSec = Math.min(30, Math.max(0, Math.floor(n)));
   }
 
-  async function query(): Promise<{ events: ReturnType<typeof serializeEvent>[]; next_cursor: string | null }> {
+  async function query(): Promise<{
+    events: ReturnType<typeof serializeEvent>[];
+    next_cursor: string | null;
+  }> {
     const rows = await prisma.event.findMany({
       where: {
         sessionId: session.id,

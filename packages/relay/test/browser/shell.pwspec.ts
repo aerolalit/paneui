@@ -20,7 +20,11 @@
 // Run: npm run test:browser  (after `npx playwright install chromium`).
 
 import { test, expect } from "@playwright/test";
-import { startRelay, createSession, type RelayHandle } from "./relay-harness.js";
+import {
+  startRelay,
+  createSession,
+  type RelayHandle,
+} from "./relay-harness.js";
 
 let relay: RelayHandle;
 
@@ -109,8 +113,13 @@ test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips e
 
   // (5) The /presence endpoint the shell polls returns JSON with the three
   // agent-presence facts. The token is the last path segment of the shell URL.
-  const token = new URL(session.humanUrl).pathname.split("/").filter(Boolean).pop()!;
-  const presenceRes = await page.request.get(`${relay.baseUrl}/s/${token}/presence`);
+  const token = new URL(session.humanUrl).pathname
+    .split("/")
+    .filter(Boolean)
+    .pop()!;
+  const presenceRes = await page.request.get(
+    `${relay.baseUrl}/s/${token}/presence`,
+  );
   expect(presenceRes.status()).toBe(200);
   expect(presenceRes.headers()["content-type"]).toContain("application/json");
   const presence = (await presenceRes.json()) as {

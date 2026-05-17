@@ -24,16 +24,22 @@ function parseBearer(c: Context): string {
 
 // Resolve a raw token to either an agent or a (participant, session) pair.
 // Used by both the HTTP middlewares and the WebSocket upgrade.
-export async function resolveBearer(token: string): Promise<
+export async function resolveBearer(
+  token: string,
+): Promise<
   | { kind: "agent"; agent: Agent }
   | { kind: "participant"; participant: Participant; session: Session }
   | null
 > {
   const hash = hashKey(token);
-  const participant = await prisma.participant.findUnique({ where: { tokenHash: hash } });
+  const participant = await prisma.participant.findUnique({
+    where: { tokenHash: hash },
+  });
   if (participant) {
     if (participant.revokedAt) return null;
-    const session = await prisma.session.findUnique({ where: { id: participant.sessionId } });
+    const session = await prisma.session.findUnique({
+      where: { id: participant.sessionId },
+    });
     if (!session) return null;
     return { kind: "participant", participant, session };
   }
@@ -49,7 +55,12 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const agent = resolved.agent;
   prisma.agent
     .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
-    .catch((err: unknown) => log.warn("lastUsedAt update failed", { agentId: agent.id, err: String(err) }));
+    .catch((err: unknown) =>
+      log.warn("lastUsedAt update failed", {
+        agentId: agent.id,
+        err: String(err),
+      }),
+    );
   c.set("agent", agent);
   c.set("author", { kind: "agent", id: agent.id });
   await next();
@@ -84,10 +95,19 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
 
   // Agent path: must own the session.
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
-  if (!session || session.agentId !== resolved.agent.id) throw errors.notFound();
+  if (!session || session.agentId !== resolved.agent.id)
+    throw errors.notFound();
   prisma.agent
-    .update({ where: { id: resolved.agent.id }, data: { lastUsedAt: new Date() } })
-    .catch((err: unknown) => log.warn("lastUsedAt update failed", { agentId: resolved.agent.id, err: String(err) }));
+    .update({
+      where: { id: resolved.agent.id },
+      data: { lastUsedAt: new Date() },
+    })
+    .catch((err: unknown) =>
+      log.warn("lastUsedAt update failed", {
+        agentId: resolved.agent.id,
+        err: String(err),
+      }),
+    );
   c.set("agent", resolved.agent);
   c.set("session", session);
   c.set("author", { kind: "agent", id: resolved.agent.id });

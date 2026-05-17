@@ -12,10 +12,15 @@ function isFilePath(value: string): boolean {
   try {
     return statSync(value).isFile();
   } catch (e) {
-    if (e && typeof e === "object" && (e as { code?: string }).code === "ENOENT") {
+    if (
+      e &&
+      typeof e === "object" &&
+      (e as { code?: string }).code === "ENOENT"
+    ) {
       return false;
     }
-    const code = e && typeof e === "object" ? (e as { code?: string }).code : undefined;
+    const code =
+      e && typeof e === "object" ? (e as { code?: string }).code : undefined;
     throw new Error(
       `cannot stat '${value}'${code ? ` (${code})` : ""}: ${
         e instanceof Error ? e.message : String(e)

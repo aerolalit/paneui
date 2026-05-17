@@ -16,7 +16,11 @@ const bridge = new Hono();
 // the `pre*` npm hooks run before dev/test/typecheck). Output lives at
 // dist/client/*.js regardless of whether we're running tsx-from-source or
 // node-from-dist, so we resolve a single absolute path from the project root.
-const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const PROJECT_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 function loadClient(name: string): string {
   let js = readFileSync(resolve(PROJECT_ROOT, "dist", "client", name), "utf8");
   // The client TS files are modules (`export {}` for file scoping + the shim's
@@ -76,9 +80,13 @@ const TOKEN_RX = /^[A-Za-z0-9_-]{40,50}$/;
 
 async function loadByToken(token: string) {
   if (!TOKEN_RX.test(token)) throw errors.notFound();
-  const participant = await prisma.participant.findUnique({ where: { tokenHash: hashKey(token) } });
+  const participant = await prisma.participant.findUnique({
+    where: { tokenHash: hashKey(token) },
+  });
   if (!participant || participant.revokedAt) throw errors.notFound();
-  const session = await prisma.session.findUnique({ where: { id: participant.sessionId } });
+  const session = await prisma.session.findUnique({
+    where: { id: participant.sessionId },
+  });
   if (!session) throw errors.notFound();
   return { participant, session };
 }
@@ -107,14 +115,18 @@ async function computeAgentPresence(session: {
     where: { id: session.agentId },
     select: { lastUsedAt: true },
   });
-  const agentLastUsedAt = agent?.lastUsedAt ? agent.lastUsedAt.toISOString() : null;
+  const agentLastUsedAt = agent?.lastUsedAt
+    ? agent.lastUsedAt.toISOString()
+    : null;
 
   const lastAgentEvent = await prisma.event.findFirst({
     where: { sessionId: session.id, authorKind: "agent" },
     orderBy: { ts: "desc" },
     select: { ts: true },
   });
-  const agentLastEventAt = lastAgentEvent ? lastAgentEvent.ts.toISOString() : null;
+  const agentLastEventAt = lastAgentEvent
+    ? lastAgentEvent.ts.toISOString()
+    : null;
 
   const agentLive = agentCount(session.id) > 0;
 
@@ -130,9 +142,11 @@ bridge.get("/:token", async (c) => {
   // computeAgentPresence. The shell then keeps them fresh by polling
   // /:token/presence (a polling agent never opens a WebSocket, so the seed
   // would otherwise go stale within ~30s).
-  const { agentLive, agentLastEventAt, agentLastUsedAt } = await computeAgentPresence(session);
+  const { agentLive, agentLastEventAt, agentLastUsedAt } =
+    await computeAgentPresence(session);
 
-  const isClosed = session.status !== "open" || session.expiresAt.getTime() < Date.now();
+  const isClosed =
+    session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase() + "/v1/sessions/" + session.id + "/stream";
   const schema = session.eventSchema as unknown as EventSchema;
   // 16 bytes of entropy, base64url so the value is safe inside both CSP and

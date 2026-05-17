@@ -3,7 +3,12 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import config from "../../config.js";
 import prisma from "../../db.js";
-import { generateSessionId, generateToken, hashKey, keyPrefix } from "../../keys.js";
+import {
+  generateSessionId,
+  generateToken,
+  hashKey,
+  keyPrefix,
+} from "../../keys.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import {
@@ -33,9 +38,7 @@ const callbackSchema = z.object({
 const createBody = z.object({
   artifact: artifactSchema,
   schema: z.unknown(),
-  participants: z
-    .object({ humans: z.number().int().positive() })
-    .optional(),
+  participants: z.object({ humans: z.number().int().positive() }).optional(),
   ttl: z.number().int().positive().optional(),
   metadata: z.record(z.unknown()).optional(),
   callback: callbackSchema.optional(),
@@ -117,7 +120,9 @@ sessions.post("/", requireAgent, async (c) => {
       artifactSource: artifact.source,
       eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
       expiresAt,
-      metadata: metadata ? (metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
+      metadata: metadata
+        ? (metadata as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       callbackUrl: callback?.url ?? null,
       callbackSecretEnc: callback ? encryptSecret(callback.secret) : null,
       callbackFilter: callback?.events
@@ -177,7 +182,9 @@ sessions.get("/:id", requireAgent, async (c) => {
   });
 });
 
-const patchSchemaBody = z.object({ add: z.object({ events: z.record(z.unknown()) }) });
+const patchSchemaBody = z.object({
+  add: z.object({ events: z.record(z.unknown()) }),
+});
 
 sessions.patch("/:id/schema", requireAgent, async (c) => {
   const id = c.req.param("id");
@@ -194,7 +201,9 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
 
   const current = session.eventSchema as unknown as EventSchema;
   const merged = mergeSchemaAdditive(current, parsed.data.add);
-  const added = Object.keys(parsed.data.add.events).filter((t) => !current.events[t]);
+  const added = Object.keys(parsed.data.add.events).filter(
+    (t) => !current.events[t],
+  );
   const updated = await prisma.session.update({
     where: { id },
     data: {
@@ -203,7 +212,10 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
     },
   });
   invalidateSchemaCache(id);
-  await appendSystemEvent(id, "system.schema.updated", { version: updated.schemaVersion, added });
+  await appendSystemEvent(id, "system.schema.updated", {
+    version: updated.schemaVersion,
+    added,
+  });
   return c.json({ schema_version: updated.schemaVersion });
 });
 

@@ -17,7 +17,11 @@ type ConnKind = "agent" | "human";
 // sessionId -> (connId -> kind)
 const connections = new Map<string, Map<string, ConnKind>>();
 
-export function addConnection(sessionId: string, connId: string, kind: ConnKind): void {
+export function addConnection(
+  sessionId: string,
+  connId: string,
+  kind: ConnKind,
+): void {
   let perSession = connections.get(sessionId);
   if (!perSession) {
     perSession = new Map();

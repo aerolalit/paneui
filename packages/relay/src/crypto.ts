@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  createHash,
+} from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +16,11 @@ import { log } from "./log.js";
 
 // Pin the key file to the project root (parent of src/ or dist/), not process.cwd(),
 // so the server picks up the same key regardless of where it's launched from.
-const KEY_FILE = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".pane-secret-key");
+const KEY_FILE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".pane-secret-key",
+);
 const FORMAT = "v1";
 
 function decodeKey(raw: string): Buffer {
@@ -42,10 +51,13 @@ function loadOrCreateKey(envValue: string | undefined): Buffer {
   } catch {
     // best effort on platforms that don't support it
   }
-  log.warn("PANE_SECRET_KEY not set; generated and persisted to .pane-secret-key", {
-    path: KEY_FILE,
-    note: "Back this file up. Losing it makes existing encrypted webhook secrets unreadable.",
-  });
+  log.warn(
+    "PANE_SECRET_KEY not set; generated and persisted to .pane-secret-key",
+    {
+      path: KEY_FILE,
+      note: "Back this file up. Losing it makes existing encrypted webhook secrets unreadable.",
+    },
+  );
   return key;
 }
 
@@ -67,7 +79,12 @@ export function encryptSecret(plain: string): string {
   const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
   const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return [FORMAT, iv.toString("base64"), ct.toString("base64"), tag.toString("base64")].join(".");
+  return [
+    FORMAT,
+    iv.toString("base64"),
+    ct.toString("base64"),
+    tag.toString("base64"),
+  ].join(".");
 }
 
 export function decryptSecret(blob: string): string {

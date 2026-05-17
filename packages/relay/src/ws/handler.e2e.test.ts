@@ -114,7 +114,10 @@ async function createSession(apiKey: string): Promise<{
 }> {
   const res = await fetch(`http://localhost:${port}/v1/sessions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
     body: JSON.stringify({
       artifact: { type: "html-inline", source: "<html></html>" },
       schema: minimalSchema,
@@ -133,7 +136,9 @@ async function createSession(apiKey: string): Promise<{
 }
 
 function connect(sessionId: string, token: string): WebSocket {
-  return new WebSocket(`ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${token}`);
+  return new WebSocket(
+    `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${token}`,
+  );
 }
 
 // FrameQueue buffers every received message into a queue and exposes async
@@ -192,7 +197,9 @@ describe("WS e2e", () => {
   it("rejects upgrade with no token (401)", async () => {
     const { apiKey } = await seedAgent();
     const { sessionId } = await createSession(apiKey);
-    const ws = new WebSocket(`ws://localhost:${port}/v1/sessions/${sessionId}/stream`);
+    const ws = new WebSocket(
+      `ws://localhost:${port}/v1/sessions/${sessionId}/stream`,
+    );
     await expect(waitOpen(ws)).rejects.toThrow(/401/);
   });
 
@@ -213,10 +220,20 @@ describe("WS e2e", () => {
 
     // First two frames are the self-join broadcast + replay.complete.
     const initial = await q.take(2);
-    expect(initial.some((f) => (f as { type?: string }).type === "system.participant.joined")).toBe(true);
-    expect(initial.some((f) => (f as { kind?: string }).kind === "system.replay.complete")).toBe(true);
+    expect(
+      initial.some(
+        (f) => (f as { type?: string }).type === "system.participant.joined",
+      ),
+    ).toBe(true);
+    expect(
+      initial.some(
+        (f) => (f as { kind?: string }).kind === "system.replay.complete",
+      ),
+    ).toBe(true);
 
-    ws.send(JSON.stringify({ type: "review.commentAdded", data: { body: "hello" } }));
+    ws.send(
+      JSON.stringify({ type: "review.commentAdded", data: { body: "hello" } }),
+    );
     // The server publishes the broadcast first (the sender sees its own event
     // echoed), then sends the ack. Read both and assert each separately.
     const echo = (await q.next()) as { type?: string; data?: { body: string } };
@@ -241,7 +258,9 @@ describe("WS e2e", () => {
     await waitOpen(ws);
     await q.take(2); // burn join + replay.complete
 
-    ws.send(JSON.stringify({ type: "review.commentAdded", data: { wrongField: 1 } }));
+    ws.send(
+      JSON.stringify({ type: "review.commentAdded", data: { wrongField: 1 } }),
+    );
     const frame = (await q.next()) as { error?: { code: string } };
     expect(frame.error?.code).toBe("schema_violation");
 
@@ -262,18 +281,32 @@ describe("WS e2e", () => {
 
     const key = "ws-idem-" + randomBytes(6).toString("hex");
     // First send: broadcast echo, then ack.
-    ws.send(JSON.stringify({ type: "review.commentAdded", data: { body: "x" }, idempotency_key: key }));
+    ws.send(
+      JSON.stringify({
+        type: "review.commentAdded",
+        data: { body: "x" },
+        idempotency_key: key,
+      }),
+    );
     await q.next(); // echo
     const a = (await q.next()) as { ack?: string; deduped?: boolean };
     // Second send: dedupe path skips publish, so ONLY the ack arrives.
-    ws.send(JSON.stringify({ type: "review.commentAdded", data: { body: "x" }, idempotency_key: key }));
+    ws.send(
+      JSON.stringify({
+        type: "review.commentAdded",
+        data: { body: "x" },
+        idempotency_key: key,
+      }),
+    );
     const b = (await q.next()) as { ack?: string; deduped?: boolean };
 
     expect(a.deduped).toBe(false);
     expect(b.deduped).toBe(true);
     expect(b.ack).toBe(a.ack);
 
-    const rows = await prisma.event.findMany({ where: { sessionId, idempotencyKey: key } });
+    const rows = await prisma.event.findMany({
+      where: { sessionId, idempotencyKey: key },
+    });
     expect(rows).toHaveLength(1);
     ws.close();
   });
@@ -285,7 +318,10 @@ describe("WS e2e", () => {
     for (const body of ["one", "two"]) {
       await fetch(`http://localhost:${port}/v1/sessions/${sessionId}/events`, {
         method: "POST",
-        headers: { authorization: `Bearer ${agentToken}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${agentToken}`,
+          "content-type": "application/json",
+        },
         body: JSON.stringify({ type: "review.commentAdded", data: { body } }),
       });
     }
@@ -298,7 +334,11 @@ describe("WS e2e", () => {
       (f) => (f as { type?: string }).type === "review.commentAdded",
     ) as { data: { body: string } }[];
     expect(replayed.map((f) => f.data.body)).toEqual(["one", "two"]);
-    expect(frames.some((f) => (f as { kind?: string }).kind === "system.replay.complete")).toBe(true);
+    expect(
+      frames.some(
+        (f) => (f as { kind?: string }).kind === "system.replay.complete",
+      ),
+    ).toBe(true);
     ws.close();
   });
 });

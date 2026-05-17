@@ -5,7 +5,11 @@ import { PaneClient, PaneApiError } from "./client.js";
 
 /** Build a client with a stubbed fetch. */
 function clientWith(fetchImpl: typeof fetch): PaneClient {
-  return new PaneClient({ url: "https://relay.test/", apiKey: "k_test", fetch: fetchImpl });
+  return new PaneClient({
+    url: "https://relay.test/",
+    apiKey: "k_test",
+    fetch: fetchImpl,
+  });
 }
 
 /** Minimal Response-like stub for the fields PaneClient.call reads. */
@@ -19,7 +23,9 @@ function res(opts: { status: number; ok?: boolean; body?: string }): Response {
 
 describe("PaneClient.call", () => {
   it("parses a 2xx JSON body", async () => {
-    const c = clientWith(async () => res({ status: 200, body: JSON.stringify({ hello: "world" }) }));
+    const c = clientWith(async () =>
+      res({ status: 200, body: JSON.stringify({ hello: "world" }) }),
+    );
     const r = await c.call("GET", "/v1/x");
     expect(r.ok).toBe(true);
     expect(r.status).toBe(200);
@@ -41,8 +47,12 @@ describe("PaneClient.call", () => {
     const r = await c.call("GET", "/v1/x");
     expect(r.ok).toBe(false);
     expect(r.status).toBe(0);
-    expect((r.data as { error: { code: string } }).error.code).toBe("fetch_error");
-    expect((r.data as { error: { message: string } }).error.message).toContain("ECONNREFUSED");
+    expect((r.data as { error: { code: string } }).error.code).toBe(
+      "fetch_error",
+    );
+    expect((r.data as { error: { message: string } }).error.message).toContain(
+      "ECONNREFUSED",
+    );
   });
 
   it("captures a non-JSON body instead of discarding it", async () => {
@@ -51,7 +61,9 @@ describe("PaneClient.call", () => {
     );
     const r = await c.call("GET", "/v1/x");
     expect(r.ok).toBe(false);
-    const err = (r.data as { error: { code: string; details: { body: string } } }).error;
+    const err = (
+      r.data as { error: { code: string; details: { body: string } } }
+    ).error;
     expect(err.code).toBe("non_json_response");
     expect(err.details.body).toContain("Bad Gateway");
   });
@@ -89,12 +101,17 @@ describe("PaneClient typed operations", () => {
   it("throws invalid_response when a 2xx body is not an object", async () => {
     const c = clientWith(async () => res({ status: 200, body: "null" }));
     await expect(c.getSession("ses_x")).rejects.toBeInstanceOf(PaneApiError);
-    await expect(c.getSession("ses_x")).rejects.toMatchObject({ code: "invalid_response" });
+    await expect(c.getSession("ses_x")).rejects.toMatchObject({
+      code: "invalid_response",
+    });
   });
 
   it("returns the parsed body on success", async () => {
     const c = clientWith(async () =>
-      res({ status: 200, body: JSON.stringify({ session_id: "ses_x", status: "open" }) }),
+      res({
+        status: 200,
+        body: JSON.stringify({ session_id: "ses_x", status: "open" }),
+      }),
     );
     const s = await c.getSession("ses_x");
     expect(s.session_id).toBe("ses_x");
@@ -103,13 +120,13 @@ describe("PaneClient typed operations", () => {
 
 describe("PaneClient.wsBaseUrl", () => {
   it("maps https to wss", () => {
-    expect(new PaneClient({ url: "https://relay.test", apiKey: "k" }).wsBaseUrl).toBe(
-      "wss://relay.test",
-    );
+    expect(
+      new PaneClient({ url: "https://relay.test", apiKey: "k" }).wsBaseUrl,
+    ).toBe("wss://relay.test");
   });
   it("maps http to ws", () => {
-    expect(new PaneClient({ url: "http://relay.test", apiKey: "k" }).wsBaseUrl).toBe(
-      "ws://relay.test",
-    );
+    expect(
+      new PaneClient({ url: "http://relay.test", apiKey: "k" }).wsBaseUrl,
+    ).toBe("ws://relay.test");
   });
 });

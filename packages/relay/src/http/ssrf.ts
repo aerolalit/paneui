@@ -9,7 +9,10 @@ import { errors } from "./errors.js";
 
 function isBlockedIPv4(addr: string): boolean {
   const parts = addr.split(".").map((n) => Number(n));
-  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)
+  ) {
     return true; // malformed -> treat as blocked
   }
   const [a, b] = parts as [number, number, number, number];
@@ -38,7 +41,13 @@ function isBlockedIPv6(addr: string): boolean {
   const a = addr.toLowerCase();
   if (a === "::" || a === "::1") return true;
   // link-local fe80::/10
-  if (a.startsWith("fe8") || a.startsWith("fe9") || a.startsWith("fea") || a.startsWith("feb")) return true;
+  if (
+    a.startsWith("fe8") ||
+    a.startsWith("fe9") ||
+    a.startsWith("fea") ||
+    a.startsWith("feb")
+  )
+    return true;
   // unique local fc00::/7
   if (a.startsWith("fc") || a.startsWith("fd")) return true;
   // multicast ff00::/8
@@ -82,9 +91,10 @@ export async function assertSafeOutboundUrl(
     throw errors.invalidRequest(`${field} must not contain credentials`);
   }
   // URL.hostname wraps IPv6 literals in brackets — strip for isIP/lookup.
-  const host = u.hostname.startsWith("[") && u.hostname.endsWith("]")
-    ? u.hostname.slice(1, -1)
-    : u.hostname;
+  const host =
+    u.hostname.startsWith("[") && u.hostname.endsWith("]")
+      ? u.hostname.slice(1, -1)
+      : u.hostname;
   if (!host) {
     throw errors.invalidRequest(`${field} must have a host`);
   }
@@ -95,11 +105,17 @@ export async function assertSafeOutboundUrl(
   // If the host is already an IP literal, check it directly.
   const ipFamily = isIP(host);
   if (ipFamily === 4) {
-    if (isBlockedIPv4(host)) throw errors.invalidRequest(`${field} resolves to a non-routable address`);
+    if (isBlockedIPv4(host))
+      throw errors.invalidRequest(
+        `${field} resolves to a non-routable address`,
+      );
     return;
   }
   if (ipFamily === 6) {
-    if (isBlockedIPv6(host)) throw errors.invalidRequest(`${field} resolves to a non-routable address`);
+    if (isBlockedIPv6(host))
+      throw errors.invalidRequest(
+        `${field} resolves to a non-routable address`,
+      );
     return;
   }
 
@@ -114,9 +130,12 @@ export async function assertSafeOutboundUrl(
     throw errors.invalidRequest(`${field} host could not be resolved`);
   }
   for (const r of resolved) {
-    const blocked = r.family === 4 ? isBlockedIPv4(r.address) : isBlockedIPv6(r.address);
+    const blocked =
+      r.family === 4 ? isBlockedIPv4(r.address) : isBlockedIPv6(r.address);
     if (blocked) {
-      throw errors.invalidRequest(`${field} resolves to a non-routable address`);
+      throw errors.invalidRequest(
+        `${field} resolves to a non-routable address`,
+      );
     }
   }
 }

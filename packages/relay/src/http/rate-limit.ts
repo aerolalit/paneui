@@ -46,7 +46,10 @@ interface SlidingWindowLimiter {
  * Create a sliding-window limiter allowing `limit` requests per `windowMs`
  * per key. `limit <= 0` disables the limiter (every check passes).
  */
-export function createRateLimiter(limit: number, windowMs: number): SlidingWindowLimiter {
+export function createRateLimiter(
+  limit: number,
+  windowMs: number,
+): SlidingWindowLimiter {
   const hits = new Map<string, number[]>();
 
   // Drop timestamps older than the window for a single key; delete the key

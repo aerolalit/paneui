@@ -42,7 +42,10 @@ describe("config", () => {
   });
 
   it("coerces register rate-limit overrides; 0 disables", () => {
-    const c = loadConfig({ REGISTER_RATE_LIMIT: "0", REGISTER_RATE_WINDOW_SECONDS: "60" });
+    const c = loadConfig({
+      REGISTER_RATE_LIMIT: "0",
+      REGISTER_RATE_WINDOW_SECONDS: "60",
+    });
     expect(c.REGISTER_RATE_LIMIT).toBe(0);
     expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(60);
   });

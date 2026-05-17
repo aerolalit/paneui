@@ -36,7 +36,10 @@ export async function writeEvent(
     throw errors.gone();
   }
 
-  if (Buffer.byteLength(JSON.stringify(input.data ?? null), "utf8") > config.MAX_EVENT_DATA_BYTES) {
+  if (
+    Buffer.byteLength(JSON.stringify(input.data ?? null), "utf8") >
+    config.MAX_EVENT_DATA_BYTES
+  ) {
     throw errors.payloadTooLarge();
   }
 
@@ -99,7 +102,11 @@ export async function writeEvent(
   return { event: serialized, deduped };
 }
 
-function fireWebhook(session: Session, type: string, event: SerializedEvent): void {
+function fireWebhook(
+  session: Session,
+  type: string,
+  event: SerializedEvent,
+): void {
   if (!session.callbackUrl || !session.callbackSecretEnc) return;
   if (!shouldFire(type, session.callbackFilter as string[] | null)) return;
 

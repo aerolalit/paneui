@@ -35,7 +35,12 @@ export class PaneApiError extends Error {
   readonly code: string;
   readonly details: unknown;
 
-  constructor(status: number, code: string, message: string, details?: unknown) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: unknown,
+  ) {
     super(message);
     this.name = "PaneApiError";
     this.status = status;
@@ -72,7 +77,11 @@ export class PaneClient {
    * JSON bodies, 204 handled. Never throws on non-2xx — returns `ok: false`.
    * Network failures return `{ ok: false, status: 0, ... }`.
    */
-  async call(method: string, path: string, body?: object): Promise<RelayResponse> {
+  async call(
+    method: string,
+    path: string,
+    body?: object,
+  ): Promise<RelayResponse> {
     const url = this.base + path;
     let res: Response;
     try {
@@ -117,7 +126,11 @@ export class PaneClient {
 
   /** Assert a 2xx body is a non-null object before treating it as typed JSON. */
   private asObject<T>(r: RelayResponse): T {
-    if (r.data === null || typeof r.data !== "object" || Array.isArray(r.data)) {
+    if (
+      r.data === null ||
+      typeof r.data !== "object" ||
+      Array.isArray(r.data)
+    ) {
       throw new PaneApiError(
         r.status,
         "invalid_response",
@@ -130,8 +143,11 @@ export class PaneClient {
 
   /** Throw a PaneApiError from a failed RelayResponse. */
   private fail(r: RelayResponse): never {
-    const err = (r.data as { error?: { code?: string; message?: string; details?: unknown } } | null)
-      ?.error;
+    const err = (
+      r.data as {
+        error?: { code?: string; message?: string; details?: unknown };
+      } | null
+    )?.error;
     throw new PaneApiError(
       r.status,
       err?.code ?? "relay_error",
@@ -141,7 +157,9 @@ export class PaneClient {
   }
 
   /** POST /v1/sessions — create a session. */
-  async createSession(req: CreateSessionRequest): Promise<CreateSessionResponse> {
+  async createSession(
+    req: CreateSessionRequest,
+  ): Promise<CreateSessionResponse> {
     const r = await this.call("POST", "/v1/sessions", {
       artifact: req.artifact,
       schema: req.schema,
@@ -156,7 +174,10 @@ export class PaneClient {
 
   /** GET /v1/sessions/:id — non-blocking session metadata. */
   async getSession(sessionId: string): Promise<SessionState> {
-    const r = await this.call("GET", `/v1/sessions/${encodeURIComponent(sessionId)}`);
+    const r = await this.call(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sessionId)}`,
+    );
     if (!r.ok) this.fail(r);
     return this.asObject<SessionState>(r);
   }
@@ -187,14 +208,23 @@ export class PaneClient {
   /** POST /v1/sessions/:id/events — append an agent event. */
   async sendEvent(
     sessionId: string,
-    ev: { type: string; data: unknown; causationId?: string; idempotencyKey?: string },
+    ev: {
+      type: string;
+      data: unknown;
+      causationId?: string;
+      idempotencyKey?: string;
+    },
   ): Promise<{ event: PaneEvent; deduped: boolean }> {
-    const r = await this.call("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
-      type: ev.type,
-      data: ev.data,
-      causation_id: ev.causationId,
-      idempotency_key: ev.idempotencyKey,
-    });
+    const r = await this.call(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/events`,
+      {
+        type: ev.type,
+        data: ev.data,
+        causation_id: ev.causationId,
+        idempotency_key: ev.idempotencyKey,
+      },
+    );
     if (!r.ok) this.fail(r);
     const body = this.asObject<{ event: PaneEvent; deduped?: boolean }>(r);
     return { event: body.event, deduped: body.deduped ?? false };
