@@ -17,6 +17,15 @@ const ajv = new AjvCtor({
   removeAdditional: false,
 });
 
+// Compiled-validator cache, keyed by `${sessionId}:${schemaVersion}`. Entries
+// are explicitly dropped on session DELETE (invalidateSchemaCache), but NOT on
+// natural TTL expiry — the TTL sweeper does a bulk deleteMany and never learns
+// the individual expired session ids, so it can't invalidate per-session.
+// Without a bound, a long-running relay would leak one compiled entry per
+// expired session forever. So the cache is a simple LRU: a JS Map preserves
+// insertion order, so "least recently used" = the first key; on a hit we
+// delete + re-set to move the entry to the most-recent position.
+const CACHE_MAX = 10_000;
 const cache = new Map<string, Map<string, ValidateFunction>>();
 const cacheKey = (sessionId: string, schemaVersion: number): string =>
   `${sessionId}:${schemaVersion}`;
@@ -28,12 +37,22 @@ function getCompilers(
 ): Map<string, ValidateFunction> {
   const k = cacheKey(sessionId, schemaVersion);
   const hit = cache.get(k);
-  if (hit) return hit;
+  if (hit) {
+    // Mark as most-recently-used.
+    cache.delete(k);
+    cache.set(k, hit);
+    return hit;
+  }
   const m = new Map<string, ValidateFunction>();
   for (const [type, entry] of Object.entries(schema.events)) {
     m.set(type, ajv.compile(entry.payload));
   }
   cache.set(k, m);
+  // Evict the least-recently-used entry (the oldest insertion) once over cap.
+  if (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
   return m;
 }
 
@@ -42,6 +61,17 @@ export function invalidateSchemaCache(sessionId: string): void {
     if (k.startsWith(`${sessionId}:`)) cache.delete(k);
   }
 }
+
+// Test-only introspection of the compiled-validator LRU. Not part of the
+// public API — exported solely so the unit test can assert eviction and
+// recency behaviour without compiling 10k schemas.
+export const __schemaCacheInternals = {
+  max: CACHE_MAX,
+  size: (): number => cache.size,
+  has: (sessionId: string, schemaVersion: number): boolean =>
+    cache.has(cacheKey(sessionId, schemaVersion)),
+  clear: (): void => cache.clear(),
+};
 
 export interface ValidateEventArgs {
   sessionId: string;

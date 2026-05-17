@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   validateEvent,
   validateSchemaShape,
   mergeSchemaAdditive,
+  invalidateSchemaCache,
+  __schemaCacheInternals,
 } from "./validation.js";
 import type { EventSchema } from "../types.js";
 
@@ -226,5 +228,56 @@ describe("mergeSchemaAdditive", () => {
     expect(next.events["review.commentAdded"]).toBeDefined();
     expect(next.events["review.approved"]).toBeDefined();
     expect(next.events["review.rejected"]).toBeDefined();
+  });
+});
+
+describe("compiled-validator cache (LRU)", () => {
+  const schema: EventSchema = {
+    events: {
+      "x.event": { payload: { type: "object" }, emittedBy: ["agent"] },
+    },
+  };
+  // Validating an event for a session populates the cache for that
+  // (sessionId, schemaVersion) key.
+  const touch = (sessionId: string): void =>
+    validateEvent({
+      sessionId,
+      schemaVersion: 1,
+      schema,
+      type: "x.event",
+      data: {},
+      authorKind: "agent",
+    });
+
+  beforeEach(() => __schemaCacheInternals.clear());
+
+  it("caches a compiled validator per session", () => {
+    touch("s1");
+    expect(__schemaCacheInternals.has("s1", 1)).toBe(true);
+    expect(__schemaCacheInternals.size()).toBe(1);
+  });
+
+  it("invalidateSchemaCache drops a session's entries", () => {
+    touch("s1");
+    invalidateSchemaCache("s1");
+    expect(__schemaCacheInternals.has("s1", 1)).toBe(false);
+  });
+
+  it("evicts the least-recently-used entry once over CACHE_MAX", () => {
+    const max = __schemaCacheInternals.max;
+    // Fill the cache exactly to capacity.
+    for (let i = 0; i < max; i++) touch(`sess_${i}`);
+    expect(__schemaCacheInternals.size()).toBe(max);
+
+    // Re-touch the oldest entry so it is no longer the LRU.
+    touch("sess_0");
+    // One more distinct session pushes the cache over cap → one eviction.
+    touch("overflow");
+
+    expect(__schemaCacheInternals.size()).toBe(max);
+    // sess_0 was refreshed, so sess_1 is now the LRU and gets evicted.
+    expect(__schemaCacheInternals.has("sess_0", 1)).toBe(true);
+    expect(__schemaCacheInternals.has("sess_1", 1)).toBe(false);
+    expect(__schemaCacheInternals.has("overflow", 1)).toBe(true);
   });
 });
