@@ -70,6 +70,14 @@ System events (relay-only; not writable by agent or page):
 | `system.schema.updated`     | `{ version, added: [type names] }` |
 | `system.session.expired`    | `{}` |
 
+`system.participant.left` is written fire-and-forget when a WebSocket closes,
+so a relay crash/restart between connect and close can lose it, leaving an
+orphan `joined`. To keep the log self-consistent the relay reconciles on
+startup: with zero live connections, every unpaired `joined` on an open session
+is provably stale, so a synthetic `system.participant.left` is emitted for each
+surplus `joined` (paired per `author`). Presence counts (`agentCountLive`) are
+tracked from connection lifecycle, never derived from this log.
+
 ## Per-session event schema
 
 The agent ships this at session creation. Shape:
