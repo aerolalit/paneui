@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import { artifactSchema, createSessionSchema } from "@pane/core";
 import config from "../../config.js";
 import prisma from "../../db.js";
 import {
@@ -28,25 +29,10 @@ import type { EventSchema } from "../../types.js";
 
 const sessions = new Hono<AuthEnv>();
 
-const artifactSchema = z.object({
-  type: z.enum(["html-inline", "html-ref"]),
-  source: z.string().min(1),
-});
-
-const callbackSchema = z.object({
-  url: z.string().url(),
-  events: z.array(z.string().min(1)).min(1),
-  secret: z.string().min(8),
-});
-
-const createBody = z.object({
-  artifact: artifactSchema,
-  schema: z.unknown(),
-  participants: z.object({ humans: z.number().int().positive() }).optional(),
-  ttl: z.number().int().positive().optional(),
-  metadata: z.record(z.unknown()).optional(),
-  callback: callbackSchema.optional(),
-});
+// `artifactSchema` and `createSessionSchema` (request shapes for POST/PATCH
+// /v1/sessions) are the single source of truth in @pane/core/schemas — the
+// relay imports them so the server-side validator and the client-facing
+// types can never drift. See packages/core/src/schemas.ts.
 
 function publicWsUrl(): string {
   const u = new URL(config.publicUrl);
@@ -74,7 +60,7 @@ async function appendSystemEvent(
 
 sessions.post("/", requireAgent, async (c) => {
   const body = await c.req.json().catch(() => null);
-  const parsed = createBody.safeParse(body);
+  const parsed = createSessionSchema.safeParse(body);
   if (!parsed.success) {
     throw errors.invalidRequest(
       "invalid body",

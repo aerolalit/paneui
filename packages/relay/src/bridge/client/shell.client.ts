@@ -13,6 +13,17 @@
 // classic <script> the file is injected into.
 export {};
 
+// The shell <-> iframe frame envelope is defined ONCE in ./protocol.ts and
+// shared (as a type) with the shim bundle, so the two sides cannot drift.
+// `import type` is fully erased by the compiler — nothing reaches this IIFE.
+import type { PaneFrameEnvelope, ShellToShimKind } from "./protocol.js";
+
+/** An outbound frame the shell posts to the iframe. */
+type OutboundFrame = PaneFrameEnvelope & {
+  kind: ShellToShimKind;
+  [k: string]: unknown;
+};
+
 interface ShellCfg {
   sessionId: string;
   schema: unknown;
@@ -288,28 +299,29 @@ interface SerializedEvent {
 
   function sendIframeInit(): void {
     if (!iframeReady || !replayDone || !frame || !frame.contentWindow) return;
-    frame.contentWindow.postMessage(
-      {
-        __pane: 1,
-        v: 1,
-        kind: "init",
-        payload: {
-          session_id: CFG.sessionId,
-          schema: CFG.schema,
-          replay: replayBuffer.slice(),
-          shell_origin: window.location.origin,
-        },
+    const frameMsg: OutboundFrame = {
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: {
+        session_id: CFG.sessionId,
+        schema: CFG.schema,
+        replay: replayBuffer.slice(),
+        shell_origin: window.location.origin,
       },
-      IFRAME_ORIGIN,
-    );
+    };
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
   }
 
   function pushToIframe(ev: SerializedEvent): void {
     if (!iframeReady || !frame || !frame.contentWindow) return;
-    frame.contentWindow.postMessage(
-      { __pane: 1, v: 1, kind: "event", payload: ev },
-      IFRAME_ORIGIN,
-    );
+    const frameMsg: OutboundFrame = {
+      __pane: 1,
+      v: 1,
+      kind: "event",
+      payload: ev,
+    };
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
   }
 
   // Schedule exactly one reconnect attempt. Coalesces: if a timer is already
@@ -390,16 +402,14 @@ interface SerializedEvent {
           frame &&
           frame.contentWindow
         ) {
-          frame.contentWindow.postMessage(
-            {
-              __pane: 1,
-              v: 1,
-              kind: "error",
-              correlation_id: msg["correlation_id"],
-              error: msg["error"],
-            },
-            IFRAME_ORIGIN,
-          );
+          const errFrame: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "error",
+            correlation_id: msg["correlation_id"],
+            error: msg["error"],
+          };
+          frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
         }
         return;
       }
@@ -410,17 +420,15 @@ interface SerializedEvent {
           frame &&
           frame.contentWindow
         ) {
-          frame.contentWindow.postMessage(
-            {
-              __pane: 1,
-              v: 1,
-              kind: "ack",
-              correlation_id: msg["correlation_id"],
-              event_id: msg["ack"],
-              deduped: !!msg["deduped"],
-            },
-            IFRAME_ORIGIN,
-          );
+          const ackFrame: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "ack",
+            correlation_id: msg["correlation_id"],
+            event_id: msg["ack"],
+            deduped: !!msg["deduped"],
+          };
+          frame.contentWindow.postMessage(ackFrame, IFRAME_ORIGIN);
         }
         return;
       }
@@ -463,6 +471,9 @@ interface SerializedEvent {
   window.addEventListener("message", (e: MessageEvent) => {
     if (!frame || e.source !== frame.contentWindow) return;
     const m = e.data;
+    // Reject anything that is not a current-version Pane frame: wrong marker
+    // OR wrong protocol version `v`. The frame shape is defined in
+    // ./protocol.ts and shared with the shim bundle (issue #58).
     if (!m || typeof m !== "object" || m.__pane !== 1 || m.v !== 1) return;
     if (m.kind === "ready") {
       iframeReady = true;
@@ -476,16 +487,14 @@ interface SerializedEvent {
       const replyError = (code: string, message: string): void => {
         if (!validCid(m.correlation_id) || !frame || !frame.contentWindow)
           return;
-        frame.contentWindow.postMessage(
-          {
-            __pane: 1,
-            v: 1,
-            kind: "error",
-            correlation_id: m.correlation_id,
-            error: { code, message },
-          },
-          IFRAME_ORIGIN,
-        );
+        const errFrame: OutboundFrame = {
+          __pane: 1,
+          v: 1,
+          kind: "error",
+          correlation_id: m.correlation_id,
+          error: { code, message },
+        };
+        frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
       };
       if (typeof m.type !== "string" || !m.type.length || m.type.length > 64) {
         replyError(
