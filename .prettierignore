@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+**/.prisma/
+**/generated/
+packages/relay/prisma/migrations/
+test-results/
+playwright-report/
+.playwright/
+
+# lockfile — managed by npm
+package-lock.json
+
+# generated / data
+*.tsbuildinfo
+data/
+*.db
+
+# docs / authored prose — left as written to avoid churn
+README.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+docs/
+skill/
