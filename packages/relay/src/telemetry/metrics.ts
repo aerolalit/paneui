@@ -132,16 +132,18 @@ export async function initTelemetry(
     unit: "s",
   });
 
-  // pane_ws_connections_active — ObservableGauge backed by the in-memory
-  // presence registry. Read on each collection; never throws.
+  // pane_ws_connections_active — ObservableGauge backed by the presence
+  // registry. Read on each collection; never throws. The callback is async
+  // because the presence registry is async (Redis-backed in multi-replica
+  // mode); the OTel metrics SDK awaits an async ObservableGauge callback.
   meter
     .createObservableGauge("pane_ws_connections_active", {
       description: "WebSocket connections currently open, by author kind.",
     })
-    .addCallback((result) => {
+    .addCallback(async (result) => {
       try {
-        result.observe(totalConnections("agent"), { kind: "agent" });
-        result.observe(totalConnections("human"), { kind: "human" });
+        result.observe(await totalConnections("agent"), { kind: "agent" });
+        result.observe(await totalConnections("human"), { kind: "human" });
       } catch (err) {
         log.warn("ws connections gauge callback failed", {
           error: err instanceof Error ? err.message : String(err),

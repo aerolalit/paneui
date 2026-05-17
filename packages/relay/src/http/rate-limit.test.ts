@@ -9,43 +9,52 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("createRateLimiter", () => {
-  it("allows up to `limit` requests then rejects within the window", () => {
+// These exercise the in-process (no-Redis) backend: REDIS_URL is unset in the
+// unit-test environment, so `redisEnabled()` is false and `check()` resolves
+// the synchronous in-process result wrapped in a Promise. `check()` is async
+// in both backends — every assertion awaits it.
+describe("createRateLimiter (in-process backend, REDIS_URL unset)", () => {
+  it("allows up to `limit` requests then rejects within the window", async () => {
     const lim = createRateLimiter(3, 1000);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(false);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(false);
   });
 
-  it("keys are independent", () => {
+  it("keys are independent", async () => {
     const lim = createRateLimiter(1, 1000);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(false);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(false);
     // A different key has its own fresh bucket.
-    expect(lim.check("b")).toBe(true);
+    expect(await lim.check("b")).toBe(true);
   });
 
-  it("expires timestamps after the window so the bucket refills", () => {
+  it("expires timestamps after the window so the bucket refills", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const lim = createRateLimiter(2, 1000);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(false); // bucket full
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(false); // bucket full
 
     // Advance past the window — the old hits fall out of the sliding window.
     vi.setSystemTime(1001);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(true);
-    expect(lim.check("a")).toBe(false);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(true);
+    expect(await lim.check("a")).toBe(false);
   });
 
-  it("limit <= 0 disables the limiter (every check passes)", () => {
+  it("limit <= 0 disables the limiter (every check passes)", async () => {
     const off = createRateLimiter(0, 1000);
-    for (let i = 0; i < 100; i++) expect(off.check("a")).toBe(true);
+    for (let i = 0; i < 100; i++) expect(await off.check("a")).toBe(true);
     const neg = createRateLimiter(-5, 1000);
-    for (let i = 0; i < 100; i++) expect(neg.check("a")).toBe(true);
+    for (let i = 0; i < 100; i++) expect(await neg.check("a")).toBe(true);
+  });
+
+  it("check() always returns a Promise (single code path for callers)", () => {
+    const lim = createRateLimiter(1, 1000);
+    expect(lim.check("a")).toBeInstanceOf(Promise);
   });
 });
 
@@ -103,7 +112,7 @@ describe("clientIp — X-Forwarded-For trust", () => {
     expect(clientIp(c, ["10.0.0.1", "10.0.0.2"])).toBe("198.51.100.7");
   });
 
-  it("a spoofed XFF from a direct client cannot reset another client's bucket", () => {
+  it("a spoofed XFF from a direct client cannot reset another client's bucket", async () => {
     // Two distinct direct clients each spoofing the SAME victim XFF must NOT
     // collapse into one bucket — they bucket by their real socket address.
     const a = fakeContext({
@@ -118,9 +127,9 @@ describe("clientIp — X-Forwarded-For trust", () => {
 
     // Concretely: the spoofed XFF does not advance the victim's bucket.
     const lim = createRateLimiter(1, 1000);
-    expect(lim.check(clientIp(a, []))).toBe(true);
+    expect(await lim.check(clientIp(a, []))).toBe(true);
     // Same victim XFF, different real client — still its own bucket.
-    expect(lim.check(clientIp(b, []))).toBe(true);
+    expect(await lim.check(clientIp(b, []))).toBe(true);
   });
 
   it("falls back to 'unknown' when there is no socket and no trusted XFF", () => {

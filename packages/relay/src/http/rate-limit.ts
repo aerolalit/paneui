@@ -1,20 +1,32 @@
-// In-memory sliding-window rate limiter, keyed by client IP (and optionally
-// token).
+// Sliding-window rate limiter, keyed by client IP (and optionally token).
 //
 // Used to bound abuse of the open POST /v1/register endpoint and every other
-// /v1 + /s route. No external dependency: state is a plain Map of key ->
-// recent request timestamps (ms).
+// /v1 + /s route.
 //
-// NOTE: this is single-process only. Each relay instance keeps its own map,
-// so behind a multi-process / multi-instance deployment the effective limit
-// is (limit * instances). A shared store (e.g. Redis) would be needed for a
-// strict global limit. For Pane's current single-process relay this is fine.
+// Two backends, selected at runtime by `redisEnabled()`:
+//
+//   REDIS OFF (single replica / self-host) — an in-process Map of key ->
+//   recent request timestamps (ms). No external dependency. Correct for a
+//   single replica; behind multiple replicas the effective limit would be
+//   (limit * replicas), which is why the Redis path exists.
+//
+//   REDIS ON (multi-replica) — a sorted set per key in Redis: ZADD the current
+//   timestamp, ZREMRANGEBYSCORE to prune entries older than the window, ZCARD
+//   to count what remains, and EXPIRE the key so idle keys are reclaimed. This
+//   is the standard correct sliding window and gives ONE global limit shared
+//   across every replica.
+//
+// `check()` is ASYNC in both modes — Redis makes it inherently async, and the
+// in-process path simply resolves an already-computed boolean so callers have
+// a single code path. See SlidingWindowLimiter below.
 
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
 import type { IncomingMessage } from "node:http";
 import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
+import { redisEnabled, redisPub } from "../redis.js";
+import { log } from "../log.js";
 
 /**
  * Core trusted-proxy IP resolution, shared by the Hono `clientIp()` and the
@@ -87,19 +99,33 @@ export function clientIp(
 }
 
 export interface SlidingWindowLimiter {
-  /** Returns true if the request is allowed, false if it exceeds the limit. */
-  check(key: string): boolean;
+  /**
+   * Resolves true if the request is allowed, false if it exceeds the limit.
+   *
+   * Async in BOTH backends: the Redis sliding window is inherently async, and
+   * the in-process path resolves an already-computed boolean (a near-free
+   * microtask) so every caller has exactly one code path regardless of
+   * whether Redis is configured.
+   */
+  check(key: string): Promise<boolean>;
 }
 
 /**
  * Create a sliding-window limiter allowing `limit` requests per `windowMs`
  * per key. `limit <= 0` disables the limiter (every check passes).
+ *
+ * The returned limiter picks its backend per call: when Redis is enabled it
+ * uses a Redis sorted set (global limit across replicas); otherwise it uses
+ * the in-process Map (single-replica behaviour, byte-for-byte as before).
  */
 export function createRateLimiter(
   limit: number,
   windowMs: number,
 ): SlidingWindowLimiter {
   const hits = new Map<string, number[]>();
+  // A short, stable namespace so two limiter instances (register vs general)
+  // never collide on the same Redis key.
+  const ns = `pane:rl:${windowMs}:`;
 
   // Drop timestamps older than the window for a single key; delete the key
   // entirely if nothing recent remains, so the map can't grow unbounded.
@@ -111,22 +137,63 @@ export function createRateLimiter(
     return recent;
   }
 
+  // In-process sliding window — the original synchronous logic, wrapped in a
+  // resolved Promise so the interface is uniform.
+  function checkInProcess(key: string): boolean {
+    const now = Date.now();
+    // Opportunistic global sweep: prune every key occasionally so idle keys
+    // don't linger forever. Cheap because the map is small in practice.
+    if (hits.size > 0 && Math.random() < 0.05) {
+      for (const k of [...hits.keys()]) prune(k, now);
+    }
+    const recent = prune(key, now);
+    if (recent.length >= limit) return false;
+    recent.push(now);
+    hits.set(key, recent);
+    return true;
+  }
+
+  // Redis sliding window — sorted set per key. The four commands run in a
+  // MULTI so the count-then-add is atomic against concurrent requests from
+  // other replicas hitting the same key.
+  async function checkRedis(key: string): Promise<boolean> {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const rkey = ns + key;
+    const member = `${now}:${Math.random().toString(36).slice(2)}`;
+    const results = await redisPub()
+      .multi()
+      // Prune entries older than the window first.
+      .zremrangebyscore(rkey, 0, cutoff)
+      // Count what remains BEFORE adding this request.
+      .zcard(rkey)
+      // Record this request, scored by its timestamp.
+      .zadd(rkey, now, member)
+      // Reclaim the key once the whole window has gone idle.
+      .pexpire(rkey, windowMs)
+      .exec();
+    // results[1] is the ZCARD reply: [err, count].
+    const countReply = results?.[1];
+    const priorCount =
+      countReply && typeof countReply[1] === "number" ? countReply[1] : 0;
+    return priorCount < limit;
+  }
+
   return {
-    check(key: string): boolean {
+    async check(key: string): Promise<boolean> {
       if (limit <= 0) return true; // disabled
-      const now = Date.now();
-
-      // Opportunistic global sweep: prune every key occasionally so idle keys
-      // don't linger forever. Cheap because the map is small in practice.
-      if (hits.size > 0 && Math.random() < 0.05) {
-        for (const k of [...hits.keys()]) prune(k, now);
+      if (!redisEnabled()) return checkInProcess(key);
+      try {
+        return await checkRedis(key);
+      } catch (err) {
+        // A mid-flight Redis failure must not 500 the request. Fall back to
+        // the in-process limiter for this call — degraded (per-replica) but
+        // still bounded — and log it.
+        log.warn("rate-limit: redis check failed, using in-process fallback", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return checkInProcess(key);
       }
-
-      const recent = prune(key, now);
-      if (recent.length >= limit) return false;
-      recent.push(now);
-      hits.set(key, recent);
-      return true;
     },
   };
 }
@@ -136,10 +203,15 @@ export function createRateLimiter(
  * caller's IP has exceeded the configured limit within the window. The limiter
  * itself is created once per app in buildApp() and read off the request
  * context, so its sliding-window state is shared across requests.
+ *
+ * Async because the underlying limiter is async (Redis-backed when REDIS_URL
+ * is set). The register route handler awaits this.
  */
-export function enforceRegisterRateLimit(c: Context<AppEnv>): void {
+export async function enforceRegisterRateLimit(
+  c: Context<AppEnv>,
+): Promise<void> {
   const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
-  if (!c.get("registerLimiter").check(ip)) {
+  if (!(await c.get("registerLimiter").check(ip))) {
     throw errors.tooManyRequests("registration rate limit exceeded");
   }
 }
@@ -170,11 +242,11 @@ function tokenKey(c: Context): string | null {
 export const generalRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
   const generalLimiter = c.get("generalLimiter");
   const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
-  if (!generalLimiter.check("ip:" + ip)) {
+  if (!(await generalLimiter.check("ip:" + ip))) {
     throw errors.tooManyRequests("rate limit exceeded");
   }
   const tok = tokenKey(c);
-  if (tok && !generalLimiter.check(tok)) {
+  if (tok && !(await generalLimiter.check(tok))) {
     throw errors.tooManyRequests("rate limit exceeded");
   }
   await next();
@@ -196,15 +268,18 @@ export const generalRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
  * is the injected `TRUSTED_PROXY` config list. Both are threaded in via
  * `attachWs()`'s deps — there is no module-level limiter or config singleton.
  *
- * Returns true if allowed, false if the IP has exceeded the limit. The caller
+ * Resolves true if allowed, false if the IP has exceeded the limit. The caller
  * is a raw socket (pre-upgrade), so there is no `ApiError` to throw — the
  * handler responds with a bare HTTP 429.
+ *
+ * Async because the underlying limiter is async (Redis-backed when REDIS_URL
+ * is set). The upgrade handler already runs in an async context, so it awaits.
  */
 export function checkWsUpgradeRateLimit(
   req: IncomingMessage,
   generalLimiter: SlidingWindowLimiter,
   trustedProxies: readonly string[],
-): boolean {
+): Promise<boolean> {
   const socketAddr = req.socket.remoteAddress ?? null;
   const xffRaw = req.headers["x-forwarded-for"];
   // node:http gives x-forwarded-for as string | string[]; normalise to one

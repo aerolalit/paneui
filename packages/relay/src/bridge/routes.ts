@@ -140,7 +140,7 @@ async function computeAgentPresence(
     ? lastAgentEvent.ts.toISOString()
     : null;
 
-  const agentLive = agentCount(session.id) > 0;
+  const agentLive = (await agentCount(session.id)) > 0;
 
   return { agentLive, agentLastEventAt, agentLastUsedAt };
 }

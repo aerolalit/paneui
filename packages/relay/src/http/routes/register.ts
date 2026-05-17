@@ -18,7 +18,7 @@ const bodySchema = z.object({
 const register = new Hono<AppEnv>();
 
 register.post("/", async (c) => {
-  enforceRegisterRateLimit(c);
+  await enforceRegisterRateLimit(c);
   const prisma = c.get("prisma");
 
   // Body is optional — a bare `pane register` sends none. Treat missing /

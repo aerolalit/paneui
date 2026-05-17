@@ -24,11 +24,13 @@
     "generate:postgres": "node scripts/prisma-generate.mjs postgres",
     "check:schema-sync": "node scripts/check-schema-sync.mjs",
     "pretest": "npm run build:client && node scripts/prisma-generate.mjs sqlite",
-    "test": "vitest run",
+    "test": "vitest run --exclude='**/*.multi-replica.test.ts' --exclude='**/node_modules/**'",
     "pretest:unit": "npm run build:client && node scripts/prisma-generate.mjs sqlite",
-    "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/node_modules/**'",
+    "test:unit": "vitest run --exclude='**/*.e2e.test.ts' --exclude='**/*.integration.test.ts' --exclude='**/*.multi-replica.test.ts' --exclude='**/node_modules/**'",
     "pretest:e2e": "npm run build:client && node scripts/prisma-generate.mjs",
     "test:e2e": "vitest run .e2e.test.ts .integration.test.ts",
+    "pretest:redis": "npm run build:client && node scripts/prisma-generate.mjs sqlite",
+    "test:redis": "vitest run .multi-replica.test.ts",
     "test:watch": "vitest",
     "pretest:browser": "npm run build:client && prisma generate --schema prisma/schema.prisma",
     "test:browser": "playwright test",
@@ -42,6 +44,7 @@
     "@opentelemetry/exporter-prometheus": "^0.218.0",
     "@opentelemetry/instrumentation": "^0.218.0",
     "@opentelemetry/instrumentation-http": "^0.218.0",
+    "@opentelemetry/instrumentation-ioredis": "^0.66.0",
     "@opentelemetry/instrumentation-pg": "^0.70.0",
     "@opentelemetry/resources": "^2.7.0",
     "@opentelemetry/sdk-logs": "^0.218.0",
@@ -58,7 +61,8 @@
     "zod": "^3.23.0"
   },
   "optionalDependencies": {
-    "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32"
+    "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

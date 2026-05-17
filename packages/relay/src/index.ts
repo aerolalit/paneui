@@ -17,6 +17,7 @@ import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
+import { initRedis, shutdownRedis } from "./redis.js";
 
 // One TTL sweep pass: collect the expired session ids first, then deleteMany,
 // then drop each session's compiled-validator cache entry. Two queries (no
@@ -77,6 +78,14 @@ async function main(): Promise<void> {
 
   await runBootstrap(prisma, config);
 
+  // Initialise the optional Redis backing for cross-process state (event
+  // pub/sub, rate limiter, WS presence). No-op when REDIS_URL is unset — the
+  // relay runs single-replica on its in-process implementations. When set,
+  // this fails fast if `ioredis` is missing or Redis is unreachable, so a
+  // misconfigured multi-replica deployment refuses to start rather than boot
+  // with no shared state.
+  await initRedis();
+
   // Close out any orphaned `system.participant.joined` events from a previous
   // process that crashed/restarted before writing the matching `left`. At this
   // point no WebSocket is connected, so every unpaired `joined` is provably
@@ -121,6 +130,7 @@ async function main(): Promise<void> {
         shutdownTelemetry(),
         shutdownTracing(),
         shutdownLogs(),
+        shutdownRedis(),
       ]).finally(() => process.exit(0));
     });
   }

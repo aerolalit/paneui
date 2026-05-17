@@ -67,9 +67,55 @@ starting point):
 | `DEFAULT_TTL_SECONDS` / `MAX_TTL_SECONDS` | `3600` / `86400` | Default and maximum session lifetime. |
 | `TTL_SWEEP_SECONDS` | `60` | Expired-session sweep interval. `0` disables the in-process sweeper. |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `REDIS_URL` | — | Optional. Set it **only** for a multi-replica deployment — see [Running multiple replicas](#running-multiple-replicas) below. Unset (the default) keeps the relay on in-process state: correct for a single replica and required for self-host. |
 | `METRICS_ENABLED` | `true` | Enables the OpenTelemetry SDK. `false` makes the instruments no-ops and unmounts `GET /metrics`. |
 | `METRICS_EXPORTER` | `none` | `none` (no telemetry exported), `prometheus` (exposes `GET /metrics`), or `azure` (App Insights). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | — | Azure Application Insights connection string. Required only when `METRICS_EXPORTER=azure`. |
+
+### Running multiple replicas
+
+By default the relay runs as a **single process** and keeps three pieces of
+state in memory: the event pub/sub bus, the rate limiter, and the WebSocket
+presence registry. That is correct and fast for self-host and local runs, and
+needs zero external services.
+
+To run the relay as **multiple replicas** (e.g. an autoscaling container app),
+set `REDIS_URL` to a Redis instance shared by every replica:
+
+```bash
+REDIS_URL=redis://my-redis:6379 npm start
+```
+
+With `REDIS_URL` set, the relay backs all three pieces of state with Redis so
+every replica stays consistent:
+
+- **Event pub/sub** — events publish to a Redis channel, so a subscriber on
+  any replica receives an event published on any other.
+- **Rate limiter** — the sliding window lives in Redis, so the configured
+  limit is global across replicas rather than per-replica.
+- **Presence** — the WebSocket presence registry lives in Redis, so counts
+  reflect connections on every replica, not just the local one.
+
+`REDIS_URL` is **optional**. Pane is open-core and self-hosts on SQLite with no
+paid dependencies; the Redis client (`ioredis`) is an `optionalDependency`,
+installed and loaded only when `REDIS_URL` is set. A relay started with
+`REDIS_URL` but without `ioredis` installed fails fast with a clear message,
+and a relay started with `REDIS_URL` unreachable fails fast on boot rather than
+running with no shared state.
+
+> Deployment note: when running multiple replicas behind a load balancer,
+> enable session affinity (sticky sessions) so a WebSocket stays pinned to the
+> replica that accepted its upgrade. The shared Redis state above makes
+> *cross-replica visibility* correct; affinity keeps an individual long-lived
+> socket on one replica for its lifetime.
+
+The cross-replica behaviour has a dedicated integration suite. It needs a real
+Redis and is skipped unless `REDIS_URL` is set, so the default test runs never
+require Redis:
+
+```bash
+REDIS_URL=redis://localhost:6379 npm run test:redis
+```
 
 ### Observability
 

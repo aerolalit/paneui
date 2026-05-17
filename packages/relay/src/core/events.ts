@@ -38,13 +38,15 @@ export interface WriteEventDeps {
 //
 // `decorate` lets a caller transform only the in-memory broadcast copy (the
 // persisted row is untouched) — the WS handler uses it to ride a live agent
-// count on participant.joined without persisting that count.
+// count on participant.joined without persisting that count. It may be async:
+// the live agent count is read from the presence registry, which is
+// Redis-backed (and therefore async) in multi-replica deployments.
 export async function appendSystemEvent(
   prisma: PrismaClient,
   sessionId: string,
   type: string,
   data: object,
-  decorate?: (e: SerializedEvent) => SerializedEvent,
+  decorate?: (e: SerializedEvent) => SerializedEvent | Promise<SerializedEvent>,
 ): Promise<SerializedEvent> {
   const event = await prisma.event.create({
     data: {
@@ -57,7 +59,7 @@ export async function appendSystemEvent(
   });
   recordEventWritten("system");
   const serialized = serializeEvent(event);
-  publish(sessionId, decorate ? decorate(serialized) : serialized);
+  publish(sessionId, decorate ? await decorate(serialized) : serialized);
   return serialized;
 }
 
