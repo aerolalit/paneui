@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { publish, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
-import { writeEvent } from "../core/events.js";
+import { appendSystemEvent, writeEvent } from "../core/events.js";
 import { addConnection, agentCount, removeConnection } from "./presence.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
 import { log } from "../log.js";
@@ -245,19 +245,14 @@ async function handleConnection(
   addConnection(sessionId, connId, author.kind === "agent" ? "agent" : "human");
 
   // 1) Append + broadcast a participant.joined system event so other peers see us.
-  //    The persisted row is exactly as before; only the broadcast copy carries
-  //    the live agent count.
-  const joinEvent = await prisma.event.create({
-    data: {
-      sessionId,
-      authorKind: "system",
-      authorId: "system",
-      type: "system.participant.joined",
-      data: { author: { kind: author.kind, id: author.id } } as object,
-    },
-  });
-  recordEventWritten("system");
-  publish(sessionId, withLiveCount(serializeEvent(joinEvent), sessionId));
+  //    The persisted row is exactly as before; `withLiveCount` decorates only
+  //    the broadcast copy with the live agent count.
+  await appendSystemEvent(
+    sessionId,
+    "system.participant.joined",
+    { author: { kind: author.kind, id: author.id } },
+    (e) => withLiveCount(e, sessionId),
+  );
 
   // 2) Replay every event since `sinceCursor` (or from the start).
   const replayWhere: { sessionId: string; id?: { gt: number } } = { sessionId };

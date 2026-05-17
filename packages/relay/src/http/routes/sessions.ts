@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { artifactSchema, createSessionSchema } from "@pane/core";
 import config from "../../config.js";
 import prisma from "../../db.js";
+import { appendSystemEvent } from "../../core/events.js";
 import {
   generateSessionId,
   generateToken,
@@ -18,14 +19,9 @@ import {
   mergeSchemaAdditive,
   validateSchemaShape,
 } from "../../core/validation.js";
-import { publish } from "../broadcast.js";
-import { serializeEvent } from "../serialize.js";
 import { assertSafeArtifactUrl, assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
-import {
-  recordEventWritten,
-  recordSessionCreated,
-} from "../../telemetry/metrics.js";
+import { recordSessionCreated } from "../../telemetry/metrics.js";
 import type { EventSchema } from "../../types.js";
 
 const sessions = new Hono<AuthEnv>();
@@ -39,24 +35,6 @@ function publicWsUrl(): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
-}
-
-async function appendSystemEvent(
-  sessionId: string,
-  type: string,
-  data: object,
-): Promise<void> {
-  const event = await prisma.event.create({
-    data: {
-      sessionId,
-      authorKind: "system",
-      authorId: "system",
-      type,
-      data: data as Prisma.InputJsonValue,
-    },
-  });
-  recordEventWritten("system");
-  publish(sessionId, serializeEvent(event));
 }
 
 sessions.post("/", requireAgent, async (c) => {

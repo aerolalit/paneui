@@ -59,6 +59,8 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
+# Migration runner (bounded retry wrapper around `prisma migrate deploy`).
+COPY packages/relay/scripts ./packages/relay/scripts
 
 WORKDIR /app/packages/relay
 # Run as the unprivileged `node` user (uid 1000, ships with the base image).
@@ -73,7 +75,12 @@ USER node
 # present in node_modules after `npm ci --omit=dev` — `npx` resolves the local
 # binary instead of downloading it on every boot.
 #
+# scripts/migrate-deploy.mjs wraps `prisma migrate deploy` in a small bounded
+# retry (5 attempts, 3s apart) so a briefly-unavailable DB — e.g. a Postgres
+# sidecar still starting — does not crash the container on boot. A genuinely
+# broken DB still fails the boot after the attempts are exhausted.
+#
 # `migrate deploy` with no --schema uses the default sqlite schema. A Postgres
 # deployment must run against schema.postgres.prisma — handled in the hosted
 # build path (issue #40), not this default self-host image.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "node scripts/migrate-deploy.mjs && node dist/index.js"]

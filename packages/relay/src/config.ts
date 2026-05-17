@@ -53,21 +53,46 @@ export interface Config extends RawConfig {
   publicUrl: string;
 }
 
+// Raised by loadConfig when an env var fails validation. Carries a
+// human-readable, multi-line summary instead of a raw ZodError stack trace, so
+// a self-hoster sees "PORT must be a number between 1 and 65535" rather than a
+// dump of Zod internals.
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigError";
+  }
+}
+
+function formatConfigError(err: z.ZodError): string {
+  const lines = err.issues.map((issue) => {
+    const field = issue.path.join(".") || "(root)";
+    return `  - ${field}: ${issue.message}`;
+  });
+  return `invalid relay configuration:\n${lines.join("\n")}`;
+}
+
 export function loadConfig(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): Config {
-  const parsed = schema.parse(env);
+  const result = schema.safeParse(env);
+  if (!result.success) {
+    throw new ConfigError(formatConfigError(result.error));
+  }
+  const parsed = result.data;
   // Fail fast: the azure exporter cannot push anywhere without a connection
   // string. Catch the misconfiguration at startup with a clear message rather
-  // than letting the exporter construction fail opaquely later.
+  // than letting the exporter construction fail opaquely later. Raised as a
+  // ConfigError so loadConfigOrExit prints it cleanly instead of stack-tracing.
   if (
     parsed.METRICS_ENABLED &&
     parsed.METRICS_EXPORTER === "azure" &&
     !parsed.APPLICATIONINSIGHTS_CONNECTION_STRING
   ) {
-    throw new Error(
-      "METRICS_EXPORTER=azure requires APPLICATIONINSIGHTS_CONNECTION_STRING to be set " +
-        "(the Application Insights connection string).",
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        "  - APPLICATIONINSIGHTS_CONNECTION_STRING: required when METRICS_EXPORTER=azure " +
+        "(the Application Insights connection string)",
     );
   }
   const publicUrl = (
@@ -85,10 +110,30 @@ export function redactConfig(c: Config): Record<string, unknown> {
     r.APPLICATIONINSIGHTS_CONNECTION_STRING = "<set>";
   }
   if (typeof r.DATABASE_URL === "string") {
-    r.DATABASE_URL = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
+    // Mask userinfo (scheme://user:pass@host) ...
+    let url = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
+    // ... and any password-bearing query param (e.g. ?password=secret,
+    // ?pwd=secret), which some drivers accept instead of inline userinfo.
+    url = url.replace(/([?&](?:password|pwd|pass)=)[^&]*/gi, "$1<redacted>");
+    r.DATABASE_URL = url;
   }
   return r;
 }
 
-const config = loadConfig();
+// Parsing happens at import time. A bad env var would otherwise throw a raw
+// ZodError before main()'s try/catch can run, so we format it here and exit
+// with a clear message for self-hosters.
+function loadConfigOrExit(): Config {
+  try {
+    return loadConfig();
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+const config = loadConfigOrExit();
 export default config;
