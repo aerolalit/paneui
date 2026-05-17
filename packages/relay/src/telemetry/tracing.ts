@@ -46,9 +46,15 @@ let tracerProvider: NodeTracerProvider | null = null;
  *   - PrismaInstrumentation hooks Prisma's tracing helper; it must be active
  *     before `@prisma/client` is imported (src/db.ts). Prisma 6 has tracing
  *     GA — no `previewFeatures` / schema change is needed; registering the
- *     instrumentation is sufficient.
- *   - PgInstrumentation patches the `pg` driver; relevant only for the
- *     Postgres engine, harmless (a no-op patch target) for SQLite.
+ *     instrumentation is sufficient. This is the ONLY way to get DB spans
+ *     from a Prisma stack: Prisma runs SQL through its Rust query engine, not
+ *     a JS driver, so JS-level driver instrumentation (e.g. `pg`) sees
+ *     nothing. The trade-off is that Prisma emits its full internal pipeline
+ *     (~6 nested client/engine spans per query) — the `engine:db_query` span
+ *     carries the real SQL + timing; the rest is Prisma-internal phases.
+ *   - PgInstrumentation is kept registered but is effectively inert with the
+ *     default Prisma engine (Prisma does not use the `pg` package). It would
+ *     only produce spans if Prisma were switched to the `pg` driver adapter.
  *
  * Registering instrumentation without a TracerProvider is fine — spans route
  * to a no-op tracer until initTracing() wires one (azure mode only).

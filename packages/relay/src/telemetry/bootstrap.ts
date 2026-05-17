@@ -9,8 +9,8 @@
 //     be registered before that loads.
 //   - `@prisma/instrumentation` hooks Prisma's tracing helper and must be
 //     active before `@prisma/client` is imported by src/db.ts.
-//   - `@opentelemetry/instrumentation-pg` patches the `pg` driver (Postgres
-//     engine only) and must likewise precede the client load.
+//   - `@opentelemetry/instrumentation-pg` patches the `pg` driver and must
+//     likewise precede the client load.
 //
 // This file does exactly one thing as an import side effect: register all of
 // the above. index.ts imports it FIRST — before config/db/buildApp/serve — so
