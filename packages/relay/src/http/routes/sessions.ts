@@ -12,6 +12,7 @@ import {
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import {
+  assertSchemaWithinLimits,
   invalidateSchemaCache,
   mergeSchemaAdditive,
   validateSchemaShape,
@@ -101,6 +102,10 @@ sessions.post("/", requireAgent, async (c) => {
     await assertSafeWebhookUrl(callback.url);
   }
 
+  assertSchemaWithinLimits(parsed.data.schema, {
+    maxBytes: config.MAX_SCHEMA_BYTES,
+    maxDepth: config.MAX_SCHEMA_DEPTH,
+  });
   const eventSchema: EventSchema = validateSchemaShape(parsed.data.schema);
 
   const ttlSeconds = Math.min(
@@ -207,6 +212,10 @@ sessions.patch("/:id/schema", requireAgent, async (c) => {
     );
   }
 
+  assertSchemaWithinLimits(parsed.data.add, {
+    maxBytes: config.MAX_SCHEMA_BYTES,
+    maxDepth: config.MAX_SCHEMA_DEPTH,
+  });
   const current = session.eventSchema as unknown as EventSchema;
   const merged = mergeSchemaAdditive(current, parsed.data.add);
   const added = Object.keys(parsed.data.add.events).filter(

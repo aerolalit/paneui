@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   validateEvent,
   validateSchemaShape,
+  assertSchemaWithinLimits,
   mergeSchemaAdditive,
   invalidateSchemaCache,
   __schemaCacheInternals,
@@ -86,6 +87,46 @@ describe("validateSchemaShape", () => {
         },
       }),
     ).toThrow();
+  });
+});
+
+describe("assertSchemaWithinLimits", () => {
+  const limits = { maxBytes: 65_536, maxDepth: 32 };
+
+  it("accepts a normal schema", () => {
+    expect(() => assertSchemaWithinLimits(exampleSchema, limits)).not.toThrow();
+  });
+
+  it("rejects an over-size schema with a clear message", () => {
+    // A schema whose serialized form exceeds the byte cap.
+    const big = {
+      events: {
+        "x.y": {
+          payload: { type: "object", description: "x".repeat(2_000) },
+          emittedBy: ["page"],
+        },
+      },
+    };
+    expect(() =>
+      assertSchemaWithinLimits(big, { maxBytes: 512, maxDepth: 32 }),
+    ).toThrow(/too large.*MAX_SCHEMA_BYTES/);
+  });
+
+  it("rejects an over-deep schema with a clear message", () => {
+    // Build a deeply-nested object well past the depth limit.
+    let nested: Record<string, unknown> = { type: "string" };
+    for (let i = 0; i < 50; i++) nested = { nested };
+    expect(() =>
+      assertSchemaWithinLimits(nested, { maxBytes: 65_536, maxDepth: 32 }),
+    ).toThrow(/too deeply nested.*MAX_SCHEMA_DEPTH/);
+  });
+
+  it("rejects a schema with circular references", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => assertSchemaWithinLimits(circular, limits)).toThrow(
+      /JSON-serializable/,
+    );
   });
 });
 
