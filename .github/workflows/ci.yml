@@ -89,6 +89,10 @@ jobs:
 
       - run: npm run generate --workspace @pane/relay -- sqlite
 
+      # relay's e2e suite imports @pane/core's compiled output; build all
+      # workspaces first so the import resolves.
+      - run: npm run build
+
       - run: npm run test:e2e
 
   # Same suite against a real Postgres 16 service. Catches engine-specific
@@ -124,6 +128,10 @@ jobs:
       - run: npm ci
 
       - run: npm run generate:postgres --workspace @pane/relay
+
+      # relay's e2e suite imports @pane/core's compiled output; build all
+      # workspaces first so the import resolves.
+      - run: npm run build
 
       - run: npm run test:e2e
         env:

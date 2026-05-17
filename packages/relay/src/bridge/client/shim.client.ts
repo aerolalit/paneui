@@ -2,7 +2,8 @@
 // `dist/client/shim.client.js` and inlined verbatim into the wrapped artifact
 // page by `src/bridge/routes.ts`.
 //
-// Wire format mirrors docs/architecture/phase-3-human-side.md:
+// Wire format mirrors docs/architecture/phase-3-human-side.md and is defined
+// as shared types in ./protocol.ts:
 //   iframe -> shell: { __pane:1, v:1, kind:"ready" | "emit", ... }
 //   shell  -> iframe: { __pane:1, v:1, kind:"init" | "event" | "ack" | "error", ... }
 //
@@ -14,12 +15,23 @@
 // `export` is a SyntaxError in the classic <script> the file is injected into.
 export {};
 
+// The shell <-> iframe frame envelope is defined ONCE in ./protocol.ts and
+// shared (as a type) with the shell bundle, so the two sides cannot drift.
+// `import type` is fully erased by the compiler — nothing reaches this IIFE.
+import type { PaneFrameEnvelope, ShimToShellKind } from "./protocol.js";
+
 interface SerializedEvent {
   id: string;
   type: string;
   data: unknown;
   [k: string]: unknown;
 }
+
+/** An outbound frame the shim posts to the shell. */
+type OutboundFrame = PaneFrameEnvelope & {
+  kind: ShimToShellKind;
+  [k: string]: unknown;
+};
 
 interface EmitOpts {
   causationId?: string;
@@ -136,7 +148,7 @@ declare global {
     opts?: EmitOpts,
   ): Promise<{ id: string; deduped: boolean }> {
     const corr = "c" + nextCorr++;
-    const frame: Record<string, unknown> = {
+    const frame: OutboundFrame = {
       __pane: 1,
       v: 1,
       kind: "emit",
@@ -215,7 +227,8 @@ declare global {
   window.pane = Object.freeze({ emit, on, state });
 
   function announceReady(): void {
-    parent.postMessage({ __pane: 1, v: 1, kind: "ready" }, "*");
+    const frame: OutboundFrame = { __pane: 1, v: 1, kind: "ready" };
+    parent.postMessage(frame, "*");
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", announceReady);
