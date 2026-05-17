@@ -22,6 +22,7 @@
     "studio": "prisma studio",
     "generate": "node scripts/prisma-generate.mjs",
     "generate:postgres": "node scripts/prisma-generate.mjs postgres",
+    "check:schema-sync": "node scripts/check-schema-sync.mjs",
     "pretest": "npm run build:client && node scripts/prisma-generate.mjs sqlite",
     "test": "vitest run",
     "pretest:unit": "npm run build:client && node scripts/prisma-generate.mjs sqlite",

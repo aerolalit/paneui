@@ -25,8 +25,12 @@ model Agent {
   rateLimit  Int?      @map("rate_limit")
   sessions   Session[]
 
-  @@index([keyHash])
   @@map("agents")
+}
+
+enum SessionStatus {
+  open
+  closed
 }
 
 model Session {
@@ -43,7 +47,7 @@ model Session {
   eventSchema     Json          @map("event_schema")
   schemaVersion   Int           @default(1) @map("schema_version")
 
-  status          String        @default("open")
+  status          SessionStatus @default(open)
   createdAt       DateTime      @default(now()) @map("created_at")
   expiresAt       DateTime      @map("expires_at")
   metadata        Json?
