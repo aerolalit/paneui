@@ -2,6 +2,7 @@
 // HTTP auto-instrumentation, which monkey-patches Node's `http` module — that
 // patch must be installed before `@hono/node-server` (below) loads `http`.
 import "./telemetry/bootstrap.js";
+import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import config, { redactConfig } from "./config.js";
 import prisma from "./db.js";
@@ -12,6 +13,23 @@ import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
+import { invalidateSchemaCache } from "./core/validation.js";
+
+// One TTL sweep pass: collect the expired session ids first, then deleteMany,
+// then drop each session's compiled-validator cache entry. Two queries (no
+// per-session round-trip), so still O(1) DB calls regardless of batch size.
+export async function sweepExpiredSessions(): Promise<number> {
+  const now = new Date();
+  const expired = await prisma.session.findMany({
+    where: { expiresAt: { lt: now } },
+    select: { id: true },
+  });
+  if (expired.length === 0) return 0;
+  const ids = expired.map((s) => s.id);
+  const r = await prisma.session.deleteMany({ where: { id: { in: ids } } });
+  for (const id of ids) invalidateSchemaCache(id);
+  return r.count;
+}
 
 function startTtlSweeper(): void {
   const intervalSec = config.TTL_SWEEP_SECONDS;
@@ -22,10 +40,9 @@ function startTtlSweeper(): void {
   const jitter = () =>
     Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
   const tick = (): void => {
-    void prisma.session
-      .deleteMany({ where: { expiresAt: { lt: new Date() } } })
-      .then((r) => {
-        if (r.count > 0) log.debug("ttl swept", { count: r.count });
+    void sweepExpiredSessions()
+      .then((count) => {
+        if (count > 0) log.debug("ttl swept", { count });
       })
       .catch((e) =>
         log.warn("ttl sweep error", {
@@ -81,10 +98,20 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  log.error("fatal", {
-    error: err instanceof Error ? err.message : String(err),
-    stack: err instanceof Error ? err.stack : undefined,
+// Only boot the relay when this module is the process entry point. When it is
+// imported instead (e.g. the sweeper integration test importing
+// `sweepExpiredSessions`), `main()` must not run — otherwise it would bind the
+// HTTP port and start the TTL sweeper as an import side effect.
+const isEntryPoint =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint) {
+  main().catch((err) => {
+    log.error("fatal", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}

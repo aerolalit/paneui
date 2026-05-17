@@ -282,9 +282,6 @@ sessions.delete("/:id", requireAgent, async (c) => {
     where: { id },
     data: { status: "closed", expiresAt: new Date() },
   });
-  // TODO(phase-4): the TTL sweeper should call invalidateSchemaCache too — the
-  // Ajv compiled-schema cache is otherwise unbounded for sessions that expire
-  // without an explicit DELETE.
   invalidateSchemaCache(id);
   await appendSystemEvent(id, "system.session.expired", {});
   return c.body(null, 204);

@@ -18,11 +18,10 @@ const ajv = new AjvCtor({
 });
 
 // Compiled-validator cache, keyed by `${sessionId}:${schemaVersion}`. Entries
-// are explicitly dropped on session DELETE (invalidateSchemaCache), but NOT on
-// natural TTL expiry — the TTL sweeper does a bulk deleteMany and never learns
-// the individual expired session ids, so it can't invalidate per-session.
-// Without a bound, a long-running relay would leak one compiled entry per
-// expired session forever. So the cache is a simple LRU: a JS Map preserves
+// are explicitly dropped via invalidateSchemaCache — on session DELETE and on
+// TTL expiry (the sweeper collects swept session ids and invalidates each).
+// As a backstop against any path that fails to invalidate, the cache is also
+// bounded so it can't leak unboundedly: it is a simple LRU — a JS Map preserves
 // insertion order, so "least recently used" = the first key; on a hit we
 // delete + re-set to move the entry to the most-recent position.
 const CACHE_MAX = 10_000;
