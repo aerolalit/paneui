@@ -27,6 +27,7 @@ import {
 } from "@opentelemetry/sdk-trace-node";
 import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { IORedisInstrumentation } from "@opentelemetry/instrumentation-ioredis";
 import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
 import { PrismaInstrumentation } from "@prisma/instrumentation";
 import type { Config } from "../config.js";
@@ -55,6 +56,12 @@ let tracerProvider: NodeTracerProvider | null = null;
  *   - PgInstrumentation is kept registered but is effectively inert with the
  *     default Prisma engine (Prisma does not use the `pg` package). It would
  *     only produce spans if Prisma were switched to the `pg` driver adapter.
+ *   - IORedisInstrumentation patches the `ioredis` client. It must be active
+ *     before `ioredis` is first imported — src/redis.ts lazy-imports it only
+ *     when REDIS_URL is set, but registering here in Phase 1 guarantees the
+ *     patch is installed up front regardless. When REDIS_URL is unset the
+ *     instrumentation is inert: nothing imports `ioredis`, so there is nothing
+ *     to patch and no spans are emitted.
  *
  * Registering instrumentation without a TracerProvider is fine — spans route
  * to a no-op tracer until initTracing() wires one (azure mode only).
@@ -80,6 +87,13 @@ export function registerHttpInstrumentation(): void {
       // wired (prometheus/none) — spans go to the no-op tracer.
       new PrismaInstrumentation(),
       new PgInstrumentation(),
+      // Redis dependency spans. The multi-replica path (rate-limit / presence /
+      // broadcast) issues ioredis commands — ZADD/HSET/PUBLISH/ZCARD etc. —
+      // which the Azure Monitor exporter renders as "dependencies" alongside
+      // the Prisma DB calls. Emitted as CLIENT spans. Inert when REDIS_URL is
+      // unset: src/redis.ts never imports `ioredis`, so there is nothing to
+      // patch and no spans are produced.
+      new IORedisInstrumentation(),
     ],
   });
 }
