@@ -20,6 +20,7 @@
     "dev": "npm run dev --workspace @pane/relay",
     "start": "npm run start --workspace @pane/relay",
     "generate": "npm run generate --workspace @pane/relay",
+    "check:schema-sync": "npm run check:schema-sync --workspace @pane/relay",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
