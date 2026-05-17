@@ -16,6 +16,7 @@
 
 import { WebSocket } from "ws";
 import type { PaneEvent } from "./types.js";
+import { MAX_FRAME_SNIPPET_LENGTH } from "./limits.js";
 
 export interface OpenStreamOptions {
   /** WebSocket base URL, e.g. wss://pane.example.com (no trailing slash). */
@@ -90,7 +91,10 @@ export function openStream(
     } catch (e) {
       // A malformed frame must never be silently dropped — a dropped event
       // makes `watch --type X` hang forever. Surface it as a transport error.
-      const snippet = text.length > 200 ? text.slice(0, 200) + "…" : text;
+      const snippet =
+        text.length > MAX_FRAME_SNIPPET_LENGTH
+          ? text.slice(0, MAX_FRAME_SNIPPET_LENGTH) + "…"
+          : text;
       handlers.onError?.(
         new Error(
           `failed to parse stream frame as JSON (${
@@ -102,7 +106,9 @@ export function openStream(
     }
     if (!msg || typeof msg !== "object") {
       handlers.onError?.(
-        new Error(`unexpected non-object stream frame: ${text.slice(0, 200)}`),
+        new Error(
+          `unexpected non-object stream frame: ${text.slice(0, MAX_FRAME_SNIPPET_LENGTH)}`,
+        ),
       );
       return;
     }
@@ -129,7 +135,7 @@ export function openStream(
     // Unrecognized frame shape — route to onError rather than dropping it.
     handlers.onError?.(
       new Error(
-        `unrecognized stream frame: ${JSON.stringify(obj).slice(0, 200)}`,
+        `unrecognized stream frame: ${JSON.stringify(obj).slice(0, MAX_FRAME_SNIPPET_LENGTH)}`,
       ),
     );
   });
@@ -154,8 +160,11 @@ export function openStream(
     close() {
       try {
         socket.close();
-      } catch {
-        /* noop */
+      } catch (e) {
+        console.debug(
+          "[pane] stream close error:",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     },
     get socket() {

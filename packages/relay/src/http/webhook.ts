@@ -5,7 +5,6 @@ import { log } from "../log.js";
 export interface WebhookConfig {
   url: string;
   secret: string;
-  filter: string[]; // glob patterns
 }
 
 function escapeRx(s: string): string {

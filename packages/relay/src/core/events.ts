@@ -116,7 +116,7 @@ function fireWebhook(
   } catch (err) {
     log.error("webhook secret decrypt failed", {
       sessionId: session.id,
-      err: String(err),
+      error: String(err),
     });
     return;
   }
@@ -124,7 +124,6 @@ function fireWebhook(
     {
       url: session.callbackUrl,
       secret,
-      filter: (session.callbackFilter as string[]) ?? [],
     },
     session.id,
     event,
@@ -132,7 +131,7 @@ function fireWebhook(
     log.warn("webhook delivery failed", {
       sessionId: session.id,
       eventId: event.id,
-      err: String(err),
+      error: String(err),
     }),
   );
 }

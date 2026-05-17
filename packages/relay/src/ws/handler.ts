@@ -2,6 +2,11 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import config from "../config.js";
+import {
+  MAX_EVENT_TYPE_LENGTH,
+  MAX_CORRELATION_ID_LENGTH,
+  MAX_CLOSE_REASON_LOG_LENGTH,
+} from "../limits.js";
 import prisma from "../db.js";
 import { resolveBearer } from "../http/auth.js";
 import { randomUUID } from "node:crypto";
@@ -292,7 +297,7 @@ async function handleConnection(
       authorKind: author.kind,
       authorId: author.id,
       code,
-      reason: reason.toString().slice(0, 200),
+      reason: reason.toString().slice(0, MAX_CLOSE_REASON_LOG_LENGTH),
       openMs: Date.now() - openedAt,
     });
     unsub();
@@ -315,7 +320,7 @@ async function handleConnection(
       .catch((err: unknown) =>
         log.warn("participant.left event insert failed", {
           sessionId,
-          err: String(err),
+          error: String(err),
         }),
       );
   });
@@ -361,10 +366,14 @@ async function handleFrame(
   const cid =
     typeof f.correlation_id === "string" &&
     f.correlation_id.length > 0 &&
-    f.correlation_id.length <= 128
+    f.correlation_id.length <= MAX_CORRELATION_ID_LENGTH
       ? f.correlation_id
       : null;
-  if (typeof f.type !== "string" || f.type.length === 0 || f.type.length > 64) {
+  if (
+    typeof f.type !== "string" ||
+    f.type.length === 0 ||
+    f.type.length > MAX_EVENT_TYPE_LENGTH
+  ) {
     sendJson(ws, {
       error: serializeApiError(
         errors.invalidRequest(
@@ -424,7 +433,7 @@ async function handleFrame(
     }
     log.error("ws writeEvent failed", {
       sessionId,
-      err: err instanceof Error ? err.message : String(err),
+      error: err instanceof Error ? err.message : String(err),
     });
     sendJson(ws, {
       error: { code: "internal" },

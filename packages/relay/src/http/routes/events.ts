@@ -6,16 +6,21 @@ import { errors } from "../errors.js";
 import { waitForEvent } from "../broadcast.js";
 import { serializeEvent } from "../serialize.js";
 import { writeEvent } from "../../core/events.js";
+import {
+  MAX_EVENT_TYPE_LENGTH,
+  MAX_CAUSATION_ID_LENGTH,
+  MAX_IDEMPOTENCY_KEY_LENGTH,
+} from "../../limits.js";
 
 const events = new Hono<AuthEnv>();
 
 events.use("*", dualAuth);
 
 const postBody = z.object({
-  type: z.string().min(1).max(64),
+  type: z.string().min(1).max(MAX_EVENT_TYPE_LENGTH),
   data: z.unknown(),
-  causation_id: z.string().min(1).max(64).optional(),
-  idempotency_key: z.string().min(1).max(128).optional(),
+  causation_id: z.string().min(1).max(MAX_CAUSATION_ID_LENGTH).optional(),
+  idempotency_key: z.string().min(1).max(MAX_IDEMPOTENCY_KEY_LENGTH).optional(),
 });
 
 events.post("/", async (c) => {
