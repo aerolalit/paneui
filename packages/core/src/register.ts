@@ -6,6 +6,7 @@
 // PaneApiError with status 429).
 
 import { PaneApiError } from "./client.js";
+import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
 
 export interface RegisterAgentOptions {
   /** Relay base URL, e.g. https://pane.example.com. Trailing slash is trimmed. */
@@ -53,7 +54,10 @@ export async function registerAgent(
     try {
       data = JSON.parse(text);
     } catch {
-      const snippet = text.length > 500 ? text.slice(0, 500) + "…" : text;
+      const snippet =
+        text.length > MAX_RESPONSE_SNIPPET_LENGTH
+          ? text.slice(0, MAX_RESPONSE_SNIPPET_LENGTH) + "…"
+          : text;
       throw new PaneApiError(
         res.status,
         "non_json_response",

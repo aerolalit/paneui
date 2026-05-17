@@ -73,7 +73,7 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
     .catch((err: unknown) =>
       log.warn("lastUsedAt update failed", {
         agentId: agent.id,
-        err: String(err),
+        error: String(err),
       }),
     );
   c.set("agent", agent);
@@ -120,7 +120,7 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
     .catch((err: unknown) =>
       log.warn("lastUsedAt update failed", {
         agentId: resolved.agent.id,
-        err: String(err),
+        error: String(err),
       }),
     );
   c.set("agent", resolved.agent);

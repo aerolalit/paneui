@@ -27,7 +27,7 @@ export function buildApp(): Hono {
       await next();
     } finally {
       const ms = Date.now() - start;
-      // Redact the session token in /s/<tok>/... paths if/when phase 3 adds them.
+      // Redact the session token in /s/<tok>/... bridge paths.
       const path = c.req.path.replace(/^\/s\/[^/]+/, "/s/***");
       if (path !== "/healthz") {
         log.info("req", {

@@ -21,6 +21,13 @@ export {
 } from "./schemas.js";
 export type { CreateSessionInput } from "./schemas.js";
 
+export {
+  MAX_EVENT_TYPE_LENGTH,
+  MAX_IDEMPOTENCY_KEY_LENGTH,
+  MAX_RESPONSE_SNIPPET_LENGTH,
+  MAX_FRAME_SNIPPET_LENGTH,
+} from "./limits.js";
+
 export type {
   AuthorKind,
   PaneEvent,

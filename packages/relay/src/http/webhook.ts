@@ -5,7 +5,6 @@ import { log } from "../log.js";
 export interface WebhookConfig {
   url: string;
   secret: string;
-  filter: string[]; // glob patterns
 }
 
 // Per-attempt request timeout. A non-responsive target must not hang the
