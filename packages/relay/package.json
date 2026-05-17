@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build:client": "tsc -p tsconfig.client.json",
+    "prebuild:server": "node scripts/prisma-generate.mjs",
     "build:server": "tsc",
     "build": "npm run build:client && npm run build:server",
     "predev": "npm run build:client && node scripts/prisma-generate.mjs",
