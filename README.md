@@ -89,8 +89,9 @@ the norm for a Prometheus scrape target — if the relay is publicly reachable,
 monitoring stack can reach it. Prometheus has no trace ingestion, so no spans
 are produced in this mode.
 
-**`azure`** — pushes metrics, distributed traces (HTTP request spans) and
-handled exceptions to [Azure Application
+**`azure`** — pushes metrics, distributed traces (HTTP request spans plus DB
+dependency spans), handled exceptions and application logs to [Azure
+Application
 Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview).
 This mode requires the **optional** `@azure/monitor-opentelemetry-exporter`
 package (`npm install @azure/monitor-opentelemetry-exporter` — it is *not* a

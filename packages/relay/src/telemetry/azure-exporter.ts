@@ -15,6 +15,9 @@ export interface AzureMonitorExporterModule {
   AzureMonitorTraceExporter: new (options: {
     connectionString: string;
   }) => object;
+  AzureMonitorLogExporter: new (options: {
+    connectionString: string;
+  }) => object;
 }
 
 /**

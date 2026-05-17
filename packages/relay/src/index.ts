@@ -11,6 +11,7 @@ import { buildApp } from "./http/app.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
+import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 
 function startTtlSweeper(): void {
   const intervalSec = config.TTL_SWEEP_SECONDS;
@@ -51,9 +52,13 @@ async function main(): Promise<void> {
   // exporter is dynamically imported; no-op when METRICS_ENABLED=false.
   await initTelemetry(config);
   // Wire the TracerProvider + span exporter. Only does anything in azure mode
-  // (prometheus has no trace ingestion story). The HTTP instrumentation itself
-  // was already registered by ./telemetry/bootstrap.js, imported first above.
+  // (prometheus has no trace ingestion story). The HTTP/DB instrumentation
+  // itself was already registered by ./telemetry/bootstrap.js, imported first
+  // above.
   await initTracing(config);
+  // Wire the LoggerProvider + log exporter so the relay logger bridges to
+  // Application Insights "Traces". Azure mode only; no-op otherwise.
+  await initLogs(config);
 
   const app = buildApp();
 
@@ -67,9 +72,11 @@ async function main(): Promise<void> {
   // just exits — but a flush lets the last scrape window's data settle.
   for (const sig of ["SIGTERM", "SIGINT"] as const) {
     process.once(sig, () => {
-      void Promise.allSettled([shutdownTelemetry(), shutdownTracing()]).finally(
-        () => process.exit(0),
-      );
+      void Promise.allSettled([
+        shutdownTelemetry(),
+        shutdownTracing(),
+        shutdownLogs(),
+      ]).finally(() => process.exit(0));
     });
   }
 }

@@ -1,4 +1,5 @@
 import config from "./config.js";
+import { emitLogRecord } from "./telemetry/logs.js";
 
 type Level = "debug" | "info" | "warn" | "error";
 
@@ -15,6 +16,10 @@ function emit(level: Level, msg: string, meta?: Record<string, unknown>): void {
   };
   const out = level === "error" ? process.stderr : process.stdout;
   out.write(JSON.stringify(line) + "\n");
+  // Bridge to OTel logs (App Insights "Traces"). Guarded no-op until the
+  // LoggerProvider is installed by initLogs() — i.e. always a no-op outside
+  // azure mode, and during early startup before telemetry initialises.
+  emitLogRecord(level, msg, meta);
 }
 
 export const log = {

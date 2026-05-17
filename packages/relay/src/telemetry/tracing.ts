@@ -27,6 +27,8 @@ import {
 } from "@opentelemetry/sdk-trace-node";
 import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
+import { PrismaInstrumentation } from "@prisma/instrumentation";
 import type { Config } from "../config.js";
 import { log } from "../log.js";
 import { buildResource } from "./resource.js";
@@ -36,8 +38,21 @@ let instrumentationRegistered = false;
 let tracerProvider: NodeTracerProvider | null = null;
 
 /**
- * Phase 1: register HTTP auto-instrumentation. MUST run before `http` /
- * `@hono/node-server` are imported — see the module header. Idempotent.
+ * Phase 1: register HTTP + DB auto-instrumentation. MUST run before the
+ * instrumented modules are first imported — see the module header:
+ *
+ *   - HttpInstrumentation patches Node's `http`/`https`, which must happen
+ *     before `@hono/node-server` (and thus `http`) loads.
+ *   - PrismaInstrumentation hooks Prisma's tracing helper; it must be active
+ *     before `@prisma/client` is imported (src/db.ts). Prisma 6 has tracing
+ *     GA — no `previewFeatures` / schema change is needed; registering the
+ *     instrumentation is sufficient.
+ *   - PgInstrumentation patches the `pg` driver; relevant only for the
+ *     Postgres engine, harmless (a no-op patch target) for SQLite.
+ *
+ * Registering instrumentation without a TracerProvider is fine — spans route
+ * to a no-op tracer until initTracing() wires one (azure mode only).
+ * Idempotent.
  */
 export function registerHttpInstrumentation(): void {
   if (instrumentationRegistered) return;
@@ -54,6 +69,11 @@ export function registerHttpInstrumentation(): void {
           return url === "/healthz" || url === "/metrics";
         },
       }),
+      // DB dependency spans. App Insights renders these as "dependencies"
+      // (child spans of a request) with timing. Cheap when no exporter is
+      // wired (prometheus/none) — spans go to the no-op tracer.
+      new PrismaInstrumentation(),
+      new PgInstrumentation(),
     ],
   });
 }
