@@ -108,3 +108,90 @@ describe("fire (per-attempt timeout)", () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe("fire (SSRF: redirects are not followed)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const event: SerializedEvent = {
+    id: "evt_1",
+    session_id: "sess_1",
+    author: { kind: "agent", id: "agent_1" },
+    ts: "2026-01-01T00:00:00.000Z",
+    type: "review.commentAdded",
+    data: {},
+    causation_id: null,
+    idempotency_key: null,
+  };
+
+  it("requests fetch with redirect: 'manual' so a 3xx is never chased", async () => {
+    // A target that always 302s. With redirect: "manual" the platform fetch
+    // surfaces an opaqueredirect response (status 0) instead of following the
+    // Location — so the relay cannot be bounced to an internal address.
+    const inits: RequestInit[] = [];
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((_url: string, init: RequestInit) => {
+        inits.push(init);
+        return Promise.resolve({
+          ok: false,
+          status: 0,
+          type: "opaqueredirect" as ResponseType,
+        } as Response);
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fire(
+      { url: "https://validated-public.test/hook", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    // Every attempt must opt out of redirect-following.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const init of inits) {
+      expect(init.redirect).toBe("manual");
+    }
+  });
+
+  it("treats a 3xx redirect as a failed delivery and retries (does not return early)", async () => {
+    // A plain 302 (some runtimes surface the status rather than an
+    // opaqueredirect). It is NOT a 2xx, so fire() must keep retrying and
+    // never treat it as a successful delivery.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 302,
+      type: "basic" as ResponseType,
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fire(
+      { url: "https://validated-public.test/hook", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    // 1 attempt + 2 retries — a 302 is a failed delivery, not a success.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result).toBeUndefined();
+  });
+
+  it("a 2xx still short-circuits the retry loop (redirect handling is narrow)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      type: "basic" as ResponseType,
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fire(
+      { url: "https://validated-public.test/hook", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    // Delivered on the first attempt — no retries.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

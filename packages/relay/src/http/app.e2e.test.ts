@@ -553,4 +553,77 @@ describe("HTTP e2e", () => {
       expect(body.error.details).toBeTruthy();
     });
   });
+
+  describe("request body size limit", () => {
+    // The global /v1/* bodyLimit ceiling is MAX_ARTIFACT_BYTES + 256 KiB
+    // (config default: 2 MB artifact cap). A body past that ceiling must be
+    // rejected with 413 BEFORE the route buffers and JSON.parses it.
+    it("rejects an oversized POST /v1/sessions body with 413 payload_too_large", async () => {
+      const { apiKey } = await seedAgent();
+      // 5 MB of artifact source — well past the ~2.25 MB global ceiling.
+      const huge = "A".repeat(5_000_000);
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: { type: "html-inline", source: huge },
+            schema: minimalSchema,
+          }),
+        }),
+      );
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("payload_too_large");
+    });
+
+    it("rejects an oversized POST /events body with 413 payload_too_large", async () => {
+      const { apiKey } = await seedAgent();
+      const create = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: { type: "html-inline", source: "<html></html>" },
+            schema: minimalSchema,
+          }),
+        }),
+      );
+      const { session_id, tokens } = (await create.json()) as {
+        session_id: string;
+        tokens: { agent: string };
+      };
+      // The events route has a tighter cap (MAX_EVENT_DATA_BYTES + 64 KiB,
+      // config default 64 KB data cap); 1 MB of data is well past it.
+      const huge = "B".repeat(1_000_000);
+      const res = await app.fetch(
+        new Request(`http://t/v1/sessions/${session_id}/events`, {
+          method: "POST",
+          headers: bearer(tokens.agent),
+          body: JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: huge },
+          }),
+        }),
+      );
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as ErrBody;
+      expect(body.error.code).toBe("payload_too_large");
+    });
+
+    it("accepts a normal-sized body (limit does not reject legitimate payloads)", async () => {
+      const { apiKey } = await seedAgent();
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: { type: "html-inline", source: "<html></html>" },
+            schema: minimalSchema,
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+    });
+  });
 });
