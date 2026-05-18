@@ -2,7 +2,7 @@
 //
 // The relay ships two Prisma schemas that generate to the SAME `@prisma/client`:
 //   - prisma/schema.prisma          (sqlite, the default)
-//   - prisma/schema.postgres.prisma (postgresql, the hosted build)
+//   - prisma/postgres/schema.prisma  (postgresql, the hosted build)
 // Whichever `prisma generate` ran last wins. The browser harness boots the relay
 // against a throwaway SQLite `file:` database, so it needs the SQLite-targeted
 // client. If the Postgres client happens to be generated, the harness fails with

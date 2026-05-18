@@ -11,56 +11,11 @@
 //   node scripts/prisma-generate.mjs sqlite     # force the sqlite schema
 //   node scripts/prisma-generate.mjs postgres   # force the postgres schema
 //
-// No dependencies — a tiny .env reader is inlined (the project keeps `.env`
-// gitignored, so absence is normal and handled gracefully).
+// Engine detection (and the tiny .env reader) is shared with
+// migrate-deploy.mjs via ./_db-engine.mjs.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-
-const relayDir = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
-
-const SCHEMAS = {
-  sqlite: "prisma/schema.prisma",
-  postgres: "prisma/schema.postgres.prisma",
-};
-
-/** Read DATABASE_URL from packages/relay/.env if it isn't already in the env. */
-function databaseUrlFromEnvFile() {
-  const envPath = path.join(relayDir, ".env");
-  if (!existsSync(envPath)) return undefined;
-  const content = readFileSync(envPath, "utf8");
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = /^DATABASE_URL\s*=\s*(.*)$/.exec(line);
-    if (!match) continue;
-    let value = match[1].trim();
-    // Strip surrounding quotes if present.
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    return value;
-  }
-  return undefined;
-}
-
-/** Map a DATABASE_URL to a schema key, defaulting to the safe sqlite schema. */
-function schemaKeyForUrl(url) {
-  if (!url) return "sqlite";
-  if (url.startsWith("postgres://") || url.startsWith("postgresql://")) {
-    return "postgres";
-  }
-  // `file:` URLs, and anything unrecognised, fall back to sqlite (the default).
-  return "sqlite";
-}
+import { relayDir, SCHEMAS, resolveEngine } from "./_db-engine.mjs";
 
 function main() {
   const forced = process.argv[2];
@@ -76,13 +31,8 @@ function main() {
     key = forced;
     console.log(`[prisma-generate] forced schema: ${key}`);
   } else {
-    const url = process.env.DATABASE_URL ?? databaseUrlFromEnvFile();
-    key = schemaKeyForUrl(url);
-    const source = process.env.DATABASE_URL
-      ? "process.env"
-      : url
-        ? ".env file"
-        : "default (DATABASE_URL unset)";
+    const { key: detected, source } = resolveEngine();
+    key = detected;
     console.log(
       `[prisma-generate] DATABASE_URL via ${source} -> schema: ${key}`,
     );

@@ -1,7 +1,7 @@
 // scripts/check-schema-sync.mjs
 //
 // The relay ships two Prisma schema files — prisma/schema.prisma (sqlite) and
-// prisma/schema.postgres.prisma (postgres) — that MUST describe the same data
+// prisma/postgres/schema.prisma (postgres) — that MUST describe the same data
 // model. They differ only in provider-specific bits: the `datasource` block,
 // and provider-specific field annotations (e.g. `@db.BigInt`).
 //
@@ -22,7 +22,7 @@ const relayDir = path.resolve(
 );
 
 const SQLITE_SCHEMA = path.join(relayDir, "prisma/schema.prisma");
-const POSTGRES_SCHEMA = path.join(relayDir, "prisma/schema.postgres.prisma");
+const POSTGRES_SCHEMA = path.join(relayDir, "prisma/postgres/schema.prisma");
 
 // Provider-specific native-type annotations that are allowed to differ between
 // the two schemas. They are stripped before comparison.
@@ -81,7 +81,7 @@ function main() {
 
   if (sqlite.join("\n") === postgres.join("\n")) {
     console.log(
-      "[check-schema-sync] OK — schema.prisma and schema.postgres.prisma " +
+      "[check-schema-sync] OK — schema.prisma and postgres/schema.prisma " +
         "describe the same data model.",
     );
     process.exit(0);
@@ -89,7 +89,7 @@ function main() {
 
   console.error(
     "[check-schema-sync] FAIL — the two Prisma schemas have diverged.\n" +
-      "  schema.prisma and schema.postgres.prisma must keep identical model\n" +
+      "  schema.prisma and postgres/schema.prisma must keep identical model\n" +
       "  and enum definitions (only datasource/generator blocks and @db.*\n" +
       "  annotations may differ). Differences (- sqlite, + postgres):\n",
   );

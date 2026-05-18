@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  # Guards that prisma/schema.prisma (sqlite) and prisma/schema.postgres.prisma
+  # Guards that prisma/schema.prisma (sqlite) and prisma/postgres/schema.prisma
   # (postgres) keep identical model/enum definitions — only the datasource
   # block and @db.* annotations may differ. Pure Node, no build or generated
   # client needed, so it runs standalone and in parallel.
