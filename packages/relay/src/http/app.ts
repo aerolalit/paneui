@@ -17,6 +17,7 @@ import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
+import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
 
@@ -148,6 +149,11 @@ export function buildApp(
       });
     });
   }
+
+  // GET /skill/pane/SKILL.md — the pane agent skill, served verbatim so an
+  // agent can fetch it from the relay it uses. Registered here, before the
+  // rate-limit middleware, so it stays unmetered like /healthz and /metrics.
+  app.route("/skill", skill);
 
   // General per-IP + per-token rate limit on every API/bridge route. /healthz
   // and /metrics are registered above so they stay unmetered (load balancers
