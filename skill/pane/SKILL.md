@@ -85,8 +85,9 @@ too).
 pane create --artifact ./form.html --schema ./schema.json --ttl 600
 ```
 
-- `--artifact <v>` — the HTML UI. A file path, or inline HTML. For a remote
-  URL, add `--artifact-type html-ref`.
+- `--artifact <v>` — the HTML UI. A file path, or inline HTML. (A remote-URL
+  artifact type, `html-ref`, exists in the schema but the relay does not serve
+  it in this release — pass the HTML inline.)
 - `--schema <v>` — the per-session event vocabulary (see **The schema** below).
   A `.json` file or inline JSON.
 - Optional: `--ttl <seconds>`, `--participants <n>`, `--metadata <path|json>`,

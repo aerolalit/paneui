@@ -19,7 +19,7 @@ import {
   mergeSchemaAdditive,
   validateSchemaShape,
 } from "../../core/validation.js";
-import { assertSafeArtifactUrl, assertSafeWebhookUrl } from "../ssrf.js";
+import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
 import type { EventSchema } from "../../types.js";
@@ -56,10 +56,17 @@ sessions.post("/", requireAgent, async (c) => {
     throw errors.payloadTooLarge();
   }
   if (artifact.type === "html-ref") {
-    // Same SSRF surface as webhook.url: the relay (or, in phase 3+, the shell
-    // page) will fetch this on the human's behalf. Block private/loopback/
-    // metadata/CGNAT targets up front.
-    await assertSafeArtifactUrl(artifact.source);
+    // v1 does not serve html-ref artifacts — the shell would render a blank
+    // iframe with no error (see issue #24). Reject at create time rather than
+    // hand back a session that silently shows nothing. The artifactSchema in
+    // @pane/core still admits html-ref so the type can be re-enabled in a
+    // later phase without a client-side change; the SSRF guard
+    // (assertSafeArtifactUrl) is kept for when the relay actually fetches it.
+    throw errors.invalidRequest(
+      "artifact.type 'html-ref' is not supported in this release",
+      undefined,
+      "use artifact.type 'html-inline' and pass the artifact HTML in artifact.source",
+    );
   }
 
   const requestedHumans = participants?.humans ?? 1;

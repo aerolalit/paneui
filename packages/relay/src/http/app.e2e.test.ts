@@ -101,6 +101,27 @@ describe("HTTP e2e", () => {
       expect(body.urls.agent_stream).toContain("ws");
     });
 
+    it("rejects artifact.type 'html-ref' with 400 invalid_request", async () => {
+      const { apiKey } = await seedAgent();
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: { type: "html-ref", source: "https://example.com/page" },
+            schema: minimalSchema,
+          }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: { code: string; message: string; retryable?: boolean };
+      };
+      expect(body.error.code).toBe("invalid_request");
+      expect(body.error.retryable).toBe(false);
+      expect(body.error.message).toContain("html-ref");
+    });
+
     it("rejects an unauthenticated request with 401", async () => {
       const res = await app.fetch(
         new Request("http://t/v1/sessions", {
