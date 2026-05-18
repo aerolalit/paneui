@@ -27,6 +27,7 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
+      REGISTRATION_MODE: "open",
       REGISTER_RATE_LIMIT: "0", // disabled
     }),
     prisma,

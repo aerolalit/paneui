@@ -9,8 +9,19 @@ const schema = z.object({
   PUBLIC_URL: z.string().url().optional(),
   API_KEY: z.string().optional(),
   PANE_SECRET_KEY: z.string().optional(),
-  // Per-IP rate limit for the open POST /v1/register endpoint.
-  // REGISTER_RATE_LIMIT=0 disables the limiter entirely (unlimited).
+  // Controls the POST /v1/register endpoint (see http/routes/register.ts):
+  //   closed - DEFAULT. Endpoint returns 404. Agents get keys only via the
+  //            API_KEY env / auto-mint. The safe default for self-hosters.
+  //   secret - Endpoint requires `Authorization: Bearer <REGISTRATION_SECRET>`.
+  //            A wrong/missing token is 401. Trusted-group invite mode.
+  //   open   - Endpoint is public; anyone can register, bounded only by the
+  //            per-IP rate limiter. For operators hosting publicly.
+  REGISTRATION_MODE: z.enum(["closed", "secret", "open"]).default("closed"),
+  // Shared secret for REGISTRATION_MODE=secret. Required (non-empty) in that
+  // mode — validated below; ignored entirely when mode is closed or open.
+  REGISTRATION_SECRET: z.string().optional(),
+  // Per-IP rate limit for the POST /v1/register endpoint. Always enforced in
+  // the secret and open modes. REGISTER_RATE_LIMIT=0 disables it (unlimited).
   REGISTER_RATE_LIMIT: z.coerce.number().int().min(0).default(5),
   REGISTER_RATE_WINDOW_SECONDS: z.coerce
     .number()
@@ -133,6 +144,20 @@ export function loadConfig(
         "(the Application Insights connection string)",
     );
   }
+  // Fail fast: REGISTRATION_MODE=secret gates POST /v1/register behind a
+  // shared bearer secret, so the secret MUST be present and non-empty —
+  // otherwise the endpoint could never be satisfied. Ignored for the closed
+  // and open modes (the secret is unused there).
+  if (
+    parsed.REGISTRATION_MODE === "secret" &&
+    (parsed.REGISTRATION_SECRET ?? "").length === 0
+  ) {
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        "  - REGISTRATION_SECRET: required and non-empty when " +
+        "REGISTRATION_MODE=secret (the shared bearer secret callers must present)",
+    );
+  }
   const publicUrl = (
     parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`
   ).replace(/\/$/, "");
@@ -185,6 +210,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
   const r: Record<string, unknown> = { ...c };
   if (r.API_KEY) r.API_KEY = "<set>";
   if (r.PANE_SECRET_KEY) r.PANE_SECRET_KEY = "<set>";
+  if (r.REGISTRATION_SECRET) r.REGISTRATION_SECRET = "<set>";
   if (r.APPLICATIONINSIGHTS_CONNECTION_STRING) {
     // Connection string embeds an InstrumentationKey — never log it.
     r.APPLICATIONINSIGHTS_CONNECTION_STRING = "<set>";

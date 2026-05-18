@@ -1,9 +1,10 @@
 // `pane register` — self-provision an agent API key from the relay.
 //
 // This is the one command that needs no API key: it is the call that obtains
-// one. Registration is open — no secret. On success the key (and relay URL)
-// are persisted to the CLI config file, so every later command works with
-// only PANE_URL (or nothing) set.
+// one. If the relay runs REGISTRATION_MODE=secret, pass the shared
+// registration secret via --secret or PANE_REGISTER_SECRET. On success the key
+// (and relay URL) are persisted to the CLI config file, so every later command
+// works with only PANE_URL (or nothing) set.
 
 import { registerAgent, PaneApiError } from "@pane/core";
 import type { ParsedArgs } from "../argv.js";
@@ -15,13 +16,16 @@ export const registerHelp = `pane register — register this agent with the rela
 Usage:
   pane register [options]
 
-Calls POST /v1/register (an open endpoint — no secret needed), then saves the
-returned API key (and relay URL) to the CLI config file — so afterwards every
-other command works with only PANE_URL set (no PANE_API_KEY needed).
+Calls POST /v1/register, then saves the returned API key (and relay URL) to the
+CLI config file — so afterwards every other command works with only PANE_URL
+set (no PANE_API_KEY needed).
 
 Options:
   --name <n>          Agent display name. The relay defaults it if omitted.
   --url <url>         Relay base URL (falls back to PANE_URL, then config file).
+  --secret <s>        Registration secret, sent as a Bearer token. Only needed
+                      when the relay uses REGISTRATION_MODE=secret. Falls back
+                      to the PANE_REGISTER_SECRET env var.
   --print-key         Also echo the full api_key in the output. By default the
                       key is only persisted to the config file, never printed.
   -h, --help          Show this help.
@@ -43,12 +47,15 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
   }
 
   const name = args.flags.get("name");
+  const secret =
+    args.flags.get("secret") ?? process.env.PANE_REGISTER_SECRET ?? undefined;
 
   let result;
   try {
     result = await registerAgent({
       url: url.replace(/\/$/, ""),
       ...(name !== undefined ? { name } : {}),
+      ...(secret !== undefined && secret !== "" ? { secret } : {}),
     });
   } catch (e) {
     if (e instanceof PaneApiError) {

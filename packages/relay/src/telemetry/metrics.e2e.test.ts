@@ -25,6 +25,8 @@ beforeAll(async () => {
   process.env.PUBLIC_URL = "http://localhost:3000";
   process.env.METRICS_ENABLED = "true";
   process.env.METRICS_EXPORTER = "prometheus";
+  // Drive a real POST /v1/register below to record a registration metric.
+  process.env.REGISTRATION_MODE = "open";
 
   // Inject the Prisma client + config directly. Module imports stay dynamic
   // here because initTelemetry() registers a PROCESS-GLOBAL MeterProvider — a
