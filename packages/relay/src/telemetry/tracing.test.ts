@@ -73,9 +73,9 @@ describe("recordExceptionOnActiveSpan", () => {
 });
 
 describe("initTracing", () => {
-  it("is a no-op in prometheus mode (no trace backend)", async () => {
+  it("is a no-op in none mode (no trace backend)", async () => {
     const { initTracing, shutdownTracing } = await import("./tracing.js");
-    const config = loadConfig({ METRICS_EXPORTER: "prometheus" });
+    const config = loadConfig({ METRICS_EXPORTER: "none" });
     // Must not throw and must not require the Azure package.
     await expect(initTracing(config)).resolves.toBeUndefined();
     await expect(shutdownTracing()).resolves.toBeUndefined();

@@ -91,14 +91,21 @@ describe("config", () => {
     expect(loadConfig({}).METRICS_EXPORTER).toBe("none");
   });
 
-  it("accepts METRICS_EXPORTER=prometheus explicitly", () => {
+  it("accepts METRICS_EXPORTER=azure explicitly", () => {
     expect(
-      loadConfig({ METRICS_EXPORTER: "prometheus" }).METRICS_EXPORTER,
-    ).toBe("prometheus");
+      loadConfig({
+        METRICS_EXPORTER: "azure",
+        APPLICATIONINSIGHTS_CONNECTION_STRING: "InstrumentationKey=test",
+      }).METRICS_EXPORTER,
+    ).toBe("azure");
   });
 
   it("rejects an unknown METRICS_EXPORTER", () => {
     expect(() => loadConfig({ METRICS_EXPORTER: "datadog" })).toThrow();
+  });
+
+  it("rejects METRICS_EXPORTER=prometheus (no longer supported)", () => {
+    expect(() => loadConfig({ METRICS_EXPORTER: "prometheus" })).toThrow();
   });
 
   it("fails fast when METRICS_EXPORTER=azure has no connection string", () => {

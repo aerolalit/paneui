@@ -4,13 +4,10 @@
 // metrics SDK. An EXPORTER — selected by config (METRICS_EXPORTER) — decides
 // where the telemetry goes:
 //
-//   - "prometheus": a PrometheusExporter whose serialized text is served by the
-//     existing Hono app at GET /metrics (see http/app.ts). Self-host friendly:
-//     one port, scrape-on-demand.
 //   - "azure": an AzureMonitorMetricExporter (Application Insights) on a
 //     PeriodicExportingMetricReader. The Azure SDK is an OPTIONAL dependency
 //     (see telemetry/azure-exporter.ts) loaded via dynamic import — the OSS
-//     core does not require it. GET /metrics is not mounted in azure mode.
+//     core does not require it.
 //   - "none": metrics collection is disabled entirely.
 //
 // Tracing lives in a sibling module (telemetry/tracing.ts) and follows the
@@ -34,10 +31,6 @@ import {
   type MetricReader,
   type PushMetricExporter,
 } from "@opentelemetry/sdk-metrics";
-import {
-  PrometheusExporter,
-  PrometheusSerializer,
-} from "@opentelemetry/exporter-prometheus";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
 import { log } from "../log.js";
@@ -49,7 +42,6 @@ import { loadAzureExporter } from "./azure-exporter.js";
 
 let enabled = false;
 let provider: MeterProvider | null = null;
-let prometheusExporter: PrometheusExporter | null = null;
 
 // Custom instruments. Undefined until initTelemetry() runs with metrics on.
 let sessionsCreated: Counter | undefined;
@@ -67,7 +59,7 @@ export type EventKind = "agent" | "human" | "system";
  * instruments exist when routes/middleware register.
  *
  * Async because the "azure" exporter is loaded via dynamic import (it is an
- * optional dependency). The prometheus/none paths resolve synchronously.
+ * optional dependency). The "none" path resolves synchronously.
  *
  * `prisma` is injected (not a module singleton) so the pane_sessions_open
  * ObservableGauge can count rows against the same client the app uses.
@@ -89,13 +81,7 @@ export async function initTelemetry(
   const resource = buildResource();
 
   const readers: MetricReader[] = [];
-  if (config.METRICS_EXPORTER === "prometheus") {
-    // preventServerStart: true — we do NOT want the exporter's own HTTP server
-    // on a separate port. The current metrics are serialized on demand and
-    // served by the existing Hono app at GET /metrics instead.
-    prometheusExporter = new PrometheusExporter({ preventServerStart: true });
-    readers.push(prometheusExporter);
-  } else if (config.METRICS_EXPORTER === "azure") {
+  if (config.METRICS_EXPORTER === "azure") {
     // Push model: the Azure Monitor metric exporter periodically flushes to
     // Application Insights. The Azure package is an OPTIONAL dependency loaded
     // via dynamic import — a missing package yields a clear, actionable error.
@@ -152,9 +138,9 @@ export async function initTelemetry(
     });
 
   // pane_sessions_open — ObservableGauge that counts currently-open sessions on
-  // each collection. Prometheus scrapes ~every 15s, so one count query per
-  // scrape is acceptable. The callback is resilient: a DB error is logged and
-  // the observation is simply skipped, never thrown out of the callback.
+  // each collection. The exporter reads it periodically, so one count query per
+  // collection is acceptable. The callback is resilient: a DB error is logged
+  // and the observation is simply skipped, never thrown out of the callback.
   meter
     .createObservableGauge("pane_sessions_open", {
       description: "Sessions currently open (status=open, not expired).",
@@ -175,7 +161,6 @@ export async function initTelemetry(
   enabled = true;
   log.info("telemetry initialised", {
     exporter: config.METRICS_EXPORTER,
-    metricsRoute: config.METRICS_EXPORTER === "prometheus" ? "/metrics" : null,
   });
 }
 
@@ -217,33 +202,6 @@ export function recordHttpDuration(
 /** Whether metrics collection is active (METRICS_ENABLED + a real exporter). */
 export function metricsEnabled(): boolean {
   return enabled;
-}
-
-// PrometheusSerializer is what the exporter's own HTTP handler uses; re-using
-// it lets us serve the text from the existing Hono app instead of a 2nd port.
-const prometheusSerializer = new PrometheusSerializer();
-
-/**
- * Serialize the current metrics in the Prometheus text exposition format.
- * Returns null if metrics are disabled or the exporter is not Prometheus.
- */
-export async function collectPrometheusMetrics(): Promise<string | null> {
-  if (!prometheusExporter) return null;
-  try {
-    const { resourceMetrics, errors: collectErrors } =
-      await prometheusExporter.collect();
-    if (collectErrors.length > 0) {
-      log.warn("metrics collection reported errors", {
-        count: collectErrors.length,
-      });
-    }
-    return prometheusSerializer.serialize(resourceMetrics);
-  } catch (err) {
-    log.warn("metrics collection failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return "";
-  }
 }
 
 /** Flush and shut the MeterProvider down. Safe to call when disabled. */

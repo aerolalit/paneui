@@ -511,4 +511,40 @@ describe("WS e2e", () => {
       expect(p.joinedAt).not.toBeNull();
     });
   });
+
+  // Cross-site WebSocket hijacking guard: a browser always sends an `Origin`
+  // header on the WS handshake. When present it must match the relay's public
+  // origin (config defaults publicUrl to http://localhost:3000). A missing
+  // Origin — non-browser agent/CLI clients — is allowed through.
+  describe("Origin check (CSWSH guard)", () => {
+    it("rejects an upgrade from a foreign Origin (403)", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await createSession(apiKey);
+      const ws = new WebSocket(
+        `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${agentToken}`,
+        { headers: { Origin: "https://attacker.example" } },
+      );
+      await expect(waitOpen(ws)).rejects.toThrow(/403/);
+    });
+
+    it("allows an upgrade with the matching public Origin", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await createSession(apiKey);
+      const ws = new WebSocket(
+        `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${agentToken}`,
+        { headers: { Origin: "http://localhost:3000" } },
+      );
+      await waitOpen(ws);
+      ws.close();
+    });
+
+    it("allows an upgrade with no Origin header (non-browser agent client)", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, agentToken } = await createSession(apiKey);
+      // connect() sends no Origin header — the agent/CLI path.
+      const ws = connect(sessionId, agentToken);
+      await waitOpen(ws);
+      ws.close();
+    });
+  });
 });

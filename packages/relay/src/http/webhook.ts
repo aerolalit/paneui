@@ -61,8 +61,25 @@ export async function fire(
           "X-Pane-Signature": `sha256=${sig}`,
         },
         body,
+        // redirect: "manual" — do NOT follow 3xx. The webhook URL is SSRF-
+        // validated only at session-create time; following a redirect would
+        // let a validated public target 302 the relay to an internal address
+        // (e.g. the cloud metadata service at 169.254.169.254), bypassing the
+        // guard. A redirect is treated as a failed delivery, not chased.
+        redirect: "manual",
         signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
       });
+      if (
+        res.type === "opaqueredirect" ||
+        (res.status >= 300 && res.status < 400)
+      ) {
+        log.warn("webhook redirect rejected", {
+          url: cfg.url,
+          status: res.status,
+          attempt: i + 1,
+        });
+        continue;
+      }
       if (res.ok) return;
       log.warn("webhook non-2xx", {
         url: cfg.url,

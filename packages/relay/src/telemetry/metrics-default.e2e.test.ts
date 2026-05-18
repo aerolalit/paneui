@@ -1,6 +1,6 @@
 // Verifies the DEFAULT telemetry posture: with METRICS_EXPORTER unset the
-// config resolves to "none", the relay starts cleanly, and GET /metrics is not
-// mounted (404).
+// config resolves to "none" and the relay starts cleanly with metrics
+// collection inactive.
 //
 // Separate file from the other telemetry e2e tests: initTelemetry() registers
 // a PROCESS-GLOBAL MeterProvider and config is a module singleton — a fresh
@@ -52,11 +52,6 @@ afterAll(async () => {
 });
 
 describe("default telemetry posture (METRICS_EXPORTER unset)", () => {
-  it("does not mount /metrics — returns 404", async () => {
-    const res = await app.fetch(new Request("http://t/metrics"));
-    expect(res.status).toBe(404);
-  });
-
   it("the relay still serves normal routes", async () => {
     const res = await app.fetch(new Request("http://t/healthz"));
     expect(res.status).toBe(200);

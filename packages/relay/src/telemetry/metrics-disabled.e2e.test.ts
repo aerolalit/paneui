@@ -1,5 +1,5 @@
-// Verifies that with METRICS_EXPORTER=none the relay starts fine, the metric
-// helpers are no-ops, and GET /metrics is not mounted (404).
+// Verifies that with METRICS_EXPORTER=none the relay starts fine and the
+// metric helpers are no-ops.
 //
 // Separate file from metrics.e2e.test.ts: initTelemetry() and config are
 // module singletons evaluated once per process — a fresh Vitest file gives a
@@ -45,12 +45,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-describe("GET /metrics with METRICS_EXPORTER=none", () => {
-  it("does not mount /metrics — returns 404", async () => {
-    const res = await app.fetch(new Request("http://t/metrics"));
-    expect(res.status).toBe(404);
-  });
-
+describe("telemetry with METRICS_EXPORTER=none", () => {
   it("the relay still serves normal routes", async () => {
     const res = await app.fetch(new Request("http://t/healthz"));
     expect(res.status).toBe(200);

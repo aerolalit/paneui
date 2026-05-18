@@ -23,12 +23,6 @@ describe("emitLogRecord", () => {
 });
 
 describe("initLogs", () => {
-  it("is a no-op in prometheus mode (no log backend)", async () => {
-    const config = loadConfig({ METRICS_EXPORTER: "prometheus" });
-    await expect(initLogs(config)).resolves.toBeUndefined();
-    await expect(shutdownLogs()).resolves.toBeUndefined();
-  });
-
   it("is a no-op in none mode", async () => {
     const config = loadConfig({ METRICS_EXPORTER: "none" });
     await expect(initLogs(config)).resolves.toBeUndefined();
