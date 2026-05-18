@@ -1,0 +1,52 @@
+name: release
+
+# Publishes @pane/core and pane-cli to npm when a v* tag is pushed.
+#
+# Release procedure (manual):
+#   1. Bump the "version" field in packages/core, packages/cli (and, for
+#      consistency, packages/relay + the root) to the new version.
+#   2. Commit, then tag: `git tag v0.1.0 && git push origin main --tags`.
+#   3. This workflow builds, runs the full test suite, and publishes.
+#
+# Requires an NPM_TOKEN repository secret (npm automation token with
+# publish rights). @pane/relay and the root stay private and are never
+# published.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      - run: npm run generate --workspace @pane/relay -- sqlite
+
+      - run: npm run build
+
+      - run: npm run test:unit
+
+      # @pane/core must publish before pane-cli — pane-cli depends on it.
+      - name: publish @pane/core
+        run: npm publish --workspace @pane/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: publish pane-cli
+        run: npm publish --workspace pane-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
