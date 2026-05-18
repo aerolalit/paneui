@@ -35,8 +35,25 @@ The deployment-critical ones:
 | `PANE_SECRET_KEY` | yes | 32-byte AES key, base64 or hex. |
 | `PUBLIC_URL` | yes | Public HTTPS URL the relay is reached at. |
 | `API_KEY` | recommended | Bootstraps the default agent. If unset, one is minted and printed once at boot. |
-| `REGISTRATION_SECRET` | recommended | Guards the open `POST /v1/register`. |
+| `REGISTRATION_MODE` | no | `closed` (default) · `secret` · `open` — controls `POST /v1/register`. See "Registration mode" below. |
+| `REGISTRATION_SECRET` | when `REGISTRATION_MODE=secret` | Shared bearer secret callers must present. Boot fails fast if the mode is `secret` and this is unset. |
 | `PORT` | no | Defaults to `3000`. |
+
+## Registration mode
+
+`POST /v1/register` — how agents self-provision a key — is gated by
+`REGISTRATION_MODE`. It is **closed by default**: a freshly deployed relay does
+not expose self-service registration to anyone.
+
+| `REGISTRATION_MODE` | Behavior | Use it for |
+|---------------------|----------|------------|
+| `closed` *(default)* | Endpoint returns `404`. Agents get keys only via `API_KEY` / boot-mint. | Most deployments — provision keys yourself. |
+| `secret` | Caller must send `Authorization: Bearer <REGISTRATION_SECRET>`. Wrong/missing → `401`. | Trusted-group invite. |
+| `open` | Anyone may register; bounded only by the per-IP rate limiter. | A relay intentionally hosted for the public. |
+
+The per-IP rate limiter (`REGISTER_RATE_LIMIT` / `REGISTER_RATE_WINDOW_SECONDS`)
+applies in both `secret` and `open` modes. With `REGISTRATION_MODE=secret`, the
+relay **fails fast at startup** if `REGISTRATION_SECRET` is unset.
 
 All credentials must live in the ACA **secret store** and be referenced with
 `secretref:` — never as plain env vars. `redactConfig`
@@ -100,6 +117,103 @@ exists.** So deployment is inherently two steps:
    This triggers a new revision that passes the preflight.
 
 Once you attach a custom domain, update `PUBLIC_URL` to that domain.
+
+## Self-hosting with Docker + SQLite
+
+The Azure steps below are the *reference* deployment. For a solo or small-team
+self-host you do not need Azure, Postgres, or a container registry — the relay
+runs as one container against a SQLite file.
+
+### What you deploy
+
+Only the **relay**. It bundles the human-facing web UI (the `/s/:token` shell
+page), so there is no separate frontend to deploy. The `pane` CLI runs wherever
+your agent runs; it is not part of the deployment.
+
+### docker-compose (quickest)
+
+The repo root ships a [`docker-compose.yml`](../docker-compose.yml). Create a
+`.env` next to it:
+
+```bash
+NODE_ENV=production
+PUBLIC_URL=https://pane.example.com      # the public URL — see "PUBLIC_URL" below
+PANE_SECRET_KEY=                         # openssl rand -base64 32
+API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx    # optional; bootstraps your agent key
+# REGISTRATION_MODE defaults to closed — leave unset unless you want self-service
+```
+
+Then:
+
+```bash
+docker compose up -d --build
+```
+
+The image builds from `packages/relay/Dockerfile` (build context is the
+monorepo root), migrations run automatically on boot, and a named volume
+(`pane-data`) persists the SQLite database at `/app/data` across restarts.
+`docker compose` runs a `GET /healthz` healthcheck.
+
+### docker run (without compose)
+
+```bash
+docker build -f packages/relay/Dockerfile -t pane .   # context = repo root
+docker run -d -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e PUBLIC_URL=https://pane.example.com \
+  -e PANE_SECRET_KEY="$(openssl rand -base64 32)" \
+  -e API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx \
+  -v pane-data:/app/data \
+  pane
+```
+
+### From source
+
+```bash
+npm install
+npm run build  --workspace @pane/relay
+npm run migrate:deploy --workspace @pane/relay
+NODE_ENV=production PUBLIC_URL=... PANE_SECRET_KEY=... \
+  npm run start --workspace @pane/relay
+```
+
+### Database
+
+SQLite is the default and is the recommended store for a self-host — one file,
+no separate service. The shipped Docker image runs **only the SQLite
+migrations**; Postgres is the hosted/Azure path (see below) and is not wired
+into the default image. For a solo deployment, stay on SQLite.
+
+### TLS and reverse proxy
+
+The relay speaks plain HTTP on `PORT`. For anything internet-facing, put a
+reverse proxy (Caddy, nginx, Traefik) in front to terminate TLS. The proxy
+**must forward WebSocket upgrades** for `/v1/sessions/:id/stream`, and
+`PUBLIC_URL` must exactly match the public scheme + host the proxy serves —
+the relay bakes it into every participant URL and the WebSocket CSP origin.
+
+### Keys for a self-host
+
+With `REGISTRATION_MODE` at its default (`closed`), no one can self-register.
+Provide your agent's key via `API_KEY`, or let the relay mint one on first boot
+and read it from the logs (`docker compose logs`). Open `secret`/`open`
+registration only if you actually want other agents to provision themselves —
+see "Registration mode" above.
+
+### Solo quickstart
+
+```bash
+# 1. configure
+cp packages/relay/.env.example packages/relay/.env   # then edit
+#    set NODE_ENV=production, PUBLIC_URL, PANE_SECRET_KEY (openssl rand -base64 32)
+
+# 2. run
+docker compose up -d --build
+
+# 3. point the CLI at it and do a round trip
+PANE_URL=https://pane.example.com PANE_API_KEY=<your key> \
+  pane create --artifact ./form.html --schema ./schema.json --ttl 600
+```
 
 ## Deploy steps (Azure Container Apps)
 
