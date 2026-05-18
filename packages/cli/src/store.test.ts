@@ -8,12 +8,12 @@ import {
   statSync,
   writeFileSync,
   mkdirSync,
+  existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
 import { readStore, writeStore, storePath, clearStore } from "./store.js";
-import { resolveConfig } from "./config.js";
+import { resolveConfig, DEFAULT_RELAY_URL } from "./config.js";
 import type { ParsedArgs } from "./argv.js";
 
 let dir: string;
@@ -132,5 +132,15 @@ describe("resolveConfig store fallback", () => {
         emptyArgs({ url: "https://flag.test", "api-key": "pk_flag" }),
       ),
     ).toEqual({ url: "https://flag.test", apiKey: "pk_flag" });
+  });
+
+  it("falls back to DEFAULT_RELAY_URL when no flag, env, or store URL is set", () => {
+    // Only an API key in the store — no URL anywhere. The hosted relay is the
+    // last-resort fallback so a fresh user needs only a key.
+    writeStore({ apiKey: "pk_stored" });
+    expect(resolveConfig(emptyArgs())).toEqual({
+      url: DEFAULT_RELAY_URL,
+      apiKey: "pk_stored",
+    });
   });
 });

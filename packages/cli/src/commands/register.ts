@@ -8,6 +8,7 @@
 
 import { registerAgent, PaneApiError } from "@pane/core";
 import type { ParsedArgs } from "../argv.js";
+import { DEFAULT_RELAY_URL } from "../config.js";
 import { printJson, fail } from "../output.js";
 import { readStore, writeStore } from "../store.js";
 
@@ -22,7 +23,8 @@ set (no PANE_API_KEY needed).
 
 Options:
   --name <n>          Agent display name. The relay defaults it if omitted.
-  --url <url>         Relay base URL (falls back to PANE_URL, then config file).
+  --url <url>         Relay base URL. Falls back to PANE_URL, then the config
+                      file, then the hosted Pane relay. Self-hosters set this.
   --secret <s>        Registration secret, sent as a Bearer token. Only needed
                       when the relay uses REGISTRATION_MODE=secret. Falls back
                       to the PANE_REGISTER_SECRET env var.
@@ -38,13 +40,11 @@ unless --print-key is passed.`;
 
 export async function runRegister(args: ParsedArgs): Promise<void> {
   const store = readStore();
-  const url = args.flags.get("url") ?? process.env.PANE_URL ?? store.url ?? "";
-  if (!url) {
-    fail(
-      "missing relay URL: set PANE_URL or pass --url <relay-base-url>",
-      "config_error",
-    );
-  }
+  const url =
+    args.flags.get("url") ??
+    process.env.PANE_URL ??
+    store.url ??
+    DEFAULT_RELAY_URL;
 
   const name = args.flags.get("name");
   const secret =
