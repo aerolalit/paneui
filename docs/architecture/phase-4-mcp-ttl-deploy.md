@@ -207,15 +207,11 @@ else touches the project.
 
 The same Docker image, run on Azure (Container Apps, on the credits).
 `PUBLIC_URL` = the assigned `*.azurecontainerapps.io` (or a cheap domain). For
-"people can try it without deploying": the cheapest v1 path that needs **no new
-code** is to set `REGISTRATION_SECRET` to a value documented on the demo page
-(so `POST /v1/register` works for anyone who reads the docs) and give issued
-agents a generous `rate_limit`. A proper anonymous, per-IP-rate-limited
-`/v1/register` (provisional keys) is more code and a hosted-product concern;
-defer. The shell page on the demo instance carries a banner: "demo instance.
-Data may vanish, no SLA, may change or disappear." **OPEN**:
-public-`REGISTRATION_SECRET` shortcut vs real anonymous registration. Lean: the
-shortcut.
+"people can try it without deploying": `POST /v1/register` is open by default —
+anyone can self-register, bounded only by the per-IP `REGISTER_RATE_LIMIT`
+sliding window — so the demo instance needs no special config. The shell page
+on the demo instance carries a banner: "demo instance. Data may vanish, no SLA,
+may change or disappear."
 
 ## Acceptance criteria
 
@@ -237,16 +233,15 @@ shortcut.
   claw acts on the resulting event. Bonus: the claw replies live to one of
   Lalit's comments via `pane send`.
 - **hosted-lite**: a second machine (or a stranger) can `POST /v1/register`
-  (with the documented secret), get a key, create a session, complete it, with
+  (open, no secret), get a key, create a session, complete it, with
   zero involvement from Lalit.
 - **Publish**: repo public, `LICENSE` is MIT, `README.md` has a working
   quickstart and a short demo clip / gif.
 
 ## Open decisions
 
-- **hosted-lite registration**: documented public `REGISTRATION_SECRET` +
-  generous per-agent `rate_limit` (lean, no new code) vs real anonymous
-  rate-limited `/v1/register`. OPEN.
+- **hosted-lite registration**: RESOLVED — `/v1/register` is open by default
+  and bounded by a per-IP sliding-window rate limiter (`REGISTER_RATE_LIMIT`).
 - **Image registry**: GHCR vs Docker Hub for the published image. OPEN, low
   stakes.
 - TTL sweeper design (interval + lazy-read), the CLI replacing the MCP server,

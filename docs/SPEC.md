@@ -212,7 +212,7 @@ All agent endpoints require `Authorization: Bearer <api_key>` from `agents`.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST`   | `/v1/register` | Self-provision an API key. Gated by `REGISTRATION_SECRET` on self-host. |
+| `POST`   | `/v1/register` | Self-provision an API key. Gated by `REGISTRATION_MODE`: `closed` (default) → 404; `secret` → requires a bearer registration secret; `open` → public, per-IP rate-limited. |
 | `POST`   | `/v1/sessions` | Create session (artifact + schema + participants). |
 | `GET`    | `/v1/sessions/{id}` | Session metadata. |
 | `PATCH`  | `/v1/sessions/{id}/schema`   | Additive schema update. |
@@ -362,7 +362,7 @@ Every write (POST or WS message) runs:
 
 ## Auth (three layers; only #1 and #2 in v1)
 
-1. **Agent → relay**: bearer token in the `agents` table. Issued via `POST /register` (gated by `REGISTRATION_SECRET` on self-host). `sha256(key) + prefix` stored. Bump `last_used_at` on each request. Revocable via `DELETE /keys/{id}`.
+1. **Agent → relay**: bearer token in the `agents` table. Issued via `POST /register`, whose exposure is operator-configurable through `REGISTRATION_MODE`: `closed` by default (endpoint 404s — keys come from `API_KEY` / auto-mint), `secret` (bearer registration secret required), or `open` (public, per-IP rate-limited). `sha256(key) + prefix` stored. Bump `last_used_at` on each request. Revocable via `DELETE /keys/{id}`.
 2. **Participant → session**: per-identity token issued at `POST /sessions` time. Stored as `sha256(token)` in `participants.token_hash`. URL token IS the auth for humans.
 3. **Multi-tenancy / roles / orgs / SSO**: hosted only, v2+.
 
@@ -388,7 +388,7 @@ Principle: the OSS version must do the whole job, end to end, for one user, on t
 - Single-container relay (Docker + SQLite).
 - All transports: WS, HTTP POST + long-poll, best-effort signed webhook.
 - Schema validation, identity stamping, sandbox.
-- Bearer auth, key issuance, revocation, `POST /register` behind `REGISTRATION_SECRET`.
+- Bearer auth, key issuance, revocation, `POST /register` gated by `REGISTRATION_MODE` (closed default / secret / open) with per-IP rate limiting in the secret and open modes.
 - MCP server wrapping `create_pane_session(artifact, schema)` and `await_pane_result(session_id, terminal_event_type)`.
 - Reference demo: a `claudeclaw` integration that lets the agent ask Lalit something through a UI.
 
