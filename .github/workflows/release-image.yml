@@ -1,11 +1,16 @@
 name: release-image
 
-# Builds the relay container image and pushes it to GitHub Container Registry
-# when a v* tag is pushed. Self-hosters then `docker pull` a versioned image
-# instead of cloning the repo and building locally.
+# Builds the relay container image(s) and pushes them to GitHub Container
+# Registry when a v* tag is pushed. Self-hosters `docker pull` a versioned
+# image instead of cloning the repo and building locally.
 #
-# The image is the SQLite self-host build (the default Dockerfile target).
-# Postgres / hosted deployment is a separate path (issue #40).
+# Two variants are published from the one Dockerfile, selected by the
+# DATABASE_PROVIDER build arg:
+#
+#   ghcr.io/<owner>/pane:<version>            — SQLite (the self-host default)
+#   ghcr.io/<owner>/pane:latest
+#   ghcr.io/<owner>/pane:<version>-postgres   — Postgres (the hosted build)
+#   ghcr.io/<owner>/pane:latest-postgres
 #
 # No secrets to configure: GHCR auth uses the built-in GITHUB_TOKEN.
 
@@ -21,6 +26,15 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          # SQLite — the default self-host image. Plain semver tags.
+          - provider: sqlite
+            tag-suffix: ""
+          # Postgres — the hosted build. Same versions, `-postgres` suffix.
+          - provider: postgres
+            tag-suffix: "-postgres"
     steps:
       - uses: actions/checkout@v4
 
@@ -32,12 +46,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Derives tags from the git ref: the exact version (v1.2.3 -> 1.2.3),
-      # the minor series (1.2), and `latest`. ghcr.io/<owner>/pane, lowercased.
+      # the minor series (1.2), the major (1), and `latest`. The matrix
+      # `tag-suffix` appends `-postgres` for the Postgres variant, so the
+      # SQLite build owns the unsuffixed tags and the two never collide.
       - name: Derive image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/pane
+          flavor: |
+            latest=true
+            suffix=${{ matrix.tag-suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -46,15 +65,18 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push (${{ matrix.provider }})
         uses: docker/build-push-action@v6
         with:
           # Build context is the monorepo root — the Dockerfile copies the
           # workspace manifests and expects root context.
           context: .
           file: packages/relay/Dockerfile
+          build-args: |
+            DATABASE_PROVIDER=${{ matrix.provider }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Per-provider cache scope so the two variants don't evict each other.
+          cache-from: type=gha,scope=${{ matrix.provider }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.provider }}
