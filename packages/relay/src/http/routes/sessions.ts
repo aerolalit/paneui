@@ -6,7 +6,8 @@ import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
   generateSessionId,
-  generateToken,
+  generateAgentParticipantToken,
+  generateHumanParticipantToken,
   hashKey,
   keyPrefix,
 } from "../../keys.js";
@@ -114,9 +115,9 @@ sessions.post("/", requireAgent, async (c) => {
 
   const sessionId = generateSessionId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
-    generateToken(),
+    generateHumanParticipantToken(),
   );
-  const agentToken = generateToken();
+  const agentToken = generateAgentParticipantToken();
 
   await prisma.session.create({
     data: {

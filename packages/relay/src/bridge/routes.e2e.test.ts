@@ -9,7 +9,7 @@ import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
-import { hashKey, keyPrefix } from "../keys.js";
+import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
 import { buildApp } from "../http/app.js";
 
 let testDb: TestDb;
@@ -47,9 +47,14 @@ const minimalSchema = {
   },
 };
 
-// Seed an agent + open session + one human participant, returning the
+// Seed an agent + session + one human participant, returning the
 // participant token (the bridge URL credential) and the agent id.
-async function seedSession(opts?: { agentLastUsedAt?: Date }): Promise<{
+async function seedSession(opts?: {
+  agentLastUsedAt?: Date;
+  closed?: boolean;
+  expired?: boolean;
+  artifactSource?: string;
+}): Promise<{
   token: string;
   agentId: string;
   sessionId: string;
@@ -69,20 +74,22 @@ async function seedSession(opts?: { agentLastUsedAt?: Date }): Promise<{
       id: sessionId,
       agentId: agent.id,
       artifactType: "html-inline",
-      artifactSource: "<html></html>",
+      artifactSource: opts?.artifactSource ?? "<html></html>",
       eventSchema: minimalSchema,
-      status: "open",
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      status: opts?.closed ? "closed" : "open",
+      expiresAt: opts?.expired
+        ? new Date(Date.now() - 60 * 60 * 1000)
+        : new Date(Date.now() + 60 * 60 * 1000),
     },
   });
-  const token = randomBytes(32).toString("base64url");
+  const token = generateHumanParticipantToken();
   await prisma.participant.create({
     data: {
       sessionId,
       kind: "human",
       identityId: "human-1",
       tokenHash: hashKey(token),
-      tokenPrefix: token.slice(0, 8),
+      tokenPrefix: keyPrefix(token),
     },
   });
   return { token, agentId: agent.id, sessionId };
@@ -138,8 +145,146 @@ describe("bridge /presence", () => {
   });
 
   it("404s on a well-formed but unknown token", async () => {
-    const bogus = randomBytes(32).toString("base64url");
+    // Valid `tok_h_`-shaped token that passes TOKEN_RX but is not seeded —
+    // exercises the DB-miss path rather than the regex-reject path.
+    const bogus = generateHumanParticipantToken();
     const res = await app.fetch(new Request(`http://t/s/${bogus}/presence`));
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("bridge shell GET /s/:token", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("returns 200 text/html for a valid open session", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("sets the framing/caching security headers", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("sets a nonce-based CSP that confines scripts and connections", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("script-src 'nonce-");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("connect-src 'self'");
+  });
+
+  it("sets a permissions-policy that disables sensitive APIs", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const pp = res.headers.get("permissions-policy") ?? "";
+    expect(pp).toContain("camera=()");
+    expect(pp).toContain("geolocation=()");
+  });
+
+  it("inlines the pane-cfg JSON block carrying the participant token", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toContain('<script type="application/json" id="pane-cfg">');
+    expect(body).toContain(token);
+  });
+
+  it("renders an iframe pointing at the content route", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toContain("<iframe");
+    expect(body).toContain(`src="/s/${token}/content"`);
+  });
+
+  it("renders the closed banner and no iframe for a closed session", async () => {
+    const { token } = await seedSession({ closed: true });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('class="closed"');
+    expect(body).toContain("This session is closed");
+    expect(body).not.toContain("<iframe");
+  });
+
+  it("404s on a malformed token", async () => {
+    const res = await app.fetch(new Request("http://t/s/not-a-real-token"));
+    expect(res.status).toBe(404);
+  });
+
+  it("404s on a well-formed but unknown token", async () => {
+    const bogus = generateHumanParticipantToken();
+    const res = await app.fetch(new Request(`http://t/s/${bogus}`));
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("bridge content GET /s/:token/content", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  const MARKER = '<div id="art">MARKER</div>';
+
+  it("returns 200 text/html for a valid open session", async () => {
+    const { token } = await seedSession({ artifactSource: MARKER });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("sets a sandboxed CSP for the artifact frame", async () => {
+    const { token } = await seedSession({ artifactSource: MARKER });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("script-src 'unsafe-inline'");
+    expect(csp).toContain("frame-ancestors 'self'");
+  });
+
+  it("embeds the artifact body and the pane shim", async () => {
+    const { token } = await seedSession({ artifactSource: MARKER });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    const body = await res.text();
+    expect(body).toContain(MARKER);
+    // Stable substrings from shim.client.ts: it assigns `window.pane`
+    // and tags every frame with `__pane`.
+    expect(body).toContain("window.pane");
+    expect(body).toContain("__pane");
+  });
+
+  it("does not set X-Frame-Options (unlike the shell route)", async () => {
+    const { token } = await seedSession({ artifactSource: MARKER });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    expect(res.headers.get("x-frame-options")).toBeNull();
+  });
+
+  it("returns 410 for a closed session", async () => {
+    const { token } = await seedSession({ closed: true });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    expect(res.status).toBe(410);
+  });
+
+  it("returns 410 for an expired session", async () => {
+    const { token } = await seedSession({ expired: true });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    expect(res.status).toBe(410);
+  });
+
+  it("404s on a malformed token", async () => {
+    const res = await app.fetch(
+      new Request("http://t/s/not-a-real-token/content"),
+    );
     expect(res.status).toBe(404);
   });
 });

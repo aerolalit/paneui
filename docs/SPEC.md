@@ -177,6 +177,21 @@ TTL bound to that (identity, session), then opens the WebSocket with
 (e.g. the agent CLI) may still pass the real token via `Authorization` or
 `?token=` directly.
 
+**Self-echo before ack.** When a WS client emits a frame, the relay inserts and
+broadcasts the event *before* sending the ack back to the emitter. The sender
+therefore receives its own event echoed on the same connection, and that echo
+arrives ahead of the ack for the emit. Clients that both send and receive on one
+connection — multiplexed agents, the page bridge shim — must dedupe by event id
+(`event.id` vs the `id` returned in the ack).
+
+**Slow-client backpressure (v1 limitation).** The relay broadcasts synchronously
+to every subscribed socket; each subscriber gets a plain `ws.send()`. v1 has no
+backpressure: large session event rates against slow connections may grow the
+per-socket send buffer unbounded, since the `ws` library queues data internally
+when a socket is not draining. The v2 fix is a per-socket `bufferedAmount`
+threshold — when a socket exceeds it, `terminate()` that one slow client (drop
+the offending connection only, not the whole session).
+
 ### HTTP POST + cursor read (stateless fallback)
 
 ```

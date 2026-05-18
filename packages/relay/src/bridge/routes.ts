@@ -80,12 +80,14 @@ const PERMISSIONS_POLICY = [
   "xr-spatial-tracking=()",
 ].join(", ");
 
-// Participant tokens are `randomBytes(32).toString("base64url")` in keys.ts —
-// exactly 43 chars, base64url alphabet. Reject on shape before we hash so
-// pathological inputs (10 MB strings, control chars) can't force SHA-256 work
-// and a guaranteed-miss DB lookup. A real rate limiter belongs at the edge
-// (tracked in issue #6); this is the in-app first line of defence.
-const TOKEN_RX = /^[A-Za-z0-9_-]{40,50}$/;
+// Participant tokens are minted in keys.ts as a type prefix ("tok_a_" for
+// agent, "tok_h_" for human) followed by `randomBytes(32).toString("base64url")`
+// — 6 prefix chars + 43 base64url chars = 49 chars total. Reject on shape
+// before we hash so pathological inputs (10 MB strings, control chars) can't
+// force SHA-256 work and a guaranteed-miss DB lookup. A real rate limiter
+// belongs at the edge (tracked in issue #6); this is the in-app first line of
+// defence.
+const TOKEN_RX = /^tok_[ah]_[A-Za-z0-9_-]{43}$/;
 
 async function loadByToken(prisma: PrismaClient, token: string) {
   if (!TOKEN_RX.test(token)) throw errors.notFound();
