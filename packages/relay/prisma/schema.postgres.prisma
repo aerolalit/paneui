@@ -82,10 +82,14 @@ model Participant {
 }
 
 model Event {
-  // Keep `Int` on both engines so the generated client surface is identical
-  // (number, not bigint). Moving to @db.BigInt for the hosted Postgres build
-  // is a separate migration once we're closer to capacity — tracked in the
-  // project board.
+  // The model field stays `Int` so the generated @prisma/client surface is
+  // identical on both engines (`number`, never `bigint`). The underlying
+  // Postgres column is widened to BIGINT by migration
+  // 20260518090000_event_id_bigint for hosted-scale headroom past int4's
+  // 2.1B-row limit. A JS `number` represents every integer up to 2^53 exactly,
+  // far beyond any realistic event count, so a BIGINT id reads back safely.
+  // Note: `prisma migrate dev` will report drift here (model says int4, DB is
+  // int8) — that is expected; `migrate deploy` applies migrations verbatim.
   id              Int      @id @default(autoincrement())
   sessionId       String   @map("session_id")
   session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)

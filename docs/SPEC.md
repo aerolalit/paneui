@@ -323,7 +323,7 @@ agents 1 ──< sessions 1 ──< events
 | `identity_id`    | the value in `author.id`. |
 | `token_hash`     | sha256 of the auth token. |
 | `token_prefix`   | display only. |
-| `joined_at`      | nullable; stamped on first connect. |
+| `joined_at`      | nullable; stamped on the first **WebSocket** connect only. HTTP polling of `GET /v1/sessions/:id/events` does not count as joining. |
 | `revoked_at`     | nullable. |
 
 ### `events`
