@@ -139,4 +139,40 @@ describe("clientIp — X-Forwarded-For trust", () => {
     });
     expect(clientIp(c, [])).toBe("unknown");
   });
+
+  it("with TRUSTED_PROXY=* honors XFF from any socket peer", () => {
+    // The `*` sentinel: the proxy's source IP is not a known literal (e.g.
+    // Azure Container Apps ingress). XFF is trusted regardless of peer.
+    const c = fakeContext({
+      headers: { "x-forwarded-for": "198.51.100.7" },
+      peer: "10.42.0.5", // some unlistable internal ingress IP
+    });
+    expect(clientIp(c, ["*"])).toBe("198.51.100.7");
+  });
+
+  it("with TRUSTED_PROXY=* takes the right-most XFF hop", () => {
+    // No hop is "trusted" under `*`, so the right-most entry wins — the
+    // client IP as the ingress recorded it (ingress appends its own hop or
+    // overwrites the header; the right-most untrusted hop is the real client).
+    const c = fakeContext({
+      headers: { "x-forwarded-for": "203.0.113.1, 198.51.100.7" },
+      peer: "10.42.0.5",
+    });
+    expect(clientIp(c, ["*"])).toBe("198.51.100.7");
+  });
+
+  it("with TRUSTED_PROXY=* two clients behind the same ingress bucket apart", () => {
+    // Regression for the core bug: without `*`, every request collapses to
+    // the ingress socket IP (one global bucket). With `*`, distinct clients
+    // bucket by their real XFF IP.
+    const a = fakeContext({
+      headers: { "x-forwarded-for": "203.0.113.1" },
+      peer: "10.42.0.5",
+    });
+    const b = fakeContext({
+      headers: { "x-forwarded-for": "203.0.113.2" },
+      peer: "10.42.0.5", // same ingress
+    });
+    expect(clientIp(a, ["*"])).not.toBe(clientIp(b, ["*"]));
+  });
 });

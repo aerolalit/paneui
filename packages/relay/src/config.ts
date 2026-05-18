@@ -35,6 +35,13 @@ const schema = z.object({
   // Comma-separated list of proxy IPs the relay sits directly behind. Only
   // when the socket peer is one of these is the `X-Forwarded-For` header
   // honored (taking the last untrusted hop). Empty = never trust XFF.
+  //
+  // The single value `*` means "trust X-Forwarded-For from any socket peer".
+  // Use it ONLY when the relay is unreachable except through a proxy that
+  // always sets/overwrites X-Forwarded-For — e.g. Azure Container Apps
+  // ingress, whose ingress-to-container source IP is internal and not a
+  // stable literal you could list. If the relay is directly reachable, `*`
+  // would let a client spoof its rate-limit bucket — list explicit IPs then.
   TRUSTED_PROXY: z
     .string()
     .default("")

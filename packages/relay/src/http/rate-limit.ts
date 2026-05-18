@@ -42,13 +42,19 @@ function resolveClientIp(
   xff: string | undefined,
   trusted: readonly string[],
 ): string {
-  if (xff && socketAddr && trusted.includes(socketAddr)) {
+  // `*` in TRUSTED_PROXY trusts X-Forwarded-For from any socket peer — for
+  // deployments (e.g. Azure Container Apps) where the proxy's source IP is
+  // not a stable literal. Otherwise the socket peer must be a listed IP.
+  const trustAny = trusted.includes("*");
+  if (xff && (trustAny || (socketAddr && trusted.includes(socketAddr)))) {
     const hops = xff
       .split(",")
       .map((v) => v.trim())
       .filter((v) => v.length > 0);
     // Walk from the right (closest to our edge); the first hop that is not
-    // itself a trusted proxy is the real client as our outermost proxy saw it.
+    // itself a trusted proxy is the real client as our outermost proxy saw
+    // it. With `*` no hop is "trusted", so this takes the right-most hop —
+    // the client IP as the ingress recorded it.
     for (let i = hops.length - 1; i >= 0; i--) {
       const hop = hops[i]!;
       if (!trusted.includes(hop)) return hop;
@@ -72,6 +78,11 @@ function resolveClientIp(
  * When the socket peer is NOT a trusted proxy (a direct client), XFF is
  * ignored entirely and the raw socket address is used, so a spoofed header
  * cannot move the caller into a different rate-limit bucket.
+ *
+ * The special `TRUSTED_PROXY` value `*` trusts XFF from any socket peer —
+ * for proxies whose source IP is not a stable literal (e.g. Azure Container
+ * Apps ingress). Safe only when the relay is unreachable except through
+ * such a proxy; see the `TRUSTED_PROXY` config comment.
  *
  * Returns "unknown" if no address is available (e.g. under app.fetch() in
  * tests, where there is no socket), which buckets all such requests together.
