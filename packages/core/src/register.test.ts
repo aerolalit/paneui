@@ -77,6 +77,49 @@ describe("registerAgent", () => {
     expect(JSON.parse(seenInit!.body as string)).toEqual({ name: "ci-bot" });
   });
 
+  it("sends the registration secret as a Bearer token when given", async () => {
+    let seenInit: RequestInit | undefined;
+    await registerAgent({
+      url: "https://relay.test",
+      secret: "s3cr3t",
+      fetch: async (_url, init) => {
+        seenInit = init;
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
+      },
+    });
+    expect((seenInit!.headers as Record<string, string>)["authorization"]).toBe(
+      "Bearer s3cr3t",
+    );
+  });
+
+  it("sends no Authorization header when no secret is given", async () => {
+    let seenInit: RequestInit | undefined;
+    await registerAgent({
+      url: "https://relay.test",
+      fetch: async (_url, init) => {
+        seenInit = init;
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
+      },
+    });
+    expect(
+      (seenInit!.headers as Record<string, string>)["authorization"],
+    ).toBeUndefined();
+  });
+
   it("throws PaneApiError on 429 (rate limited)", async () => {
     try {
       await registerAgent({

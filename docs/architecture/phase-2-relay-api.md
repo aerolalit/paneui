@@ -25,7 +25,7 @@ Out:
 - One Hono `app` in `src/http/app.ts`. `src/index.ts` builds it (passing `config`, `prisma`) and serves it via `@hono/node-server`. The WebSocket server (`ws` package) attaches to the same HTTP server in `src/ws/handler.ts`.
 - Global middleware order: (1) request-id (generate + echo `X-Request-Id`), (2) access log (`log.info` method/path/status/ms; never the body), (3) the error handler (catches thrown `ApiError` and unknown errors). Then route groups.
 - `GET /healthz`: no auth, no logging noise (or `debug` level).
-- `/v1/register` is conditionally mounted: only if `config.REGISTRATION_SECRET` is set. If not, requests fall through to the 404 handler. (Don't mount-and-403; a plain 404 leaks less about whether the feature exists.)
+- `/v1/register` is always mounted but its behaviour is operator-configurable via `REGISTRATION_MODE`, enforced inside the route module: `closed` (default) returns 404 so a self-host relay exposes no public registration; `secret` requires an `Authorization: Bearer <REGISTRATION_SECRET>` token (missing/wrong → 401); `open` is public self-service. The per-IP sliding-window rate limiter runs in the `secret` and `open` modes.
 - `/v1/sessions/*` (agent-creator endpoints) and `/v1/keys/*` get the agent-bearer middleware.
 - `POST /v1/sessions/:id/events` and `GET /v1/sessions/:id/events`: dual-auth. The bearer is resolved against EITHER `agents.keyHash` OR `participants.tokenHash`. Whichever wins, the resulting `author` (`{ kind, id }`) is attached to the request. Mismatch (a participant token for a different session, an agent token for a session the agent doesn't own) → `404 not_found`.
 - `WS /v1/sessions/:id/stream`: the upgrade handshake validates the bearer the same way (agent OR participant), attaches `author` to the connection, sends the full event-log replay, then enters the bidirectional loop.
@@ -135,9 +135,11 @@ All bodies are JSON. All timestamps are ISO-8601 strings on the wire. `:id` for 
 No auth. → `200 { "status": "ok" }`.
 
 ### `POST /v1/register`
-Mounted only if `REGISTRATION_SECRET` is set; otherwise 404.
-Body: `{ "name"?: string, "registration_secret": string }`.
-- `registration_secret`: constant-time compare to `config.REGISTRATION_SECRET`; mismatch → `401 unauthorized`.
+Gated by `REGISTRATION_MODE`: `closed` (default) → 404; `secret` → requires
+`Authorization: Bearer <REGISTRATION_SECRET>` (missing/wrong → 401); `open` →
+public. Abuse is bounded by a per-IP rate limiter in the `secret` and `open`
+modes.
+Body: `{ "name"?: string }` (optional — a bare request sends none).
 - `name`: defaults to `"registered"`; length-capped (≤ 64 chars).
 Effect: `key = generateApiKey()`; `agent = prisma.agent.create({ name, keyHash: hashKey(key), keyPrefix: keyPrefix(key) })`.
 → `201 { "agent_id": agent.id, "api_key": key, "key_prefix": agent.keyPrefix }`. The raw `api_key` is returned exactly once.
@@ -279,7 +281,7 @@ Effect: `prisma.agent.update({ data: { revokedAt: new Date() } })`. The next req
 - **Idempotency**: two POSTs with the same `idempotency_key` from the same author → second responds 200 with `deduped: true`, same event id.
 - **Caps**: artifact over `MAX_ARTIFACT_BYTES` → 413. Event `data` over `MAX_EVENT_DATA_BYTES` → 413. `participants.humans` over `MAX_PARTICIPANTS_PER_SESSION` → 400.
 - **State**: posting an event to a closed session → 410. `GET` a session past `expiresAt` → `status: "closed"` even before the sweeper runs.
-- **Register**: 404 when `REGISTRATION_SECRET` is unset; 401 with a wrong secret; 201 with the right one; returned `api_key` actually authenticates.
+- **Register**: 404 in `closed` mode (the default); 401 without/with a wrong secret and 201 with the correct bearer secret in `secret` mode; 201 with no auth in `open` mode. In the modes that reach agent creation the returned `api_key` actually authenticates, and a 4th request from one IP within the window → 429.
 - **Long-poll**: `GET .../events?wait=5` with a concurrent `POST .../events` returns within ~tens of ms; with nothing happening, returns (empty) within ~5 s.
 - **Cursor round-trip**: feeding `next_cursor` back as `since` never re-delivers an event.
 - **Callback**: a session with `callback.url` set to a test endpoint; an event matching the filter triggers a signed POST within ~ms; non-matching events don't fire. A failing URL retries twice then stops; the event is still in the log.
@@ -291,7 +293,7 @@ Effect: `prisma.agent.update({ data: { revokedAt: new Date() } })`. The next req
 
 - **Long-poll mechanism**: in-process `EventEmitter` (lean) vs a DB-poll loop. OPEN.
 - **`lastUsedAt` write**: every request, fire-and-forget (lean) vs debounced in memory. OPEN.
-- **`/v1/register` rate limiting**: none in v1 (secret-gated) vs a basic per-IP limiter now. Lean: none in v1; phase 4's hosted-lite revisits. OPEN.
+- **`/v1/register` exposure**: RESOLVED — a tri-state `REGISTRATION_MODE` (`closed` default / `secret` / `open`). `closed` 404s the endpoint so self-hosters are secure by default; `secret` gates it behind a shared bearer secret; `open` is public. A per-IP rate limiter bounds the `secret` and `open` modes.
 - **Callback secret storage**: warn-and-allow-unsigned when `CALLBACK_SECRET_KEY` is unset (lean) vs refuse callbacks without it. OPEN.
 - **WS broadcast policy**: parallel fire-and-forget (lean) vs serialized awaits. OPEN.
 - Dual-auth on the events endpoints, soft-close on DELETE, separate WS handler, Ajv schema validation at the boundary, idempotency via unique constraint: all **DECIDED** above.

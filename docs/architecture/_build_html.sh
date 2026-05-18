@@ -21,7 +21,7 @@ The v1 design, now reflected in `docs/SPEC.md`, `docs/ROADMAP.md`, and the phase
 - **Schema validation at the relay.** Per-session `eventSchema.events` declares typed events with payload JSON Schemas and `emittedBy: ["page" | "agent"]`. Ajv validates every `data` against the type's payload schema; the relay rejects writes outside the declared vocabulary.
 - **Sandbox: `allow-scripts` only** (no `allow-same-origin`, no forms, no top-nav). CSP `connect-src 'none'` on the artifact content. The artifact's only channel out is `postMessage` to the shell.
 - **MCP server**: three tools in v1. `create_pane_session(artifact, schema)`, `await_pane_result(session_id, terminal_event_type)`, `get_pane_state(session_id)`. No magic "submit" verb; the agent names the terminal event type.
-- **`/v1/register`** creates an `agents` row (returns the raw key once), gated by `REGISTRATION_SECRET`, off by default. **`/v1/keys`** lists/revokes the calling agent's own row. The `API_KEY` env var upserts a `default` agent on boot, so the env key and DB-issued keys share one validation path.
+- **`/v1/register`** creates an `agents` row (returns the raw key once), open by default and bounded by a per-IP rate limiter. **`/v1/keys`** lists/revokes the calling agent's own row. The `API_KEY` env var upserts a `default` agent on boot, so the env key and DB-issued keys share one validation path.
 - **`events.id` is `BIGINT`**, doubles as the opaque poll cursor (a string on the wire), so the underlying type can change later (e.g. to a ULID for a sharded hosted build) without breaking clients.
 - **Webhook callbacks** are best-effort with HMAC signing in v1 (durable delivery is `/ee/`).
 MD

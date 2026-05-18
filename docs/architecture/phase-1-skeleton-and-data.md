@@ -63,7 +63,10 @@ pane/
 | `PORT` | no | `3000` | HTTP listen port. |
 | `PUBLIC_URL` | no (dev) | `http://localhost:${PORT}` | Base URL the relay is reachable at. Used to build session URLs (`${PUBLIC_URL}/s/${human_token}`). In any real deployment this MUST be set to the externally-reachable URL. |
 | `API_KEY` | no | (none) | If set: bootstrap a `default` agent with this key (idempotent). See bootstrap below. |
-| `REGISTRATION_SECRET` | no | (none) | If set: `POST /v1/register` is enabled and requires this secret. If unset: `POST /v1/register` returns 404. |
+| `REGISTRATION_MODE` | no | `closed` | Controls `POST /v1/register`: `closed` (default) → 404; `secret` → requires a bearer `REGISTRATION_SECRET`; `open` → public self-service. |
+| `REGISTRATION_SECRET` | when `REGISTRATION_MODE=secret` | (none) | Shared bearer secret callers must present in `secret` mode; ignored otherwise. |
+| `REGISTER_RATE_LIMIT` | no | `5` | Per-IP request cap on the `POST /v1/register` endpoint within the rate window (enforced in `secret` and `open` modes). `0` disables the limiter. |
+| `REGISTER_RATE_WINDOW_SECONDS` | no | `3600` | Sliding-window length for `REGISTER_RATE_LIMIT`. |
 | `MAX_ARTIFACT_BYTES` | no | `2_000_000` | Cap on `artifact.source` of `POST /v1/sessions`. |
 | `MAX_EVENT_DATA_BYTES` | no | `65_536` | Cap on a single event's serialized `data`. |
 | `MAX_PARTICIPANTS_PER_SESSION` | no | `32` | Cap on `participants.humans` in `POST /v1/sessions`. |
@@ -72,7 +75,7 @@ pane/
 | `TTL_SWEEP_SECONDS` | no | `60` | Sweeper interval (phase 4). `0` disables the in-process sweeper. |
 | `LOG_LEVEL` | no | `info` | `debug` / `info` / `warn` / `error`. |
 
-No secrets ever get logged. `config.ts` redacts `API_KEY` / `REGISTRATION_SECRET` / `DATABASE_URL` creds in any startup log line.
+No secrets ever get logged. `config.ts` redacts `API_KEY` / `PANE_SECRET_KEY` / `DATABASE_URL` creds in any startup log line.
 
 ### Prisma schema
 

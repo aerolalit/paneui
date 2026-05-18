@@ -57,9 +57,16 @@ If you weren't handed an API key, provision one yourself — **once** — with:
 pane register --url "$PANE_URL"
 ```
 
-Registration is open — no secret, no operator-shared value. This calls the
-relay's `POST /v1/register`, mints an agent + API key, and saves the key and
-URL to the CLI config file
+Whether `pane register` works depends on the relay's `REGISTRATION_MODE`:
+
+- `closed` (the default) — the endpoint returns 404. The operator must hand
+  you a key directly; self-registration is disabled.
+- `secret` — pass the operator-shared registration secret with `--secret <s>`
+  or the `PANE_REGISTER_SECRET` env var. A missing/wrong secret is a 401.
+- `open` — public; `pane register --url "$PANE_URL"` works with no secret.
+
+On success this calls the relay's `POST /v1/register`, mints an agent + API
+key, and saves the key and URL to the CLI config file
 (`${XDG_CONFIG_HOME:-~/.config}/pane/config.json`, mode 0600). After that,
 every other command picks the key up from that file automatically — so all
 later commands need only `PANE_URL` set (or nothing, since the URL is saved

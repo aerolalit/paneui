@@ -25,6 +25,8 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.PUBLIC_URL = "http://localhost:3000";
+  // Public registration so the per-IP rate limiter is what bounds the endpoint.
+  process.env.REGISTRATION_MODE = "open";
   // Small limit so the rate-limit case is cheap and deterministic.
   process.env.REGISTER_RATE_LIMIT = "3";
   process.env.REGISTER_RATE_WINDOW_SECONDS = "3600";

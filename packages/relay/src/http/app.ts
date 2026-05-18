@@ -159,8 +159,10 @@ export function buildApp(
   app.use("/v1/*", generalRateLimit);
   app.use("/s/*", generalRateLimit);
 
-  // /v1/register is open (no secret); abuse is bounded by a per-IP rate limit
-  // applied inside the route module.
+  // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
+  // the route module: `closed` (default) returns 404; `secret` requires an
+  // `Authorization: Bearer <REGISTRATION_SECRET>` token; `open` is public.
+  // In the secret and open modes a per-IP rate limit bounds abuse.
   app.route("/v1/register", register);
   app.route("/v1/sessions", sessions);
   app.route("/v1/sessions/:id/events", events);

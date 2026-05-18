@@ -1,0 +1,63 @@
+# Pane relay — single-container self-host.
+#
+# The relay is the only service you run: it bundles the human-facing web UI
+# and serves the agent HTTP/WebSocket API. The `pane` CLI runs alongside your
+# agent, not here. See docs/DEPLOY.md for the full guide.
+#
+# Quickstart:
+#   1. Copy packages/relay/.env.example -> .env (repo root) and edit it.
+#      At minimum set PUBLIC_URL and PANE_SECRET_KEY for a real deployment.
+#   2. docker compose up -d --build
+#   3. Put a TLS-terminating reverse proxy in front (PUBLIC_URL must be https
+#      and must forward WebSocket upgrades). The relay itself speaks plain HTTP.
+#
+# Postgres is NOT supported by this image — it ships sqlite migrations only.
+
+services:
+  relay:
+    build:
+      # Build context is the monorepo root; the Dockerfile lives in the relay
+      # package and expects root context (it copies the workspace manifests).
+      context: .
+      dockerfile: packages/relay/Dockerfile
+    image: pane
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    # Env is read from a `.env` file at the repo root. `environment:` below
+    # pins the essentials and documents them — uncomment / set as needed.
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      # Public URL the relay is reachable at — REQUIRED in production, must be
+      # https and must NOT be localhost. Human session URLs are built from it.
+      # PUBLIC_URL: https://pane.example.com
+      # 32-byte master key (base64 or hex). REQUIRED in production. Back it up —
+      # losing it makes previously-encrypted data unrecoverable.
+      # Generate with: openssl rand -base64 32
+      # PANE_SECRET_KEY: ""
+      # Optional: bootstrap a default agent with this API key on boot.
+      # If unset and no agents exist, one is auto-minted and printed to logs.
+      # API_KEY: ""
+      # SQLite DB inside the mounted data volume (the image default).
+      DATABASE_URL: file:/app/data/pane.db
+    volumes:
+      # Named volume for SQLite persistence — the Dockerfile declares /app/data
+      # as a VOLUME and defaults the DB path inside it.
+      - pane-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  pane-data:

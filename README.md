@@ -53,7 +53,9 @@ starting point):
 | `PUBLIC_URL` | — | Base URL the relay is reachable at. Set it in any real deployment. |
 | `API_KEY` | — | Optional. Bootstraps a default agent with this key on boot. If unset and no agents exist, one is auto-minted and printed once. |
 | `PANE_SECRET_KEY` | auto-generated | Encryption master key (see below). |
-| `REGISTER_RATE_LIMIT` | `5` | Per-IP rate limit for the open `POST /v1/register` endpoint. `0` disables the limiter. |
+| `REGISTRATION_MODE` | `closed` | Controls `POST /v1/register`. `closed` (default) returns 404 — agents get keys via `API_KEY` / auto-mint. `secret` requires an `Authorization: Bearer <REGISTRATION_SECRET>` token. `open` is public self-service registration. |
+| `REGISTRATION_SECRET` | — | Shared bearer secret callers must present when `REGISTRATION_MODE=secret`. Required (non-empty) in that mode; ignored otherwise. |
+| `REGISTER_RATE_LIMIT` | `5` | Per-IP rate limit for the `POST /v1/register` endpoint (enforced in `secret` and `open` modes). `0` disables the limiter. |
 | `REGISTER_RATE_WINDOW_SECONDS` | `3600` | Window for the registration rate limit. |
 | `RATE_LIMIT` | `120` | General per-IP **and** per-token rate limit applied to every `/v1/*` and `/s/*` route. `0` disables it. |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Window for the general rate limit. |

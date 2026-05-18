@@ -1,9 +1,11 @@
 // Standalone agent self-registration: POST /v1/register.
 //
 // Unlike PaneClient operations this needs no bearer API key — registration is
-// the call that *obtains* one. The relay endpoint is open: no secret. Abuse
-// is bounded server-side by a per-IP rate limit (a 429 surfaces here as a
-// PaneApiError with status 429).
+// the call that *obtains* one. Whether the relay endpoint is reachable depends
+// on its REGISTRATION_MODE: a `secret`-mode relay requires the shared
+// registration secret to be passed as a Bearer token (see the `secret` option
+// below). Abuse is bounded server-side by a per-IP rate limit (a 429 surfaces
+// here as a PaneApiError with status 429).
 
 import { PaneApiError } from "./client.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
@@ -13,6 +15,12 @@ export interface RegisterAgentOptions {
   url: string;
   /** Optional agent display name; the relay defaults it if omitted. */
   name?: string;
+  /**
+   * Shared registration secret. Sent as `Authorization: Bearer <secret>`.
+   * Only needed when the relay runs REGISTRATION_MODE=secret; ignored by
+   * relays in open mode and rejected (404) by relays in closed mode.
+   */
+  secret?: string;
   /** Optional fetch override (defaults to global fetch). */
   fetch?: typeof fetch;
 }
@@ -36,11 +44,19 @@ export async function registerAgent(
   const body: Record<string, unknown> = {};
   if (opts.name !== undefined) body["name"] = opts.name;
 
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  // Sent only when the relay runs REGISTRATION_MODE=secret; harmless otherwise.
+  if (opts.secret !== undefined && opts.secret !== "") {
+    headers["authorization"] = `Bearer ${opts.secret}`;
+  }
+
   let res: Response;
   try {
     res = await fetchImpl(base + "/v1/register", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (e) {
