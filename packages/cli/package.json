@@ -1,6 +1,6 @@
 {
   "name": "pane-cli",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Command-line client for the Pane relay: create sessions, inspect state, send and watch events.",
   "license": "MIT",
   "type": "module",
@@ -39,7 +39,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@pane/core": "^0.1.0"
+    "@pane/core": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
