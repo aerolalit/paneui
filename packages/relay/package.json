@@ -19,7 +19,7 @@
     "start": "node dist/index.js",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
-    "migrate:postgres:deploy": "prisma migrate deploy --schema prisma/schema.postgres.prisma",
+    "migrate:postgres:deploy": "node scripts/migrate-deploy.mjs --schema prisma/postgres/schema.prisma",
     "studio": "prisma studio",
     "generate": "node scripts/prisma-generate.mjs",
     "generate:postgres": "node scripts/prisma-generate.mjs postgres",

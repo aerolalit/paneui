@@ -5,7 +5,7 @@
 // 20260518090000_event_id_bigint widens it to BIGINT for hosted-scale
 // headroom. The Prisma model deliberately keeps `Event.id` as `Int` so the
 // generated client type stays `number` on both engines (see
-// prisma/schema.postgres.prisma) — which means a regression to int4 would NOT
+// prisma/postgres/schema.prisma) — which means a regression to int4 would NOT
 // be caught by typegen or the e2e suite. This test is the guard.
 //
 // On sqlite the column type is rowid-aliased INTEGER regardless, so the

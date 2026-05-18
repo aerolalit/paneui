@@ -36,7 +36,7 @@ function detectEngine(url: string | undefined): Engine {
 
 function migrationsDir(engine: Engine): string {
   return engine === "postgresql"
-    ? "prisma/migrations-postgres"
+    ? "prisma/postgres/migrations"
     : "prisma/migrations";
 }
 

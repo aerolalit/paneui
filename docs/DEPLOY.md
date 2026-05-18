@@ -198,9 +198,14 @@ NODE_ENV=production PUBLIC_URL=... PANE_SECRET_KEY=... \
 ### Database
 
 SQLite is the default and is the recommended store for a self-host — one file,
-no separate service. The shipped Docker image runs **only the SQLite
-migrations**; Postgres is the hosted/Azure path (see below) and is not wired
-into the default image. For a solo deployment, stay on SQLite.
+no separate service. The default Docker image (`docker build` with no
+`--build-arg`) bakes the SQLite-targeted Prisma client and is byte-for-byte the
+same as before. Postgres is the hosted/Azure path (see below): build the image
+with `--build-arg DATABASE_PROVIDER=postgres` to bake the postgresql-targeted
+client, then run it against a `postgresql://` `DATABASE_URL`. The container's
+boot-time `migrate deploy` is engine-aware — it detects sqlite vs postgres from
+`DATABASE_URL` and applies the matching migration set automatically. For a solo
+deployment, stay on SQLite.
 
 ### TLS and reverse proxy
 

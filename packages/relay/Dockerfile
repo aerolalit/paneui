@@ -13,6 +13,13 @@
 FROM node:20-slim AS build
 WORKDIR /app
 
+# Which Prisma engine the generated client targets. Default `sqlite` keeps the
+# self-host image byte-for-byte identical to before; `--build-arg
+# DATABASE_PROVIDER=postgres` bakes a postgresql-targeted client for the hosted
+# deployment (issue #40). `prisma-generate.mjs` accepts `sqlite`/`postgres` as
+# its forced-schema argv.
+ARG DATABASE_PROVIDER=sqlite
+
 # Prisma needs libssl to pick the right query-engine binary; node:20-slim ships
 # without it, so Prisma guesses (openssl-1.1.x) and warns. Install it explicitly.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
@@ -35,14 +42,20 @@ RUN npm run build --workspace @pane/core
 
 COPY packages/relay/prisma ./packages/relay/prisma
 # `npm run generate` runs scripts/prisma-generate.mjs, so the scripts dir must
-# be present. With no DATABASE_URL set at build time it auto-selects the
-# default sqlite schema.
+# be present. The prisma dir now also includes prisma/postgres/ (schema +
+# migrations) — copied implicitly since it sits under prisma/.
 COPY packages/relay/scripts ./packages/relay/scripts
-RUN npm run generate --workspace @pane/relay
 
 COPY packages/relay/tsconfig.json packages/relay/tsconfig.client.json ./packages/relay/
 COPY packages/relay/src ./packages/relay/src
-RUN npm run build --workspace @pane/relay
+# `npm run build` triggers `prebuild:server`, which itself runs
+# prisma-generate.mjs in auto-select mode (DATABASE_URL is unset at build time,
+# so it picks sqlite). To make the FINAL baked client match DATABASE_PROVIDER
+# we run an explicit, forced generate AFTER the build — its forced argv wins
+# over whatever prebuild:server produced, so the postgres client is not
+# clobbered. The default (sqlite) build is unaffected.
+RUN npm run build --workspace @pane/relay \
+    && npm run generate --workspace @pane/relay -- "${DATABASE_PROVIDER}"
 
 # ---------- stage 2: runtime ----------
 FROM node:20-slim
@@ -97,7 +110,10 @@ USER node
 # sidecar still starting — does not crash the container on boot. A genuinely
 # broken DB still fails the boot after the attempts are exhausted.
 #
-# `migrate deploy` with no --schema uses the default sqlite schema. A Postgres
-# deployment must run against schema.postgres.prisma — handled in the hosted
-# build path (issue #40), not this default self-host image.
+# migrate-deploy.mjs is engine-aware: it detects sqlite vs postgres from the
+# runtime DATABASE_URL and selects the matching schema (prisma/postgres/schema.prisma
+# for postgres, whose migrations resolve from prisma/postgres/migrations/). So
+# the same image entrypoint works for both engines — the generated client baked
+# in at build time (DATABASE_PROVIDER build arg) just has to match the engine
+# the container is run against.
 CMD ["sh", "-c", "node scripts/migrate-deploy.mjs && node dist/index.js"]
