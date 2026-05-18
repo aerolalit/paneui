@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 const schema = z.object({
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   DATABASE_URL: z.string().default("file:./data/pane.db"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   PUBLIC_URL: z.string().url().optional(),
@@ -85,6 +88,7 @@ export type RawConfig = z.infer<typeof schema>;
 
 export interface Config extends RawConfig {
   publicUrl: string;
+  isProduction: boolean;
 }
 
 // Raised by loadConfig when an env var fails validation. Carries a
@@ -132,7 +136,49 @@ export function loadConfig(
   const publicUrl = (
     parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`
   ).replace(/\/$/, "");
-  return Object.freeze({ ...parsed, publicUrl }) as Config;
+  return Object.freeze({
+    ...parsed,
+    publicUrl,
+    isProduction: parsed.NODE_ENV === "production",
+  }) as Config;
+}
+
+/**
+ * Production-only sanity checks for config that is fine to default in local dev
+ * but silently breaks a real deployment.
+ *
+ * PUBLIC_URL: human-facing session URLs are built from it. On Azure Container
+ * Apps the ingress FQDN isn't known until the app exists, so PUBLIC_URL is
+ * wired in a second deploy step — until then it falls back to localhost and
+ * every URL handed to a human is unreachable. Fail loudly rather than hand out
+ * dead links. See docs/DEPLOY.md.
+ *
+ * Call once at startup, after loadConfig().
+ */
+export function validateProductionConfig(c: Config): void {
+  if (!c.isProduction) return;
+
+  const pub = c.PUBLIC_URL?.trim();
+  if (!pub) {
+    throw new Error(
+      "PUBLIC_URL must be set in production — session URLs are built from it. " +
+        "On Azure Container Apps, set it to the ingress FQDN in a second deploy " +
+        "step (https://<fqdn>). See docs/DEPLOY.md.",
+    );
+  }
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(pub)) {
+    throw new Error(
+      `PUBLIC_URL still points at localhost (${pub}) in production — human-facing ` +
+        "session URLs would be unreachable. Set it to the public ingress URL. " +
+        "See docs/DEPLOY.md.",
+    );
+  }
+  if (!/^https:\/\//i.test(pub)) {
+    // console rather than ./log to avoid a config <-> log import cycle.
+    console.warn(
+      `[pane] warning: PUBLIC_URL is not https in production (${pub})`,
+    );
+  }
 }
 
 export function redactConfig(c: Config): Record<string, unknown> {

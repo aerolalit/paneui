@@ -5,7 +5,12 @@ import "./telemetry/bootstrap.js";
 import { pathToFileURL } from "node:url";
 import type { PrismaClient } from "@prisma/client";
 import { serve } from "@hono/node-server";
-import { loadConfigOrExit, redactConfig, type Config } from "./config.js";
+import {
+  loadConfigOrExit,
+  redactConfig,
+  validateProductionConfig,
+  type Config,
+} from "./config.js";
 import { createPrismaClient } from "./db.js";
 import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
@@ -18,6 +23,7 @@ import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
+import { ensureKeyLoaded } from "./crypto.js";
 
 // One TTL sweep pass: collect the expired session ids first, then deleteMany,
 // then drop each session's compiled-validator cache entry. Two queries (no
@@ -75,6 +81,11 @@ async function main(): Promise<void> {
   const prisma = createPrismaClient(config.DATABASE_URL);
 
   log.info("starting pane relay", { config: redactConfig(config) });
+
+  // Fail fast on production misconfiguration before binding a port:
+  // PUBLIC_URL must be a real public URL, PANE_SECRET_KEY must be set.
+  validateProductionConfig(config);
+  ensureKeyLoaded();
 
   await runBootstrap(prisma, config);
 
