@@ -13,11 +13,21 @@ name: release-image
 #   ghcr.io/<owner>/pane:latest-postgres
 #
 # No secrets to configure: GHCR auth uses the built-in GITHUB_TOKEN.
+#
+# Triggered by a v* tag (the normal release path), or run manually from the
+# Actions tab (workflow_dispatch) — useful for publishing an image ahead of a
+# tagged release, e.g. to bootstrap a hosted deployment.
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.1.0). Also always tagged `latest` and the commit SHA."
+        required: false
+        default: "latest"
 
 jobs:
   image:
@@ -45,8 +55,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Derives tags from the git ref: the exact version (v1.2.3 -> 1.2.3),
-      # the minor series (1.2), the major (1), and `latest`. The matrix
+      # Derives the image tags. On a v* tag push: the exact version
+      # (v1.2.3 -> 1.2.3), the minor series (1.2), the major (1), and `latest`.
+      # On a manual run: the `tag` input verbatim, plus `latest`. Either way a
+      # commit-SHA tag is added so every image is traceable. The matrix
       # `tag-suffix` appends `-postgres` for the Postgres variant, so the
       # SQLite build owns the unsuffixed tags and the two never collide.
       - name: Derive image tags
@@ -61,6 +73,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=sha
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
