@@ -23,7 +23,7 @@ This matters most for agents that live **outside a GUI host app**: cron agents, 
 The repo is an npm-workspaces monorepo with three packages:
 
 - **`@pane/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
-- **`@pane/relay`** — the relay server. Ships as a single Docker container, SQLite by default: `docker build -f packages/relay/Dockerfile -t pane .` then `docker run` and it works.
+- **`@pane/relay`** — the relay server. Ships as a single Docker container, SQLite by default — `docker pull ghcr.io/aerolalit/pane` (or build from the repo) and it works. See [docs/DEPLOY.md](docs/DEPLOY.md).
 - **`pane-cli`** — the `pane` command-line tool. `npm i -g pane-cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
 
 The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process-monitoring tool, with nothing to install but one binary. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands; pipe it into whatever supervises your agent. A LangChain tool wrapper may come later (v2).

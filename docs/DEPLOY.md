@@ -126,14 +126,24 @@ runs as one container against a SQLite file.
 
 ### What you deploy
 
-Only the **relay**. It bundles the human-facing web UI (the `/s/:token` shell
-page), so there is no separate frontend to deploy. The `pane` CLI runs wherever
-your agent runs; it is not part of the deployment.
+Only the **relay**, and you do **not** need to clone the repo to run it — a
+prebuilt image is published to the GitHub Container Registry on every release:
+
+```
+ghcr.io/aerolalit/pane:<version>     # e.g. :0.1.0
+ghcr.io/aerolalit/pane:latest
+```
+
+Pin a real version tag for reproducible deploys; `latest` moves. The image
+bundles the human-facing web UI (the `/s/:token` shell page), so there is no
+separate frontend to deploy. The `pane` CLI runs wherever your agent runs; it
+is not part of the deployment.
 
 ### docker-compose (quickest)
 
-The repo root ships a [`docker-compose.yml`](../docker-compose.yml). Create a
-`.env` next to it:
+The repo ships a [`docker-compose.yml`](../docker-compose.yml) that pulls the
+GHCR image — copy just that file into an empty directory (no clone needed) and
+create a `.env` next to it:
 
 ```bash
 NODE_ENV=production
@@ -146,28 +156,36 @@ API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx    # optional; bootstraps your agent key
 Then:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-The image builds from `packages/relay/Dockerfile` (build context is the
-monorepo root), migrations run automatically on boot, and a named volume
-(`pane-data`) persists the SQLite database at `/app/data` across restarts.
-`docker compose` runs a `GET /healthz` healthcheck.
+Migrations run automatically on boot, a named volume (`pane-data`) persists the
+SQLite database at `/app/data` across restarts, and `docker compose` runs a
+`GET /healthz` healthcheck. Upgrade with `docker compose pull && docker compose up -d`.
 
 ### docker run (without compose)
 
 ```bash
-docker build -f packages/relay/Dockerfile -t pane .   # context = repo root
 docker run -d -p 3000:3000 \
   -e NODE_ENV=production \
   -e PUBLIC_URL=https://pane.example.com \
   -e PANE_SECRET_KEY="$(openssl rand -base64 32)" \
   -e API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx \
   -v pane-data:/app/data \
-  pane
+  ghcr.io/aerolalit/pane:latest
 ```
 
-### From source
+### Building from source (contributors)
+
+If you are modifying pane or want an unreleased build, build the image from a
+checkout instead of pulling it. The `docker-compose.yml` has a commented
+`build:` block for this; or directly:
+
+```bash
+docker build -f packages/relay/Dockerfile -t pane .   # context = repo root
+```
+
+To run the relay straight from source without Docker:
 
 ```bash
 npm install
@@ -203,12 +221,12 @@ see "Registration mode" above.
 ### Solo quickstart
 
 ```bash
-# 1. configure
-cp packages/relay/.env.example packages/relay/.env   # then edit
-#    set NODE_ENV=production, PUBLIC_URL, PANE_SECRET_KEY (openssl rand -base64 32)
+# 1. configure — in an empty directory, drop in docker-compose.yml and a .env
+#    (no clone needed). Copy the env keys from packages/relay/.env.example.
+#    Set NODE_ENV=production, PUBLIC_URL, PANE_SECRET_KEY (openssl rand -base64 32).
 
-# 2. run
-docker compose up -d --build
+# 2. run — pulls ghcr.io/aerolalit/pane and starts it
+docker compose up -d
 
 # 3. point the CLI at it and do a round trip
 PANE_URL=https://pane.example.com PANE_API_KEY=<your key> \
