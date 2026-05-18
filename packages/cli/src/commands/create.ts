@@ -19,7 +19,9 @@ Required:
 
 Options:
   --artifact-type <t> "html-inline" (default) or "html-ref". With "html-ref"
-                      the --artifact value is treated as a URL.
+                      the --artifact value is treated as a URL. Note: the relay
+                      does not serve "html-ref" artifacts in this release and
+                      will reject the session — use "html-inline".
   --ttl <seconds>     Session time-to-live in seconds.
   --participants <n>  Number of human participants (default 1).
   --metadata <path|json>  Arbitrary metadata object (file path or inline JSON).

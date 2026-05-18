@@ -73,6 +73,22 @@ export interface AssertSafeUrlOptions {
   field?: string;
 }
 
+/**
+ * Validates that `rawUrl` does not point at a private/loopback/metadata/CGNAT
+ * target, resolving DNS and checking every returned address.
+ *
+ * Residual risk — create-time vs fire-time TOCTOU. This runs when the session
+ * is created; the actual outbound request (the webhook callback) happens later
+ * in webhook.ts and is NOT re-validated. An attacker who controls DNS for the
+ * host can let it resolve to a public IP at create time, then rebind it to a
+ * private IP before the webhook fires (a DNS-rebinding attack). We accept this
+ * rather than re-resolve per fire because (a) re-resolving still races the next
+ * packet, so it is not a real fix, and (b) the defence-in-depth that does close
+ * it — egress network policy / a locked-down outbound proxy — belongs at the
+ * infrastructure layer, which most cloud hosts already provide. Operators
+ * running the relay where outbound traffic is unrestricted should add egress
+ * filtering.
+ */
 export async function assertSafeOutboundUrl(
   rawUrl: string,
   opts: AssertSafeUrlOptions = {},

@@ -231,7 +231,9 @@ bridge.get("/:token/content", async (c) => {
   if (session.artifactType === "html-inline") {
     artifactBody = session.artifactSource;
   } else {
-    // html-ref: v1 stub. Fetch + cache support is deferred (issue #24).
+    // html-ref is rejected at POST /v1/sessions in this release, so no new
+    // session reaches here with that type. Kept as defence-in-depth for any
+    // pre-existing row; fetch + cache support is deferred to a later phase.
     artifactBody = "<!-- artifact.type=html-ref is not implemented in v1 -->";
   }
 
