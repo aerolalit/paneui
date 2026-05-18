@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { generateApiKey, generateToken, hashKey, keyPrefix } from "./keys.js";
+import {
+  generateApiKey,
+  generateAgentParticipantToken,
+  generateHumanParticipantToken,
+  hashKey,
+  keyPrefix,
+} from "./keys.js";
 
 describe("keys", () => {
   it("generates a 'pane_' prefixed api key with 32 hex chars", () => {
@@ -7,10 +13,16 @@ describe("keys", () => {
     expect(k).toMatch(/^pane_[0-9a-f]{32}$/);
   });
 
-  it("generates a base64url token of 43 chars", () => {
-    const t = generateToken();
-    expect(t).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(t.length).toBe(43);
+  it("generates an agent participant token with the 'tok_a_' prefix (49 chars)", () => {
+    const t = generateAgentParticipantToken();
+    expect(t).toMatch(/^tok_a_[A-Za-z0-9_-]{43}$/);
+    expect(t.length).toBe(49);
+  });
+
+  it("generates a human participant token with the 'tok_h_' prefix (49 chars)", () => {
+    const t = generateHumanParticipantToken();
+    expect(t).toMatch(/^tok_h_[A-Za-z0-9_-]{43}$/);
+    expect(t.length).toBe(49);
   });
 
   it("hashKey is deterministic and returns 64 hex chars", () => {
@@ -26,10 +38,17 @@ describe("keys", () => {
     expect(k.startsWith(p)).toBe(true);
   });
 
-  it("keyPrefix for a token returns 8 chars and is a prefix of the token", () => {
-    const t = generateToken();
-    const p = keyPrefix(t);
-    expect(p.length).toBe(8);
-    expect(t.startsWith(p)).toBe(true);
+  it("keyPrefix for a participant token returns a 12-char type-aware prefix", () => {
+    const agentTok = generateAgentParticipantToken();
+    const ap = keyPrefix(agentTok);
+    expect(ap.length).toBe(12);
+    expect(ap.startsWith("tok_a_")).toBe(true);
+    expect(agentTok.startsWith(ap)).toBe(true);
+
+    const humanTok = generateHumanParticipantToken();
+    const hp = keyPrefix(humanTok);
+    expect(hp.length).toBe(12);
+    expect(hp.startsWith("tok_h_")).toBe(true);
+    expect(humanTok.startsWith(hp)).toBe(true);
   });
 });
