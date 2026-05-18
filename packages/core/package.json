@@ -1,11 +1,30 @@
 {
   "name": "@pane/core",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Pane relay client: typed HTTP + WebSocket operations against a Pane relay. Framework-free.",
   "license": "MIT",
   "type": "module",
+  "keywords": [
+    "pane",
+    "agent",
+    "websocket",
+    "relay",
+    "human-in-the-loop"
+  ],
+  "homepage": "https://github.com/aerolalit/pane#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aerolalit/pane.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/aerolalit/pane/issues"
+  },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
