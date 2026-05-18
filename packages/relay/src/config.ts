@@ -76,19 +76,18 @@ const schema = z.object({
   REDIS_URL: z.string().optional(),
   // OpenTelemetry metrics. The relay is instrumented once with the
   // vendor-neutral OTel SDK; the exporter decides where telemetry goes.
-  // METRICS_ENABLED=false makes the instrument helpers no-ops, omits the
-  // MeterProvider, and unmounts GET /metrics.
+  // METRICS_ENABLED=false makes the instrument helpers no-ops and omits the
+  // MeterProvider.
   METRICS_ENABLED: z
     .enum(["true", "false", "1", "0"])
     .default("true")
     .transform((v) => v === "true" || v === "1"),
-  // Selects the metrics/traces exporter. "prometheus" exposes GET /metrics in
-  // the Prometheus text format on the existing Hono app; "azure" pushes
-  // metrics, traces and exceptions to Azure Application Insights via the
-  // optional @azure/monitor-opentelemetry-exporter package; "none" (the
-  // default) collects no telemetry and mounts nothing — operators opt in.
+  // Selects the metrics/traces exporter. "azure" pushes metrics, traces and
+  // exceptions to Azure Application Insights via the optional
+  // @azure/monitor-opentelemetry-exporter package; "none" (the default)
+  // collects no telemetry — operators opt in.
   // See telemetry/metrics.ts and telemetry/tracing.ts.
-  METRICS_EXPORTER: z.enum(["prometheus", "azure", "none"]).default("none"),
+  METRICS_EXPORTER: z.enum(["azure", "none"]).default("none"),
   // Azure Application Insights connection string. Standard env var name used by
   // Azure Monitor tooling — kept verbatim so portal/CLI conventions line up.
   // REQUIRED when METRICS_EXPORTER=azure (validated below); ignored otherwise.

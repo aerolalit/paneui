@@ -1,17 +1,13 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { ZodError } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import { ApiError, serializeApiError } from "./errors.js";
+import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
 import { log } from "../log.js";
-import {
-  collectPrometheusMetrics,
-  metricsEnabled,
-  recordError,
-  recordHttpDuration,
-} from "../telemetry/metrics.js";
+import { recordError, recordHttpDuration } from "../telemetry/metrics.js";
 import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
@@ -130,38 +126,35 @@ export function buildApp(
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-  // GET /metrics — Prometheus text exposition. Mounted ONLY when metrics are
-  // enabled AND the exporter is prometheus. Served on the existing Hono app
-  // (one port, simpler deploy) rather than the OTel exporter's own server.
-  // No auth: standard for a Prometheus scrape target — operators should
-  // firewall it off if the relay is publicly reachable.
-  if (config.METRICS_ENABLED && config.METRICS_EXPORTER === "prometheus") {
-    app.get("/metrics", async (c) => {
-      if (!metricsEnabled()) {
-        return c.json({ error: { code: "not_found" } }, 404);
-      }
-      const body = await collectPrometheusMetrics();
-      if (body === null) {
-        return c.json({ error: { code: "not_found" } }, 404);
-      }
-      return c.body(body, 200, {
-        "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
-      });
-    });
-  }
-
   // GET /skill/pane/SKILL.md — the pane agent skill, served verbatim so an
   // agent can fetch it from the relay it uses. Registered here, before the
-  // rate-limit middleware, so it stays unmetered like /healthz and /metrics.
+  // rate-limit middleware, so it stays unmetered like /healthz.
   app.route("/skill", skill);
 
+  // Global request-body size cap. Routes parse JSON bodies with c.req.json();
+  // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES) are only
+  // checked AFTER a full parse, so without this an oversized body is buffered
+  // and JSON.parse'd in memory before being rejected — a trivial OOM DoS. This
+  // ceiling sits a little above MAX_ARTIFACT_BYTES (the largest legitimate
+  // body) to leave room for JSON envelope/escaping overhead. The tighter
+  // /events limit is applied on that route below.
+  const globalBodyLimit = config.MAX_ARTIFACT_BYTES + 256 * 1024;
+  app.use(
+    "/v1/*",
+    bodyLimit({
+      maxSize: globalBodyLimit,
+      onError: () => {
+        throw apiErrors.payloadTooLarge();
+      },
+    }),
+  );
+
   // General per-IP + per-token rate limit on every API/bridge route. /healthz
-  // and /metrics are registered above so they stay unmetered (load balancers
-  // and Prometheus scrapers poll them). The rate-limit middleware runs after
-  // the request-id/duration middleware (app.use("*", ...) above) so rejected
-  // (429) requests are still logged and traced. The open /v1/register
-  // endpoint additionally has its own stricter per-IP limiter applied inside
-  // the route module.
+  // and /skill are registered above so they stay unmetered (load balancers
+  // poll them). The rate-limit middleware runs after the request-id/duration
+  // middleware (app.use("*", ...) above) so rejected (429) requests are still
+  // logged and traced. The open /v1/register endpoint additionally has its own
+  // stricter per-IP limiter applied inside the route module.
   app.use("/v1/*", generalRateLimit);
   app.use("/s/*", generalRateLimit);
 
@@ -171,6 +164,18 @@ export function buildApp(
   // In the secret and open modes a per-IP rate limit bounds abuse.
   app.route("/v1/register", register);
   app.route("/v1/sessions", sessions);
+  // Event bodies carry at most MAX_EVENT_DATA_BYTES of `data`; a tighter cap
+  // here (leaving headroom for the JSON envelope) rejects an oversized event
+  // body before it is buffered/parsed, ahead of the global /v1/* limit.
+  app.use(
+    "/v1/sessions/:id/events",
+    bodyLimit({
+      maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
+      onError: () => {
+        throw apiErrors.payloadTooLarge();
+      },
+    }),
+  );
   app.route("/v1/sessions/:id/events", events);
   app.route("/v1/keys", keys);
   app.route("/s", bridge);

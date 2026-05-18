@@ -136,6 +136,26 @@ async function handleUpgrade(
     }
     const sessionId = m[1]!;
 
+    // Cross-site WebSocket hijacking guard. Browsers always send an `Origin`
+    // header on a WS handshake; a `?token=`/`?ticket=` in the query string is
+    // not protected by the same-origin policy, so a malicious page could open
+    // a stream cross-site if it ever obtains a credential. When `Origin` is
+    // present it MUST match the relay's own public origin. Non-browser clients
+    // (agents, the CLI) omit `Origin` entirely — those are allowed through.
+    const origin = req.headers["origin"];
+    if (typeof origin === "string" && origin.length > 0) {
+      let originOk = false;
+      try {
+        originOk = new URL(origin).origin === new URL(config.publicUrl).origin;
+      } catch {
+        originOk = false;
+      }
+      if (!originOk) {
+        sendUpgradeError(socket, 403);
+        return;
+      }
+    }
+
     // Per-IP rate limit FIRST — before any token resolve or DB lookup — so a
     // flood of upgrade attempts cannot drive DB work. The Hono `generalRateLimit`
     // middleware does not cover the upgrade (it is handled off the Hono app).
@@ -309,6 +329,7 @@ function extractCredential(
 function sendUpgradeError(socket: Duplex, status: number): void {
   const statusText: Record<number, string> = {
     401: "Unauthorized",
+    403: "Forbidden",
     404: "Not Found",
     410: "Gone",
     429: "Too Many Requests",
