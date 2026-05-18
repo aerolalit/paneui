@@ -198,14 +198,25 @@ NODE_ENV=production PUBLIC_URL=... PANE_SECRET_KEY=... \
 ### Database
 
 SQLite is the default and is the recommended store for a self-host — one file,
-no separate service. The default Docker image (`docker build` with no
-`--build-arg`) bakes the SQLite-targeted Prisma client and is byte-for-byte the
-same as before. Postgres is the hosted/Azure path (see below): build the image
-with `--build-arg DATABASE_PROVIDER=postgres` to bake the postgresql-targeted
-client, then run it against a `postgresql://` `DATABASE_URL`. The container's
-boot-time `migrate deploy` is engine-aware — it detects sqlite vs postgres from
-`DATABASE_URL` and applies the matching migration set automatically. For a solo
-deployment, stay on SQLite.
+no separate service. Two image variants are published to GHCR on every release:
+
+```
+ghcr.io/aerolalit/pane:<version>            # SQLite — the self-host default
+ghcr.io/aerolalit/pane:latest
+ghcr.io/aerolalit/pane:<version>-postgres   # Postgres — the hosted build
+ghcr.io/aerolalit/pane:latest-postgres
+```
+
+The two differ only in the Prisma client baked at build time (the datasource
+provider is fixed at `prisma generate` time, so it cannot be switched at
+runtime). The Postgres variant is for the hosted/Azure path — run it against a
+`postgresql://` `DATABASE_URL`. The container's boot-time `migrate deploy` is
+engine-aware: it detects sqlite vs postgres from `DATABASE_URL` and applies the
+matching migration set automatically. For a solo deployment, stay on SQLite.
+
+To build either variant locally instead of pulling it: `docker build` with no
+`--build-arg` gives the SQLite image; `--build-arg DATABASE_PROVIDER=postgres`
+gives the Postgres one.
 
 ### TLS and reverse proxy
 
