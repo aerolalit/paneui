@@ -4,23 +4,29 @@
 # and serves the agent HTTP/WebSocket API. The `pane` CLI runs alongside your
 # agent, not here. See docs/DEPLOY.md for the full guide.
 #
-# Quickstart:
-#   1. Copy packages/relay/.env.example -> .env (repo root) and edit it.
-#      At minimum set PUBLIC_URL and PANE_SECRET_KEY for a real deployment.
-#   2. docker compose up -d --build
+# Quickstart (no clone needed — this file + a .env is all you need):
+#   1. Put this file and a .env in an empty directory. Copy the env keys from
+#      packages/relay/.env.example. At minimum set PUBLIC_URL and
+#      PANE_SECRET_KEY for a real deployment.
+#   2. docker compose up -d
 #   3. Put a TLS-terminating reverse proxy in front (PUBLIC_URL must be https
 #      and must forward WebSocket upgrades). The relay itself speaks plain HTTP.
+#
+# This pulls a prebuilt image from GHCR — pin a real version tag instead of
+# `latest` for reproducible deploys (see https://github.com/aerolalit/pane/pkgs/container/pane).
+# To build from a local checkout instead (for contributors / unreleased
+# changes), comment out `image:` and uncomment the `build:` block below.
 #
 # Postgres is NOT supported by this image — it ships sqlite migrations only.
 
 services:
   relay:
-    build:
-      # Build context is the monorepo root; the Dockerfile lives in the relay
-      # package and expects root context (it copies the workspace manifests).
-      context: .
-      dockerfile: packages/relay/Dockerfile
-    image: pane
+    image: ghcr.io/aerolalit/pane:latest
+    # build:
+    #   # Build context is the monorepo root; the Dockerfile lives in the relay
+    #   # package and expects root context (it copies the workspace manifests).
+    #   context: .
+    #   dockerfile: packages/relay/Dockerfile
     restart: unless-stopped
     ports:
       - "3000:3000"
