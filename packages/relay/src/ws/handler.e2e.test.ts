@@ -468,4 +468,47 @@ describe("WS e2e", () => {
     ).toBe(true);
     ws.close();
   });
+
+  // Issue #15: `participant.joined_at` is stamped on the first WebSocket
+  // connect only. HTTP polling of GET /v1/sessions/:id/events must NOT count
+  // as joining — a poll-only human is reachable but has not "joined".
+  describe("joined_at stamping (#15)", () => {
+    async function humanParticipant(sessionId: string) {
+      const p = await prisma.participant.findFirst({
+        where: { sessionId, kind: "human" },
+      });
+      if (!p) throw new Error("human participant not found");
+      return p;
+    }
+
+    it("HTTP polling does NOT stamp joined_at", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, humanToken } = await createSession(apiKey);
+
+      const res = await fetch(
+        `http://localhost:${port}/v1/sessions/${sessionId}/events`,
+        { headers: { authorization: `Bearer ${humanToken}` } },
+      );
+      expect(res.status).toBe(200);
+
+      const p = await humanParticipant(sessionId);
+      expect(p.joinedAt).toBeNull();
+    });
+
+    it("WebSocket connect stamps joined_at", async () => {
+      const { apiKey } = await seedAgent();
+      const { sessionId, humanToken } = await createSession(apiKey);
+
+      const ws = connect(sessionId, humanToken);
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
+      // Drain the join broadcast + replay.complete so handleConnection's
+      // replay query has finished before we close and the suite tears down.
+      await q.take(2);
+      ws.close();
+
+      const p = await humanParticipant(sessionId);
+      expect(p.joinedAt).not.toBeNull();
+    });
+  });
 });

@@ -128,12 +128,12 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
     where: { id: participant.sessionId },
   });
   if (!session) throw errors.notFound();
-  if (!participant.joinedAt) {
-    await prisma.participant.update({
-      where: { id: participant.id },
-      data: { joinedAt: new Date() },
-    });
-  }
+  // Note: `participant.joinedAt` is intentionally NOT stamped here. The SPEC
+  // defines it as stamped "on first connect", and a connect is a WebSocket
+  // upgrade — not an HTTP poll of GET /v1/sessions/:id/events. A human who
+  // only ever polls (the no-WS fallback) is reachable but has not "joined";
+  // counting polls would inflate the "human joined" analytics. The stamp
+  // lives solely in the WS upgrade path (src/ws/handler.ts). See issue #15.
   c.set("session", session);
   c.set("participant", participant);
   c.set("author", {
