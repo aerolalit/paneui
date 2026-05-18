@@ -41,22 +41,43 @@ export interface WriteEventDeps {
 // count on participant.joined without persisting that count. It may be async:
 // the live agent count is read from the presence registry, which is
 // Redis-backed (and therefore async) in multi-replica deployments.
+//
+// Returns `null` when the session no longer exists: a session can be deleted
+// or expire-and-be-swept while a WS connection is still mid-handshake, so the
+// `participant.joined` write can race the parent row away. That surfaces as a
+// Prisma P2003 foreign-key violation, which we swallow — the system event has
+// no session to belong to, and crashing handleConnection over it is wrong.
 export async function appendSystemEvent(
   prisma: PrismaClient,
   sessionId: string,
   type: string,
   data: object,
   decorate?: (e: SerializedEvent) => SerializedEvent | Promise<SerializedEvent>,
-): Promise<SerializedEvent> {
-  const event = await prisma.event.create({
-    data: {
-      sessionId,
-      authorKind: "system",
-      authorId: "system",
-      type,
-      data: data as Prisma.InputJsonValue,
-    },
-  });
+): Promise<SerializedEvent | null> {
+  let event;
+  try {
+    event = await prisma.event.create({
+      data: {
+        sessionId,
+        authorKind: "system",
+        authorId: "system",
+        type,
+        data: data as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2003"
+    ) {
+      log.warn("appendSystemEvent skipped: session no longer exists", {
+        sessionId,
+        type,
+      });
+      return null;
+    }
+    throw err;
+  }
   recordEventWritten("system");
   const serialized = serializeEvent(event);
   publish(sessionId, decorate ? await decorate(serialized) : serialized);

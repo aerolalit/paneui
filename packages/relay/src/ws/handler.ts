@@ -13,7 +13,7 @@ import {
   type SlidingWindowLimiter,
 } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
-import { publish, subscribe } from "../http/broadcast.js";
+import { subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
@@ -24,7 +24,6 @@ import {
   refreshSession,
   removeConnection,
 } from "./presence.js";
-import { recordEventWritten } from "../telemetry/metrics.js";
 import { redeemTicket } from "./ticket.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
@@ -468,17 +467,15 @@ async function handleConnection(
     void (async () => {
       try {
         await removeConnection(sessionId, connId);
-        const row = await prisma.event.create({
-          data: {
-            sessionId,
-            authorKind: "system",
-            authorId: "system",
-            type: "system.participant.left",
-            data: { author: { kind: author.kind, id: author.id } } as object,
-          },
-        });
-        recordEventWritten("system");
-        publish(sessionId, await withLiveCount(serializeEvent(row), sessionId));
+        // appendSystemEvent persists + broadcasts, and tolerates the session
+        // having been deleted while this socket was draining (returns null).
+        await appendSystemEvent(
+          prisma,
+          sessionId,
+          "system.participant.left",
+          { author: { kind: author.kind, id: author.id } },
+          (e) => withLiveCount(e, sessionId),
+        );
       } catch (err) {
         log.warn("participant.left event insert failed", {
           sessionId,

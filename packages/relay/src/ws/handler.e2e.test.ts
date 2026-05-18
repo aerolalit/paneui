@@ -543,7 +543,12 @@ describe("WS e2e", () => {
       const { sessionId, agentToken } = await createSession(apiKey);
       // connect() sends no Origin header — the agent/CLI path.
       const ws = connect(sessionId, agentToken);
+      const q = new FrameQueue(ws);
       await waitOpen(ws);
+      // Drain the join broadcast + replay.complete so handleConnection's
+      // appendSystemEvent has finished before we close and the suite tears
+      // down — otherwise the system-event write races the session delete.
+      await q.take(2);
       ws.close();
     });
   });
