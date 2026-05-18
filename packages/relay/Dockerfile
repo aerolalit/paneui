@@ -18,13 +18,20 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 
-# Workspace manifests first, for layer caching. Only the relay workspace is
-# needed to build the relay (it depends on no other workspace package).
+# Workspace manifests first, for layer caching. The relay depends on the
+# @pane/core workspace package, so both workspaces are installed.
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
+COPY packages/core/package.json ./packages/core/package.json
 # --ignore-scripts: the root `prepare` script runs `husky`, a dev-only git-hook
 # installer with no role inside the image (and the .git dir is not in context).
-RUN npm ci --workspace @pane/relay --include-workspace-root --ignore-scripts
+RUN npm ci --workspace @pane/relay --workspace @pane/core \
+    --include-workspace-root --ignore-scripts
+
+# Build @pane/core first — the relay imports its compiled output.
+COPY packages/core/tsconfig.json ./packages/core/tsconfig.json
+COPY packages/core/src ./packages/core/src
+RUN npm run build --workspace @pane/core
 
 COPY packages/relay/prisma ./packages/relay/prisma
 # `npm run generate` runs scripts/prisma-generate.mjs, so the scripts dir must
@@ -50,17 +57,27 @@ ENV DATABASE_URL=file:/app/data/pane.db
 
 # Prod deps only. --ignore-scripts: skip the root `prepare`/husky hook (husky is
 # a devDependency and is absent under --omit=dev — without this, `npm ci` fails).
+# @pane/core is installed too: the relay imports it, and npm wires up the
+# node_modules/@pane/core workspace symlink that the import resolves through.
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
-RUN npm ci --omit=dev --workspace @pane/relay --include-workspace-root --ignore-scripts
+COPY packages/core/package.json ./packages/core/package.json
+RUN npm ci --omit=dev --workspace @pane/relay --workspace @pane/core \
+    --include-workspace-root --ignore-scripts
 
-# Generated client + migrations + compiled JS.
+# Generated client + migrations + compiled JS. @pane/core's compiled dist is
+# copied so the workspace symlink resolves to real built output at runtime.
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
 # Migration runner (bounded retry wrapper around `prisma migrate deploy`).
 COPY packages/relay/scripts ./packages/relay/scripts
+# The pane agent skill, served verbatim at GET /skill/pane/SKILL.md. The skill
+# route resolves it relative to the relay package root (see routes/skill.ts),
+# so it is copied into the package rather than to the image root.
+COPY skill ./packages/relay/skill
 
 WORKDIR /app/packages/relay
 # Run as the unprivileged `node` user (uid 1000, ships with the base image).
