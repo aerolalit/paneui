@@ -52,7 +52,7 @@
     "@opentelemetry/sdk-metrics": "^2.7.0",
     "@opentelemetry/sdk-trace-node": "^2.7.0",
     "@opentelemetry/semantic-conventions": "^1.41.0",
-    "@pane/core": "^0.0.1",
+    "@pane/core": "^0.1.0",
     "@prisma/client": "^6.19.0",
     "@prisma/instrumentation": "^6.19.3",
     "ajv": "^8.20.0",
