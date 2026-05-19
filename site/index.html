@@ -104,7 +104,23 @@
        so neither panel resizes the row as content streams in. */
     .stage { --demo-h: 560px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
     .stage-3 { grid-template-columns: 1fr 1fr 1fr; }
+    /* intro: while the quiz story is still being told, the stage shows fewer
+       columns — it grows to stage-3 as the panels join. */
+    .stage-3.quiz-cols-1 { grid-template-columns: minmax(0, 420px); justify-content: center; }
+    .stage-3.quiz-cols-2 { grid-template-columns: minmax(0, 420px) minmax(0, 420px); justify-content: center; }
+    /* tab 1's 2-col stage collapses to a single centered column while the
+       release story is still being told in the terminal. */
+    .stage.release-cols-1 { grid-template-columns: minmax(0, 620px); justify-content: center; }
     .stage-col { display: flex; flex-direction: column; gap: 10px; }
+    /* a panel that has not yet joined the staged intro: removed from layout */
+    .stage-col.quiz-pending { display: none; }
+    /* a panel sliding into the layout: starts low + transparent */
+    .stage-col.quiz-enter { opacity: 0; transform: translateY(22px);
+      transition: opacity .4s ease, transform .4s ease; }
+    .stage-col.quiz-enter.quiz-in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .stage-col.quiz-enter { transition: none; }
+    }
     .stage-col .mock, .stage-col .term, .stage-col .botview {
       height: var(--demo-h); flex: none;
       display: flex; flex-direction: column; min-height: 0;
@@ -188,6 +204,29 @@
     .mock-body .label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
     .mock-body .q { font-size: 16.5px; font-weight: 700; margin-bottom: 16px; }
     .field { margin-bottom: 15px; }
+    /* the submitted confirmation that replaces the form after Approve & ship */
+    .submitted {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      justify-content: center; min-height: 320px; padding: 24px 18px; gap: 4px;
+    }
+    .submitted .seal {
+      width: 56px; height: 56px; border-radius: 50%; margin-bottom: 14px;
+      display: flex; align-items: center; justify-content: center;
+      background: #e7f7ec; color: #16a34a; font-size: 28px;
+      animation: sealPop .35s cubic-bezier(.2,1.3,.5,1) both;
+    }
+    @keyframes sealPop { from { transform: scale(0); } to { transform: scale(1); } }
+    @media (prefers-reduced-motion: reduce) { .submitted .seal { animation: none; } }
+    .submitted h3 { font-size: 19px; font-weight: 800; color: #131a2c; margin: 0 0 4px; }
+    .submitted .sub { font-size: 13.5px; color: #5b6479; margin: 0 0 16px; }
+    .submitted .recap {
+      width: 100%; text-align: left; border: 1px solid #e3e6ef; border-radius: 10px;
+      background: #f7f8fb; padding: 12px 14px; font-size: 12.5px;
+    }
+    .submitted .recap .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+    .submitted .recap .row .k { color: #8b93a8; }
+    .submitted .recap .row .v { color: #1c2333; font-weight: 600; }
+    .submitted .closed-note { font-size: 12px; color: #9aa1b4; margin-top: 12px; }
     .field > .fl {
       font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
       color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 6px;
@@ -323,8 +362,55 @@
     .term-body .tool {
       color: #f7c66a;                                    /* tool-call lines */
     }
+    /* ---- "click the link" animation (used in both intros before the
+       browser pane opens) — a cursor glyph taps the link, link flashes ---- */
+    .link-hot {
+      position: relative; border-radius: 4px;
+      animation: linkFlash .5s ease 1;
+    }
+    @keyframes linkFlash {
+      0%, 100% { background: transparent; }
+      45%      { background: rgba(34,211,238,.28); }
+    }
+    .click-cursor {
+      position: fixed; z-index: 80; width: 22px; height: 22px;
+      margin: -2px 0 0 -3px; pointer-events: none;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
+      transition: left .5s cubic-bezier(.4,0,.2,1), top .5s cubic-bezier(.4,0,.2,1);
+    }
+    .click-cursor.tap { animation: cursorTap .26s ease 1; }
+    @keyframes cursorTap { 50% { transform: scale(.78); } }
+    /* the ripple that blooms where the cursor taps */
+    .click-ripple {
+      position: fixed; z-index: 79; width: 12px; height: 12px;
+      margin: -6px 0 0 -6px; border-radius: 50%;
+      border: 2px solid var(--human); pointer-events: none;
+      animation: ripple .5s ease-out 1 forwards;
+    }
+    @keyframes ripple {
+      from { transform: scale(.4); opacity: .9; }
+      to   { transform: scale(3.4); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .link-hot, .click-cursor, .click-cursor.tap, .click-ripple { animation: none; }
+      .click-cursor { transition: none; }
+    }
     .term-body .json { color: #99a2c4; }
     .term-body .gap { height: 9px; }
+    /* ---- Claude Code UI inside the terminal ---- */
+    /* the user's message — a bordered chat input box with a > caret */
+    .term-body .cc-input {
+      display: flex; gap: 8px; align-items: flex-start;
+      border: 1px solid #2d3650; border-radius: 8px;
+      padding: 7px 10px; margin: 2px 0; background: #0f1424;
+    }
+    .term-body .cc-input .caret { color: var(--human); flex: none; }
+    .term-body .cc-input .txt { color: #eef1fb; }
+    /* Claude's action bullet — the filled dot Claude Code prints per step */
+    .term-body .cc-dot { color: var(--agent); }          /* ⏺ before an action */
+    .term-body .cc-tree { color: var(--faint); }         /* the ⎿ sub-line gutter */
+    .term-body .cc-tool { color: #f7c66a; }              /* tool name */
+    .term-body .cc-meta { color: var(--faint); }         /* muted result text */
     .term-cursor {
       display: inline-block; width: 7px; height: 14px; background: var(--human);
       vertical-align: -2px; animation: blink 1.1s steps(1) infinite;
@@ -336,19 +422,31 @@
 
     /* ---------- demo tab bar ---------- */
     .demo-tabs {
-      display: flex; justify-content: center; gap: 8px; margin-bottom: 22px;
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-bottom: 22px;
     }
+    @media (max-width: 720px) {
+      .demo-tab { padding: 7px 12px; }
+      .demo-tab .tpat { font-size: 12.5px; }
+      .demo-tab .tex { font-size: 10.5px; }
+    }
+    /* two-line tab: the communication pattern (top) + the example (subtitle) */
     .demo-tab {
-      display: inline-flex; align-items: center; gap: 8px;
-      font-weight: 600; font-size: 14px; padding: 9px 18px; border-radius: 999px;
-      background: var(--panel); border: 1px solid var(--border); color: var(--muted);
-      cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease;
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 8px 16px; border-radius: 14px; text-align: left;
+      background: var(--panel); border: 1px solid var(--border);
+      cursor: pointer; transition: border-color .15s ease, background .15s ease;
     }
-    .demo-tab:hover { color: var(--fg); border-color: var(--accent); }
+    .demo-tab .tlabel { display: flex; flex-direction: column; line-height: 1.25; }
+    .demo-tab .tpat { font-weight: 700; font-size: 13.5px; color: var(--muted); }
+    .demo-tab .tex { font-size: 11px; color: var(--faint); }
+    .demo-tab:hover { border-color: var(--accent); }
+    .demo-tab:hover .tpat { color: var(--fg); }
     .demo-tab[aria-selected="true"] {
-      color: var(--fg); border-color: rgba(167,139,250,.6);
+      border-color: rgba(167,139,250,.6);
       background: linear-gradient(135deg, rgba(167,139,250,.18), rgba(34,211,238,.12));
     }
+    .demo-tab[aria-selected="true"] .tpat { color: var(--fg); }
+    .demo-tab[aria-selected="true"] .tex { color: var(--muted); }
     .demo-tab:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
     .demo-tab .tdot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
     .demo-tab[aria-selected="true"] .tdot { background: var(--agent); box-shadow: 0 0 0 4px rgba(167,139,250,.18); }
@@ -393,6 +491,121 @@
     .quiz-fb.bad .fb-verdict { color: #b91c1c; }
     .quiz-fb .fb-text { color: #3f4760; margin-top: 2px; }
     @media (prefers-reduced-motion: reduce) { .quiz-fb { animation: none; } }
+
+    /* ---------- deploy monitor (tab 3) ---------- */
+    .mon-title {
+      font-size: 15.5px; font-weight: 800; color: #131a2c;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    }
+    .mon-sub { font-size: 12.5px; color: #8b93a8; margin-bottom: 16px; }
+    /* a single deploy stage row: label + percent + progress bar */
+    .mon-stage { margin-bottom: 13px; }
+    .mon-stage .mon-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    }
+    .mon-stage .mon-tick {
+      width: 17px; height: 17px; border-radius: 50%; flex: none;
+      border: 2px solid #c8cdda; position: relative;
+      transition: border-color .2s ease, background .2s ease;
+    }
+    .mon-stage.active .mon-tick { border-color: #818cf8; }
+    .mon-stage.done .mon-tick { border-color: #16a34a; background: #16a34a; }
+    .mon-stage.done .mon-tick::after {
+      content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px;
+      border: solid #fff; border-width: 0 2.2px 2.2px 0; transform: rotate(45deg);
+    }
+    .mon-stage .mon-nm { font-size: 13.5px; font-weight: 600; color: #1c2333; }
+    .mon-stage .mon-pct {
+      margin-left: auto; font: 11.5px/1 ui-monospace, Menlo, monospace; color: #8b93a8;
+    }
+    .mon-stage.done .mon-pct { color: #16a34a; }
+    .mon-bar {
+      height: 7px; border-radius: 999px; background: #eef0f5;
+      border: 1px solid #e3e6ef; overflow: hidden;
+    }
+    .mon-fill {
+      height: 100%; width: 0%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--agent), var(--human));
+      transition: width .55s ease;
+    }
+    .mon-stage.done .mon-fill { background: #16a34a; }
+    @media (prefers-reduced-motion: reduce) {
+      .mon-fill, .mon-stage .mon-tick { transition: none; }
+    }
+    .mon-banner {
+      display: none; align-items: center; gap: 9px; margin-top: 4px;
+      padding: 11px 13px; border-radius: 11px;
+      background: #e7f7ec; border: 1px solid #bce7c9;
+      font-size: 13px; font-weight: 700; color: #15803d;
+      animation: lnIn .3s ease both;
+    }
+    .mon-banner.show { display: flex; }
+    @media (prefers-reduced-motion: reduce) { .mon-banner { animation: none; } }
+
+    /* ---------- weekly report (tab 4) ---------- */
+    .rep-title { font-size: 15.5px; font-weight: 800; color: #131a2c; margin-bottom: 12px; }
+    .rep-stats {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;
+    }
+    .rep-stat {
+      flex: 1 1 0; min-width: 84px; text-align: center;
+      border: 1px solid #e3e6ef; border-radius: 10px;
+      background: #f7f8fb; padding: 9px 6px;
+    }
+    .rep-stat .rv { font-size: 18px; font-weight: 800; color: #131a2c; letter-spacing: -.02em; }
+    .rep-stat .rk {
+      font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+      color: #9aa1b4; margin-top: 2px;
+    }
+    /* pure-CSS bar chart — one bar per day */
+    .rep-chart {
+      display: flex; align-items: stretch; gap: 10px;
+      height: 124px; margin-bottom: 18px; padding: 0 2px;
+    }
+    /* each column fills the chart height so the bar's % resolves */
+    .rep-chcol { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+    /* the value label above the bar */
+    .rep-chval { font-size: 11px; font-weight: 700; color: #5b6479; text-align: center; }
+    /* the bar grows from the bottom of the remaining space */
+    .rep-chwrap { flex: 1; display: flex; align-items: flex-end; min-height: 0; }
+    .rep-chbar {
+      width: 100%; border-radius: 5px 5px 0 0;
+      background: linear-gradient(180deg, var(--agent), var(--accent-2));
+      min-height: 4px; height: 0;
+      transition: height .7s cubic-bezier(.22,1,.36,1);
+    }
+    @media (prefers-reduced-motion: reduce) { .rep-chbar { transition: none; } }
+    .rep-chday { font-size: 10.5px; font-weight: 600; color: #9aa1b4; text-align: center; }
+    /* expandable day rows */
+    .rep-rows { border: 1px solid #e3e6ef; border-radius: 10px; overflow: hidden; }
+    .rep-row { border-top: 1px solid #eef0f5; }
+    .rep-row:first-child { border-top: none; }
+    .rep-rhd {
+      display: flex; align-items: center; gap: 9px; padding: 9px 12px;
+      font-size: 13px; background: #fff;
+    }
+    .rep-row.expandable .rep-rhd { cursor: pointer; }
+    .rep-row.expandable .rep-rhd:hover { background: #f7f8fb; }
+    .rep-rhd:focus-visible { outline: 2px solid var(--agent); outline-offset: -2px; }
+    .rep-rhd .rep-caret {
+      width: 12px; flex: none; color: #9aa1b4; font-size: 10px;
+      transition: transform .15s ease;
+    }
+    .rep-row.open .rep-rhd .rep-caret { transform: rotate(90deg); }
+    .rep-rhd .rep-day { font-weight: 700; color: #1c2333; }
+    .rep-rhd .rep-meta { margin-left: auto; font-size: 11.5px; color: #8b93a8; }
+    .rep-rhd .rep-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex: none; background: #16a34a;
+    }
+    .rep-rhd .rep-dot.warn { background: #f59e0b; }
+    .rep-rbody { display: none; padding: 2px 12px 11px 33px; background: #fafbfc; }
+    .rep-row.open .rep-rbody { display: block; }
+    .rep-rbody .rep-sub {
+      display: flex; gap: 8px; font-size: 12px; color: #5b6479; padding: 3px 0;
+    }
+    .rep-rbody .rep-sub .rep-sha {
+      font: 11px/1.5 ui-monospace, Menlo, monospace; color: #818cf8; flex: none;
+    }
 
     /* ---------- telegram bot view ---------- */
     /* ---- Telegram chat (the quiz demo's right panel) ---- */
@@ -612,13 +825,28 @@
         <p class="hero-note">Install with <code>npm i -g pane-cli</code></p>
       </div>
 
-      <!-- demo tab bar: pick which round-trip demo to watch -->
-      <div class="demo-tabs" role="tablist" aria-label="Interactive demos">
+      <!-- demo tab bar: each tab is a communication pattern, with the
+           concrete example shown as a subtitle -->
+      <div class="demo-tabs" role="tablist" aria-label="Communication patterns">
         <button class="demo-tab" id="tab-release" role="tab" aria-selected="true" aria-controls="panel-release" tabindex="0">
-          <span class="tdot"></span>Approve a release
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Human in the loop</span>
+            <span class="tex">Approve a release</span></span>
         </button>
         <button class="demo-tab" id="tab-quiz" role="tab" aria-selected="false" aria-controls="panel-quiz" tabindex="-1">
-          <span class="tdot"></span>Run a quiz
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Multi-turn loop</span>
+            <span class="tex">Run a quiz</span></span>
+        </button>
+        <button class="demo-tab" id="tab-monitor" role="tab" aria-selected="false" aria-controls="panel-monitor" tabindex="-1">
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Live stream</span>
+            <span class="tex">Live deploy monitor</span></span>
+        </button>
+        <button class="demo-tab" id="tab-report" role="tab" aria-selected="false" aria-controls="panel-report" tabindex="-1">
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">One-way handoff</span>
+            <span class="tex">Generate a report</span></span>
         </button>
       </div>
 
@@ -626,15 +854,15 @@
       <div class="demo-panel" id="panel-release" role="tabpanel" aria-labelledby="tab-release">
 
       <!-- demo stage: the human's browser (left) and the agent's terminal (right) -->
-      <div class="stage">
+      <div class="stage" id="rel-stage">
 
       <!-- LEFT: what the human sees -->
-      <div class="stage-col">
+      <div class="stage-col" id="rel-col-pane">
         <div class="stage-cap"><span class="pip human"></span>The human opens the URL</div>
       <div class="mock" role="img" aria-label="A browser window showing the pane shell wrapping a rich interactive artifact the agent handed to a human">
         <div class="mock-bar">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-          <span class="mock-url"><span class="lock">🔒</span> paneui.com/s/8fa2c1</span>
+          <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/8fa2c1</span>
         </div>
 
         <!-- pane shell header: relay-rendered chrome around every artifact -->
@@ -712,7 +940,7 @@
       </div><!-- /stage-col left -->
 
       <!-- RIGHT: what the agent sees — a Claude Code terminal -->
-      <div class="stage-col">
+      <div class="stage-col" id="rel-col-term">
         <div class="stage-cap"><span class="pip agent"></span>The agent waits in the terminal</div>
         <div class="term" role="img" aria-label="A Claude Code terminal where the agent created the pane and is waiting for the human's response">
           <div class="term-bar">
@@ -721,17 +949,8 @@
             <span class="dot g" style="background:#28c840"></span>
             <span class="ttl">claude — deployment</span>
           </div>
-          <div class="term-body" id="demo-term">
-            <div class="ln dim">▸ deploy-bot · release pipeline</div>
-            <div class="gap"></div>
-            <div class="ln"><span class="pr">$</span> <span class="cmd">pane create --artifact ./review.html --event-schema ./schema.json</span></div>
-            <div class="ln ok">✓ session <span class="ev">ses_8fa2c1</span> created</div>
-            <div class="ln dim">  share this URL with the reviewer:</div>
-            <div class="ln"><span class="url">https://paneui.com/s/8fa2c1</span></div>
-            <div class="gap"></div>
-            <div class="ln"><span class="pr">$</span> <span class="cmd">pane watch ses_8fa2c1 --type form.submitted</span></div>
-            <div class="ln dim" id="term-wait">  waiting for the human to respond<span class="term-cursor"></span></div>
-          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="demo-term"></div>
         </div>
       </div><!-- /stage-col right -->
 
@@ -743,15 +962,15 @@
       <!-- ===== TAB 2: run a quiz ===== -->
       <div class="demo-panel" id="panel-quiz" role="tabpanel" aria-labelledby="tab-quiz" hidden>
 
-      <div class="stage stage-3">
+      <div class="stage stage-3" id="quiz-stage">
 
       <!-- LEFT: what the student sees -->
-      <div class="stage-col">
+      <div class="stage-col" id="quiz-col-pane">
         <div class="stage-cap"><span class="pip human"></span>The student takes the quiz</div>
         <div class="mock" role="img" aria-label="A browser window showing an interactive quiz the agent generated from uploaded notes">
           <div class="mock-bar">
             <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-            <span class="mock-url"><span class="lock">🔒</span> paneui.com/s/q7m2x9</span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/q7m2x9</span>
           </div>
 
           <!-- pane shell header -->
@@ -788,7 +1007,7 @@
       </div><!-- /stage-col left -->
 
       <!-- RIGHT: what the bot does — a Telegram bot view -->
-      <div class="stage-col">
+      <div class="stage-col" id="quiz-col-bot">
         <div class="stage-cap"><span class="pip agent"></span>MyClawAi works in the background</div>
         <div class="botview" role="img" aria-label="A Telegram chat with the MyClawAi bot, which generated the quiz and grades each answer">
           <div class="bot-bar">
@@ -813,7 +1032,7 @@
       </div><!-- /stage-col right -->
 
       <!-- THIRD: the OpenClaw agent process that runs the bot -->
-      <div class="stage-col">
+      <div class="stage-col" id="quiz-col-term">
         <div class="stage-cap"><span class="pip agent"></span>OpenClaw runs the bot</div>
         <div class="term" role="img" aria-label="An OpenClaw terminal showing the agent process that runs the MyClawAi bot, receiving pane events and grading answers">
           <div class="term-bar">
@@ -822,20 +1041,8 @@
             <span class="dot g" style="background:#28c840"></span>
             <span class="ttl">openclaw — myclawai</span>
           </div>
-          <div class="term-body" id="quiz-term">
-            <div class="ln dim">▸ openclaw · myclawai bot</div>
-            <div class="gap"></div>
-            <div class="ln"><span class="pr">$</span> <span class="cmd">openclaw start --agent myclawai</span></div>
-            <div class="ln ok">✓ telegram bot online — <span class="ev">@MyClawAi</span></div>
-            <div class="ln dim"><span class="ev">●</span> telegram: received notes.pdf (14 pages)</div>
-            <div class="ln tool">⚙ tool: read_pdf → extracted 14 pages</div>
-            <div class="ln dim"><span class="ev">●</span> built a 5-question quiz from the notes</div>
-            <div class="ln"><span class="pr">$</span> <span class="cmd">pane create --artifact ./quiz.html --event-schema ./quiz.schema.json</span></div>
-            <div class="ln ok">✓ session <span class="ev">ses_q7m2x9</span> created</div>
-            <div class="gap"></div>
-            <div class="ln"><span class="pr">$</span> <span class="cmd">pane watch ses_q7m2x9 --type quiz.answered</span></div>
-            <div class="ln dim" id="quiz-term-wait">  waiting for answers…<span class="term-cursor"></span></div>
-          </div>
+          <!-- starts empty — startup lines are streamed in by JS during the intro -->
+          <div class="term-body" id="quiz-term"></div>
         </div>
       </div><!-- /stage-col third -->
 
@@ -843,6 +1050,144 @@
 
       <p class="stage-hint">↑ <b>Answer a question</b> — the pane sends it to <b>MyClawAi</b>, OpenClaw grades it in the terminal, and the next question comes back.</p>
       </div><!-- /panel-quiz -->
+
+      <!-- ===== TAB 3: live deploy monitor ===== -->
+      <div class="demo-panel" id="panel-monitor" role="tabpanel" aria-labelledby="tab-monitor" hidden>
+
+      <!-- demo stage: the human's browser (left) and the agent's terminal (right) -->
+      <div class="stage" id="mon-stage">
+
+      <!-- LEFT: what the human watches -->
+      <div class="stage-col" id="mon-col-pane">
+        <div class="stage-cap"><span class="pip human"></span>The human watches it live</div>
+        <div class="mock" role="img" aria-label="A browser window showing a live deploy monitor the agent streams progress into">
+          <div class="mock-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/d3k9p1</span>
+          </div>
+
+          <!-- pane shell header -->
+          <div class="shell-hdr">
+            <span class="shell-brand">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <rect width="100" height="100" rx="22" fill="#0f172a" />
+                <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+                <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+                <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+                <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+                <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+              </svg>
+              <span class="nm">Pane</span>
+            </span>
+            <span class="sp"></span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <span class="pdot up"></span><span class="ptx">connected</span>
+            </span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+              <span class="pdot up"></span><span class="ptx">agent active</span>
+            </span>
+          </div>
+
+          <!-- the live monitor artifact, rendered on white -->
+          <div class="artifact">
+            <div class="mock-body" id="mon-pane">
+              <!-- monitor body rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /stage-col left -->
+
+      <!-- RIGHT: what the agent does — a Claude Code terminal -->
+      <div class="stage-col" id="mon-col-term">
+        <div class="stage-cap"><span class="pip agent"></span>The agent streams progress</div>
+        <div class="term" role="img" aria-label="A Claude Code terminal where the agent runs a deploy and streams progress into the pane">
+          <div class="term-bar">
+            <span class="dot r" style="background:#ff5f57"></span>
+            <span class="dot y" style="background:#febc2e"></span>
+            <span class="dot g" style="background:#28c840"></span>
+            <span class="ttl">claude — release</span>
+          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="mon-term"></div>
+        </div>
+      </div><!-- /stage-col right -->
+
+      </div><!-- /stage -->
+
+      <p class="stage-hint">↑ <b>No input needed</b> — the agent pushes deploy progress and the pane updates live. A pane can be a read-only window the agent streams into.</p>
+      </div><!-- /panel-monitor -->
+
+      <!-- ===== TAB 4: generate a report ===== -->
+      <div class="demo-panel" id="panel-report" role="tabpanel" aria-labelledby="tab-report" hidden>
+
+      <!-- demo stage: the human's browser (left) and the agent's terminal (right) -->
+      <div class="stage" id="rep-stage">
+
+      <!-- LEFT: what the human gets -->
+      <div class="stage-col" id="rep-col-pane">
+        <div class="stage-cap"><span class="pip human"></span>The human gets a report</div>
+        <div class="mock" role="img" aria-label="A browser window showing a Q2 financial report the agent compiled and handed over as a view-only pane">
+          <div class="mock-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/r5w8t2</span>
+          </div>
+
+          <!-- pane shell header -->
+          <div class="shell-hdr">
+            <span class="shell-brand">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <rect width="100" height="100" rx="22" fill="#0f172a" />
+                <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+                <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+                <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+                <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+                <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+              </svg>
+              <span class="nm">Pane</span>
+            </span>
+            <span class="sp"></span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <span class="pdot up"></span><span class="ptx">connected</span>
+            </span>
+            <!-- the agent created this pane then disconnected — the real
+                 shell shows "agent away" with a neutral (grey) dot. -->
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+              <span class="pdot"></span><span class="ptx">agent away</span>
+            </span>
+          </div>
+
+          <!-- the report artifact, rendered on white -->
+          <div class="artifact">
+            <div class="mock-body" id="rep-pane">
+              <!-- report body rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /stage-col left -->
+
+      <!-- RIGHT: what the agent does — a Claude Code terminal -->
+      <div class="stage-col" id="rep-col-term">
+        <div class="stage-cap"><span class="pip agent"></span>The agent compiles it</div>
+        <div class="term" role="img" aria-label="A Claude Code terminal where the agent compiles a Q2 financial report and hands it over as a view-only pane">
+          <div class="term-bar">
+            <span class="dot r" style="background:#ff5f57"></span>
+            <span class="dot y" style="background:#febc2e"></span>
+            <span class="dot g" style="background:#28c840"></span>
+            <span class="ttl">claude — reporting</span>
+          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="rep-term"></div>
+        </div>
+      </div><!-- /stage-col right -->
+
+      </div><!-- /stage -->
+
+      <p class="stage-hint">↑ <b>Explore the report</b> — click a month to break down the revenue. A pane can be a view-only output surface, not just a form.</p>
+      </div><!-- /panel-report -->
     </div>
   </section>
 
@@ -1003,6 +1348,75 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     </div>
   </footer>
 
+  <!-- ============ shared: animate a cursor clicking a link ============ -->
+  <script>
+  // __paneClickLink(linkEl, done): glides a fake cursor to linkEl, taps it
+  // (ripple + flash), then calls done(). Used by both intros right before
+  // the browser pane opens, so the cause (the click) is visible.
+  window.__paneClickLink = function (linkEl, done) {
+    var reduce = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!linkEl || reduce) {
+      if (linkEl) linkEl.classList.add('link-hot');
+      setTimeout(function () { if (done) done(); }, reduce ? 0 : 200);
+      return;
+    }
+    // The link sits inside a scrolling terminal/chat. As lines streamed in,
+    // it may have scrolled out of the visible area — a stale rect would land
+    // the cursor at the top-left of the screen. Scroll it into view first,
+    // wait a frame for the scroll to settle, THEN measure.
+    if (linkEl.scrollIntoView) {
+      linkEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    requestAnimationFrame(function () {
+      var r = linkEl.getBoundingClientRect();
+      // if the element still isn't laid out, skip the animation gracefully
+      if (r.width === 0 && r.height === 0) {
+        linkEl.classList.add('link-hot');
+        setTimeout(function () { if (done) done(); }, 200);
+        return;
+      }
+      // aim a little inside the link, vertically centered
+      var tx = r.left + Math.min(48, r.width * 0.4);
+      var ty = r.top + r.height / 2;
+
+      var cur = document.createElement('div');
+      cur.className = 'click-cursor';
+      cur.innerHTML =
+        '<svg viewBox="0 0 24 24" width="22" height="22">' +
+        '<path d="M5 3l15 9-6.6 1.4L17 21l-3 1.3-3.4-7.6L5 19z" ' +
+        'fill="#fff" stroke="#0b1020" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+      // start from the lower-right, off toward the form, then glide in
+      cur.style.left = (tx + 120) + 'px';
+      cur.style.top = (ty + 90) + 'px';
+      document.body.appendChild(cur);
+
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          cur.style.left = tx + 'px';
+          cur.style.top = ty + 'px';
+        });
+      });
+
+      // after the glide (.5s) — tap: ripple, cursor press, link flash
+      setTimeout(function () {
+        cur.classList.add('tap');
+        var rip = document.createElement('div');
+        rip.className = 'click-ripple';
+        rip.style.left = tx + 'px';
+        rip.style.top = ty + 'px';
+        document.body.appendChild(rip);
+        linkEl.classList.add('link-hot');
+        setTimeout(function () {
+          if (cur.parentNode) cur.parentNode.removeChild(cur);
+          if (rip.parentNode) rip.parentNode.removeChild(rip);
+          if (done) done();
+        }, 520);
+      }, 560);
+    });
+  };
+  </script>
+
   <!-- ============ interactive hero demo ============ -->
   <script>
   (function () {
@@ -1141,12 +1555,47 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     var term = document.getElementById('demo-term');
     var submit = document.getElementById('demo-submit');
     var running = false;
-    // snapshot the terminal's resting state so the demo can replay cleanly
-    var TERM_INITIAL = term.innerHTML;
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // the terminal's startup sequence — was static markup, now streamed in by
+    // JS one line at a time. each entry: { gap: true } OR { html, cls } OR
+    // { html, cls, wait: true } (the resting wait line runTerminal() targets).
+    // RELEASE_TERM_INITIAL is replayed so the post-intro resting state is
+    // reusable for reset().
+    var RELEASE_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/deploy-pipeline</span>', cls: '' },
+      { gap: true },
+      // the developer's message, typed into Claude Code's chat input box
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">let\'s ship the new release</span></div>' },
+      { gap: true },
+      // Claude's actions — ⏺ bullets, tool sub-lines under a ⎿ gutter
+      { html: '<span class="cc-dot">⏺</span> Checking the build for v2.4.0.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(git log --oneline)  <span class="cc-meta">12 commits, tag ready</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Build looks good. This needs a human ' +
+              'sign-off — I\'ll hand them a review pane.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane create --artifact ./review.html --event-schema ./schema.json)', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">ses_8fa2c1</span>' +
+              ' created', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Sent the reviewer this link:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="rel-url">' +
+              'https://relay.paneui.com/s/8fa2c1</span>', cls: '' },
+      { gap: true },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Monitor</span>' +
+              '(pane watch ses_8fa2c1 --type form.submitted)', cls: '' },
+      { html: '     waiting for the human to respond<span class="term-cursor"></span>',
+        cls: 'dim', wait: true }
+    ];
 
     function termLine(html, cls) {
       var d = document.createElement('div');
-      d.className = 'ln reveal' + (cls ? ' ' + cls : '');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
       d.innerHTML = html;
       term.appendChild(d);
       term.scrollTop = term.scrollHeight;
@@ -1157,13 +1606,27 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       d.className = 'gap';
       term.appendChild(d);
     }
+    // render one startup-sequence entry (a line or a gap). the `wait` entry
+    // gets id="term-wait" — runTerminal() depends on finding it.
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'term-wait';
+      return d;
+    }
+    // resting state for reset(): clear the terminal and replay the whole
+    // startup sequence at once (no per-line stagger, no slow intro).
+    function resetTerm() {
+      term.innerHTML = '';
+      RELEASE_TERM_INITIAL.forEach(renderTermEntry);
+      term.scrollTop = term.scrollHeight;
+    }
 
     function runTerminal() {
       if (running) return;
       running = true;
-      submit.classList.add('done');
-      var label = submit.textContent;
-      submit.textContent = '✓ Submitted';
+      // the form is replaced by a submitted confirmation (below) and the
+      // terminal output persists. Only a hard page refresh starts over.
 
       var checked = Object.keys(state.checklist).filter(function (k) { return state.checklist[k]; });
       var note = (document.getElementById('demo-note').textContent || '').trim();
@@ -1171,50 +1634,80 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       var checklistJson = checked.map(function (k) { return '"' + k + '"'; }).join(', ');
       var target = TARGET_IDS[state.targetIdx];
 
-      // the agent's follow-up actions adapt to what the human chose
+      // replace the whole form with a submitted confirmation — the input
+      // fields are gone; the pane now just shows what was sent.
+      demo.innerHTML =
+        '<div class="submitted">' +
+          '<div class="seal">✓</div>' +
+          '<h3>Response submitted</h3>' +
+          '<div class="sub">Your approval was sent back to the agent.</div>' +
+          '<div class="recap">' +
+            '<div class="row"><span class="k">Deploy target</span>' +
+              '<span class="v">' + esc(TARGETS[state.targetIdx]) + '</span></div>' +
+            '<div class="row"><span class="k">Canary rollout</span>' +
+              '<span class="v">' + state.canary + '%</span></div>' +
+            '<div class="row"><span class="k">Auto-rollback</span>' +
+              '<span class="v">' + (state.autoRollback ? 'On' : 'Off') + '</span></div>' +
+            '<div class="row"><span class="k">Checklist</span>' +
+              '<span class="v">' + checked.length + ' of 3 confirmed</span></div>' +
+          '</div>' +
+          '<div class="closed-note">This pane is now closed.</div>' +
+        '</div>';
+
+      // Claude's follow-up actions adapt to what the human chose. each is a
+      // ⎿ tool sub-line under the "proceeding with release" action bullet.
       var actions = [
-        { d: 380, t: 'tool', h: '⚙ Bash · git tag v2.4.0 &amp;&amp; git push --tags' },
-        { d: 620, t: 'tool', h: '⚙ Deploy · target=' + target + ' canary=' + state.canary + '%' },
+        { d: 420, h: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(git push --tags)  <span class="cc-meta">v2.4.0 tagged</span>' },
+        { d: 620, h: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(deploy ' + esc(target) + ' --canary ' + state.canary + ')' },
       ];
       if (state.checklist.notify) {
-        actions.push({ d: 520, t: 'tool', h: '⚙ Slack · posting release note to #support' });
+        actions.push({ d: 520, h: '  <span class="cc-tree">⎿</span> ' +
+          '<span class="cc-tool">Slack</span>(post #support)  ' +
+          '<span class="cc-meta">release note sent</span>' });
       }
       if (state.autoRollback) {
-        actions.push({ d: 480, t: 'tool', h: '⚙ Monitor · auto-rollback armed (5xx &gt; 2%)' });
+        actions.push({ d: 480, h: '  <span class="cc-tree">⎿</span> ' +
+          '<span class="cc-tool">Monitor</span>(auto-rollback)  ' +
+          '<span class="cc-meta">armed · 5xx &gt; 2%</span>' });
       }
 
-      // the scripted reveal sequence
+      // the scripted reveal sequence — styled like a live Claude Code session
       var seq = [];
-      // the wait line resolves into a received event
+      // the waiting line resolves into the received pane event
       seq.push({ d: 260, fn: function () {
         var w = document.getElementById('term-wait');
-        w.className = 'ln ok';
-        w.innerHTML = '✓ event received — <span class="ev">form.submitted</span>';
+        w.className = 'ln';
+        w.innerHTML = '     <span class="ok">✓</span> received ' +
+          '<span class="ev">form.submitted</span> from the reviewer';
       }});
-      seq.push({ d: 220, fn: function () {
-        termLine('<span class="json">{</span>', 'json');
-        termLine('<span class="json">  "checklist": [' + esc(checklistJson) + '],</span>', 'json');
-        termLine('<span class="json">  "target": "' + esc(target) + '", "canary": ' + state.canary + ',</span>', 'json');
-        termLine('<span class="json">  "autoRollback": ' + state.autoRollback +
-                 ', "note": "' + esc(noteShort) + '"</span>', 'json');
-        termLine('<span class="json">}</span>', 'json');
+      // Claude reads the structured answer the human submitted
+      seq.push({ d: 240, fn: function () {
         termGap();
+        termLine('<span class="cc-dot">⏺</span> The reviewer approved. They sent:');
+        termLine('  <span class="cc-tree">⎿</span> <span class="json">{ ' +
+          '"checklist": [' + esc(checklistJson) + '], "target": "' + esc(target) +
+          '",</span>');
+        termLine('     <span class="json">"canary": ' + state.canary +
+          ', "autoRollback": ' + state.autoRollback +
+          ', "note": "' + esc(noteShort) + '" }</span>');
       }});
       seq.push({ d: 340, fn: function () {
-        termLine('<span class="ev">●</span> agent: reviewer approved — proceeding with release', 'dim');
+        termGap();
+        termLine('<span class="cc-dot">⏺</span> Approval received — shipping ' +
+          'release v2.4.0.');
       }});
       actions.forEach(function (a) {
-        seq.push({ d: a.d, fn: function () { termLine(a.h, a.t); } });
+        seq.push({ d: a.d, fn: function () { termLine(a.h); } });
       });
       seq.push({ d: 560, fn: function () {
         termGap();
-        termLine('✓ release v2.4.0 shipped to <span class="ev">' + esc(target) + '</span>', 'ok');
-        termLine('<span class="pr">$</span> <span class="term-cursor"></span>');
+        termLine('<span class="cc-dot">⏺</span> <span class="ok">Done.</span> ' +
+          'Release v2.4.0 shipped to <span class="ev">' + esc(target) + '</span>.');
       }});
-      seq.push({ d: 1500, fn: function () {
-        // reset so the demo can be replayed
-        reset(label);
-      }});
+      // NOTE: no reset step — the submitted form and the terminal output
+      // both persist. The demo only resets on a hard page refresh.
 
       var i = 0;
       (function step() {
@@ -1224,23 +1717,87 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       })();
     }
 
-    function reset(label) {
-      // restore the terminal to its resting state for a clean replay
-      term.innerHTML = TERM_INITIAL;
-      submit.classList.remove('done');
-      submit.textContent = label;
-      running = false;
+    submit.addEventListener('click', runTerminal);
+
+    // ===================================================================
+    // staged intro — auto-plays when tab 1 ("Approve a release") opens.
+    // story: a developer asks Claude to ship a release; Claude works in the
+    // terminal, creates a pane, hands over the URL; THEN the browser review
+    // pane slides into the layout. mirrors tab 2's playIntro().
+    // ===================================================================
+    var stage = document.getElementById('rel-stage');
+    var colPane = document.getElementById('rel-col-pane');
+    var colTerm = document.getElementById('rel-col-term');
+    var introState = 'idle';   // idle | playing | done — guards double-runs
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0 }
+      : { termLine: 300, browserIn: 500 };
+
+    // put a column into the layout with a slide+fade-in transition.
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
     }
 
-    submit.addEventListener('click', runTerminal);
+    function playReleaseIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1 — only the terminal: the browser pane is removed from layout
+      // and the stage collapses to a single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (stage) stage.classList.add('release-cols-1');
+      term.innerHTML = '';
+
+      // STAGE 2 — stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = RELEASE_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3 — the reviewer "clicks" the link: a cursor taps the URL,
+      // then the browser review pane slides in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) stage.classList.remove('release-cols-1');
+          enterCol(colPane);
+          introState = 'done';
+        };
+        var link = document.getElementById('rel-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the browser pane hidden + the stage collapsed; the intro
+    // reveals them. (the terminal is already empty in the markup.)
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (stage) stage.classList.add('release-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneReleaseIntro = playReleaseIntro;
   })();
   </script>
 
   <!-- ============ demo tab switching ============ -->
   <script>
   (function () {
-    var tabs = [document.getElementById('tab-release'), document.getElementById('tab-quiz')];
-    var panels = [document.getElementById('panel-release'), document.getElementById('panel-quiz')];
+    var tabs = [document.getElementById('tab-release'), document.getElementById('tab-quiz'),
+                document.getElementById('tab-monitor'), document.getElementById('tab-report')];
+    var panels = [document.getElementById('panel-release'), document.getElementById('panel-quiz'),
+                  document.getElementById('panel-monitor'), document.getElementById('panel-report')];
     if (tabs.some(function (t) { return !t; }) || panels.some(function (p) { return !p; })) return;
 
     function select(idx, focus) {
@@ -1251,6 +1808,20 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
         panels[i].hidden = !on;
       });
       if (focus) tabs[idx].focus();
+      // auto-play each tab's staged intro the first time it opens.
+      // both intros guard themselves against double-runs / replays.
+      if (idx === 0 && typeof window.__paneReleaseIntro === 'function') {
+        window.__paneReleaseIntro();
+      }
+      if (idx === 1 && typeof window.__paneQuizIntro === 'function') {
+        window.__paneQuizIntro();
+      }
+      if (idx === 2 && typeof window.__paneMonitorIntro === 'function') {
+        window.__paneMonitorIntro();
+      }
+      if (idx === 3 && typeof window.__paneReportIntro === 'function') {
+        window.__paneReportIntro();
+      }
     }
 
     tabs.forEach(function (t, i) {
@@ -1269,6 +1840,13 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
         }
       });
     });
+
+    // tab 1 ("Approve a release") is the default-selected tab on page load,
+    // so auto-play its staged intro right away. the demo IIFE runs before this
+    // one (its <script> comes first), so __paneReleaseIntro is already set.
+    if (typeof window.__paneReleaseIntro === 'function') {
+      window.__paneReleaseIntro();
+    }
   })();
   </script>
 
@@ -1279,8 +1857,28 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     var bot = document.getElementById('quiz-bot');
     var qterm = document.getElementById('quiz-term');
     if (!pane || !bot) return;
-    // snapshot the OpenClaw terminal's resting state so restart() can replay it
-    var QUIZ_TERM_INITIAL = qterm ? qterm.innerHTML : '';
+    var stage = document.getElementById('quiz-stage');
+    var colPane = document.getElementById('quiz-col-pane');
+    var colBot = document.getElementById('quiz-col-bot');
+    var colTerm = document.getElementById('quiz-col-term');
+
+    // the OpenClaw terminal's startup sequence — was static markup, now streamed
+    // in by JS one line at a time. each entry: { gap: true } OR { html, cls }.
+    // QUIZ_TERM_INITIAL replays this so the post-intro resting state is reusable.
+    var QUIZ_TERM_INITIAL = [
+      { html: '▸ openclaw · myclawai bot', cls: 'dim' },
+      { gap: true },
+      { html: '<span class="pr">$</span> <span class="cmd">openclaw start --agent myclawai</span>' },
+      { html: '✓ telegram bot online — <span class="ev">@MyClawAi</span>', cls: 'ok' },
+      { html: '<span class="ev">●</span> telegram: received notes.pdf (14 pages)', cls: 'dim' },
+      { html: '⚙ tool: read_pdf → extracted 14 pages', cls: 'tool' },
+      { html: '<span class="ev">●</span> built a 5-question quiz from the notes', cls: 'dim' },
+      { html: '<span class="pr">$</span> <span class="cmd">pane create --artifact ./quiz.html --event-schema ./quiz.schema.json</span>' },
+      { html: '✓ session <span class="ev">ses_q7m2x9</span> created', cls: 'ok' },
+      { gap: true },
+      { html: '<span class="pr">$</span> <span class="cmd">pane watch ses_q7m2x9 --type quiz.answered</span>' },
+      { html: '  waiting for answers…<span class="term-cursor"></span>', cls: 'dim', wait: true }
+    ];
 
     // 5 questions generated "from the uploaded notes.pdf" — a Biology
     // chapter on cell organelles.
@@ -1378,8 +1976,22 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       d.className = 'gap';
       qterm.appendChild(d);
     }
+    // render one startup-sequence entry (a line or a gap). reused by both the
+    // staged intro (one at a time) and resetTerm() (all at once).
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) waitLine = d;
+      return d;
+    }
+    // resting state for restart(): clear the terminal and replay the whole
+    // startup sequence at once (no per-line stagger).
     function resetTerm() {
-      if (qterm) qterm.innerHTML = QUIZ_TERM_INITIAL;
+      if (!qterm) return;
+      qterm.innerHTML = '';
+      waitLine = null;
+      QUIZ_TERM_INITIAL.forEach(renderTermEntry);
+      qterm.scrollTop = qterm.scrollHeight;
     }
 
     // an outgoing file-attachment bubble (the student uploading the PDF).
@@ -1395,19 +2007,28 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       bot.scrollTop = bot.scrollHeight;
       return row;
     }
-    // the opening conversation: the student uploads notes and asks for a quiz,
-    // the bot processes the PDF and hands back a pane link.
-    function resetBot() {
+    // the student's opening: upload notes.pdf, ask for a quiz. (the bot's
+    // replies are sent separately — during the intro they stream in after the
+    // terminal startup; resetBot() appends them straight away.)
+    function botOpening() {
       bot.innerHTML = '';
       clk = 9 * 60 + 41;
       dayPill('Today');
       meAttach('notes.pdf', 'Biology · Ch. 4 — Cell Organelles');
       meMsg('Can you make an interactive quiz from this? 🙏');
+    }
+    // the bot's three replies — processing the PDF and handing back a pane link.
+    function botReplies() {
       botMsg('Got it! Reading <b>notes.pdf</b> — 14 pages 📖');
       botMsg('✨ I\'ve generated a <b>5-question quiz</b> from your notes.');
-      botMsg('Tap to start 👇<br><a class="qlink">paneui.com/s/q7m2x9</a>');
+      botMsg('Tap to start 👇<br><a class="qlink">relay.paneui.com/s/q7m2x9</a>');
       // the Telegram chat goes quiet here — OpenClaw waits on the pane channel;
       // it only posts again with the final results summary.
+    }
+    // full resting state: opening + replies, used by restart().
+    function resetBot() {
+      botOpening();
+      botReplies();
     }
 
     // ---------- quiz pane (left panel) ----------
@@ -1607,16 +2228,585 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       if (btn) btn.addEventListener('click', restart);
     }
 
+    // restart: the story has already been told, so DON'T replay the slow
+    // intro. keep all three panels present and just reset to the post-intro
+    // resting state — Q1 showing, full Telegram conversation, terminal startup.
     function restart() {
       idx = 0; score = 0; picked = -1; locked = false;
+      revealAll();
       resetBot();
       resetTerm();
       renderQuestion();
     }
 
-    // initial render
-    resetBot();
-    renderQuestion();
+    // ---------- staged intro ----------
+    var introState = 'idle';   // idle | playing | done — guards double-runs
+    var DELAYS = reduceMotion
+      ? { termIn: 0, termLine: 0, betweenBot: 0, beforeReplies: 0, browserIn: 0, typing: 0 }
+      : { termIn: 900, termLine: 320, betweenBot: 650, beforeReplies: 500, browserIn: 600, typing: 700 };
+
+    // put a column into the layout with a slide+fade-in transition.
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      // next frame, flip to the resting state so the transition runs
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+    // force the finished/interactive state: all three panels present, no anim.
+    function revealAll() {
+      [colPane, colBot, colTerm].forEach(function (c) {
+        if (!c) return;
+        c.classList.remove('quiz-pending', 'quiz-enter', 'quiz-in');
+      });
+      if (stage) stage.classList.remove('quiz-cols-1', 'quiz-cols-2');
+    }
+    // collapse the stage to fewer columns while panels are still joining.
+    function setCols(n) {
+      if (!stage) return;
+      stage.classList.remove('quiz-cols-1', 'quiz-cols-2');
+      if (n === 1) stage.classList.add('quiz-cols-1');
+      else if (n === 2) stage.classList.add('quiz-cols-2');
+    }
+
+    // the chronological reveal — auto-plays the first time tab 2 is opened.
+    // the terminal and the Telegram chat are CAUSALLY interleaved: the agent
+    // does a step in the terminal, then the matching message lands in chat.
+    function playIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1 — only Telegram: student already uploaded notes + asked
+      // (botOpening ran at init); the bot shows a typing indicator.
+      setCols(1);
+      colBot.classList.remove('quiz-pending');
+      colPane.classList.add('quiz-pending');
+      colTerm.classList.add('quiz-pending');
+      var typing = botTyping();
+
+      // helpers used by the step script -------------------------------------
+      function term(html, cls, wait) {
+        renderTermEntry(wait ? { html: html, cls: cls, wait: true }
+                             : (cls ? { html: html, cls: cls } : { html: html }));
+      }
+      function termGapStep() { renderTermEntry({ gap: true }); }
+      // a bot chat message — drops the typing indicator, posts, then shows it
+      // again (the bot is "still working") unless `final` is set.
+      function botSay(html, final) {
+        if (typing) { typing.remove(); typing = null; }
+        botMsg(html);
+        if (!final) typing = botTyping();
+      }
+
+      // the interleaved script — each step is { d: delayBefore, fn }.
+      // d is scaled to 0 under reduced motion.
+      var L = DELAYS.termLine, B = DELAYS.betweenBot;
+      var script = [
+        // the terminal panel joins, openclaw boots
+        { d: DELAYS.termIn, fn: function () {
+            setCols(2); enterCol(colTerm); } },
+        { d: L,  fn: function () { term('▸ openclaw · myclawai bot', 'dim'); } },
+        { d: 80, fn: termGapStep },
+        { d: L,  fn: function () {
+            term('<span class="pr">$</span> <span class="cmd">openclaw start --agent myclawai</span>'); } },
+        { d: L,  fn: function () {
+            term('✓ telegram bot online — <span class="ev">@MyClawAi</span>', 'ok'); } },
+        // the bot received the PDF — terminal logs it, then the bot replies
+        { d: L,  fn: function () {
+            term('<span class="ev">●</span> telegram: received notes.pdf (14 pages)', 'dim'); } },
+        { d: L,  fn: function () {
+            term('⚙ tool: read_pdf → extracted 14 pages', 'tool'); } },
+        { d: B,  fn: function () {
+            botSay('Got it! Reading <b>notes.pdf</b> — 14 pages 📖'); } },
+        // the agent builds the quiz — terminal step, then the bot reply
+        { d: B,  fn: function () {
+            term('<span class="ev">●</span> built a 5-question quiz from the notes', 'dim'); } },
+        { d: B,  fn: function () {
+            botSay('✨ I\'ve generated a <b>5-question quiz</b> from your notes.'); } },
+        // the agent creates the pane session — then hands the URL to chat
+        { d: B,  fn: function () {
+            term('<span class="pr">$</span> <span class="cmd">pane create --artifact ./quiz.html --event-schema ./quiz.schema.json</span>'); } },
+        { d: L,  fn: function () {
+            term('✓ session <span class="ev">ses_q7m2x9</span> created', 'ok'); } },
+        { d: B,  fn: function () {
+            botSay('Tap to start 👇<br><a class="qlink" id="quiz-url">' +
+                   'relay.paneui.com/s/q7m2x9</a>', true); } },
+        // the agent starts watching the session for answers
+        { d: L,  fn: termGapStep },
+        { d: L,  fn: function () {
+            term('<span class="pr">$</span> <span class="cmd">pane watch ses_q7m2x9 --type quiz.answered</span>'); } },
+        { d: L,  fn: function () {
+            term('  waiting for answers…<span class="term-cursor"></span>', 'dim', true); } },
+        // the student "clicks" the link — a cursor taps it, then the browser
+        // quiz pane slides in and Question 1 renders.
+        { d: DELAYS.browserIn, fn: function () {
+            var open = function () {
+              setCols(0); enterCol(colPane); renderQuestion(); introState = 'done';
+            };
+            var link = document.getElementById('quiz-url');
+            if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+            else open();
+        } }
+      ];
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start the panels hidden; the intro reveals them.
+    colPane.classList.add('quiz-pending');
+    colTerm.classList.add('quiz-pending');
+    setCols(1);
+    botOpening();
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneQuizIntro = playIntro;
+  })();
+  </script>
+
+  <!-- ============ live deploy monitor demo (tab 3) ============ -->
+  <script>
+  (function () {
+    var pane = document.getElementById('mon-pane');
+    var term = document.getElementById('mon-term');
+    if (!pane || !term) return;
+    var stage = document.getElementById('mon-stage');
+    var colPane = document.getElementById('mon-col-pane');
+    var colTerm = document.getElementById('mon-col-term');
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // the deploy stages the human watches stream forward.
+    var STAGES = [
+      { id: 'build',   nm: 'Build image' },
+      { id: 'migrate', nm: 'Run migrations' },
+      { id: 'canary',  nm: 'Canary rollout' },
+      { id: 'full',    nm: 'Full rollout' },
+      { id: 'health',  nm: 'Health checks' }
+    ];
+
+    // the terminal's startup sequence — streamed in by JS one line at a time.
+    // each entry: { gap: true } OR { html, cls } OR { html, cls, wait: true }.
+    var MONITOR_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/deploy-pipeline</span>', cls: '' },
+      { gap: true },
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">ship v2.4.0 to production</span></div>' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Building the release image for v2.4.0.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(docker build -t app:v2.4.0 .)  <span class="cc-meta">image built</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Checking pending database migrations.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(migrate status)  <span class="cc-meta">2 migrations pending</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> This deploy will take a few minutes — ' +
+              'I\'ll open a live monitor so you can follow along.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane create --artifact ./deploy.html --event-schema ./schema.json)', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">ses_d3k9p1</span>' +
+              ' created', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Watch the rollout here:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="monitor-url">' +
+              'https://relay.paneui.com/s/d3k9p1</span>', cls: '' },
+      { html: '     <span class="cc-meta">streaming progress<span class="term-cursor"></span></span>',
+        cls: 'dim', wait: true }
+    ];
+
+    function termLine(html, cls) {
+      var d = document.createElement('div');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      term.appendChild(d);
+      term.scrollTop = term.scrollHeight;
+      return d;
+    }
+    function termGap() {
+      var d = document.createElement('div');
+      d.className = 'gap';
+      term.appendChild(d);
+    }
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'mon-wait';
+      return d;
+    }
+
+    // render the live-monitor artifact into the pane: a title + a row with a
+    // progress bar per deploy stage, all starting at 0% / pending.
+    function renderMonitor() {
+      var rows = STAGES.map(function (s) {
+        return '<div class="mon-stage" id="mon-st-' + s.id + '">' +
+                 '<div class="mon-row">' +
+                   '<span class="mon-tick"></span>' +
+                   '<span class="mon-nm">' + s.nm + '</span>' +
+                   '<span class="mon-pct">0%</span>' +
+                 '</div>' +
+                 '<div class="mon-bar"><div class="mon-fill"></div></div>' +
+               '</div>';
+      }).join('');
+      pane.innerHTML =
+        '<div class="mon-title">⏺ Deploying v2.4.0 → production</div>' +
+        '<div class="mon-sub">Live — the agent streams each stage as it runs. No input needed.</div>' +
+        rows +
+        '<div class="mon-banner" id="mon-banner">✓ Deployed — v2.4.0 live in production</div>';
+    }
+
+    // set a stage's progress bar + percent; flips to done at 100%.
+    function setStage(id, pct) {
+      var el = document.getElementById('mon-st-' + id);
+      if (!el) return;
+      pct = Math.max(0, Math.min(100, pct));
+      var fill = el.querySelector('.mon-fill');
+      var lbl = el.querySelector('.mon-pct');
+      if (fill) fill.style.width = pct + '%';
+      if (lbl) lbl.textContent = pct + '%';
+      el.classList.toggle('active', pct > 0 && pct < 100);
+      el.classList.toggle('done', pct >= 100);
+    }
+
+    var introState = 'idle';   // idle | playing | done — guards double-runs
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0, step: 0 }
+      : { termLine: 300, browserIn: 500, step: 720 };
+
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+
+    // the streamed deploy timeline — terminal pane.send lines paired with
+    // browser progress-bar updates, in sync.
+    function streamDeploy() {
+      var S = DELAYS.step;
+      var seq = [
+        { d: 200, fn: function () { setStage('build', 100); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:build 100%</span>'); } },
+        { d: S,   fn: function () { setStage('migrate', 100); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:migrate 100%</span>  ' +
+              '<span class="cc-meta">2 applied</span>'); } },
+        { d: S,   fn: function () { setStage('canary', 40); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:canary 40%</span>'); } },
+        { d: S,   fn: function () { setStage('canary', 100); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:canary 100%</span>  ' +
+              '<span class="cc-meta">5xx nominal</span>'); } },
+        { d: S,   fn: function () { setStage('full', 70); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:full 70%</span>'); } },
+        { d: S,   fn: function () { setStage('full', 100); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:full 100%</span>'); } },
+        { d: S,   fn: function () { setStage('health', 100); } },
+        { d: S,   fn: function () {
+            termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
+              ' → <span class="ev">stage:health 100%</span>  ' +
+              '<span class="cc-meta">all checks green</span>'); } },
+        { d: S,   fn: function () {
+            var b = document.getElementById('mon-banner');
+            if (b) b.classList.add('show'); } },
+        { d: S,   fn: function () {
+            termGap();
+            termLine('<span class="cc-dot">⏺</span> <span class="ok">Done.</span> ' +
+              'v2.4.0 is live in <span class="ev">production</span>.');
+            introState = 'done';
+        } }
+      ];
+      var i = 0;
+      (function step() {
+        if (i >= seq.length) return;
+        var s = seq[i++];
+        setTimeout(function () { s.fn(); step(); }, s.d);
+      })();
+    }
+
+    // staged intro — auto-plays when tab 3 ("Live deploy monitor") opens.
+    function playMonitorIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1 — only the terminal, single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (stage) stage.classList.add('release-cols-1');
+      term.innerHTML = '';
+
+      // STAGE 2 — stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = MONITOR_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3 — the human "clicks" the link, the monitor pane slides in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) stage.classList.remove('release-cols-1');
+          renderMonitor();
+          enterCol(colPane);
+          // STAGE 4 — the agent streams deploy progress; the pane updates live.
+          setTimeout(streamDeploy, reduceMotion ? 0 : 500);
+        };
+        var link = document.getElementById('monitor-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the browser pane hidden + the stage collapsed.
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (stage) stage.classList.add('release-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneMonitorIntro = playMonitorIntro;
+  })();
+  </script>
+
+  <!-- ============ weekly report demo (tab 4) ============ -->
+  <script>
+  (function () {
+    var pane = document.getElementById('rep-pane');
+    var term = document.getElementById('rep-term');
+    if (!pane || !term) return;
+    var stage = document.getElementById('rep-stage');
+    var colPane = document.getElementById('rep-col-pane');
+    var colTerm = document.getElementById('rep-col-term');
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // the terminal's startup sequence — streamed in by JS one line at a time.
+    var REPORT_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/finance</span>', cls: '' },
+      { gap: true },
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">put together the Q2 financial report</span></div>' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Pulling the Q2 numbers from the books.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(ledger export --quarter Q2)  <span class="cc-meta">3 months · 412 entries</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Totalling revenue, expenses and runway.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(finance summarize --quarter Q2)  <span class="cc-meta">net margin 24% · 18mo runway</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Compiled the report. A pane reads better than a wall ' +
+              'of numbers — opening it as one.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane create --artifact ./q2-report.html)  ' +
+              '<span class="cc-meta">view-only · no event schema</span>', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">ses_r5w8t2</span>' +
+              ' created', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Your Q2 financial report:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="report-url">' +
+              'https://relay.paneui.com/s/r5w8t2</span>', cls: '' },
+      { html: '     <span class="cc-meta">view-only pane — nothing to wait on<span class="term-cursor"></span></span>',
+        cls: 'dim', wait: true }
+    ];
+
+    // Q2 revenue by month. `rev` (in $k) is the source of truth — the chart
+    // bar heights are computed from it so they're accurate. Expandable months
+    // break the revenue down by source (sub-line amounts sum to `rev`).
+    var MONTHS = [
+      { day: 'Apr', rev: 182, warn: false,
+        lines: [['Subscriptions', 141], ['Services', 31], ['Other', 10]] },
+      { day: 'May', rev: 201, warn: false,
+        lines: [['Subscriptions', 158], ['Services', 34], ['Other', 9]] },
+      { day: 'Jun', rev: 237, warn: false,
+        lines: [['Subscriptions', 186], ['Services', 41], ['Other', 10]] }
+    ];
+
+    function termLine(html, cls) {
+      var d = document.createElement('div');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      term.appendChild(d);
+      term.scrollTop = term.scrollHeight;
+      return d;
+    }
+    function termGap() {
+      var d = document.createElement('div');
+      d.className = 'gap';
+      term.appendChild(d);
+    }
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'rep-wait';
+      return d;
+    }
+
+    // render the report artifact: title, stat row, CSS bar chart, month rows.
+    // every month row is expandable — it breaks revenue down by source.
+    function renderReport() {
+      var stats = [
+        { v: '$620k', k: 'Q2 revenue' },
+        { v: '$471k', k: 'expenses' },
+        { v: '24%',   k: 'net margin' },
+        { v: '18mo',  k: 'runway' }
+      ];
+      var statHtml = stats.map(function (s) {
+        return '<div class="rep-stat"><div class="rv">' + s.v + '</div>' +
+               '<div class="rk">' + s.k + '</div></div>';
+      }).join('');
+
+      // bar heights are computed from the real revenue — the tallest month
+      // is 100%, the rest scale against it (so the chart is truthful).
+      var maxRev = MONTHS.reduce(function (m, d) {
+        return Math.max(m, d.rev); }, 0);
+
+      var chartHtml = MONTHS.map(function (d) {
+        var pct = Math.round((d.rev / maxRev) * 100);
+        // the bar starts at height 0 (CSS default) and is animated up to
+        // data-h after render — see the requestAnimationFrame block below.
+        return '<div class="rep-chcol">' +
+                 '<div class="rep-chval">$' + d.rev + 'k</div>' +
+                 '<div class="rep-chwrap">' +
+                   '<div class="rep-chbar" data-h="' + pct + '"></div>' +
+                 '</div>' +
+                 '<div class="rep-chday">' + d.day + '</div>' +
+               '</div>';
+      }).join('');
+
+      var rowsHtml = MONTHS.map(function (d, i) {
+        var sub = d.lines.map(function (r) {
+          return '<div class="rep-sub"><span>' + r[0] + '</span>' +
+                 '<span class="rep-sha">$' + r[1] + 'k</span></div>';
+        }).join('');
+        return '<div class="rep-row expandable" id="rep-row-' + i + '">' +
+                 '<div class="rep-rhd" tabindex="0" role="button" ' +
+                   'aria-expanded="false" aria-controls="rep-body-' + i + '">' +
+                   '<span class="rep-caret">▸</span>' +
+                   '<span class="rep-dot' + (d.warn ? ' warn' : '') + '"></span>' +
+                   '<span class="rep-day">' + d.day + '</span>' +
+                   '<span class="rep-meta">$' + d.rev + 'k revenue</span>' +
+                 '</div>' +
+                 '<div class="rep-rbody" id="rep-body-' + i + '">' + sub + '</div>' +
+               '</div>';
+      }).join('');
+
+      pane.innerHTML =
+        '<div class="rep-title">Q2 financial report</div>' +
+        '<div class="rep-stats">' + statHtml + '</div>' +
+        '<div class="rep-chart">' + chartHtml + '</div>' +
+        '<div class="rep-rows">' + rowsHtml + '</div>';
+
+      // animate the chart bars up from flat to their value. with reduced
+      // motion the transition is off, so this just sets the final height.
+      var bars = pane.querySelectorAll('.rep-chbar');
+      var grow = function () {
+        bars.forEach(function (b) { b.style.height = b.getAttribute('data-h') + '%'; });
+      };
+      if (reduceMotion) grow();
+      else requestAnimationFrame(function () { requestAnimationFrame(grow); });
+
+      // wire up the expandable rows — click + Enter/Space, aria-expanded.
+      MONTHS.forEach(function (d, i) {
+        var row = document.getElementById('rep-row-' + i);
+        if (!row) return;
+        var hd = row.querySelector('.rep-rhd');
+        function toggle() {
+          var open = row.classList.toggle('open');
+          if (hd) hd.setAttribute('aria-expanded', String(open));
+        }
+        if (hd) {
+          hd.addEventListener('click', toggle);
+          hd.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+          });
+        }
+      });
+    }
+
+    var introState = 'idle';   // idle | playing | done — guards double-runs
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0 }
+      : { termLine: 300, browserIn: 500 };
+
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+
+    // staged intro — auto-plays when tab 4 ("Generate a report") opens.
+    function playReportIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1 — only the terminal, single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (stage) stage.classList.add('release-cols-1');
+      term.innerHTML = '';
+
+      // STAGE 2 — stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = REPORT_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3 — the human "clicks" the link, the report pane slides in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) stage.classList.remove('release-cols-1');
+          renderReport();
+          enterCol(colPane);
+          introState = 'done';
+        };
+        var link = document.getElementById('report-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the browser pane hidden + the stage collapsed.
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (stage) stage.classList.add('release-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneReportIntro = playReportIntro;
   })();
   </script>
 
