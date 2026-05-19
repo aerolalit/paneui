@@ -1,7 +1,8 @@
 # Reusable Artifacts (design note)
 
-Status: **PROPOSED** — design of record, not yet built and not on a committed
-roadmap. Captured so the model is reviewed before any code.
+Status: **ACCEPTED** — design of record; implementation in progress (phases
+A–D). The hosted relay has no users yet, so the schema change is a clean
+database reset — no migration or backfill.
 
 ## Summary
 
@@ -74,7 +75,10 @@ model Artifact {
   id            String   @id @default(cuid())
   ownerId       String   @map("owner_id")          // -> agents.id
   owner         Agent    @relation(fields: [ownerId], references: [id])
-  name          String
+  // null = an anonymous artifact, created transparently for an inline
+  // (one-off) session — see "Inline artifacts are sugar" below. A named
+  // artifact is one the agent registered for reuse.
+  name          String?
   latestVersion Int      @default(1) @map("latest_version")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -138,6 +142,137 @@ same PR-review page show *this* PR. It is a typed input contract, validated by
 the relay. Conflating the two would mix "data the relay enforces and the
 artifact renders" with "data the relay ignores" — so it gets its own column.
 
+## Concrete schema delta
+
+The exact tables and columns added, changed, and removed.
+
+**NEW table — `artifacts`** (the head: mutable identity, no content)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | String, PK | `cuid()` |
+| `owner_id` | String, FK → `agents.id` | the owning agent |
+| `name` | String, **nullable** | `null` = anonymous (inline-created); set = a named reusable artifact |
+| `slug` | String, **nullable** | agent-chosen stable handle (`pr-review`); unique per owner; `null` for anonymous |
+| `description` | String, **nullable** | prose: what the artifact is and does — read by an agent deciding whether to reuse it |
+| `tags` | Json (string array), **nullable** | keywords for search (`["review","pr","code"]`) |
+| `latest_version` | Int, default 1 | newest version number |
+| `last_used_at` | DateTime, **nullable** | bumped when a session is created from the artifact — ranks search results |
+| `created_at` | DateTime | default `now()` |
+| `updated_at` | DateTime | `@updatedAt` |
+
+Index: `owner_id`. Unique: `(owner_id, slug)` — a slug is unique within an
+owner; anonymous artifacts have `slug = null` and are exempt.
+
+**NEW table — `artifact_versions`** (the child: immutable per-version content)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | String, PK | `cuid()` |
+| `artifact_id` | String, FK → `artifacts.id` | `ON DELETE CASCADE` |
+| `version` | Int | 1, 2, 3, … |
+| `artifact_type` | String | `html-inline` / `html-ref` — **moved from `sessions`** |
+| `artifact_source` | String | the HTML — **moved from `sessions`** |
+| `event_schema` | Json | event vocabulary — **moved from `sessions`** |
+| `input_schema` | Json, nullable | **NEW** — JSON Schema for `session.input_data` |
+| `created_at` | DateTime | default `now()` |
+
+Unique: `(artifact_id, version)`. Index: `artifact_id`.
+
+**CHANGED table — `sessions`**
+
+Columns ADDED (2):
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `artifact_version_id` | String, FK → `artifact_versions.id` | the pinned version this session instantiates — the version pin |
+| `input_data` | Json, nullable | this instance's data; validated against the version's `input_schema` |
+
+Columns REMOVED (5) — all move to `artifact_versions` or become obsolete:
+
+| Removed | Fate |
+|---------|------|
+| `artifact_type` | → `artifact_versions.artifact_type` |
+| `artifact_source` | → `artifact_versions.artifact_source` |
+| `event_schema` | → `artifact_versions.event_schema` |
+| `artifact_version` | dropped — was a per-session edit counter; replaced by real artifact versioning + the pin |
+| `schema_version` | dropped — same: an obsolete per-session counter |
+
+Columns UNCHANGED (8): `id`, `agent_id`, `status`, `created_at`, `expires_at`,
+`metadata`, `callback_url`, `callback_secret_enc`, `callback_filter`.
+
+**`agents`** — gains only a Prisma back-relation (`artifacts Artifact[]`); no
+column change. **`events`**, **`participants`** — unchanged.
+
+## Inline artifacts are sugar — one model, two entry points
+
+A session is **always** an instance of an `artifact_version`. There is no
+"artifactless session" and no nullable artifact FK. But an agent must not be
+forced to register an artifact for a throwaway, one-off UI — that would tax the
+common case.
+
+So `POST /v1/sessions` accepts the artifact in either of two forms, and the
+*inline* form is sugar over the same model:
+
+- **By reference** — `artifact: { id, version? }` — instances an existing
+  (named) artifact. The reuse path; cheap, no HTML re-sent.
+- **Inline** — `artifact: { source, type, event_schema }` — for a one-off UI.
+  The relay **transparently creates an anonymous artifact** (`name = null`)
+  with a single version, owned by the calling agent, and the session pins it.
+  The agent does not see or manage that artifact; it is an implementation
+  detail.
+
+Result: one mental model ("a session instances an artifact version" — always
+true, no special case in the schema), **and** zero ceremony for one-offs
+(`pane create --artifact ./form.html` stays a single call). An agent that later
+wants to reuse a one-off can **name** its anonymous artifact (promote it) with
+no re-upload.
+
+This is why the inline path is kept — dropping it would make every throwaway UI
+a two-step (`create artifact` → `create session`) ceremony, friction the agent
+feels on every call. Keeping it as *sugar* (not a parallel code path) preserves
+the single model.
+
+## Discovery — making artifacts *actually* reusable
+
+A reusable artifact is only reusable if the agent can **find it again**. The
+artifact lives on the relay (durable); the agent does not — a fresh Claude Code
+(or other) session starts with no memory of `art_abc`. Storage alone does not
+make a thing reusable; **rediscovery** does. This is both an API problem and a
+prompt problem.
+
+**Self-describing metadata.** A named artifact carries enough for an agent to
+recognise it without opening the HTML:
+
+- `name` / `slug` — a short handle (`pr-review`).
+- `description` — prose: *what it is and does* ("PR review page: shows the
+  diff, lets a reviewer approve / request changes with inline comments").
+- `tags` — keywords for search.
+- `input_schema` — doubles as documentation: it tells the agent exactly what
+  data the artifact needs (`{prTitle, diffUrl, files[]}`), so a found artifact
+  is immediately usable.
+
+**Search, not just list.** `GET /v1/artifacts?q=...` does a text search over
+name + description + tags, ranked by `last_used_at` (what the agent actually
+uses outranks abandoned experiments). The list/search response is **lean** —
+`id, slug, name, description, tags, latest_version, last_used_at` — and
+deliberately omits `artifact_source`: an agent browsing 30 artifacts does not
+want 30 HTML blobs; it fetches a full version only once it has chosen one.
+
+**The stable handle.** A `cuid()` is unguessable and unmemorable — an agent
+cannot carry it across sessions. The agent-chosen `slug` is the durable handle:
+an agent (or its operator) can record `pr-review` in its own prompt/notes and
+later `pane create --artifact-id pr-review` with no search at all. Search is
+the fallback when the agent does *not* already know the slug.
+
+**The behavioural half — the skill must say "look first".** A search endpoint
+is dead weight if the agent never calls it. The pane skill (`SKILL.md`) must
+instruct: *before generating artifact HTML, run `pane artifact search` / `list`
+— a reusable artifact may already exist; reuse it instead of regenerating.*
+Without that instruction every fresh session regenerates from scratch and the
+whole feature is unused. This is the single most load-bearing piece of making
+reuse real, and it is a phase-D deliverable, not an afterthought.
+
 ## The two schemas an artifact version declares
 
 An artifact version is a typed component. It declares **both** of its
@@ -181,32 +316,41 @@ sessions pin.
 
 ## API surface
 
-New — `/v1/artifacts` (CRUD over the agent's own artifacts):
+New — `/v1/artifacts` (CRUD over the agent's own *named* artifacts):
 
 | Method & path | Does |
 |---------------|------|
-| `POST /v1/artifacts` | Create an artifact; body is the v1 content (HTML, `event_schema`, optional `input_schema`). Returns `artifact_id` + `version: 1`. |
-| `POST /v1/artifacts/:id/versions` | Append a new version. Returns the new `version`. |
-| `GET /v1/artifacts` | List the calling agent's artifacts (head rows). |
-| `GET /v1/artifacts/:id` | Get an artifact + its version list. |
+| `POST /v1/artifacts` | Create a named artifact; body is `name` + optional `slug` / `description` / `tags`, plus the v1 content (HTML, `type`, `event_schema`, optional `input_schema`). Returns `artifact_id` + `version: 1`. |
+| `POST /v1/artifacts/:id/versions` | Append a new version (content only). Returns the new `version`. |
+| `PATCH /v1/artifacts/:id` | Update head metadata — `name`, `slug`, `description`, `tags`. Not the content. |
+| `GET /v1/artifacts?q=...` | Search/list the agent's named artifacts. `q` matches name + description + tags; ranked by `last_used_at`. **Lean response** — no `artifact_source`. |
+| `GET /v1/artifacts/:id` | Get an artifact + its version list. `:id` accepts the `id` or the `slug`. |
 | `GET /v1/artifacts/:id/versions/:version` | Get one version's full content. |
 
-Changed — `POST /v1/sessions`:
+Changed — `POST /v1/sessions` — takes the artifact in one of two forms (see
+"Inline artifacts are sugar" above):
 
-- Accepts `artifact_id` (+ optional `version`, default `latestVersion`) instead
-  of inline `artifact` / `schema`.
-- Accepts `input_data`; the relay validates it against the pinned version's
-  `input_schema` before creating the session.
-- **Ad-hoc path retained:** an inline `artifact` + `schema` (today's shape) is
-  still accepted for one-off UIs that are not worth saving as an artifact. The
-  relay implements this by transparently creating a single-version, unnamed,
-  owner-scoped artifact behind the scenes — so `sessions` always FKs to an
-  `artifact_version`, with no nullable-FK branch. (Implementation choice; could
-  also be a private "scratch" flag — decide at build time.)
+```jsonc
+// Form 1 — reference an existing named artifact
+{ "artifact": { "id": "art_abc", "version": 3 },  // version optional -> latest
+  "input_data": { ... } }
+
+// Form 2 — inline (one-off); relay creates an anonymous artifact behind it
+{ "artifact": { "source": "<html>...", "type": "html-inline",
+                "event_schema": { ... } },
+  "input_data": { ... } }
+```
+
+- Exactly one of `artifact.id` / `artifact.source` must be present.
+- `input_data`, when given, is validated against the pinned version's
+  `input_schema` before the session is created (clear error on mismatch).
+- Either form, the session ends up FK'd to an `artifact_version` — no
+  nullable-FK branch anywhere.
 
 Ownership: every `/v1/artifacts` route is scoped to the calling agent. An agent
-sees and uses only its own artifacts. No cross-agent access — that is the
-deferred global-template feature.
+sees and uses only its own artifacts. Referencing another agent's `artifact.id`
+is a `404`. No cross-agent access — that is the deferred global-template
+feature.
 
 ## Bridge / rendering
 
@@ -216,52 +360,61 @@ artifactSource`. The injected page bridge (`window.pane`) additionally exposes
 the session's `input_data` so the artifact can render its per-instance data —
 alongside the event log it already receives.
 
-## Migration
+## Migration — a clean reset
 
-Not a behaviour-preserving no-op — `sessions` loses columns. Sketch:
+The hosted relay has **no users and no data worth keeping**, and pane is
+pre-1.0. So this is **not** a backfill migration — it is a clean reset:
 
-1. Add `artifacts` + `artifact_versions` tables.
-2. Backfill: for every existing session, create a one-version artifact from its
-   inline `artifact_*` / `event_schema`, and set `artifact_version_id`.
-3. Drop the inline `artifact_type`, `artifact_source`, `event_schema`,
-   `artifact_version`, `schema_version` columns from `sessions`.
-4. Both schema variants (SQLite + Postgres) must move together — the
+1. Replace the `init` migration (or add a new one) so the schema is simply the
+   new shape — `artifacts` + `artifact_versions`, and `sessions` with
+   `artifact_version_id` + `input_data` and without the 5 removed columns.
+2. The hosted Postgres database is **reset** (drop + recreate) — no backfill,
+   no dual-read. Local SQLite self-host DBs are likewise disposable at this
+   stage.
+3. Both schema variants (SQLite + `prisma/postgres/`) must move together — the
    `check:schema-sync` guard applies.
 
-Because pane is pre-1.0 and the hosted relay's data is disposable, a clean
-cutover (drop + recreate) is also acceptable and simpler — decide at build time.
+No production data is at risk, so there is no migration-safety burden.
 
-## Open questions
+## Decided
 
-- **Default version on session-create** — `latestVersion`, or require the
-  caller to name a version explicitly? Defaulting to latest is convenient but
-  means a new artifact version silently changes what new sessions get. Leaning:
-  default to latest, allow an explicit pin.
-- **Editing an artifact while sessions are open on the old version** — the
-  pinned-version rule already handles correctness (old sessions are frozen).
-  Confirmed non-issue; listed for completeness.
-- **Ad-hoc artifacts** — transparent single-version artifact vs. a `scratch`
-  flag vs. keeping a nullable inline path. Three options; pick at build time.
+- **Inline path** — kept, as sugar over an anonymous artifact (see "Inline
+  artifacts are sugar"). Not a parallel code path.
+- **Default version on session-create** — defaults to `latest_version`; an
+  explicit `artifact.version` pins a specific one.
+- **Editing an artifact with sessions open on an old version** — non-issue: the
+  pinned-version rule freezes old sessions.
+
+## Open questions (settle at build time)
+
 - **Artifact deletion** — may an artifact be deleted while sessions reference
-  its versions? Either block it, or soft-delete the head and keep versions for
-  referencing sessions. Likely: block hard-delete when referenced.
+  its versions? Either block hard-delete when referenced, or soft-delete the
+  head and keep versions. Leaning: block hard-delete when referenced.
 - **Limits** — a `MAX_ARTIFACTS_PER_AGENT` / `MAX_VERSIONS_PER_ARTIFACT` cap,
   consistent with the existing `MAX_*` config knobs.
+- **Anonymous-artifact lifecycle** — anonymous artifacts accumulate one per
+  one-off session. They are cascade-bound to nothing and never reaped. A
+  follow-up (sweep anonymous artifacts whose sessions are all expired) may be
+  worthwhile, but is out of scope here.
 
 ## Phasing
 
 Each phase is independently shippable.
 
 - **Phase A — data model.** Add `artifacts` + `artifact_versions`; add
-  `artifact_version_id` + `input_data` to `sessions`. Backfill + drop inline
-  columns. Migration only.
-- **Phase B — artifact CRUD.** `/v1/artifacts` routes. Sessions can now be
-  created from a saved artifact; the inline path still works.
+  `artifact_version_id` + `input_data` to `sessions`; drop the 5 obsolete
+  columns. Clean reset, both schema variants. No backfill.
+- **Phase B — artifact CRUD + session-create rework.** `/v1/artifacts` routes;
+  `POST /v1/sessions` takes the two-form `artifact` (reference or inline);
+  inline transparently creates an anonymous artifact.
 - **Phase C — input_schema validation.** Enforce `session.input_data` against
   the version's `input_schema` at create time; bridge exposes `input_data` to
   the page.
-- **Phase D — docs + SDK/CLI.** `pane artifact create` / `pane create
-  --artifact-id`; update `docs/SPEC.md` and the skill.
+- **Phase D — CLI + discovery + docs.** `pane artifact create / search / list /
+  versions / show`, `pane create --artifact-id <id|slug> [--version]
+  [--input-data]`, `pane create --artifact` kept (inline). Crucially: update
+  `SKILL.md` to instruct the agent to **search for an existing artifact before
+  generating** one. Update `docs/SPEC.md`.
 
 ## Scope
 
