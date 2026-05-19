@@ -662,4 +662,12 @@ describe("HTTP e2e", () => {
       expect(res.status).toBe(201);
     });
   });
+
+  describe("root route", () => {
+    it("GET / redirects to the landing site", async () => {
+      const res = await app.fetch(new Request("http://t/"));
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://paneui.com");
+    });
+  });
 });
