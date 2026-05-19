@@ -8,16 +8,34 @@ import { printJson, fail, failFromError } from "../output.js";
 
 export const createHelp = `pane create — create a Pane session
 
-Usage:
-  pane create --artifact <path|inline> --schema <path|json> [options]
+A session is one use of an artifact. Supply the artifact in ONE of two ways:
 
-Required:
-  --artifact <v>      HTML artifact. Either a file path / URL, or inline HTML.
-                      Combine with --artifact-type to control interpretation.
-  --schema <v>        Per-session event schema. A path to a .json file, or
-                      inline JSON.
+  Reference form — instance an existing reusable artifact (the cheap path,
+  no HTML re-sent):
+    pane create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
+
+  Inline form — a one-off artifact, defined on this call:
+    pane create --artifact <path|inline> --schema <path|json> [options]
+
+Exactly one of --artifact-id / --artifact must be given.
+
+Artifact (choose one):
+  --artifact-id <v>   Reference an existing named artifact by id or slug.
+                      Tip: run 'pane artifact search <keywords>' first — a
+                      suitable artifact may already exist; reuse it instead of
+                      regenerating HTML.
+  --version <n>       With --artifact-id: pin a specific version. Defaults to
+                      the artifact's latest version.
+  --artifact <v>      Inline HTML artifact. Either a file path / URL, or inline
+                      HTML. Combine with --artifact-type to control reading.
+  --schema <v>        Inline-form event schema. A .json file, or inline JSON.
+                      Required with --artifact; ignored with --artifact-id.
 
 Options:
+  --input-data <v>    This instance's seed data — a JSON object (file path or
+                      inline JSON), validated by the relay against the artifact
+                      version's input_schema. The page reads it as
+                      window.pane.inputData.
   --artifact-type <t> "html-inline" (default) or "html-ref". With "html-ref"
                       the --artifact value is treated as a URL. Note: the relay
                       does not serve "html-ref" artifacts in this release and
@@ -36,45 +54,93 @@ Output (stdout, JSON):
 Deliver urls.humans to the human(s); keep tokens.agent for the WS stream.`;
 
 export async function runCreate(args: ParsedArgs): Promise<void> {
+  const artifactIdVal = args.flags.get("artifact-id");
   const artifactVal = args.flags.get("artifact");
-  const schemaVal = args.flags.get("schema");
-  if (!artifactVal) fail("missing --artifact", "invalid_args");
-  if (!schemaVal) fail("missing --schema", "invalid_args");
 
-  const artifactType = (args.flags.get("artifact-type") ?? "html-inline") as
-    | "html-inline"
-    | "html-ref";
-  if (artifactType !== "html-inline" && artifactType !== "html-ref") {
-    fail("--artifact-type must be 'html-inline' or 'html-ref'", "invalid_args");
+  // Exactly one of the two artifact forms must be present.
+  if (artifactIdVal !== undefined && artifactVal !== undefined) {
+    fail(
+      "pass only one of --artifact-id (reference an existing artifact) or --artifact (inline a one-off)",
+      "invalid_args",
+    );
   }
-
-  // html-ref: the value is a URL, used verbatim. html-inline: file or literal.
-  let source: string;
-  try {
-    source =
-      artifactType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
-  } catch (e) {
-    fail(e instanceof Error ? e.message : String(e), "invalid_args");
-  }
-
-  let schema: unknown;
-  try {
-    schema = resolveJson(schemaVal!, "--schema");
-  } catch (e) {
-    fail(e instanceof Error ? e.message : String(e), "invalid_args");
+  if (artifactIdVal === undefined && artifactVal === undefined) {
+    fail(
+      "missing artifact — pass --artifact-id <id|slug> to reference an existing artifact, or --artifact <path|inline> to inline one",
+      "invalid_args",
+    );
   }
 
   // Assemble a candidate request object, then validate the whole thing with
   // the shared Zod schema (single source of truth, matches what the relay
   // expects). Per-field number parsing still happens here so we can give a
   // flag-specific message; the schema then enforces shape and bounds.
-  //
-  // The CLI emits the INLINE artifact form: the event schema rides inside the
-  // `artifact` object. (`pane create --artifact-id <id|slug>` — instancing a
-  // reusable artifact — is a Phase D addition.)
-  const candidate: Record<string, unknown> = {
-    artifact: { type: artifactType, source, event_schema: schema },
-  };
+  const candidate: Record<string, unknown> = {};
+
+  if (artifactIdVal !== undefined) {
+    // Reference form — instance an existing named artifact. --artifact /
+    // --schema are not needed here.
+    const ref: Record<string, unknown> = { id: artifactIdVal };
+    const versionRaw = args.flags.get("version");
+    if (versionRaw !== undefined) {
+      const version = Number(versionRaw);
+      if (!Number.isInteger(version) || version < 1) {
+        fail("--version must be a positive integer", "invalid_args");
+      }
+      ref["version"] = version;
+    }
+    candidate["artifact"] = ref;
+  } else {
+    // Inline form — the event schema rides inside the `artifact` object; the
+    // relay transparently creates an anonymous artifact behind it.
+    const schemaVal = args.flags.get("schema");
+    if (!schemaVal) {
+      fail("missing --schema (required with --artifact)", "invalid_args");
+    }
+
+    const artifactType = (args.flags.get("artifact-type") ?? "html-inline") as
+      | "html-inline"
+      | "html-ref";
+    if (artifactType !== "html-inline" && artifactType !== "html-ref") {
+      fail(
+        "--artifact-type must be 'html-inline' or 'html-ref'",
+        "invalid_args",
+      );
+    }
+
+    // html-ref: the value is a URL, used verbatim. html-inline: file or literal.
+    let source: string;
+    try {
+      source =
+        artifactType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e), "invalid_args");
+    }
+
+    let schema: unknown;
+    try {
+      schema = resolveJson(schemaVal, "--schema");
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e), "invalid_args");
+    }
+
+    candidate["artifact"] = {
+      type: artifactType,
+      source,
+      event_schema: schema,
+    };
+  }
+
+  // --input-data — per-instance seed data, applies to either form (the relay
+  // validates it against the pinned version's input_schema).
+  const inputDataRaw = args.flags.get("input-data");
+  if (inputDataRaw !== undefined) {
+    try {
+      candidate["input_data"] = resolveJson(inputDataRaw, "--input-data");
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e), "invalid_args");
+    }
+  }
 
   const ttlRaw = args.flags.get("ttl");
   if (ttlRaw !== undefined) {

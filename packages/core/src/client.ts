@@ -2,6 +2,11 @@
 // The caller supplies the relay base URL + API key explicitly.
 
 import type {
+  ArtifactRecord,
+  ArtifactSummary,
+  ArtifactType,
+  ArtifactVersion,
+  CreateArtifactResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   EventsPage,
@@ -24,6 +29,43 @@ export interface RelayResponse {
   ok: boolean;
   status: number;
   data: unknown;
+}
+
+/**
+ * Request body for POST /v1/artifacts — create a named, reusable artifact plus
+ * its v1 content. Mirrors `createArtifactSchema` from ./schemas.js.
+ */
+export interface CreateArtifactRequest {
+  name: string;
+  slug?: string;
+  description?: string;
+  tags?: string[];
+  source: string;
+  type: ArtifactType;
+  event_schema?: unknown;
+  input_schema?: Record<string, unknown>;
+}
+
+/**
+ * Request body for POST /v1/artifacts/:id/versions — append a new immutable
+ * version (content only). Mirrors `createArtifactVersionSchema`.
+ */
+export interface CreateArtifactVersionRequest {
+  source: string;
+  type: ArtifactType;
+  event_schema?: unknown;
+  input_schema?: Record<string, unknown>;
+}
+
+/**
+ * Request body for PATCH /v1/artifacts/:id — head metadata only (never
+ * content). Mirrors `patchArtifactMetadataSchema`.
+ */
+export interface PatchArtifactMetadataRequest {
+  name?: string;
+  slug?: string;
+  description?: string;
+  tags?: string[];
 }
 
 /**
@@ -254,5 +296,113 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
     const body = this.asObject<{ event: PaneEvent; deduped?: boolean }>(r);
     return { event: body.event, deduped: body.deduped ?? false };
+  }
+
+  /**
+   * POST /v1/artifacts — create a named, reusable artifact and its v1 content.
+   * Returns the new `artifact_id` and `version` (1).
+   */
+  async createArtifact(
+    req: CreateArtifactRequest,
+  ): Promise<CreateArtifactResponse> {
+    const r = await this.call("POST", "/v1/artifacts", {
+      name: req.name,
+      slug: req.slug,
+      description: req.description,
+      tags: req.tags,
+      source: req.source,
+      type: req.type,
+      event_schema: req.event_schema,
+      input_schema: req.input_schema,
+    });
+    if (!r.ok) this.fail(r);
+    return this.asObject<CreateArtifactResponse>(r);
+  }
+
+  /**
+   * POST /v1/artifacts/:id/versions — append a new immutable version to an
+   * existing artifact. `idOrSlug` accepts the artifact id or its slug.
+   * Returns the new `version` number.
+   */
+  async createArtifactVersion(
+    idOrSlug: string,
+    req: CreateArtifactVersionRequest,
+  ): Promise<CreateArtifactResponse> {
+    const r = await this.call(
+      "POST",
+      `/v1/artifacts/${encodeURIComponent(idOrSlug)}/versions`,
+      {
+        source: req.source,
+        type: req.type,
+        event_schema: req.event_schema,
+        input_schema: req.input_schema,
+      },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<CreateArtifactResponse>(r);
+  }
+
+  /**
+   * PATCH /v1/artifacts/:id — update head metadata (name / slug / description /
+   * tags); never the content. Returns the updated lean summary.
+   */
+  async updateArtifact(
+    idOrSlug: string,
+    metadata: PatchArtifactMetadataRequest,
+  ): Promise<ArtifactSummary> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+      {
+        name: metadata.name,
+        slug: metadata.slug,
+        description: metadata.description,
+        tags: metadata.tags,
+      },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<ArtifactSummary>(r);
+  }
+
+  /**
+   * GET /v1/artifacts?q=... — search/list the agent's named artifacts. The
+   * response is lean (no `source` blob), ranked by `last_used_at`. Omit `query`
+   * to list every named artifact.
+   */
+  async searchArtifacts(query?: string): Promise<ArtifactSummary[]> {
+    const qs =
+      query != null && query !== "" ? "?q=" + encodeURIComponent(query) : "";
+    const r = await this.call("GET", `/v1/artifacts${qs}`);
+    if (!r.ok) this.fail(r);
+    return this.asObject<{ artifacts: ArtifactSummary[] }>(r).artifacts;
+  }
+
+  /**
+   * GET /v1/artifacts/:id — fetch a full artifact (head metadata + version
+   * list). `idOrSlug` accepts the artifact id or its slug.
+   */
+  async getArtifact(idOrSlug: string): Promise<ArtifactRecord> {
+    const r = await this.call(
+      "GET",
+      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<ArtifactRecord>(r);
+  }
+
+  /**
+   * GET /v1/artifacts/:id/versions/:version — fetch one version's full
+   * content (HTML, event schema, input schema).
+   */
+  async getArtifactVersion(
+    idOrSlug: string,
+    version: number,
+  ): Promise<ArtifactVersion> {
+    const r = await this.call(
+      "GET",
+      `/v1/artifacts/${encodeURIComponent(idOrSlug)}/versions/${encodeURIComponent(String(version))}`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<ArtifactVersion>(r);
   }
 }

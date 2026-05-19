@@ -10,6 +10,7 @@ import { runState, stateHelp } from "./commands/state.js";
 import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
 import { runRegister, registerHelp } from "./commands/register.js";
+import { runArtifact, artifactHelp } from "./commands/artifact.js";
 
 const VERSION = "0.0.1";
 
@@ -23,6 +24,8 @@ Commands:
                     to the CLI config file. Run this once before other commands.
   create            Create a session (POST /v1/sessions). Prints session_id,
                     urls, tokens, expires_at.
+  artifact          Manage reusable, versioned artifacts (create / version /
+                    update / search / list / show).
   state <id>        Non-blocking snapshot: session metadata + event log.
   send <id>         Emit an agent event into a session.
   watch <id>        Stream a session's events as JSON-lines on stdout
@@ -48,7 +51,12 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 // (JSON is currently the only output mode): accepting `--json` as a no-op bool
 // means a future `--text`/`--json` toggle won't break existing invocations. It
 // is intentionally undocumented in --help.
-const BOOLEAN_FLAGS = new Set(["json", "once", "help", "version", "print-key"]);
+//
+// `version` is deliberately NOT here: the top-level `-v` / `--version` is
+// handled from rawArgv[0] before parseArgs runs, so it never needs to be a
+// boolean flag — and keeping it out lets `pane create --version <n>` /
+// `pane artifact version` consume a value as a normal value-flag.
+const BOOLEAN_FLAGS = new Set(["json", "once", "help", "print-key"]);
 
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
@@ -90,6 +98,7 @@ async function main(): Promise<void> {
   const helps: Record<string, string> = {
     register: registerHelp,
     create: createHelp,
+    artifact: artifactHelp,
     state: stateHelp,
     send: sendHelp,
     watch: watchHelp,
@@ -118,6 +127,9 @@ async function main(): Promise<void> {
       break;
     case "create":
       await runCreate(args);
+      break;
+    case "artifact":
+      await runArtifact(args);
       break;
     case "state":
       await runState(args);
