@@ -81,8 +81,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
             participants: { humans: 2 },
           }),
         }),
@@ -108,8 +111,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-ref", source: "https://example.com/page" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-ref",
+              source: "https://example.com/page",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -128,8 +134,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -143,8 +152,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
             callback: {
               url: "http://169.254.169.254/latest/meta-data/",
               events: ["review.*"],
@@ -165,8 +177,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
             callback: {
               url: "https://example.com/hook",
               events: ["review.*"],
@@ -189,8 +204,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -231,8 +249,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
             participants: { humans: 1 },
           }),
         }),
@@ -427,8 +448,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
             participants: { humans: 1 },
           }),
         }),
@@ -446,8 +470,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -567,8 +594,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: huge },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: huge,
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -584,8 +614,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );
@@ -618,8 +651,11 @@ describe("HTTP e2e", () => {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: { type: "html-inline", source: "<html></html>" },
-            schema: minimalSchema,
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
           }),
         }),
       );

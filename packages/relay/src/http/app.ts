@@ -11,6 +11,7 @@ import { recordError, recordHttpDuration } from "../telemetry/metrics.js";
 import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
 import sessions from "./routes/sessions.js";
+import artifacts from "./routes/artifacts.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import skill from "./routes/skill.js";
@@ -177,6 +178,7 @@ export function buildApp(
     }),
   );
   app.route("/v1/sessions/:id/events", events);
+  app.route("/v1/artifacts", artifacts);
   app.route("/v1/keys", keys);
   app.route("/s", bridge);
 

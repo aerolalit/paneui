@@ -10,6 +10,7 @@ import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { EventSchema } from "./types.js";
 import { setupTestDb, type TestDb } from "./test-helpers/db.js";
+import { seedSessionRow } from "./test-helpers/seed.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -59,18 +60,13 @@ async function seedSession(expiresInMs: number): Promise<string> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const session = await prisma.session.create({
-    data: {
-      id: `ses_${randomBytes(8).toString("hex")}`,
-      agentId: agent.id,
-      artifactType: "html-inline",
-      artifactSource: "<html></html>",
-      eventSchema: SCHEMA as unknown as object,
-      status: "open",
-      expiresAt: new Date(Date.now() + expiresInMs),
-    },
+  const { sessionId } = await seedSessionRow(prisma, {
+    agentId: agent.id,
+    eventSchema: SCHEMA as unknown as object,
+    status: "open",
+    expiresAt: new Date(Date.now() + expiresInMs),
   });
-  return session.id;
+  return sessionId;
 }
 
 // Populate the compiled-validator cache for a session by validating an event.

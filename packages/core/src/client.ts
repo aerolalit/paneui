@@ -188,7 +188,7 @@ export class PaneClient {
   ): Promise<CreateSessionResponse> {
     const r = await this.call("POST", "/v1/sessions", {
       artifact: req.artifact,
-      schema: req.schema,
+      input_data: req.input_data,
       participants: req.participants,
       ttl: req.ttl,
       metadata: req.metadata,

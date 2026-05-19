@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { PrismaClient, Session } from "@prisma/client";
+import type { ArtifactVersion, PrismaClient, Session } from "@prisma/client";
 import type { Config } from "../config.js";
 import { decryptSecret } from "../crypto.js";
 import { publish } from "../http/broadcast.js";
@@ -10,6 +10,14 @@ import { log } from "../log.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
 import type { Author, EventSchema, SerializedEvent } from "../types.js";
 import { validateEvent } from "./validation.js";
+
+// A session row with its pinned artifact version eagerly loaded. The event
+// vocabulary (`eventSchema`) and the per-version event-schema number live on
+// `artifactVersion` since the reusable-artifacts change — so every caller of
+// writeEvent must load the session with `include: { artifactVersion: true }`.
+export type SessionWithArtifactVersion = Session & {
+  artifactVersion: ArtifactVersion;
+};
 
 export interface WriteEventInput {
   type: string;
@@ -90,7 +98,7 @@ export async function appendSystemEvent(
 // step across transports.
 export async function writeEvent(
   deps: WriteEventDeps,
-  session: Session,
+  session: SessionWithArtifactVersion,
   author: Author,
   input: WriteEventInput,
 ): Promise<WriteEventResult> {
@@ -126,8 +134,8 @@ export async function writeEvent(
 
   validateEvent({
     sessionId: session.id,
-    schemaVersion: session.schemaVersion,
-    schema: session.eventSchema as unknown as EventSchema,
+    schemaVersion: session.artifactVersion.version,
+    schema: session.artifactVersion.eventSchema as unknown as EventSchema,
     type: input.type,
     data: input.data,
     authorKind: author.kind,

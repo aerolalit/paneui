@@ -22,6 +22,9 @@ export interface PaneEvent {
   idempotency_key: string | null;
 }
 
+/** The artifact content type. `html-ref` is rejected by the relay for now. */
+export type ArtifactType = "html-inline" | "html-ref";
+
 /**
  * An artifact: discriminated on `type`. `html-inline` carries raw HTML in
  * `source`; `html-ref` carries a URL the relay/shell fetches on the human's
@@ -56,9 +59,12 @@ export interface CreateSessionResponse {
 export interface SessionState {
   session_id: string;
   status: string;
-  schema_version: number;
+  /** The artifact version this session is pinned to. */
+  artifact_id: string;
+  artifact_version_id: string;
   artifact_version: number;
   metadata: Record<string, unknown> | null;
+  input_data: Record<string, unknown> | null;
   created_at: string;
   expires_at: string;
 }
@@ -67,6 +73,57 @@ export interface SessionState {
 export interface EventsPage {
   events: PaneEvent[];
   next_cursor: string | null;
+}
+
+/** One immutable version of an artifact's content. */
+export interface ArtifactVersion {
+  id: string;
+  version: number;
+  type: ArtifactType;
+  source: string;
+  event_schema: unknown;
+  input_schema: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** A full artifact — head metadata plus its version list. */
+export interface Artifact_ {
+  id: string;
+  slug: string | null;
+  name: string | null;
+  description: string | null;
+  tags: string[] | null;
+  latest_version: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  versions: ArtifactVersion[];
+}
+
+/**
+ * A full artifact — head metadata plus its version list. (`ArtifactRecord` is
+ * the public name; `Artifact` is kept as the older inline-artifact union.)
+ */
+export type ArtifactRecord = Artifact_;
+
+/**
+ * A lean artifact summary for list/search responses — head metadata only, no
+ * `source` blob. See GET /v1/artifacts.
+ */
+export interface ArtifactSummary {
+  id: string;
+  slug: string | null;
+  name: string | null;
+  description: string | null;
+  tags: string[] | null;
+  latest_version: number;
+  last_used_at: string | null;
+}
+
+/** Response from POST /v1/artifacts and POST /v1/artifacts/:id/versions. */
+export interface CreateArtifactResponse {
+  artifact_id: string;
+  version: number;
 }
 
 /** A relay error envelope. */

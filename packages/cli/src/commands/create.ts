@@ -68,9 +68,12 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   // the shared Zod schema (single source of truth, matches what the relay
   // expects). Per-field number parsing still happens here so we can give a
   // flag-specific message; the schema then enforces shape and bounds.
+  //
+  // The CLI emits the INLINE artifact form: the event schema rides inside the
+  // `artifact` object. (`pane create --artifact-id <id|slug>` — instancing a
+  // reusable artifact — is a Phase D addition.)
   const candidate: Record<string, unknown> = {
-    artifact: { type: artifactType, source },
-    schema,
+    artifact: { type: artifactType, source, event_schema: schema },
   };
 
   const ttlRaw = args.flags.get("ttl");

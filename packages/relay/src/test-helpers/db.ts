@@ -106,6 +106,8 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.event.deleteMany();
         await p.participant.deleteMany();
         await p.session.deleteMany();
+        await p.artifactVersion.deleteMany();
+        await p.artifact.deleteMany();
         await p.agent.deleteMany();
       },
       cleanup: async () => {
@@ -138,7 +140,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "events", "participants", "sessions", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

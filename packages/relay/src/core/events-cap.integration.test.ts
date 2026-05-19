@@ -6,13 +6,18 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
-import type { PrismaClient, Session } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import type { Author } from "../types.js";
 import { ApiError } from "../http/errors.js";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { seedSessionRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig, type Config } from "../config.js";
-import { writeEvent, type WriteEventInput } from "./events.js";
+import {
+  writeEvent,
+  type SessionWithArtifactVersion,
+  type WriteEventInput,
+} from "./events.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -21,7 +26,11 @@ let config: Config;
 const CAP = 5;
 
 // Thin wrapper binding writeEvent to the injected { prisma, config } deps.
-function we(session: Session, author: Author, input: WriteEventInput) {
+function we(
+  session: SessionWithArtifactVersion,
+  author: Author,
+  input: WriteEventInput,
+) {
   return writeEvent({ prisma, config }, session, author, input);
 }
 
@@ -43,7 +52,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSession(): Promise<Session> {
+async function seedSession(): Promise<SessionWithArtifactVersion> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -51,21 +60,19 @@ async function seedSession(): Promise<Session> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  return prisma.session.create({
-    data: {
-      id: `ses_${randomBytes(8).toString("hex")}`,
-      agentId: agent.id,
-      artifactType: "html-inline",
-      artifactSource: "<html></html>",
-      eventSchema: {
-        events: {
-          ping: { payload: { type: "object" }, emittedBy: ["page", "agent"] },
-        },
+  const { sessionId } = await seedSessionRow(prisma, {
+    agentId: agent.id,
+    eventSchema: {
+      events: {
+        ping: { payload: { type: "object" }, emittedBy: ["page", "agent"] },
       },
-      status: "open",
-      expiresAt: new Date(Date.now() + 3_600_000),
     },
   });
+  const session = await prisma.session.findUniqueOrThrow({
+    where: { id: sessionId },
+    include: { artifactVersion: true },
+  });
+  return session;
 }
 
 const author: Author = { kind: "agent", id: "a1" };

@@ -1,8 +1,9 @@
 import type { Context, MiddlewareHandler } from "hono";
-import type { Agent, Participant, PrismaClient, Session } from "@prisma/client";
+import type { Agent, Participant, PrismaClient } from "@prisma/client";
 import { hashKey } from "../keys.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
+import type { SessionWithArtifactVersion } from "../core/events.js";
 import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
 
@@ -10,7 +11,9 @@ export type AuthEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
     agent: Agent;
     author: Author;
-    session: Session;
+    // The session is always loaded with its pinned artifact version eagerly
+    // included — writeEvent + the bridge need the version's event schema.
+    session: SessionWithArtifactVersion;
     participant: Participant;
   };
 };
@@ -39,7 +42,11 @@ export async function resolveBearer(
   kind: ResolveKind = "both",
 ): Promise<
   | { kind: "agent"; agent: Agent }
-  | { kind: "participant"; participant: Participant; session: Session }
+  | {
+      kind: "participant";
+      participant: Participant;
+      session: SessionWithArtifactVersion;
+    }
   | null
 > {
   const hash = hashKey(token);
@@ -52,6 +59,7 @@ export async function resolveBearer(
       if (participant.revokedAt) return null;
       const session = await prisma.session.findUnique({
         where: { id: participant.sessionId },
+        include: { artifactVersion: true },
       });
       if (!session) return null;
       return { kind: "participant", participant, session };
@@ -102,6 +110,7 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   if (agent && !agent.revokedAt) {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
+      include: { artifactVersion: true },
     });
     if (!session || session.agentId !== agent.id) throw errors.notFound();
     prisma.agent
@@ -126,6 +135,7 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   if (participant.sessionId !== sessionId) throw errors.notFound();
   const session = await prisma.session.findUnique({
     where: { id: participant.sessionId },
+    include: { artifactVersion: true },
   });
   if (!session) throw errors.notFound();
   // Note: `participant.joinedAt` is intentionally NOT stamped here. The SPEC

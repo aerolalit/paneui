@@ -16,14 +16,16 @@ import {
   vi,
 } from "vitest";
 import { randomBytes } from "node:crypto";
-import type { PrismaClient, Session } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import type { Author } from "../types.js";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { seedSessionRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig, type Config } from "../config.js";
 import { encryptSecret, _resetKeyCacheForTests } from "../crypto.js";
 import {
   writeEvent,
+  type SessionWithArtifactVersion,
   type WriteEventInput,
   type WriteEventResult,
 } from "./events.js";
@@ -35,11 +37,34 @@ let config: Config;
 // Thin wrapper that binds writeEvent to the injected { prisma, config } deps so
 // the individual test bodies stay focused on session/author/input.
 function we(
-  session: Session,
+  session: SessionWithArtifactVersion,
   author: Author,
   input: WriteEventInput,
 ): Promise<WriteEventResult> {
   return writeEvent({ prisma, config }, session, author, input);
+}
+
+// Re-read a session with its artifact version eagerly included — used after a
+// raw update to hand writeEvent a fresh SessionWithArtifactVersion.
+function reloadSession(id: string): Promise<SessionWithArtifactVersion> {
+  return prisma.session.findUniqueOrThrow({
+    where: { id },
+    include: { artifactVersion: true },
+  });
+}
+
+// Replace the pinned artifact version's event schema in place. The relay never
+// mutates a version's content, but a test that needs a different vocabulary
+// can do so directly against the row.
+async function overrideEventSchema(
+  session: SessionWithArtifactVersion,
+  eventSchema: object,
+): Promise<SessionWithArtifactVersion> {
+  await prisma.artifactVersion.update({
+    where: { id: session.artifactVersionId },
+    data: { eventSchema },
+  });
+  return reloadSession(session.id);
 }
 
 beforeAll(async () => {
@@ -70,7 +95,7 @@ interface SeedOptions {
 
 async function seedSession(
   opts: SeedOptions = {},
-): Promise<{ session: Session; agentId: string }> {
+): Promise<{ session: SessionWithArtifactVersion; agentId: string }> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -78,40 +103,36 @@ async function seedSession(
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const session = await prisma.session.create({
-    data: {
-      id: `ses_${randomBytes(8).toString("hex")}`,
-      agentId: agent.id,
-      artifactType: "html-inline",
-      artifactSource: "<html></html>",
-      eventSchema: {
-        events: {
-          "review.commentAdded": {
-            payload: {
-              type: "object",
-              properties: { body: { type: "string" } },
-              required: ["body"],
-              additionalProperties: false,
-            },
-            emittedBy: ["page", "agent"],
+  const { sessionId } = await seedSessionRow(prisma, {
+    agentId: agent.id,
+    eventSchema: {
+      events: {
+        "review.commentAdded": {
+          payload: {
+            type: "object",
+            properties: { body: { type: "string" } },
+            required: ["body"],
+            additionalProperties: false,
           },
+          emittedBy: ["page", "agent"],
         },
       },
-      status: opts.status ?? "open",
-      expiresAt: new Date(Date.now() + (opts.expiresInMs ?? 3_600_000)),
-      callbackUrl: opts.withCallback
-        ? (opts.callbackUrl ?? "https://example.com/webhook")
-        : null,
-      callbackSecretEnc: opts.withCallback
-        ? encryptSecret(
-            opts.callbackSecret ?? "whsec_" + randomBytes(8).toString("hex"),
-          )
-        : null,
-      callbackFilter: opts.withCallback
-        ? (opts.callbackFilter ?? ["review.*"])
-        : null,
     },
+    status: (opts.status as "open" | "closed" | undefined) ?? "open",
+    expiresAt: new Date(Date.now() + (opts.expiresInMs ?? 3_600_000)),
+    callbackUrl: opts.withCallback
+      ? (opts.callbackUrl ?? "https://example.com/webhook")
+      : null,
+    callbackSecretEnc: opts.withCallback
+      ? encryptSecret(
+          opts.callbackSecret ?? "whsec_" + randomBytes(8).toString("hex"),
+        )
+      : null,
+    callbackFilter: opts.withCallback
+      ? (opts.callbackFilter ?? ["review.*"])
+      : null,
   });
+  const session = await reloadSession(sessionId);
   return { session, agentId: agent.id };
 }
 
@@ -184,20 +205,15 @@ describe("writeEvent (integration, real SQLite)", () => {
     const { session } = await seedSession();
     // Force-override the schema to make review.commentAdded page-only,
     // then prove an agent cannot emit it.
-    const updated = await prisma.session.update({
-      where: { id: session.id },
-      data: {
-        eventSchema: {
-          events: {
-            "review.commentAdded": {
-              payload: {
-                type: "object",
-                properties: { body: { type: "string" } },
-                required: ["body"],
-              },
-              emittedBy: ["page"],
-            },
+    const updated = await overrideEventSchema(session, {
+      events: {
+        "review.commentAdded": {
+          payload: {
+            type: "object",
+            properties: { body: { type: "string" } },
+            required: ["body"],
           },
+          emittedBy: ["page"],
         },
       },
     });
@@ -213,16 +229,11 @@ describe("writeEvent (integration, real SQLite)", () => {
     const { session, agentId } = await seedSession();
     // Override the schema to accept a large free-form payload so we hit the
     // size cap before the JSON Schema check.
-    const updated = await prisma.session.update({
-      where: { id: session.id },
-      data: {
-        eventSchema: {
-          events: {
-            "big.payload": {
-              payload: { type: "object", additionalProperties: true },
-              emittedBy: ["agent"],
-            },
-          },
+    const updated = await overrideEventSchema(session, {
+      events: {
+        "big.payload": {
+          payload: { type: "object", additionalProperties: true },
+          emittedBy: ["agent"],
         },
       },
     });
@@ -322,7 +333,7 @@ describe("writeEvent (integration, real SQLite)", () => {
       // still commit and the function should return normally — the webhook
       // failure path must not leak into the caller's success path.
       const { session, agentId } = await seedSession();
-      const broken = await prisma.session.update({
+      await prisma.session.update({
         where: { id: session.id },
         data: {
           callbackUrl: "https://example.invalid/hook",
@@ -330,6 +341,7 @@ describe("writeEvent (integration, real SQLite)", () => {
           callbackFilter: ["review.*"],
         },
       });
+      const broken = await reloadSession(session.id);
       const { event, deduped } = await we(broken, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },

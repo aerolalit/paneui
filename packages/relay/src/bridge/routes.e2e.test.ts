@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { seedSessionRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
 import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
@@ -68,19 +69,14 @@ async function seedSession(opts?: {
       lastUsedAt: opts?.agentLastUsedAt ?? null,
     },
   });
-  const sessionId = "ses_" + randomBytes(8).toString("hex");
-  await prisma.session.create({
-    data: {
-      id: sessionId,
-      agentId: agent.id,
-      artifactType: "html-inline",
-      artifactSource: opts?.artifactSource ?? "<html></html>",
-      eventSchema: minimalSchema,
-      status: opts?.closed ? "closed" : "open",
-      expiresAt: opts?.expired
-        ? new Date(Date.now() - 60 * 60 * 1000)
-        : new Date(Date.now() + 60 * 60 * 1000),
-    },
+  const { sessionId } = await seedSessionRow(prisma, {
+    agentId: agent.id,
+    artifactSource: opts?.artifactSource ?? "<html></html>",
+    eventSchema: minimalSchema,
+    status: opts?.closed ? "closed" : "open",
+    expiresAt: opts?.expired
+      ? new Date(Date.now() - 60 * 60 * 1000)
+      : new Date(Date.now() + 60 * 60 * 1000),
   });
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
