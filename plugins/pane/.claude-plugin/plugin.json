@@ -6,8 +6,8 @@
     "name": "aerolalit",
     "url": "https://github.com/aerolalit"
   },
-  "homepage": "https://github.com/aerolalit/pane#readme",
-  "repository": "https://github.com/aerolalit/pane",
+  "homepage": "https://github.com/aerolalit/paneui#readme",
+  "repository": "https://github.com/aerolalit/paneui",
   "license": "MIT",
   "keywords": ["pane", "agent", "human-in-the-loop", "relay", "skill"],
   "skills": ["./skills/pane"]

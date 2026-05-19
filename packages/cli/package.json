@@ -11,14 +11,14 @@
     "relay",
     "human-in-the-loop"
   ],
-  "homepage": "https://github.com/aerolalit/pane#readme",
+  "homepage": "https://github.com/aerolalit/paneui#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aerolalit/pane.git",
+    "url": "git+https://github.com/aerolalit/paneui.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/aerolalit/pane/issues"
+    "url": "https://github.com/aerolalit/paneui/issues"
   },
   "engines": {
     "node": ">=20"

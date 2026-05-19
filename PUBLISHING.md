@@ -26,7 +26,7 @@ and workflow run.
 
 3. **Add the token to GitHub Actions secrets:**
    ```sh
-   gh secret set NPM_TOKEN --repo aerolalit/pane
+   gh secret set NPM_TOKEN --repo aerolalit/paneui
    # paste the token when prompted
    ```
 
@@ -77,7 +77,7 @@ and workflow run.
 6. **Watch the workflow.**
 
    ```sh
-   gh run watch --repo aerolalit/pane
+   gh run watch --repo aerolalit/paneui
    ```
 
    On success, both packages are live on npm with provenance attached

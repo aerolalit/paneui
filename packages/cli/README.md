@@ -1,6 +1,6 @@
 # @paneui/cli
 
-Command-line client for the [Pane](https://github.com/aerolalit/pane) relay:
+Command-line client for the [Pane](https://github.com/aerolalit/paneui) relay:
 hand a human a rich interactive UI by URL and capture their answer as structured
 data — from any agent (cron job, chat bot, CI, headless server).
 
@@ -56,6 +56,6 @@ pane watch "$SESSION" | jq 'select(.type == "human_response")'
 
 ## Links
 
-- Repo: <https://github.com/aerolalit/pane>
-- Spec: <https://github.com/aerolalit/pane/blob/main/docs/SPEC.md>
+- Repo: <https://github.com/aerolalit/paneui>
+- Spec: <https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md>
 - License: MIT

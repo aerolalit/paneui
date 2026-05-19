@@ -13,8 +13,8 @@ Only the **relay**. A prebuilt image is published to the GitHub Container
 Registry on every release:
 
 ```
-ghcr.io/aerolalit/pane:<version>     # e.g. :0.1.0 — pin this for reproducible deploys
-ghcr.io/aerolalit/pane:latest
+ghcr.io/aerolalit/paneui:<version>     # e.g. :0.1.0 — pin this for reproducible deploys
+ghcr.io/aerolalit/paneui:latest
 ```
 
 The image bundles the human-facing web UI (the `/s/:token` shell page), so
@@ -73,7 +73,7 @@ docker run -d -p 3000:3000 \
   -e PANE_SECRET_KEY="$(openssl rand -base64 32)" \
   -e API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx \
   -v pane-data:/app/data \
-  ghcr.io/aerolalit/pane:latest
+  ghcr.io/aerolalit/paneui:latest
 ```
 
 ## Building from source

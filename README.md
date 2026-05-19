@@ -51,7 +51,7 @@ An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
 **Claude Code** — install the skill from the plugin marketplace:
 
 ```text
-/plugin marketplace add aerolalit/pane
+/plugin marketplace add aerolalit/paneui
 /plugin install pane@pane
 ```
 
@@ -59,7 +59,7 @@ An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
 with the cross-agent [`skills`](https://github.com/vercel-labs/skills) tool:
 
 ```sh
-npx skills add aerolalit/pane --skill pane
+npx skills add aerolalit/paneui --skill pane
 ```
 
 Then install and register the CLI:
