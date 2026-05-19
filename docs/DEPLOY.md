@@ -1,13 +1,14 @@
 # Deploying Pane
 
-Pane runs as a **single-container** relay. This guide covers the hosted
-reference deployment on **Azure Container Apps (ACA)** backed by Azure Database
-for PostgreSQL. Self-hosting elsewhere (any container host) follows the same
-shape — the env-var contract is the only thing that matters.
+Pane runs as a container relay. This guide covers the hosted reference
+deployment on **Azure Container Apps (ACA)** backed by Azure Database for
+PostgreSQL. Deploying elsewhere (any container host) follows the same shape —
+the env-var contract is the only thing that matters.
 
-> **Single replica only.** The event fan-out is an in-process `EventEmitter`
-> (`packages/relay/src/http/broadcast.ts`). Scaling past one replica silently
-> drops cross-replica events. Pin `minReplicas = maxReplicas = 1`.
+> **Replicas.** A single replica needs no external services. To scale past one
+> replica, set `REDIS_URL` so cross-replica event fan-out, rate limiting, and
+> presence stay consistent — see [Running multiple replicas](#running-multiple-replicas).
+> Without `REDIS_URL`, pin `minReplicas = maxReplicas = 1`.
 
 ## Production preflight
 
@@ -118,136 +119,109 @@ exists.** So deployment is inherently two steps:
 
 Once you attach a custom domain, update `PUBLIC_URL` to that domain.
 
-## Self-hosting with Docker + SQLite
+## Single-box self-host
 
-The Azure steps below are the *reference* deployment. For a solo or small-team
-self-host you do not need Azure, Postgres, or a container registry — the relay
-runs as one container against a SQLite file.
+For a solo or small-team relay — one container against a SQLite file, no
+Postgres, no registry, no clone — see **[SELF-HOSTING.md](SELF-HOSTING.md)**.
+The rest of this guide is the operator path: a Postgres-backed, optionally
+multi-replica deployment with observability, using the Azure Container Apps
+reference setup.
 
-### What you deploy
+## Database
 
-Only the **relay**, and you do **not** need to clone the repo to run it — a
-prebuilt image is published to the GitHub Container Registry on every release:
-
-```
-ghcr.io/aerolalit/pane:<version>     # e.g. :0.1.0
-ghcr.io/aerolalit/pane:latest
-```
-
-Pin a real version tag for reproducible deploys; `latest` moves. The image
-bundles the human-facing web UI (the `/s/:token` shell page), so there is no
-separate frontend to deploy. The `pane` CLI runs wherever your agent runs; it
-is not part of the deployment.
-
-### docker-compose (quickest)
-
-The repo ships a [`docker-compose.yml`](../docker-compose.yml) that pulls the
-GHCR image — copy just that file into an empty directory (no clone needed) and
-create a `.env` next to it:
-
-```bash
-NODE_ENV=production
-PUBLIC_URL=https://pane.example.com      # the public URL — see "PUBLIC_URL" below
-PANE_SECRET_KEY=                         # openssl rand -base64 32
-API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx    # optional; bootstraps your agent key
-# REGISTRATION_MODE defaults to closed — leave unset unless you want self-service
-```
-
-Then:
-
-```bash
-docker compose up -d
-```
-
-Migrations run automatically on boot, a named volume (`pane-data`) persists the
-SQLite database at `/app/data` across restarts, and `docker compose` runs a
-`GET /healthz` healthcheck. Upgrade with `docker compose pull && docker compose up -d`.
-
-### docker run (without compose)
-
-```bash
-docker run -d -p 3000:3000 \
-  -e NODE_ENV=production \
-  -e PUBLIC_URL=https://pane.example.com \
-  -e PANE_SECRET_KEY="$(openssl rand -base64 32)" \
-  -e API_KEY=pane_xxxxxxxxxxxxxxxxxxxxxxxx \
-  -v pane-data:/app/data \
-  ghcr.io/aerolalit/pane:latest
-```
-
-### Building from source (contributors)
-
-If you are modifying pane or want an unreleased build, build the image from a
-checkout instead of pulling it. The `docker-compose.yml` has a commented
-`build:` block for this; or directly:
-
-```bash
-docker build -f packages/relay/Dockerfile -t pane .   # context = repo root
-```
-
-To run the relay straight from source without Docker:
-
-```bash
-npm install
-npm run build  --workspace @pane/relay
-npm run migrate:deploy --workspace @pane/relay
-NODE_ENV=production PUBLIC_URL=... PANE_SECRET_KEY=... \
-  npm run start --workspace @pane/relay
-```
-
-### Database
-
-SQLite is the default and is the recommended store for a self-host — one file,
-no separate service. Two image variants are published to GHCR on every release:
+The hosted/operator path runs on **PostgreSQL**. A `-postgres` image variant is
+published to GHCR on every release alongside the SQLite default:
 
 ```
-ghcr.io/aerolalit/pane:<version>            # SQLite — the self-host default
-ghcr.io/aerolalit/pane:latest
-ghcr.io/aerolalit/pane:<version>-postgres   # Postgres — the hosted build
+ghcr.io/aerolalit/pane:<version>            # SQLite — the single-box self-host default
+ghcr.io/aerolalit/pane:<version>-postgres   # Postgres — the hosted/operator build
 ghcr.io/aerolalit/pane:latest-postgres
 ```
 
 The two differ only in the Prisma client baked at build time (the datasource
 provider is fixed at `prisma generate` time, so it cannot be switched at
-runtime). The Postgres variant is for the hosted/Azure path — run it against a
-`postgresql://` `DATABASE_URL`. The container's boot-time `migrate deploy` is
-engine-aware: it detects sqlite vs postgres from `DATABASE_URL` and applies the
-matching migration set automatically. For a solo deployment, stay on SQLite.
+runtime). Run the `-postgres` variant against a `postgresql://` `DATABASE_URL`.
+The container's boot-time `migrate deploy` is engine-aware: it detects sqlite vs
+postgres from `DATABASE_URL` and applies the matching migration set
+automatically.
 
-To build either variant locally instead of pulling it: `docker build` with no
-`--build-arg` gives the SQLite image; `--build-arg DATABASE_PROVIDER=postgres`
-gives the Postgres one.
+To build the Postgres variant locally: `docker build --build-arg
+DATABASE_PROVIDER=postgres` (no `--build-arg` gives the SQLite image).
 
-### TLS and reverse proxy
+## Running multiple replicas
 
-The relay speaks plain HTTP on `PORT`. For anything internet-facing, put a
-reverse proxy (Caddy, nginx, Traefik) in front to terminate TLS. The proxy
-**must forward WebSocket upgrades** for `/v1/sessions/:id/stream`, and
-`PUBLIC_URL` must exactly match the public scheme + host the proxy serves —
-the relay bakes it into every participant URL and the WebSocket CSP origin.
+By default the relay runs as a **single process** and keeps three pieces of
+state in memory: the event pub/sub bus, the rate limiter, and the WebSocket
+presence registry. That is correct and fast for a single replica.
 
-### Keys for a self-host
-
-With `REGISTRATION_MODE` at its default (`closed`), no one can self-register.
-Provide your agent's key via `API_KEY`, or let the relay mint one on first boot
-and read it from the logs (`docker compose logs`). Open `secret`/`open`
-registration only if you actually want other agents to provision themselves —
-see "Registration mode" above.
-
-### Solo quickstart
+To run the relay as **multiple replicas** (e.g. an autoscaling container app),
+set `REDIS_URL` to a Redis instance shared by every replica:
 
 ```bash
-# 1. configure — in an empty directory, drop in docker-compose.yml and a .env
-#    (no clone needed). Copy the env keys from packages/relay/.env.example.
-#    Set NODE_ENV=production, PUBLIC_URL, PANE_SECRET_KEY (openssl rand -base64 32).
-
-# 2. run — pulls ghcr.io/aerolalit/pane and starts it
-docker compose up -d
-
-# 3. point the CLI at it and do a round trip
-PANE_URL=https://pane.example.com PANE_API_KEY=<your key> \
-  pane create --artifact ./form.html --schema ./schema.json --ttl 600
+REDIS_URL=redis://my-redis:6379 npm start
 ```
+
+With `REDIS_URL` set, the relay backs all three pieces of state with Redis so
+every replica stays consistent:
+
+- **Event pub/sub** — events publish to a Redis channel, so a subscriber on
+  any replica receives an event published on any other.
+- **Rate limiter** — the sliding window lives in Redis, so the configured
+  limit is global across replicas rather than per-replica.
+- **Presence** — the WebSocket presence registry lives in Redis, so counts
+  reflect connections on every replica, not just the local one.
+
+`REDIS_URL` is **optional**. The Redis client (`ioredis`) is an
+`optionalDependency`, installed and loaded only when `REDIS_URL` is set. A relay
+started with `REDIS_URL` but without `ioredis` installed fails fast with a clear
+message, and a relay started with `REDIS_URL` unreachable fails fast on boot
+rather than running with no shared state.
+
+> When running multiple replicas behind a load balancer, enable session
+> affinity (sticky sessions) so a WebSocket stays pinned to the replica that
+> accepted its upgrade. The shared Redis state above makes *cross-replica
+> visibility* correct; affinity keeps an individual long-lived socket on one
+> replica for its lifetime.
+
+## Observability
+
+The relay is instrumented with the vendor-neutral
+[OpenTelemetry](https://opentelemetry.io/) SDK. `METRICS_EXPORTER` selects where
+telemetry goes; there are three modes:
+
+**`none` (default)** — no telemetry is exported. The instrument helpers are
+cheap no-ops, no exporter is constructed, no tracer provider is created, and
+`GET /metrics` is not mounted (it returns 404). Operators opt in to one of the
+modes below.
+
+**`prometheus`** — `GET /metrics` serves the current metrics in the Prometheus
+text exposition format on the relay's normal port; point a Prometheus scrape at
+it. Exposed instruments include `pane_sessions_created_total`,
+`pane_events_written_total`, `pane_registrations_total`, `pane_errors_total`,
+`pane_ws_connections_active`, `pane_sessions_open`, and
+`pane_http_request_duration_seconds`. `/metrics` is unauthenticated, which is
+the norm for a Prometheus scrape target — if the relay is publicly reachable,
+**firewall the endpoint** (or restrict it at a reverse proxy) so only your
+monitoring stack can reach it. Prometheus has no trace ingestion, so no spans
+are produced in this mode.
+
+**`azure`** — pushes metrics, distributed traces (HTTP request spans plus DB
+dependency spans), handled exceptions and application logs to [Azure
+Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview).
+This mode requires the **optional** `@azure/monitor-opentelemetry-exporter`
+package (`npm install @azure/monitor-opentelemetry-exporter` — it is *not* a
+hard dependency of the open-source core) and the
+`APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable. The relay fails
+fast at startup with a clear error if the connection string is missing or the
+package is not installed. `GET /metrics` is not mounted in `azure` mode.
+
+## SSRF protection
+
+Agent-supplied URLs — webhook callback URLs and `html-ref` artifact URLs — are
+validated before use. They must be `http`/`https`, must not embed credentials,
+and must not resolve to a loopback, private, link-local, or CGNAT address (this
+also blocks the cloud metadata endpoint `169.254.169.254`). A URL that fails
+these checks is rejected at the API boundary.
 
 ## Deploy steps (Azure Container Apps)
 
