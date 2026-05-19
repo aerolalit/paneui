@@ -1,5 +1,5 @@
 {
-  "name": "@pane/core",
+  "name": "@paneui/core",
   "version": "0.0.1",
   "description": "Pane relay client: typed HTTP + WebSocket operations against a Pane relay. Framework-free.",
   "license": "MIT",
@@ -11,14 +11,14 @@
     "relay",
     "human-in-the-loop"
   ],
-  "homepage": "https://github.com/aerolalit/pane#readme",
+  "homepage": "https://github.com/aerolalit/paneui#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aerolalit/pane.git",
+    "url": "git+https://github.com/aerolalit/paneui.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/aerolalit/pane/issues"
+    "url": "https://github.com/aerolalit/paneui/issues"
   },
   "engines": {
     "node": ">=20"
@@ -35,7 +35,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",

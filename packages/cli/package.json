@@ -1,5 +1,5 @@
 {
-  "name": "pane-cli",
+  "name": "@paneui/cli",
   "version": "0.0.1",
   "description": "Command-line client for the Pane relay: create sessions, inspect state, send and watch events.",
   "license": "MIT",
@@ -11,14 +11,14 @@
     "relay",
     "human-in-the-loop"
   ],
-  "homepage": "https://github.com/aerolalit/pane#readme",
+  "homepage": "https://github.com/aerolalit/paneui#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aerolalit/pane.git",
+    "url": "git+https://github.com/aerolalit/paneui.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/aerolalit/pane/issues"
+    "url": "https://github.com/aerolalit/paneui/issues"
   },
   "engines": {
     "node": ">=20"
@@ -30,7 +30,9 @@
     "pane": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -39,7 +41,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@pane/core": "^0.0.1"
+    "@paneui/core": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

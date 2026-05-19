@@ -3,7 +3,7 @@
 // how to fix its input (`hint`), and where to read more (`docsUrl`).
 
 // No hosted docs site yet — link the repo SPEC with verified heading anchors.
-const SPEC = "https://github.com/aerolalit/pane/blob/main/docs/SPEC.md";
+const SPEC = "https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md";
 const DOCS = {
   auth: `${SPEC}#auth-three-layers-only-1-and-2-in-v1`,
   api: `${SPEC}#http-api-v1`,

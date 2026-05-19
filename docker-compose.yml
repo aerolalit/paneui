@@ -13,7 +13,7 @@
 #      and must forward WebSocket upgrades). The relay itself speaks plain HTTP.
 #
 # This pulls a prebuilt image from GHCR — pin a real version tag instead of
-# `latest` for reproducible deploys (see https://github.com/aerolalit/pane/pkgs/container/pane).
+# `latest` for reproducible deploys (see https://github.com/aerolalit/paneui/pkgs/container/pane).
 # To build from a local checkout instead (for contributors / unreleased
 # changes), comment out `image:` and uncomment the `build:` block below.
 #
@@ -21,7 +21,7 @@
 
 services:
   relay:
-    image: ghcr.io/aerolalit/pane:latest
+    image: ghcr.io/aerolalit/paneui:latest
     # build:
     #   # Build context is the monorepo root; the Dockerfile lives in the relay
     #   # package and expects root context (it copies the workspace manifests).

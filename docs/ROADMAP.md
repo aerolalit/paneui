@@ -14,7 +14,7 @@ Goal: an agent can hand a human a UI by URL and get a structured answer back. No
 - [ ] Sandboxed iframe shell + bridge shim: `sandbox="allow-scripts"` (no `allow-same-origin`), CSP `connect-src 'none'` on `/s/{token}/content`. `pane.emit / pane.on / pane.state` shim, `postMessage` origin check on the shell-iframe boundary.
 - [ ] DB-backed bearer-token auth for agent → relay: keys in `agents` (`sha256` + display prefix + `revoked_at`). `POST /register` gated by `REGISTRATION_MODE` (closed default / secret / open), bounded by a per-IP rate limiter in the secret and open modes. Per-identity participant tokens issued at session create.
 - [ ] Security caps: 2 MB artifact, 64 KB event data, per-agent session-create rate limit. Best-effort webhook delivery with HMAC signing (durable retry deferred to hosted).
-- [ ] The `pane` CLI (`pane-cli`): `pane create` returns the human URL(s); `pane watch <id> --type <event>` streams the session as JSON-lines and exits when that event lands; `pane state` / `pane send` cover non-blocking reads and agent emits. Harness-agnostic — works for MCP hosts, cron agents, shell pipelines, CI, Claude Code's process tools.
+- [ ] The `pane` CLI (`@paneui/cli`): `pane create` returns the human URL(s); `pane watch <id> --type <event>` streams the session as JSON-lines and exits when that event lands; `pane state` / `pane send` cover non-blocking reads and agent emits. Harness-agnostic — works for MCP hosts, cron agents, shell pipelines, CI, Claude Code's process tools.
 - [ ] Dogfood demo: a `claudeclaw` integration where an agent asks Lalit something through a real UI.
 - [ ] README + a 30-second demo clip. MIT license. Publish the repo.
 - [ ] A hosted-lite demo instance: the OSS container, run on Azure credits, per-user provisional keys, generous limits, no SLA, "may change/disappear", so people can try it without deploying.
@@ -45,8 +45,8 @@ Shared, live UI where the agent is a participant, not just a form-handler: agent
 ## Decided
 
 - **Language: TypeScript.** Node 20+ (Bun fine), Hono for the web layer, **Prisma** ORM (SQLite for self-host/default, PostgreSQL for the hosted build). See `SPEC.md`.
-- **Monorepo: npm workspaces.** Three packages — `@pane/core` (pure relay client: HTTP + WS), `@pane/relay` (the server), `pane-cli` (the published `pane` CLI).
-- **Client wrapper: a CLI, not an MCP server.** The originally-planned MCP server was dropped in favour of `pane-cli`: a CLI that emits JSON on stdout is harness-agnostic (MCP host, cron agent, shell, CI, Claude Code process tools) and drops the `@modelcontextprotocol/sdk` dependency. The relay API contract lives in `@pane/core`. An MCP wrapper remains a possible v2 addition. See `docs/architecture/phase-4-mcp-ttl-deploy.md`.
+- **Monorepo: npm workspaces.** Three packages — `@paneui/core` (pure relay client: HTTP + WS), `@paneui/relay` (the server), `@paneui/cli` (the published `pane` CLI).
+- **Client wrapper: a CLI, not an MCP server.** The originally-planned MCP server was dropped in favour of `@paneui/cli`: a CLI that emits JSON on stdout is harness-agnostic (MCP host, cron agent, shell, CI, Claude Code process tools) and drops the `@modelcontextprotocol/sdk` dependency. The relay API contract lives in `@paneui/core`. An MCP wrapper remains a possible v2 addition. See `docs/architecture/phase-4-mcp-ttl-deploy.md`.
 
 ## Open questions
 

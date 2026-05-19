@@ -6,7 +6,7 @@ Please report security vulnerabilities **privately** — do not open a public is
 
 The preferred channel is **GitHub Private Vulnerability Reporting**:
 
-1. Go to the [Security tab](https://github.com/aerolalit/pane/security) of the `aerolalit/pane` repository.
+1. Go to the [Security tab](https://github.com/aerolalit/paneui/security) of the `aerolalit/paneui` repository.
 2. Click **"Report a vulnerability"**.
 3. Describe the issue, including steps to reproduce and affected versions/components (`relay`, `cli`, or `core`).
 

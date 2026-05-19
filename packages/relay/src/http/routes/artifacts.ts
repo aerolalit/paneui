@@ -4,7 +4,7 @@ import {
   createArtifactSchema,
   createArtifactVersionSchema,
   patchArtifactMetadataSchema,
-} from "@pane/core";
+} from "@paneui/core";
 import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";

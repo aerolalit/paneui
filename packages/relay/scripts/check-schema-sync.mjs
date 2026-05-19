@@ -7,7 +7,7 @@
 //
 // This check normalises both files down to just their model/enum definitions,
 // strips provider-specific annotations, and fails if anything else diverges.
-// Run it locally with `npm run check:schema-sync --workspace @pane/relay`;
+// Run it locally with `npm run check:schema-sync --workspace @paneui/relay`;
 // CI runs it on every push/PR.
 //
 // No dependencies — pure Node.

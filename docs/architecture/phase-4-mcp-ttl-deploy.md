@@ -4,9 +4,9 @@
 
 In:
 - The TTL sweeper (periodic cleanup + lazy expiry on read).
-- The `pane` CLI (`pane-cli`, bin `pane`) and its four commands: the first
+- The `pane` CLI (`@paneui/cli`, bin `pane`) and its four commands: the first
   client wrapper.
-- The npm-workspaces monorepo layout (`@pane/core`, `@pane/relay`, `pane-cli`).
+- The npm-workspaces monorepo layout (`@paneui/core`, `@paneui/relay`, `@paneui/cli`).
 - The Dockerfile + `.dockerignore` + single-container deploy story.
 - The `claudeclaw` dogfood: wiring `pane watch` into a real claw instance and
   doing one genuine round trip.
@@ -30,24 +30,24 @@ the common scripts (`build`, `typecheck`, `test`) to the workspaces.
 pane/
 ├── package.json            workspace root
 ├── packages/
-│   ├── core/               @pane/core — relay HTTP + WS client; pure,
+│   ├── core/               @paneui/core — relay HTTP + WS client; pure,
 │   │                       framework-free (deps: zod + ws)
-│   ├── relay/              @pane/relay — the server: src/, prisma/,
+│   ├── relay/              @paneui/relay — the server: src/, prisma/,
 │   │                       Dockerfile, .dockerignore
-│   └── cli/                pane-cli — the published CLI; bin "pane"
-│                           (deps: @pane/core + zod)
+│   └── cli/                @paneui/cli — the published CLI; bin "pane"
+│                           (deps: @paneui/core + zod)
 └── docs/
 ```
 
-- **`@pane/core`** holds the relay API contract: the `PaneClient` HTTP helper
+- **`@paneui/core`** holds the relay API contract: the `PaneClient` HTTP helper
   (`call()` + typed `createSession` / `getSession` / `getEvents` / `sendEvent`)
   and `openStream` — a WebSocket client for `WS /v1/sessions/:id/stream` with
   replay-on-connect. It is pure: no argv, no `process.env`, no MCP. Any client
   (the CLI, a future LangChain tool) builds on it.
-- **`@pane/relay`** is the unchanged server — all of the former top-level
+- **`@paneui/relay`** is the unchanged server — all of the former top-level
   `src/` and `prisma/`, the Dockerfile and `.dockerignore`. Build, run, and the
   full test suite behave exactly as before; only paths moved.
-- **`pane-cli`** is the published package: `npm i -g pane-cli` gives you the
+- **`@paneui/cli`** is the published package: `npm i -g @paneui/cli` gives you the
   `pane` binary.
 
 ## TTL sweeper
@@ -68,16 +68,16 @@ pane/
 
 ## The `pane` CLI
 
-`pane-cli` replaces the originally-planned MCP server. The motivation: an MCP
+`@paneui/cli` replaces the originally-planned MCP server. The motivation: an MCP
 server only helps MCP hosts, and it pulls in the `@modelcontextprotocol/sdk`
 dependency and a stdio-transport lifecycle. A CLI that emits **JSON on stdout**
 is harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline,
 a CI job, or Claude Code's process tools, with nothing to install but one
 binary. The relay API contract the MCP server encoded (the `call()` helper +
-the three operations) now lives in `@pane/core` and is reused unchanged.
+the three operations) now lives in `@paneui/core` and is reused unchanged.
 
-- **Distribution**: published as `pane-cli`, `bin: { "pane": "dist/index.js" }`,
-  so `npm i -g pane-cli` (or `npx pane-cli`) gives the `pane` command.
+- **Distribution**: published as `@paneui/cli`, `bin: { "pane": "dist/index.js" }`,
+  so `npm i -g @paneui/cli` (or `npx @paneui/cli`) gives the `pane` command.
 - **It is a client of the relay's HTTP / WS API.** It holds `PANE_URL` and
   `PANE_API_KEY` (env; `--url` / `--api-key` override per invocation) and calls
   `POST /v1/sessions`, `GET /v1/sessions/:id`, `GET /v1/sessions/:id/events`,
@@ -109,7 +109,7 @@ optional `--causation-id` / `--idempotency-key`) into the session. The relay
 stamps the author from the API key; identity cannot be spoofed, and the event
 type must exist in the schema with `agent` in its `emittedBy`.
 
-**`pane watch <id>`** — long-lived. Holds a WebSocket via `@pane/core`'s
+**`pane watch <id>`** — long-lived. Holds a WebSocket via `@paneui/core`'s
 `openStream` (replay-on-connect, then live). Prints **one compact JSON object
 per line** to stdout, flushing after each. On session close it prints a final
 `{"type":"_closed"}` line and exits 0. Flags:
@@ -164,8 +164,8 @@ binary; `debian-openssl-3.0.x` is the default and works on slim).
 `binaryTargets = ["native", "linux-musl-openssl-3.0.x"]` and more surprises;
 document for anyone who insists, but ship slim.)
 
-The Dockerfile installs only the `@pane/relay` workspace
-(`npm ci --workspace @pane/relay --include-workspace-root`), generates the
+The Dockerfile installs only the `@paneui/relay` workspace
+(`npm ci --workspace @paneui/relay --include-workspace-root`), generates the
 Prisma client, compiles `dist/`, and in the runtime stage carries `dist/`, prod
 `node_modules`, the generated Prisma client, and `prisma/migrations/`. The
 runtime working directory is `/app/packages/relay`.
@@ -248,6 +248,6 @@ may change or disappear."
   the npm-workspaces monorepo, the four-command surface
   (`create` / `state` / `send` / `watch`), JSON-lines stdout as the contract,
   Docker base (`node:20-slim`): all **DECIDED** above.
-- **MCP**: dropped in v1. An MCP-server wrapper around `@pane/core` remains a
+- **MCP**: dropped in v1. An MCP-server wrapper around `@paneui/core` remains a
   viable later addition for hosts that want native tools, but the CLI covers
   the same agents with less surface. Reconsider in v2 if there is demand.
