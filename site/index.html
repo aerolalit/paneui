@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pane — a round-trip UI channel between agents and humans</title>
+  <meta name="description" content="An agent hands a human a rich interactive UI by URL, captures their interactions as structured data, and feeds it back. For agents that live outside a GUI host app." />
+  <meta property="og:title" content="Pane — a round-trip UI channel between agents and humans" />
+  <meta property="og:description" content="An agent hands a human a rich interactive UI by URL and gets a structured answer back." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://paneui.com" />
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;rect width='100' height='100' rx='20' fill='%230969da'/&gt;&lt;rect x='22' y='22' width='24' height='24' rx='3' fill='white'/&gt;&lt;rect x='54' y='22' width='24' height='24' rx='3' fill='white' opacity='.6'/&gt;&lt;rect x='22' y='54' width='24' height='24' rx='3' fill='white' opacity='.6'/&gt;&lt;rect x='54' y='54' width='24' height='24' rx='3' fill='white'/&gt;&lt;/svg&gt;" />
+  <style>
+    :root { color-scheme: light dark; --fg: #1c2128; --muted: #57606a; --bg: #ffffff; --card: #f6f8fa; --border: #d0d7de; --accent: #0969da; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #e6edf3; --muted: #8b949e; --bg: #0d1117; --card: #161b22; --border: #30363d; --accent: #4493f8; }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--fg); background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 72px 24px 96px; }
+    .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+    .logo svg { width: 36px; height: 36px; }
+    .logo span { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+    h1 { font-size: 34px; line-height: 1.25; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 16px; }
+    .lede { font-size: 18px; color: var(--muted); margin: 0 0 40px; }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 40px 0 12px; }
+    p { margin: 0 0 16px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .steps { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+    .steps li { display: flex; gap: 12px; align-items: baseline; }
+    .steps .n {
+      flex: 0 0 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff;
+      font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+    }
+    pre {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px; overflow-x: auto; margin: 8px 0 0;
+    }
+    code { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    p code, li code { background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+    @media (max-width: 540px) { .cards { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px 18px; display: block; color: inherit;
+    }
+    .card:hover { border-color: var(--accent); text-decoration: none; }
+    .card .t { font-weight: 600; margin-bottom: 2px; }
+    .card .d { font-size: 14px; color: var(--muted); }
+    footer {
+      margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+      font-size: 14px; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="logo">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <rect width="100" height="100" rx="20" fill="var(--accent)" />
+        <rect x="22" y="22" width="24" height="24" rx="3" fill="#fff" />
+        <rect x="54" y="22" width="24" height="24" rx="3" fill="#fff" opacity=".6" />
+        <rect x="22" y="54" width="24" height="24" rx="3" fill="#fff" opacity=".6" />
+        <rect x="54" y="54" width="24" height="24" rx="3" fill="#fff" />
+      </svg>
+      <span>Pane</span>
+    </div>
+
+    <h1>A round-trip UI channel between agents and humans.</h1>
+    <p class="lede">
+      An agent hands a human a rich interactive UI by URL, captures their
+      interactions as structured data, and feeds it back — no GUI host app
+      needed on either side.
+    </p>
+
+    <h2>The idea</h2>
+    <p>
+      Agents can already emit rich output. But the human's reply is still a text
+      box. Pane closes the loop: the agent renders a UI — a form, a picker, a
+      doc-review view, a dashboard — the human acts on it, and every interaction
+      comes back as structured data. The human answers by <em>using</em> a UI,
+      not by typing.
+    </p>
+    <p>
+      It matters most for agents that live outside a GUI host app: cron agents,
+      Slack and Telegram bots, CI jobs, headless servers. The agent only makes
+      outbound calls to the relay — no host app, no public address of its own.
+    </p>
+
+    <h2>Get started</h2>
+    <ol class="steps">
+      <li>
+        <span class="n">1</span>
+        <div>Install the CLI:
+          <pre><code>npm i -g pane-cli</code></pre>
+        </div>
+      </li>
+      <li>
+        <span class="n">2</span>
+        <div>Register an agent key against the hosted relay:
+          <pre><code>pane register --url https://relay.paneui.com</code></pre>
+        </div>
+      </li>
+      <li>
+        <span class="n">3</span>
+        <div>Hand a human a UI and wait for the answer:
+          <pre><code>pane create --artifact ./form.html --schema ./schema.json
+pane watch ses_xxxx --type form.submitted</code></pre>
+        </div>
+      </li>
+    </ol>
+
+    <h2>Teach an agent to use it</h2>
+    <p>
+      The pane skill (<a href="https://agentskills.io">Agent Skills</a> format)
+      installs into any agent. For Claude Code, use the plugin marketplace; for
+      others, the cross-agent <code>skills</code> tool:
+    </p>
+    <pre><code># Claude Code
+/plugin marketplace add aerolalit/pane
+/plugin install pane@pane
+
+# Codex, Cursor, Copilot, Gemini CLI, …
+npx skills add aerolalit/pane --skill pane</code></pre>
+
+    <h2>Learn more</h2>
+    <div class="cards">
+      <a class="card" href="https://github.com/aerolalit/pane">
+        <div class="t">Source &amp; docs →</div>
+        <div class="d">The repo, the spec, and the API reference. MIT-licensed.</div>
+      </a>
+      <a class="card" href="https://relay.paneui.com/skills/pane/SKILL.md">
+        <div class="t">The agent skill →</div>
+        <div class="d">The full <code>pane</code> skill, served by the relay.</div>
+      </a>
+    </div>
+
+    <footer>
+      <a href="https://github.com/aerolalit/pane">GitHub</a>
+      <a href="https://relay.paneui.com/healthz">Relay status</a>
+      <span>Open-core, MIT.</span>
+    </footer>
+  </main>
+</body>
+</html>

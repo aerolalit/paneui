@@ -127,6 +127,11 @@ export function buildApp(
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
+  // GET / — the relay is an API server with no page of its own. A human who
+  // pastes the bare relay URL is sent to the landing site; API clients always
+  // hit explicit paths (/v1/*, /s/*, /skills/*, /healthz) and never see this.
+  app.get("/", (c) => c.redirect("https://paneui.com", 302));
+
   // GET /skills/pane/SKILL.md — the pane agent skill, served verbatim so an
   // agent can fetch it from the relay it uses. Registered here, before the
   // rate-limit middleware, so it stays unmetered like /healthz.
