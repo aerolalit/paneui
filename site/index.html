@@ -110,6 +110,32 @@
     .btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
     .btn-ghost { border-color: var(--border); color: var(--fg); background: var(--panel); }
     .btn-ghost:hover { border-color: var(--accent); }
+    /* GitHub button: star icon + live star count chip */
+    .btn-gh .gh-star {
+      width: 15px; height: 15px; color: #facc15;  /* amber star */
+      flex: none; margin-right: -2px;
+    }
+    .btn-gh .gh-stars {
+      display: inline-block; min-width: 0; padding: 0 8px 0 10px;
+      margin: 0 -2px 0 6px; font-variant-numeric: tabular-nums;
+      font-size: 13.5px; color: var(--muted); font-weight: 600;
+      border-left: 1px solid var(--border);
+      transition: color .15s ease;
+    }
+    /* hidden until the fetch resolves (empty = no left border, no padding) */
+    .btn-gh .gh-stars:empty { display: none; }
+    .btn-gh:hover .gh-stars { color: var(--fg); }
+    /* nav "Star on GitHub" pill — smaller, fits the link row */
+    .nav-links .nav-gh {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--muted);
+    }
+    .nav-links .nav-gh .gh-star { width: 13px; height: 13px; color: #facc15; }
+    .nav-links .nav-gh .gh-stars {
+      font-size: 13px; color: var(--muted); font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .nav-links .nav-gh .gh-stars:empty { display: none; }
     @media (max-width: 720px) { .nav-links { display: none; } }
 
     /* ---------- hero ---------- */
@@ -180,7 +206,7 @@
     /* ---------- the demo stage: browser + terminal side by side ---------- */
     /* every demo card is a FIXED-HEIGHT window — its inner content scrolls,
        so neither panel resizes the row as content streams in. */
-    .stage { --demo-h: 560px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+    .stage { --demo-h: 760px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
     .stage-3 { grid-template-columns: 1fr 1fr 1fr; }
     /* intro: while the quiz story is still being told, the stage shows fewer
        columns — it grows to stage-3 as the panels join. */
@@ -526,8 +552,29 @@
     .demo-tab[aria-selected="true"] .tpat { color: var(--fg); }
     .demo-tab[aria-selected="true"] .tex { color: var(--muted); }
     .demo-tab:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
-    .demo-tab .tdot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
-    .demo-tab[aria-selected="true"] .tdot { background: var(--agent); box-shadow: 0 0 0 4px rgba(167,139,250,.18); }
+    .demo-tab .tdot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none;
+      /* keep the same box around the dot at rest so the active pulse doesn't
+         change the dot's outer footprint and shove the label sideways. */
+      box-shadow: 0 0 0 0 rgba(167,139,250,0);
+    }
+    /* active tab — the dot turns brand-violet and pulses a radiating ring,
+       like a live status indicator. the keyframes ride the box-shadow so
+       the dot itself stays put (no jitter on the label). */
+    .demo-tab[aria-selected="true"] .tdot {
+      background: var(--agent);
+      animation: tab-tdot-pulse 1.8s ease-out infinite;
+    }
+    @keyframes tab-tdot-pulse {
+      0%   { box-shadow: 0 0 0 0    rgba(167,139,250,.55); }
+      70%  { box-shadow: 0 0 0 10px rgba(167,139,250,0);   }
+      100% { box-shadow: 0 0 0 0    rgba(167,139,250,0);   }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .demo-tab[aria-selected="true"] .tdot {
+        animation: none; box-shadow: 0 0 0 4px rgba(167,139,250,.22);
+      }
+    }
     .demo-panel[hidden] { display: none; }
 
     /* ---------- quiz: progress + question cards ---------- */
@@ -831,17 +878,62 @@
     pre .c { color: var(--faint); }
     pre .p { color: var(--human); }
     pre .a { color: var(--agent); }
+    pre .s { color: #9bd1a3; }
+
+    /* ---------- install: two-audience tabs (agent / human) ---------- */
+    .install-tabs {
+      display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap;
+    }
+    .install-tab {
+      appearance: none; cursor: pointer;
+      background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+      padding: 10px 16px; border-radius: 10px;
+      font: inherit; font-weight: 600; font-size: 14px;
+      display: inline-flex; align-items: center; gap: 9px;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+    .install-tab:hover { border-color: var(--accent); color: var(--fg); }
+    .install-tab[aria-selected="true"] {
+      background: rgba(167,139,250,.12);
+      border-color: var(--accent);
+      color: var(--fg);
+    }
+    .install-tab:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
+    .install-tab .ttag {
+      font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--faint);
+    }
+    .install-tab[aria-selected="true"] .ttag { color: var(--accent); }
+
+    .install-panel { position: relative; }
+    .install-panel[hidden] { display: none; }
+    .install-panel .install-lede {
+      color: var(--muted); margin: 0 0 12px; font-size: 14.5px;
+    }
+    .install-panel pre {
+      padding-right: 56px; /* leave room for the copy button */
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .copy-btn {
+      position: absolute; top: 10px; right: 10px;
+      appearance: none; cursor: pointer;
+      background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+      padding: 5px 10px; border-radius: 7px;
+      font: inherit; font-size: 12px; font-weight: 600;
+      transition: border-color .15s, color .15s;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--fg); }
+    .copy-btn.copied { color: #6ee7b7; border-color: #6ee7b7; }
+    .copy-btn:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
 
     /* ---------- cta band ---------- */
-    .cta-band { padding: 76px 0; text-align: center; }
-    .cta-band::before {
-      content: ""; position: absolute; inset: 0; z-index: 0;
-      background: radial-gradient(560px 240px at 50% 0%, rgba(167,139,250,.18), transparent 70%);
-    }
-    .cta-band .wrap { position: relative; z-index: 1; }
-    .cta-band h2 { font-size: 32px; }
-    .cta-band p { color: var(--muted); margin: 0 auto 26px; max-width: 480px; }
-    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 38px; text-align: left; }
+    /* "Learn more" row — a slim band of supporting links above the footer.
+       no big repeat CTAs (the nav + hero already cover that). */
+    .learn-more { padding: 56px 0 48px; }
+    .learn-more .eyebrow { text-align: center; }
+
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; text-align: left; }
     @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
     .lcard {
       background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; color: inherit;
@@ -879,9 +971,12 @@
         <a href="#how">How it works</a>
         <a href="#why">Why pane?</a>
         <a href="#start">Get started</a>
-        <a href="https://github.com/aerolalit/pane">GitHub</a>
+        <a class="nav-gh" href="https://github.com/aerolalit/pane" rel="noopener" aria-label="Star on GitHub">
+          <svg class="gh-star" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5l2.92 6.32 6.93.62-5.22 4.66 1.55 6.78L12 17.27 5.82 20.88l1.55-6.78-5.22-4.66 6.93-.62L12 2.5z"/></svg>
+          <span class="gh-stars" data-gh-stars></span>
+          GitHub
+        </a>
       </div>
-      <a class="btn btn-primary" href="#start">Get started</a>
     </div>
   </nav>
 
@@ -902,10 +997,8 @@
           by URL — and feeds every interaction back as structured data.
         </p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="#start">Get started →</a>
-          <a class="btn btn-ghost" href="https://github.com/aerolalit/pane">View on GitHub</a>
+          <a class="btn btn-primary" href="#start">See install instructions</a>
         </div>
-        <p class="hero-note">Install with <code>npm i -g pane-cli</code></p>
       </div>
 
       <!-- demo tab bar: each tab is a communication pattern, with the
@@ -1328,60 +1421,77 @@
   </section>
 
   <!-- ============ GET STARTED ============ -->
+  <!-- Two audiences, two failure modes.
+       - Agent tab: natural-language instructions to paste into an agent
+         chat. The agent figures out where its own skill directory is, fetches
+         the SKILL.md, registers, and confirms. Includes an explicit
+         GLOBAL-scope instruction because agents default to dropping things in
+         the current workspace.
+       - Human tab: literal shell commands. Uses `npx skills add` so the skill
+         install routes to whatever agent the human has installed, rather than
+         hardcoding ~/.claude/skills/. -->
   <section class="start band" id="start">
     <div class="wrap">
       <p class="eyebrow">Get started</p>
       <h2>A handful of commands to a human in the loop.</h2>
-      <p class="section-lede">No build step, no host app. Install the CLI, register against a relay, and hand someone a UI.</p>
-      <div class="steps">
-        <div class="step">
-          <span class="n">1</span>
-          <div>
-            <div class="st">Install the CLI</div>
-            <pre><code>npm i -g pane-cli</code></pre>
-          </div>
-        </div>
-        <div class="step">
-          <span class="n">2</span>
-          <div>
-            <div class="st">Register an agent key against the hosted relay</div>
-            <pre><code>pane register <span class="a">--url</span> https://relay.paneui.com</code></pre>
-          </div>
-        </div>
-        <div class="step">
-          <span class="n">3</span>
-          <div>
-            <div class="st">Hand a human a UI</div>
-<pre><code><span class="p">pane create</span> <span class="a">--artifact</span> ./form.html <span class="a">--event-schema</span> ./schema.json</code></pre>
-          </div>
-        </div>
-        <div class="step">
-          <span class="n">4</span>
-          <div>
-            <div class="st">Wait for the answer</div>
-<pre><code><span class="p">pane watch</span> ses_xxxx <span class="a">--type</span> form.submitted</code></pre>
-          </div>
-        </div>
+      <p class="section-lede">No build step, no host app. Pick your audience — paste the agent block into your AI agent's chat, or run the human block yourself.</p>
+
+      <div class="install-tabs" role="tablist" aria-label="Install instructions">
+        <button class="install-tab" id="itab-agent" role="tab" aria-selected="true" aria-controls="ipanel-agent" tabindex="0">
+          <span class="ttag">Paste to</span> Your AI agent
+        </button>
+        <button class="install-tab" id="itab-human" role="tab" aria-selected="false" aria-controls="ipanel-human" tabindex="-1">
+          <span class="ttag">Run yourself</span> Human
+        </button>
       </div>
-    </div>
-  </section>
 
-  <!-- ============ TEACH AN AGENT ============ -->
-  <section class="features" id="skill">
-    <div class="wrap">
-      <p class="eyebrow">Teach an agent to use it</p>
-      <h2>Your agent already knows how to use it.</h2>
-      <p class="section-lede">
-        The pane skill ships in <a href="https://agentskills.io">Agent Skills</a> format
-        and installs into any agent — through the Claude Code plugin marketplace, or the
-        cross-agent <code>skills</code> tool.
-      </p>
-<pre><code><span class="c"># Claude Code</span>
-/plugin marketplace add aerolalit/pane
-/plugin install pane@pane
+      <div class="install-panel" id="ipanel-agent" role="tabpanel" aria-labelledby="itab-agent">
+        <p class="install-lede">Paste the block below into your AI agent's chat. It will install the CLI, register against the hosted relay, and install the Pane skill into its own skill directory.</p>
+        <button class="copy-btn" type="button" data-copy-target="install-agent-code" aria-label="Copy agent instructions">Copy</button>
+<pre><code id="install-agent-code">Install Pane for me. Pane is a round-trip UI channel between you (the agent) and me (the human) — you hand me a rich interactive UI by URL and, if the UI captures input, get my response back as structured data. Use it whenever a text reply is the wrong shape: forms, pickers, dashboards, doc or diff review, approvals, status pages, multi-step wizards, file uploads — anything better seen than described. Input is optional; a read-only dashboard or status view is a valid Pane.
 
-<span class="c"># Codex, Cursor, Copilot, Gemini CLI, …</span>
-npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
+Install everything at GLOBAL / USER scope, not in the current workspace. Pane is a personal capability I want available in every project, not a per-repo dependency. Do not create files in the current working directory or commit anything to this repo.
+
+Do the following:
+1. Install the CLI globally: `npm i -g @pane/cli` (needs Node 20+). The binary is `pane`. Do not add it to the current project's package.json.
+2. Install the Pane skill into your agent's GLOBAL / USER skill directory, not a project-local one. For example:
+   - Claude Code: ~/.claude/skills/pane/SKILL.md  (NOT .claude/skills/ in the current repo)
+   - Cursor: user-level rules, NOT .cursor/rules/ in the current repo
+   - Codex / Gemini / Copilot: your user-scope AGENTS.md / GEMINI.md / instructions file, NOT the project root
+   The skill is hosted at https://relay.paneui.com/skills/pane/SKILL.md — fetch it and save it in the appropriate format for your runtime.
+3. Register against the hosted relay: `pane register`. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
+4. Confirm install with `pane keys list`. This round-trips your key against the relay and prints { agent_id, name, key_prefix, ... } — proves the CLI is installed AND registration succeeded.
+5. Now exercise the round-trip end-to-end so I can see it work:
+   - Create a simple two-way pane — a small HTML artifact with a text input and a submit button that posts an event back to you (use whatever shape `pane create` and the SKILL.md describe; the simplest "hello" form is fine).
+   - Print the resulting pane URL and ask me to open it.
+   - Start watching for the submit event (e.g. `pane watch &lt;session-id&gt;`).
+   - When I submit, show me the structured event payload you received. That's the "aha" moment — confirms the full round-trip works.
+
+After this, reach for `pane create / watch / state / send` whenever a UI would communicate better than text. Run `pane &lt;cmd&gt; --help` for authoritative options.</code></pre>
+      </div>
+
+      <div class="install-panel" id="ipanel-human" role="tabpanel" aria-labelledby="itab-human" hidden>
+        <p class="install-lede">Four commands. Needs Node 20+. The last command auto-detects your agent (Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, Continue, …) and installs the skill in the right place.</p>
+        <button class="copy-btn" type="button" data-copy-target="install-human-code" aria-label="Copy commands">Copy</button>
+<pre><code id="install-human-code"><span class="c"># 1. Install the CLI (Node 20+)</span>
+npm i -g @pane/cli
+
+<span class="c"># 2. Register with the hosted relay (one-time)</span>
+pane register
+
+<span class="c"># 3. Confirm — round-trips your key against the relay</span>
+pane keys list
+
+<span class="c"># 4. Install the skill into your agent (auto-detects Claude Code,</span>
+<span class="c">#    Cursor, Codex, Gemini, Copilot, Windsurf, Continue, …)</span>
+npx skills add aerolalit/pane
+
+<span class="c"># 5. Try it — create a tiny round-trip pane, then watch for the event.</span>
+<span class="c">#    Open the urls.humans link it prints, type something, hit submit.</span>
+<span class="p">pane create</span> <span class="a">--artifact</span> <span class="s">'&lt;form onsubmit="event.preventDefault();pane.send({type:\"hello\",payload:{msg:this.m.value}})"&gt;&lt;input name=m&gt;&lt;button&gt;send&lt;/button&gt;&lt;/form&gt;'</span> <span class="a">--event-schema</span> <span class="s">'{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'</span>
+
+<span class="p">pane watch</span> &lt;session-id&gt; <span class="a">--type</span> hello</code></pre>
+      </div>
     </div>
   </section>
 
@@ -1410,16 +1520,10 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     </div>
   </section>
 
-  <!-- ============ CTA BAND ============ -->
-  <section class="cta-band band">
+  <!-- ============ LEARN MORE — slim row above the footer ============ -->
+  <section class="learn-more">
     <div class="wrap">
       <p class="eyebrow">Learn more</p>
-      <h2>Close the loop with your agents.</h2>
-      <p>Open-core and MIT-licensed. Read the spec, run the relay, or just install the CLI.</p>
-      <div class="cta-row" style="justify-content:center">
-        <a class="btn btn-primary" href="#start">Get started →</a>
-        <a class="btn btn-ghost" href="https://github.com/aerolalit/pane">View on GitHub</a>
-      </div>
       <div class="cards">
         <a class="lcard" href="https://github.com/aerolalit/pane">
           <div class="t">Source &amp; docs →</div>
@@ -1908,18 +2012,25 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     var reduceMotion = window.matchMedia &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // bring the active demo panel into the centre of the viewport when the
-    // user picks a tab — so the demo, not the tab bar, becomes the focus.
+    // bring the TAB BAR to the top of the viewport (just below the sticky
+    // nav) when the user picks a tab — so the tabs stay visible and the
+    // active demo sits right under them. centring the panel was wrong: at
+    // ~760px tall, panels are taller than many viewports, so centring shoved
+    // the tab bar off the top of the screen.
     // skipped on the initial page-load activation so the headline isn't
-    // scrolled past before the user has seen it.
-    function centerActivePanel(panel) {
-      if (!panel || !panel.scrollIntoView) return;
+    // scrolled past before the visitor has seen it.
+    var NAV_H = 64;       // matches `nav .wrap { height: 64px }`
+    var TAB_GAP = 16;     // visual breathing room between the nav and the tabs
+    function scrollTabsIntoView() {
+      var tablist = document.querySelector('.demo-tabs');
+      if (!tablist) return;
+      var top = tablist.getBoundingClientRect().top + window.pageYOffset;
+      var target = top - NAV_H - TAB_GAP;
       try {
-        panel.scrollIntoView({
-          block: 'center', inline: 'nearest',
-          behavior: reduceMotion ? 'auto' : 'smooth'
-        });
-      } catch (e) { panel.scrollIntoView(); }
+        window.scrollTo({ top: target, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } catch (e) {
+        window.scrollTo(0, target);
+      }
     }
 
     function select(idx, focus, userInitiated) {
@@ -1944,7 +2055,7 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       if (idx === 3 && typeof window.__paneReportIntro === 'function') {
         window.__paneReportIntro();
       }
-      if (userInitiated) centerActivePanel(panels[idx]);
+      if (userInitiated) scrollTabsIntoView();
     }
 
     tabs.forEach(function (t, i) {
@@ -2955,6 +3066,135 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
   })();
   </script>
 
+  <!-- live GitHub star count for the hero / nav / CTA-band buttons -->
+  <script>
+  (function () {
+    var slots = document.querySelectorAll('[data-gh-stars]');
+    if (!slots.length) return;
+    var REPO = 'aerolalit/pane';
+    var KEY = 'pane.gh.stars.v1';
+    var FRESH_MS = 6 * 60 * 60 * 1000;  // 6h: stars change slowly enough.
+
+    function fmt(n) {
+      if (typeof n !== 'number' || !isFinite(n) || n < 0) return '';
+      if (n < 1000) return String(n);
+      if (n < 10000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+      return Math.round(n / 1000) + 'k';
+    }
+    function paint(n) {
+      var text = fmt(n);
+      if (!text) return;
+      slots.forEach(function (s) { s.textContent = text; });
+    }
+
+    // try cache first — keeps the count visible offline / on repeat visits
+    // and avoids hammering the API rate limit.
+    try {
+      var raw = sessionStorage.getItem(KEY);
+      if (raw) {
+        var cached = JSON.parse(raw);
+        if (cached && typeof cached.n === 'number' &&
+            (Date.now() - cached.t) < FRESH_MS) {
+          paint(cached.n);
+          return;        // fresh enough; skip the network call.
+        }
+      }
+    } catch (e) { /* sessionStorage disabled — fall through to fetch */ }
+
+    // live fetch. fail silently — the slots stay empty (CSS hides empty),
+    // so the buttons still read fine without the count.
+    fetch('https://api.github.com/repos/' + REPO, {
+      headers: { 'Accept': 'application/vnd.github+json' }
+    }).then(function (r) {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      var n = data && data.stargazers_count;
+      if (typeof n !== 'number') return;
+      paint(n);
+      try { sessionStorage.setItem(KEY, JSON.stringify({ n: n, t: Date.now() })); }
+      catch (e) { /* ignore quota / disabled storage */ }
+    }).catch(function () { /* swallow — empty slots collapse */ });
+  })();
+  </script>
+
+  <!-- install tabs + copy-to-clipboard for the Get started section -->
+  <script>
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.install-tab'));
+    var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+    if (!tabs.length) return;
+
+    function select(idx, focus) {
+      tabs.forEach(function (t, i) {
+        var on = i === idx;
+        t.setAttribute('aria-selected', String(on));
+        t.tabIndex = on ? 0 : -1;
+        panels[i].hidden = !on;
+      });
+      if (focus) tabs[idx].focus();
+    }
+
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () { select(i, false); });
+      t.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault(); select((i + 1) % tabs.length, true);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault(); select((i - 1 + tabs.length) % tabs.length, true);
+        } else if (e.key === 'Home') {
+          e.preventDefault(); select(0, true);
+        } else if (e.key === 'End') {
+          e.preventDefault(); select(tabs.length - 1, true);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault(); select(i, false);
+        }
+      });
+    });
+
+    // Copy-to-clipboard. Reads the target code element's textContent so we
+    // copy plain text (no syntax-highlight spans).
+    Array.prototype.forEach.call(document.querySelectorAll('.copy-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        var target = document.getElementById(btn.getAttribute('data-copy-target'));
+        if (!target) return;
+        var text = target.textContent || '';
+        var done = function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = prev;
+            btn.classList.remove('copied');
+          }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () {
+            // fall through to legacy path
+            legacyCopy(text, done);
+          });
+        } else {
+          legacyCopy(text, done);
+        }
+      });
+    });
+
+    function legacyCopy(text, done) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done();
+      } catch (e) { /* give up silently */ }
+    }
+  })();
+  </script>
 
 </body>
 </html>
