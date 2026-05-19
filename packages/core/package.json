@@ -1,5 +1,5 @@
 {
-  "name": "@pane/core",
+  "name": "@paneui/core",
   "version": "0.0.1",
   "description": "Pane relay client: typed HTTP + WebSocket operations against a Pane relay. Framework-free.",
   "license": "MIT",

@@ -90,10 +90,10 @@ To run the relay straight from source without Docker:
 
 ```bash
 npm install
-npm run build  --workspace @pane/relay
-npm run migrate:deploy --workspace @pane/relay
+npm run build  --workspace @paneui/relay
+npm run migrate:deploy --workspace @paneui/relay
 NODE_ENV=production PUBLIC_URL=... PANE_SECRET_KEY=... \
-  npm run start --workspace @pane/relay
+  npm run start --workspace @paneui/relay
 ```
 
 ## TLS and reverse proxy

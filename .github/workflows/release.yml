@@ -1,12 +1,12 @@
 name: release
 
-# Publishes @pane/core and @pane/cli to npm when a v* tag is pushed.
+# Publishes @paneui/core and @paneui/cli to npm when a v* tag is pushed.
 #
 # This is the canonical release path. Procedure:
 #   1. Bump the "version" field in packages/core, packages/cli (and, for
 #      consistency, packages/relay + the root) to the new version. Bump the
 #      `VERSION` constant in packages/cli/src/index.ts to match.
-#   2. Update the `@pane/core` dependency in packages/cli/package.json to the
+#   2. Update the `@paneui/core` dependency in packages/cli/package.json to the
 #      same new version. Run `npm install` so package-lock.json picks it up.
 #   3. Commit, then tag and push:
 #         git tag v0.1.0 && git push origin main --tags
@@ -15,10 +15,10 @@ name: release
 #
 # Setup (one-time):
 #   - Repo secret NPM_TOKEN — an npm automation token with publish rights on
-#     the @pane scope. Generate at https://www.npmjs.com/settings/<user>/tokens
+#     the @paneui scope. Generate at https://www.npmjs.com/settings/<user>/tokens
 #     (type: "Automation").
 #
-# @pane/relay stays `private: true` and is never published.
+# @paneui/relay stays `private: true` and is never published.
 
 on:
   push:
@@ -46,19 +46,19 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate --workspace @pane/relay -- sqlite
+      - run: npm run generate --workspace @paneui/relay -- sqlite
 
       - run: npm run build
 
       - run: npm run test:unit
 
-      # @pane/core must publish before @pane/cli — @pane/cli depends on it.
-      - name: publish @pane/core
-        run: npm publish --workspace @pane/core --provenance --access public
+      # @paneui/core must publish before @paneui/cli — @paneui/cli depends on it.
+      - name: publish @paneui/core
+        run: npm publish --workspace @paneui/core --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: publish @pane/cli
-        run: npm publish --workspace @pane/cli --provenance --access public
+      - name: publish @paneui/cli
+        run: npm publish --workspace @paneui/cli --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

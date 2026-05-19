@@ -13,7 +13,7 @@
 // pool entirely.)
 //
 // To run it (a Redis must be reachable at the URL):
-//   REDIS_URL=redis://localhost:6379 npm run test:redis --workspace @pane/relay
+//   REDIS_URL=redis://localhost:6379 npm run test:redis --workspace @paneui/relay
 //
 // What it proves:
 //   1. broadcast pub/sub crosses processes — an event published on one Redis

@@ -1,6 +1,6 @@
 // `pane create` — create a session via POST /v1/sessions.
 
-import { createSessionSchema, type CreateSessionRequest } from "@pane/core";
+import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";

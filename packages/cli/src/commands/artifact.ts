@@ -14,7 +14,7 @@ import {
   type CreateArtifactRequest,
   type CreateArtifactVersionRequest,
   type PatchArtifactMetadataRequest,
-} from "@pane/core";
+} from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";

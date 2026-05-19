@@ -1,4 +1,4 @@
-# @pane/cli
+# @paneui/cli
 
 Command-line client for the [Pane](https://github.com/aerolalit/pane) relay:
 hand a human a rich interactive UI by URL and capture their answer as structured
@@ -7,9 +7,9 @@ data — from any agent (cron job, chat bot, CI, headless server).
 ## Install
 
 ```sh
-npm install -g @pane/cli
+npm install -g @paneui/cli
 # or, no install:
-npx @pane/cli <command>
+npx @paneui/cli <command>
 ```
 
 The binary is `pane`.

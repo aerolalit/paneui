@@ -2,7 +2,7 @@
 //
 // These mirror the relay's public response shapes (see the relay's
 // src/types.ts, src/http/serialize.ts and src/http/routes/*). They are
-// re-declared here rather than imported from @pane/relay so that @pane/core
+// re-declared here rather than imported from @paneui/relay so that @paneui/core
 // stays pure and framework-free — no Prisma, no Hono, no server deps.
 
 import type { z } from "zod";

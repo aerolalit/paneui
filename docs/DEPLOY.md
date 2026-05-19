@@ -295,7 +295,7 @@ Run the Postgres migrations against the Flexible Server before/with the first
 rollout:
 
 ```bash
-npm run migrate:postgres:deploy --workspace @pane/relay
+npm run migrate:postgres:deploy --workspace @paneui/relay
 ```
 
 (or run it as a one-off ACA job / init container — pick one and keep it

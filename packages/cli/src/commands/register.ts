@@ -6,7 +6,7 @@
 // (and relay URL) are persisted to the CLI config file, so every later command
 // works with only PANE_URL (or nothing) set.
 
-import { registerAgent, PaneApiError } from "@pane/core";
+import { registerAgent, PaneApiError } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { DEFAULT_RELAY_URL } from "../config.js";
 import { printJson, fail } from "../output.js";

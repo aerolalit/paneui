@@ -1,27 +1,26 @@
 # Publishing pane to npm
 
-Releases of `@pane/core` and `@pane/cli` are cut by pushing a `v*` tag. The
+Releases of `@paneui/core` and `@paneui/cli` are cut by pushing a `v*` tag. The
 `.github/workflows/release.yml` workflow does the actual `npm publish`, with
 provenance attestations, so a release is always traceable to the exact commit
 and workflow run.
 
-`@pane/relay` is **not** published — it ships as Docker / source clone. Its
+`@paneui/relay` is **not** published — it ships as Docker / source clone. Its
 `package.json` is `private: true` to enforce this.
 
 ## One-time setup
 
-1. **Claim the `@pane` scope on npm.**
+1. **Own the `@paneui` scope on npm.** The scope is already claimed; the
+   only login the local machine needs is for any manual fallback publish:
 
    ```sh
    npm login
-   npm org create pane
    ```
 
-   If the name is taken, stop and reconsider the package names — do not
-   silently rename. The CLI binary (`pane`) is independent of the package
-   name and stays the same regardless.
+   (CI uses an automation token — see step 3 — so npm login on your machine
+   is not required for the tag-triggered publish path.)
 
-2. **Create an npm automation token** with publish rights on the `@pane`
+2. **Create an npm automation token** with publish rights on the `@paneui`
    scope. From <https://www.npmjs.com/> → Account → Access Tokens →
    "Generate New Token" → type **Automation**.
 
@@ -42,7 +41,7 @@ and workflow run.
 
 2. **Bump versions in lock-step.** All three of these must match:
    - `packages/core/package.json` — `version`
-   - `packages/cli/package.json` — `version` AND `dependencies["@pane/core"]`
+   - `packages/cli/package.json` — `version` AND `dependencies["@paneui/core"]`
    - `packages/cli/src/index.ts` — the `VERSION` constant (used by `pane --version`)
 
    Also bump for consistency:
@@ -88,8 +87,8 @@ and workflow run.
 
    ```sh
    cd /tmp && mkdir pane-smoke && cd pane-smoke
-   npx @pane/cli@latest --version
-   npx @pane/cli@latest --help
+   npx @paneui/cli@latest --version
+   npx @paneui/cli@latest --help
    ```
 
 8. **Create a GitHub release** from the tag with a short changelog
@@ -107,8 +106,8 @@ npm ci
 npm run build
 npm run test:unit
 
-npm publish --workspace @pane/core --access public
-npm publish --workspace @pane/cli  --access public
+npm publish --workspace @paneui/core --access public
+npm publish --workspace @paneui/cli  --access public
 ```
 
 Manual publishes do **not** carry provenance. Use only as a fallback.
@@ -117,8 +116,8 @@ Manual publishes do **not** carry provenance. Use only as a fallback.
 
 - The relay is intentionally not published. To run a relay, use the Docker
   image or clone the repo. See `packages/relay/README.md`.
-- `@pane/core` is Node-only today (uses `ws`, not the browser `WebSocket`).
+- `@paneui/core` is Node-only today (uses `ws`, not the browser `WebSocket`).
   Don't advertise it as isomorphic until that changes.
-- Order matters even in CI: `@pane/core` publishes before `@pane/cli`,
-  because `@pane/cli`'s registry-resolved dependency on `@pane/core` would
+- Order matters even in CI: `@paneui/core` publishes before `@paneui/cli`,
+  because `@paneui/cli`'s registry-resolved dependency on `@paneui/core` would
   otherwise 404.
