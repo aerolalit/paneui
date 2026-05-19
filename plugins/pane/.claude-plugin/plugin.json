@@ -1,0 +1,14 @@
+{
+  "name": "pane",
+  "version": "0.0.1",
+  "description": "Hand a human a rich interactive UI by URL and get a structured answer back, from any agent. Bundles the `pane` agent skill, which drives the `pane` CLI.",
+  "author": {
+    "name": "aerolalit",
+    "url": "https://github.com/aerolalit"
+  },
+  "homepage": "https://github.com/aerolalit/pane#readme",
+  "repository": "https://github.com/aerolalit/pane",
+  "license": "MIT",
+  "keywords": ["pane", "agent", "human-in-the-loop", "relay", "skill"],
+  "skills": ["./skills/pane"]
+}

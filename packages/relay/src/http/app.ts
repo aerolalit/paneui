@@ -126,10 +126,10 @@ export function buildApp(
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-  // GET /skill/pane/SKILL.md — the pane agent skill, served verbatim so an
+  // GET /skills/pane/SKILL.md — the pane agent skill, served verbatim so an
   // agent can fetch it from the relay it uses. Registered here, before the
   // rate-limit middleware, so it stays unmetered like /healthz.
-  app.route("/skill", skill);
+  app.route("/skills", skill);
 
   // Global request-body size cap. Routes parse JSON bodies with c.req.json();
   // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES) are only
@@ -150,7 +150,7 @@ export function buildApp(
   );
 
   // General per-IP + per-token rate limit on every API/bridge route. /healthz
-  // and /skill are registered above so they stay unmetered (load balancers
+  // and /skills are registered above so they stay unmetered (load balancers
   // poll them). The rate-limit middleware runs after the request-id/duration
   // middleware (app.use("*", ...) above) so rejected (429) requests are still
   // logged and traced. The open /v1/register endpoint additionally has its own

@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppEnv } from "../env.js";
 
-// Serves the pane agent skill verbatim at GET /skill/pane/SKILL.md so an agent
+// Serves the pane agent skill verbatim at GET /skills/pane/SKILL.md so an agent
 // can fetch it straight from the relay it talks to — no repo clone, and the
 // skill is always version-matched to that relay's image.
 
@@ -24,10 +24,10 @@ const PACKAGE_ROOT = resolve(
 // static doc — editing it requires a relay restart, which is fine.
 function loadSkill(): string {
   // Candidate 1: copied into the relay package — the Docker image layout.
-  // Candidate 2: the monorepo-root skill/ dir — running from a source checkout.
+  // Candidate 2: the monorepo-root skills/ dir — running from a source checkout.
   const candidates = [
-    resolve(PACKAGE_ROOT, "skill", "pane", "SKILL.md"),
-    resolve(PACKAGE_ROOT, "..", "..", "skill", "pane", "SKILL.md"),
+    resolve(PACKAGE_ROOT, "skills", "pane", "SKILL.md"),
+    resolve(PACKAGE_ROOT, "..", "..", "skills", "pane", "SKILL.md"),
   ];
   for (const p of candidates) {
     try {
