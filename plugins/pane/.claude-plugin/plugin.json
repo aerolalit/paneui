@@ -1,7 +1,7 @@
 {
   "name": "pane",
   "version": "0.0.1",
-  "description": "Hand a human a rich interactive UI by URL and get a structured answer back, from any agent. Bundles the `pane` agent skill, which drives the `pane` CLI.",
+  "description": "Hand a human a rich interactive UI by URL — collect a structured answer back, or show them a view-only report/dashboard. Bundles the `pane` agent skill, which drives the `pane` CLI.",
   "author": {
     "name": "aerolalit",
     "url": "https://github.com/aerolalit"

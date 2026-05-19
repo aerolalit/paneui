@@ -5,14 +5,14 @@
     "url": "https://github.com/aerolalit"
   },
   "metadata": {
-    "description": "Pane — a round-trip UI channel between agents and humans.",
+    "description": "Pane — a rich UI channel between agents and humans.",
     "version": "0.0.1"
   },
   "plugins": [
     {
       "name": "pane",
       "source": "./plugins/pane",
-      "description": "Hand a human a rich interactive UI by URL and get a structured answer back. Bundles the `pane` agent skill."
+      "description": "Hand a human a rich interactive UI by URL — collect a structured answer back, or just show them a report. Bundles the `pane` agent skill."
     }
   ]
 }
