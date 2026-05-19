@@ -159,6 +159,11 @@ the session _only_ through it:
 - `pane.on(type, handler)` → `unsubscribe` — react to events (e.g. an
   `assistant.reply` you sent via `pane send`).
 - `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
+- `pane.inputData` — this session's per-instance seed data: the `input_data`
+  passed to `POST /v1/sessions`, validated by the relay against the artifact
+  version's `input_schema`. `null` when the session was created without
+  `input_data`. Read it to render this instance — e.g. a PR-review artifact
+  does `window.pane.inputData.prTitle`.
 
 ### What a handler receives — the event envelope
 

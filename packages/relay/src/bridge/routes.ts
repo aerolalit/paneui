@@ -207,6 +207,7 @@ bridge.get("/:token", async (c) => {
       token,
       sessionId: session.id,
       schema,
+      inputData: session.inputData ?? null,
       wsUrl,
       isClosed,
       agentLive,
@@ -303,6 +304,10 @@ interface ShellArgs {
   token: string;
   sessionId: string;
   schema: EventSchema;
+  // The session's per-instance input_data (validated against the artifact
+  // version's input_schema at create time). Threaded through the shell config
+  // and the init frame so the artifact can read it as `window.pane.inputData`.
+  inputData: unknown;
   wsUrl: string;
   isClosed: boolean;
   // Live agent-presence facts, computed at request time. See the /s/:token
@@ -316,6 +321,7 @@ function renderShell(args: ShellArgs): string {
   const cfg = {
     sessionId: args.sessionId,
     schema: args.schema,
+    inputData: args.inputData,
     token: args.token,
     wsUrl: args.wsUrl,
     isClosed: args.isClosed,

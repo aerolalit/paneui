@@ -27,6 +27,10 @@ type OutboundFrame = PaneFrameEnvelope & {
 interface ShellCfg {
   sessionId: string;
   schema: unknown;
+  // The session's per-instance input_data — the relay validated it against the
+  // artifact version's input_schema at create time. Forwarded to the iframe in
+  // the `init` frame; the shim exposes it as `window.pane.inputData`.
+  inputData: unknown;
   token: string;
   wsUrl: string;
   isClosed: boolean;
@@ -308,6 +312,7 @@ interface SerializedEvent {
         schema: CFG.schema,
         replay: replayBuffer.slice(),
         shell_origin: window.location.origin,
+        input_data: CFG.inputData,
       },
     };
     frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);

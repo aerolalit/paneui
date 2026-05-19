@@ -245,6 +245,36 @@ export function assertValidInputSchema(raw: unknown): void {
   }
 }
 
+// Validate a session's `input_data` against the pinned artifact version's
+// `input_schema` (a JSON Schema object). Called at POST /v1/sessions time so a
+// bad request fails fast — with a clear 422, exactly like a rejected event —
+// before any session row is created. `inputSchema` must already be a valid
+// JSON Schema (the /v1/artifacts routes enforce that via assertValidInputSchema
+// at artifact-write time). `data` is validated as-is; a caller that supplied no
+// `input_data` should pass `{}` so the schema's `required` fields fail
+// naturally rather than this throwing on undefined. Reuses the single shared
+// `ajv` instance — no second instance is created.
+export function validateInputData(inputSchema: object, data: unknown): void {
+  let validate: ValidateFunction;
+  try {
+    validate = ajv.compile(inputSchema);
+  } catch (err) {
+    // Should not happen — input_schema is validated at artifact-write time —
+    // but if a malformed schema ever reaches here, surface it as a 400 rather
+    // than letting Ajv throw an unhandled error.
+    throw errors.invalidRequest(
+      `input_schema is not a valid JSON Schema: ${(err as Error).message}`,
+    );
+  }
+  if (!validate(data)) {
+    throw errors.schemaViolation(
+      "input_schema_violation",
+      validate.errors,
+      "input_data does not validate against the artifact version's input_schema; see details for the failing JSON Schema paths, and check the schema for required fields",
+    );
+  }
+}
+
 // Additive merge: the patch may only ADD new event types. Re-declaring an
 // existing type (even with an identical payload schema) is rejected — clients
 // pinned to an older `schemaVersion` would break if the payload shape changed,

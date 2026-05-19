@@ -85,6 +85,37 @@ describe("pane shim", () => {
     });
   });
 
+  it("exposes input_data from the init frame as window.pane.inputData", () => {
+    // Before init, inputData is null (the value is unknown until the handshake).
+    expect(window.pane.inputData).toBeNull();
+
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: {
+        shell_origin: "http://shell",
+        replay: [],
+        input_data: { prTitle: "Fix the bug", files: ["a.ts"] },
+      },
+    });
+
+    expect(window.pane.inputData).toEqual({
+      prTitle: "Fix the bug",
+      files: ["a.ts"],
+    });
+  });
+
+  it("leaves window.pane.inputData null when init carries none", () => {
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: { shell_origin: "http://shell", replay: [] },
+    });
+    expect(window.pane.inputData).toBeNull();
+  });
+
   it("posts outbound emits to the shell origin learnt from init", () => {
     dispatch({
       __pane: 1,
