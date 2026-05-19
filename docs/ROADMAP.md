@@ -8,7 +8,7 @@ Goal: an agent can hand a human a UI by URL and get a structured answer back. No
 
 - [ ] Relay HTTP API: `POST /v1/register`, `POST /v1/sessions` (artifact + schema + participants), `GET /v1/sessions/{id}`, `PATCH /v1/sessions/{id}/{schema,artifact}`, `DELETE /v1/sessions/{id}`, `POST /v1/sessions/{id}/events`, `GET /v1/sessions/{id}/events?since=<opaque cursor>&wait=`. One Docker container, SQLite by default.
 - [ ] WebSocket transport: `WS /v1/sessions/{id}/stream`. Bidirectional event stream with token auth, replay-on-connect, broadcast to all participants.
-- [ ] Four-table Prisma schema (`agents`, `sessions`, `participants`, `events`) per `SPEC.md`. `prisma migrate`, TTL cleanup job. `events.id` is an autoincrement `Int` today; the `?since=` cursor is opaque in the API. (Widening `events.id` to BigInt is tracked as future work — see issue #23.)
+- [ ] Four-table Prisma schema (`agents`, `sessions`, `participants`, `events`) per `SPEC.md`. `prisma migrate`, TTL cleanup job. `events.id` is an autoincrement `Int` today; the `?since=` cursor is opaque in the API. (Widening `events.id` to BigInt is tracked as future work.)
 - [ ] Schema validation: every write checks `type` exists in `session.event_schema`, `data` validates against the type's payload (Ajv), and `author.kind ∈ emittedBy`. Idempotency-key dedup on `(session_id, author_id, key)`.
 - [ ] Identity stamping: relay stamps `author` server-side from the auth token; clients cannot spoof. `causation_id` stored verbatim as metadata.
 - [ ] Sandboxed iframe shell + bridge shim: `sandbox="allow-scripts"` (no `allow-same-origin`), CSP `connect-src 'none'` on `/s/{token}/content`. `pane.emit / pane.on / pane.state` shim, `postMessage` origin check on the shell-iframe boundary.

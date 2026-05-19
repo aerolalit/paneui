@@ -95,7 +95,7 @@ reference.
 
 ## Business model
 
-Open-core. MIT core (this repo, minus the `/ee/` directory) + a managed hosted version for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
+Open-core. This repo is the MIT core; a managed hosted version (with org/compliance and scale extras) is offered for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
 
 ## Contributing
 
