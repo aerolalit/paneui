@@ -1,5 +1,5 @@
 {
-  "name": "pane-cli",
+  "name": "@pane/cli",
   "version": "0.0.1",
   "description": "Command-line client for the Pane relay: create sessions, inspect state, send and watch events.",
   "license": "MIT",
@@ -30,7 +30,9 @@
     "pane": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",

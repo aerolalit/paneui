@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @pane/core && npm run build --workspace @pane/relay && npm run build --workspace pane-cli",
+    "build": "npm run build --workspace @pane/core && npm run build --workspace @pane/relay && npm run build --workspace @pane/cli",
     "typecheck": "npm run build --workspace @pane/core && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",

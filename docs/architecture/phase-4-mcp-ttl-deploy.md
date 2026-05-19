@@ -4,9 +4,9 @@
 
 In:
 - The TTL sweeper (periodic cleanup + lazy expiry on read).
-- The `pane` CLI (`pane-cli`, bin `pane`) and its four commands: the first
+- The `pane` CLI (`@pane/cli`, bin `pane`) and its four commands: the first
   client wrapper.
-- The npm-workspaces monorepo layout (`@pane/core`, `@pane/relay`, `pane-cli`).
+- The npm-workspaces monorepo layout (`@pane/core`, `@pane/relay`, `@pane/cli`).
 - The Dockerfile + `.dockerignore` + single-container deploy story.
 - The `claudeclaw` dogfood: wiring `pane watch` into a real claw instance and
   doing one genuine round trip.
@@ -34,7 +34,7 @@ pane/
 │   │                       framework-free (deps: zod + ws)
 │   ├── relay/              @pane/relay — the server: src/, prisma/,
 │   │                       Dockerfile, .dockerignore
-│   └── cli/                pane-cli — the published CLI; bin "pane"
+│   └── cli/                @pane/cli — the published CLI; bin "pane"
 │                           (deps: @pane/core + zod)
 └── docs/
 ```
@@ -47,7 +47,7 @@ pane/
 - **`@pane/relay`** is the unchanged server — all of the former top-level
   `src/` and `prisma/`, the Dockerfile and `.dockerignore`. Build, run, and the
   full test suite behave exactly as before; only paths moved.
-- **`pane-cli`** is the published package: `npm i -g pane-cli` gives you the
+- **`@pane/cli`** is the published package: `npm i -g @pane/cli` gives you the
   `pane` binary.
 
 ## TTL sweeper
@@ -68,7 +68,7 @@ pane/
 
 ## The `pane` CLI
 
-`pane-cli` replaces the originally-planned MCP server. The motivation: an MCP
+`@pane/cli` replaces the originally-planned MCP server. The motivation: an MCP
 server only helps MCP hosts, and it pulls in the `@modelcontextprotocol/sdk`
 dependency and a stdio-transport lifecycle. A CLI that emits **JSON on stdout**
 is harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline,
@@ -76,8 +76,8 @@ a CI job, or Claude Code's process tools, with nothing to install but one
 binary. The relay API contract the MCP server encoded (the `call()` helper +
 the three operations) now lives in `@pane/core` and is reused unchanged.
 
-- **Distribution**: published as `pane-cli`, `bin: { "pane": "dist/index.js" }`,
-  so `npm i -g pane-cli` (or `npx pane-cli`) gives the `pane` command.
+- **Distribution**: published as `@pane/cli`, `bin: { "pane": "dist/index.js" }`,
+  so `npm i -g @pane/cli` (or `npx @pane/cli`) gives the `pane` command.
 - **It is a client of the relay's HTTP / WS API.** It holds `PANE_URL` and
   `PANE_API_KEY` (env; `--url` / `--api-key` override per invocation) and calls
   `POST /v1/sessions`, `GET /v1/sessions/:id`, `GET /v1/sessions/:id/events`,

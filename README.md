@@ -29,7 +29,7 @@ The repo is an npm-workspaces monorepo with three packages:
 
 - **`@pane/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
 - **`@pane/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
-- **`pane-cli`** — the `pane` command-line tool. `npm i -g pane-cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
+- **`@pane/cli`** — the `pane` command-line tool. `npm i -g @pane/cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
 
 The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process-monitoring tool, with nothing to install but one binary. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands; pipe it into whatever supervises your agent. A LangChain tool wrapper may come later (v2).
 
@@ -65,7 +65,7 @@ npx skills add aerolalit/pane --skill pane
 Then install and register the CLI:
 
 ```sh
-npm i -g pane-cli
+npm i -g @pane/cli
 pane register
 ```
 

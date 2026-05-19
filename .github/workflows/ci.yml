@@ -85,7 +85,7 @@ jobs:
 
       - run: npm run generate --workspace @pane/relay -- sqlite
 
-      # pane-cli's unit tests import @pane/core's compiled output; build all
+      # @pane/cli's unit tests import @pane/core's compiled output; build all
       # workspaces first so the import resolves.
       - run: npm run build
 

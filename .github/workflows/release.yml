@@ -1,6 +1,6 @@
 name: release
 
-# Publishes @pane/core and pane-cli to npm when a v* tag is pushed.
+# Publishes @pane/core and @pane/cli to npm when a v* tag is pushed.
 #
 # Release procedure (manual):
 #   1. Bump the "version" field in packages/core, packages/cli (and, for
@@ -40,13 +40,13 @@ jobs:
 
       - run: npm run test:unit
 
-      # @pane/core must publish before pane-cli — pane-cli depends on it.
+      # @pane/core must publish before @pane/cli — @pane/cli depends on it.
       - name: publish @pane/core
         run: npm publish --workspace @pane/core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: publish pane-cli
-        run: npm publish --workspace pane-cli
+      - name: publish @pane/cli
+        run: npm publish --workspace @pane/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
