@@ -87,10 +87,10 @@ COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
 # Migration runner (bounded retry wrapper around `prisma migrate deploy`).
 COPY packages/relay/scripts ./packages/relay/scripts
-# The pane agent skill, served verbatim at GET /skill/pane/SKILL.md. The skill
+# The pane agent skill, served verbatim at GET /skills/pane/SKILL.md. The skill
 # route resolves it relative to the relay package root (see routes/skill.ts),
 # so it is copied into the package rather than to the image root.
-COPY skill ./packages/relay/skill
+COPY skills ./packages/relay/skills
 
 WORKDIR /app/packages/relay
 # Run as the unprivileged `node` user (uid 1000, ships with the base image).

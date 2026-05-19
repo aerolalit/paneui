@@ -101,7 +101,7 @@ Keep `session_id`. `tokens` are per-participant auth already baked into the
 
 ## The schema
 
-The schema is the contract for *every* event on the session. The relay
+The schema is the contract for _every_ event on the session. The relay
 **rejects any event that violates it** — a wrong `data` shape, or the wrong
 author. Get this right or the round trip silently fails.
 
@@ -120,8 +120,10 @@ Each entry under `events` declares:
     "form.submitted": {
       "payload": {
         "type": "object",
-        "properties": { "name": { "type": "string" },
-                         "rating": { "type": "integer" } },
+        "properties": {
+          "name": { "type": "string" },
+          "rating": { "type": "integer" }
+        },
         "required": ["name", "rating"]
       },
       "emittedBy": ["page"]
@@ -129,8 +131,10 @@ Each entry under `events` declares:
     "assistant.reply": {
       "payload": {
         "type": "object",
-        "properties": { "title": { "type": "string" },
-                         "message": { "type": "string" } },
+        "properties": {
+          "title": { "type": "string" },
+          "message": { "type": "string" }
+        },
         "required": ["title", "message"]
       },
       "emittedBy": ["agent"]
@@ -147,7 +151,7 @@ network access. Ordinary `<form action>`, `fetch()`, or `XMLHttpRequest` will
 **not** work and the human's answer will never reach you.
 
 Instead, the relay injects a global `window.pane` bridge. The artifact talks to
-the session *only* through it:
+the session _only_ through it:
 
 - `pane.emit(type, data?, opts?)` → `Promise<{ id, deduped }>` — send an event.
   `type` must exist in the schema with `"page"` in `emittedBy`; `data` must
@@ -159,10 +163,12 @@ the session *only* through it:
 ### What a handler receives — the event envelope
 
 `pane.on(type, handler)` calls `handler(ev)` with **one argument: the event
-envelope**, *not* the bare payload. The envelope shape is:
+envelope**, _not_ the bare payload. The envelope shape is:
 
 ```js
-{ id, session_id, author, ts, type, data, causation_id, idempotency_key }
+{
+  (id, session_id, author, ts, type, data, causation_id, idempotency_key);
+}
 ```
 
 The payload — the object you passed to `pane.emit(...)` or to
@@ -175,7 +181,7 @@ Two things to know:
 
 - **Handlers also fire for replayed history.** When the iframe connects, every
   prior event is replayed through your `pane.on` handlers — including events
-  sent *before* the artifact loaded. A handler registered in an inline
+  sent _before_ the artifact loaded. A handler registered in an inline
   `<script>` still receives an `assistant.reply` that was sent earlier, so you
   don't need to race the agent.
 - `pane.state.last(type)` returns the most recent envelope of that type (or the
@@ -188,7 +194,9 @@ A minimal working artifact for the schema above:
 <!doctype html>
 <meta charset="utf-8" />
 <style>
-  #reply-msg { white-space: pre-wrap; }
+  #reply-msg {
+    white-space: pre-wrap;
+  }
 </style>
 <form id="f">
   <input name="name" placeholder="Your name" required />

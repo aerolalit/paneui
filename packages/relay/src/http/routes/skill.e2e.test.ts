@@ -1,4 +1,4 @@
-// End-to-end coverage for GET /skill/pane/SKILL.md — the pane agent skill
+// End-to-end coverage for GET /skills/pane/SKILL.md — the pane agent skill
 // served verbatim by the relay. The route is auth-free and does not touch the
 // database, so the setup is minimal.
 
@@ -37,28 +37,28 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-describe("GET /skill/pane/SKILL.md", () => {
+describe("GET /skills/pane/SKILL.md", () => {
   it("serves the skill as markdown with a 200", async () => {
-    const res = await app.fetch(new Request("http://t/skill/pane/SKILL.md"));
+    const res = await app.fetch(new Request("http://t/skills/pane/SKILL.md"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/markdown");
   });
 
   it("returns the actual skill content", async () => {
-    const res = await app.fetch(new Request("http://t/skill/pane/SKILL.md"));
+    const res = await app.fetch(new Request("http://t/skills/pane/SKILL.md"));
     const body = await res.text();
-    // Frontmatter + heading from skill/pane/SKILL.md.
+    // Frontmatter + heading from skills/pane/SKILL.md.
     expect(body).toContain("name: pane");
     expect(body).toContain("# pane");
   });
 
   it("marks the skill cacheable", async () => {
-    const res = await app.fetch(new Request("http://t/skill/pane/SKILL.md"));
+    const res = await app.fetch(new Request("http://t/skills/pane/SKILL.md"));
     expect(res.headers.get("cache-control")).toContain("max-age=");
   });
 
-  it("404s on an unknown path under /skill", async () => {
-    const res = await app.fetch(new Request("http://t/skill/pane/nope.md"));
+  it("404s on an unknown path under /skills", async () => {
+    const res = await app.fetch(new Request("http://t/skills/pane/nope.md"));
     expect(res.status).toBe(404);
   });
 });
