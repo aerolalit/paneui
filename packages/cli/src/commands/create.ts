@@ -33,6 +33,25 @@ Artifact (choose one):
                       (a report/dashboard the human only views — no page/agent
                       events). Ignored with --artifact-id.
 
+                      Shape — an object with an "events" map, keyed by event
+                      type. Each entry declares who may emit it and the JSON
+                      Schema for its payload:
+                          {
+                            "events": {
+                              "form.submitted": {
+                                "emittedBy": ["page"],
+                                "payload": {
+                                  "type": "object",
+                                  "properties": { "answer": { "type": "string" } },
+                                  "required": ["answer"]
+                                }
+                              }
+                            }
+                          }
+                      emittedBy is any non-empty subset of ["page", "agent"].
+                      payload is a JSON Schema; the relay validates every
+                      emit against it. See docs/SPEC.md for the full grammar.
+
 Options:
   --input-data <v>    This instance's seed data — a JSON object (file path or
                       inline JSON), validated by the relay against the artifact
