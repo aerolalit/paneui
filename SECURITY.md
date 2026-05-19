@@ -100,7 +100,7 @@ configured to derive client IPs from the proxy's forwarded headers; without
 that, every request appears to come from the proxy's IP and the rate limit
 collapses to a single shared bucket. If you do not need open self-registration,
 disable or block the endpoint at the proxy and provision API keys out of band.
-See issue #48 for the trusted-proxy / forwarded-IP configuration work.
+Trusted-proxy / forwarded-IP configuration is tracked as future work on the roadmap.
 
 ## Supported versions
 
