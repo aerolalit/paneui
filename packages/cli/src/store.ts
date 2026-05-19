@@ -4,7 +4,13 @@
 // later commands need no env vars. The file holds a secret — it is written
 // 0600. Tiny and synchronous; no deps.
 
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  chmodSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
@@ -59,5 +65,15 @@ export function writeStore(patch: Store): string {
   writeFileSync(path, JSON.stringify(merged, null, 2) + "\n", { mode: 0o600 });
   // Ensure mode even if the file pre-existed with looser permissions.
   chmodSync(path, 0o600);
+  return path;
+}
+
+/**
+ * Delete the persisted config file (URL + API key). Idempotent — no error if
+ * the file never existed. Returns the path it targeted. Used by `pane logout`.
+ */
+export function clearStore(): string {
+  const path = storePath();
+  rmSync(path, { force: true });
   return path;
 }

@@ -126,6 +126,20 @@ export interface CreateArtifactResponse {
   version: number;
 }
 
+/**
+ * Response from GET /v1/keys — the calling agent's own key info. The relay
+ * scopes this to the authenticated agent: it returns ONE key (the caller's),
+ * not a list.
+ */
+export interface KeyInfo {
+  agent_id: string;
+  name: string | null;
+  key_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
 /** A relay error envelope. */
 export interface RelayError {
   code: string;
