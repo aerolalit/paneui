@@ -38,26 +38,38 @@ Config is `PANE_URL` + `PANE_API_KEY` (env), overridable with `--url` / `--api-k
 
 ### Teaching an agent to use pane
 
-An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill in
-its skills directory. Every relay serves the skill at `GET /skill/pane/SKILL.md`,
-so onboarding is a self-contained snippet you can paste to any agent:
+An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
+([Agent Skills](https://agentskills.io) format) in its skills directory.
+
+**Claude Code** — install the skill from the plugin marketplace:
 
 ```text
-Set up the `pane` CLI so you can hand interactive UIs to humans:
+/plugin marketplace add aerolalit/pane
+/plugin install pane@pane
+```
 
-1. Install the CLI:     npm i -g pane-cli
-2. Download the skill:  mkdir -p ~/.claude/skills/pane && \
-                          curl -fsSL <your-relay>/skill/pane/SKILL.md \
-                          -o ~/.claude/skills/pane/SKILL.md
-3. Register:            pane register --url <your-relay>
-4. Read the skill you just downloaded and follow it from now on.
+**Other agents** (Codex, Cursor, Copilot, Gemini CLI, …) — install the skill
+with the cross-agent [`skills`](https://github.com/vercel-labs/skills) tool:
+
+```sh
+npx skills add aerolalit/pane --skill pane
+```
+
+Then install and register the CLI:
+
+```sh
+npm i -g pane-cli
+pane register --url <your-relay>
 ```
 
 `pane register` provisions an API key and saves it (with the relay URL) to the
-CLI config file, so every later command works with no env vars. Adjust the
-skills path to your agent runtime (`~/.claude/skills/pane/` for Claude Code).
-The skill file is pure skill content — it documents the `pane` workflow and
-assumes the CLI is already installed and registered.
+CLI config file, so every later command works with no env vars. The skill file
+is pure skill content — it documents the `pane` workflow and assumes the CLI is
+already installed and registered.
+
+A running relay also serves its own copy of the skill at
+`GET /skills/pane/SKILL.md`, version-matched to that relay — handy as a fallback
+when the marketplace isn't reachable.
 
 ## Stack
 
