@@ -26,19 +26,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 
 # Workspace manifests first, for layer caching. The relay depends on the
-# @pane/core workspace package, so both workspaces are installed.
+# @paneui/core workspace package, so both workspaces are installed.
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
 COPY packages/core/package.json ./packages/core/package.json
 # --ignore-scripts: the root `prepare` script runs `husky`, a dev-only git-hook
 # installer with no role inside the image (and the .git dir is not in context).
-RUN npm ci --workspace @pane/relay --workspace @pane/core \
+RUN npm ci --workspace @paneui/relay --workspace @paneui/core \
     --include-workspace-root --ignore-scripts
 
-# Build @pane/core first — the relay imports its compiled output.
+# Build @paneui/core first — the relay imports its compiled output.
 COPY packages/core/tsconfig.json ./packages/core/tsconfig.json
 COPY packages/core/src ./packages/core/src
-RUN npm run build --workspace @pane/core
+RUN npm run build --workspace @paneui/core
 
 COPY packages/relay/prisma ./packages/relay/prisma
 # `npm run generate` runs scripts/prisma-generate.mjs, so the scripts dir must
@@ -54,8 +54,8 @@ COPY packages/relay/src ./packages/relay/src
 # we run an explicit, forced generate AFTER the build — its forced argv wins
 # over whatever prebuild:server produced, so the postgres client is not
 # clobbered. The default (sqlite) build is unaffected.
-RUN npm run build --workspace @pane/relay \
-    && npm run generate --workspace @pane/relay -- "${DATABASE_PROVIDER}"
+RUN npm run build --workspace @paneui/relay \
+    && npm run generate --workspace @paneui/relay -- "${DATABASE_PROVIDER}"
 
 # ---------- stage 2: runtime ----------
 FROM node:20-slim
@@ -70,15 +70,15 @@ ENV DATABASE_URL=file:/app/data/pane.db
 
 # Prod deps only. --ignore-scripts: skip the root `prepare`/husky hook (husky is
 # a devDependency and is absent under --omit=dev — without this, `npm ci` fails).
-# @pane/core is installed too: the relay imports it, and npm wires up the
-# node_modules/@pane/core workspace symlink that the import resolves through.
+# @paneui/core is installed too: the relay imports it, and npm wires up the
+# node_modules/@paneui/core workspace symlink that the import resolves through.
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
 COPY packages/core/package.json ./packages/core/package.json
-RUN npm ci --omit=dev --workspace @pane/relay --workspace @pane/core \
+RUN npm ci --omit=dev --workspace @paneui/relay --workspace @paneui/core \
     --include-workspace-root --ignore-scripts
 
-# Generated client + migrations + compiled JS. @pane/core's compiled dist is
+# Generated client + migrations + compiled JS. @paneui/core's compiled dist is
 # copied so the workspace symlink resolves to real built output at runtime.
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
