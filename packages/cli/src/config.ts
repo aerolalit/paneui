@@ -71,8 +71,7 @@ export function describeConfig(args: ParsedArgs): ConfigDescription {
  * needs an API key — `pane register` against the hosted relay, then go. A
  * self-hoster overrides it with `--url` / `PANE_URL` / `pane register --url`.
  */
-export const DEFAULT_RELAY_URL =
-  "https://ca-eur-prod-pane.redsky-f9cbab31.northeurope.azurecontainerapps.io";
+export const DEFAULT_RELAY_URL = "https://relay.paneui.com";
 
 /**
  * Resolve relay URL + API key. Precedence (highest first):
