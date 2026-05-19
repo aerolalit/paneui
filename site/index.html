@@ -840,7 +840,7 @@
       </a>
       <div class="nav-links">
         <a href="#how">How it works</a>
-        <a href="#features">Features</a>
+        <a href="#why">Why pane?</a>
         <a href="#start">Get started</a>
         <a href="https://github.com/aerolalit/pane">GitHub</a>
       </div>
@@ -861,9 +861,8 @@
         <span class="tag"><span class="dot"></span>Open-core · MIT licensed</span>
         <h1>A round-trip UI channel between <span class="grad">agents and humans</span>.</h1>
         <p class="lede">
-          An agent hands a human a rich interactive UI by URL, captures every
-          interaction as structured data, and feeds it back — no GUI host app
-          needed on either side.
+          Agents can already render rich output. Pane gives humans a way to act on it —
+          by URL — and feeds every interaction back as structured data.
         </p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#start">Get started →</a>
@@ -1003,7 +1002,7 @@
 
       </div><!-- /stage -->
 
-      <p class="stage-hint">↑ <b>Interact with the form on the left</b> — then click <b>Approve &amp; ship</b> and watch the agent pick it up.</p>
+      <p class="stage-hint">↑ <b>Fill out the form and approve</b> — the agent picks it up in the terminal.</p>
       </div><!-- /panel-release -->
 
       <!-- ===== TAB 2: run a quiz ===== -->
@@ -1163,7 +1162,7 @@
 
       </div><!-- /stage -->
 
-      <p class="stage-hint">↑ <b>No input needed</b> — the agent pushes deploy progress and the pane updates live. A pane can be a read-only window the agent streams into.</p>
+      <p class="stage-hint">↑ <b>The agent streams progress into the pane</b> — nothing for the human to do but watch.</p>
       </div><!-- /panel-monitor -->
 
       <!-- ===== TAB 4: generate a report ===== -->
@@ -1238,26 +1237,10 @@
     </div>
   </section>
 
-  <!-- ============ FLOW STRIP ============ -->
-  <section class="flow band" id="how">
+  <!-- ============ THE ROUND-TRIP (merged: flow strip + the idea) ============ -->
+  <section class="features band" id="how">
     <div class="wrap">
-      <div class="node agent">
-        <svg class="ic" viewBox="0 0 100 100"><rect x="14" y="22" width="48" height="38" rx="11" fill="#a78bfa"/><circle cx="30" cy="42" r="5" fill="#0b1020"/><circle cx="46" cy="42" r="5" fill="#0b1020"/><circle cx="74" cy="62" r="22" fill="#22d3ee"/></svg>
-        Agent renders a UI
-      </div>
-      <span class="arrow">→</span>
-      <div class="node">🔗 Human gets a URL</div>
-      <span class="arrow">→</span>
-      <div class="node human">✋ Human acts on it</div>
-      <span class="arrow">→</span>
-      <div class="node">📦 Structured data back</div>
-    </div>
-  </section>
-
-  <!-- ============ THE IDEA ============ -->
-  <section class="features" id="idea">
-    <div class="wrap">
-      <p class="eyebrow">The idea</p>
+      <p class="eyebrow">The round-trip</p>
       <h2>Agents emit rich output. The human's reply is still a text box.</h2>
       <p class="section-lede">
         Pane closes the loop. The agent renders a real UI — a form, a picker, a
@@ -1265,6 +1248,28 @@
         comes back as structured data. The human answers by <em>using</em> a UI,
         not by typing.
       </p>
+      <div class="flow" style="margin-top: 28px;">
+        <div class="wrap">
+          <div class="node agent">
+            <svg class="ic" viewBox="0 0 100 100"><rect x="14" y="22" width="48" height="38" rx="11" fill="#a78bfa"/><circle cx="30" cy="42" r="5" fill="#0b1020"/><circle cx="46" cy="42" r="5" fill="#0b1020"/><circle cx="74" cy="62" r="22" fill="#22d3ee"/></svg>
+            Agent renders a UI
+          </div>
+          <span class="arrow">→</span>
+          <div class="node">🔗 Human gets a URL</div>
+          <span class="arrow">→</span>
+          <div class="node human">✋ Human acts on it</div>
+          <span class="arrow">→</span>
+          <div class="node">📦 Structured data back</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ WHY PANE? ============ -->
+  <section class="features" id="why">
+    <div class="wrap">
+      <p class="eyebrow">Why pane?</p>
+      <h2>A UI is a richer answer than a text box.</h2>
       <div class="grid-3">
         <div class="feat">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M3 7h18M3 12h18M3 17h10"/></svg></div>
@@ -1275,21 +1280,6 @@
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
           <h3>Built for headless agents</h3>
           <p>Cron jobs, Slack &amp; Telegram bots, CI, headless servers — anything with no GUI host app.</p>
-        </div>
-        <div class="feat">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2"/></svg></div>
-          <h3>Outbound calls only</h3>
-          <p>The agent only calls the relay. No host app, no inbound port, no public address of its own.</p>
-        </div>
-        <div class="feat">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"><path d="M4 6h16v12H4zM4 10h16"/></svg></div>
-          <h3>Three ways to get the answer</h3>
-          <p>Poll, subscribe over WebSocket, or receive a webhook. Pick what fits your runtime.</p>
-        </div>
-        <div class="feat">
-          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 4v6c0 5-3.5 7.5-8 8-4.5-.5-8-3-8-8V7z"/></svg></div>
-          <h3>Self-host or use the relay</h3>
-          <p>One Docker container, SQLite by default. Or point at the hosted relay and skip the setup.</p>
         </div>
         <div class="feat">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3"/></svg></div>
@@ -1304,7 +1294,7 @@
   <section class="start band" id="start">
     <div class="wrap">
       <p class="eyebrow">Get started</p>
-      <h2>Three commands to a human in the loop.</h2>
+      <h2>A handful of commands to a human in the loop.</h2>
       <p class="section-lede">No build step, no host app. Install the CLI, register against a relay, and hand someone a UI.</p>
       <div class="steps">
         <div class="step">
@@ -1324,9 +1314,15 @@
         <div class="step">
           <span class="n">3</span>
           <div>
-            <div class="st">Hand a human a UI and wait for the answer</div>
-<pre><code><span class="p">pane create</span> <span class="a">--artifact</span> ./form.html <span class="a">--event-schema</span> ./schema.json
-<span class="p">pane watch</span> ses_xxxx <span class="a">--type</span> form.submitted</code></pre>
+            <div class="st">Hand a human a UI</div>
+<pre><code><span class="p">pane create</span> <span class="a">--artifact</span> ./form.html <span class="a">--event-schema</span> ./schema.json</code></pre>
+          </div>
+        </div>
+        <div class="step">
+          <span class="n">4</span>
+          <div>
+            <div class="st">Wait for the answer</div>
+<pre><code><span class="p">pane watch</span> ses_xxxx <span class="a">--type</span> form.submitted</code></pre>
           </div>
         </div>
       </div>
@@ -1337,7 +1333,7 @@
   <section class="features" id="skill">
     <div class="wrap">
       <p class="eyebrow">Teach an agent to use it</p>
-      <h2>Install the skill, and your agent knows pane.</h2>
+      <h2>Your agent already knows how to use it.</h2>
       <p class="section-lede">
         The pane skill ships in <a href="https://agentskills.io">Agent Skills</a> format
         and installs into any agent — through the Claude Code plugin marketplace, or the
@@ -1349,6 +1345,31 @@
 
 <span class="c"># Codex, Cursor, Copilot, Gemini CLI, …</span>
 npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
+    </div>
+  </section>
+
+  <!-- ============ UNDER THE HOOD ============ -->
+  <section class="features band" id="hood">
+    <div class="wrap">
+      <p class="eyebrow">Under the hood</p>
+      <h2>How it actually works.</h2>
+      <div class="grid-3">
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2"/></svg></div>
+          <h3>Outbound calls only</h3>
+          <p>The agent only calls the relay. No host app, no inbound port, no public address of its own.</p>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"><path d="M4 6h16v12H4zM4 10h16"/></svg></div>
+          <h3>Three ways to get the answer</h3>
+          <p>Poll, subscribe over WebSocket, or receive a webhook. Pick what fits your runtime.</p>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 4v6c0 5-3.5 7.5-8 8-4.5-.5-8-3-8-8V7z"/></svg></div>
+          <h3>Self-host or use the relay</h3>
+          <p>One Docker container, SQLite by default. Or point at the hosted relay and skip the setup.</p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1847,7 +1868,24 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
                   document.getElementById('panel-monitor'), document.getElementById('panel-report')];
     if (tabs.some(function (t) { return !t; }) || panels.some(function (p) { return !p; })) return;
 
-    function select(idx, focus) {
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // bring the active demo panel into the centre of the viewport when the
+    // user picks a tab — so the demo, not the tab bar, becomes the focus.
+    // skipped on the initial page-load activation so the headline isn't
+    // scrolled past before the user has seen it.
+    function centerActivePanel(panel) {
+      if (!panel || !panel.scrollIntoView) return;
+      try {
+        panel.scrollIntoView({
+          block: 'center', inline: 'nearest',
+          behavior: reduceMotion ? 'auto' : 'smooth'
+        });
+      } catch (e) { panel.scrollIntoView(); }
+    }
+
+    function select(idx, focus, userInitiated) {
       tabs.forEach(function (t, i) {
         var on = i === idx;
         t.setAttribute('aria-selected', String(on));
@@ -1869,21 +1907,22 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       if (idx === 3 && typeof window.__paneReportIntro === 'function') {
         window.__paneReportIntro();
       }
+      if (userInitiated) centerActivePanel(panels[idx]);
     }
 
     tabs.forEach(function (t, i) {
-      t.addEventListener('click', function () { select(i); });
+      t.addEventListener('click', function () { select(i, false, true); });
       t.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-          e.preventDefault(); select((i + 1) % tabs.length, true);
+          e.preventDefault(); select((i + 1) % tabs.length, true, true);
         } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-          e.preventDefault(); select((i - 1 + tabs.length) % tabs.length, true);
+          e.preventDefault(); select((i - 1 + tabs.length) % tabs.length, true, true);
         } else if (e.key === 'Home') {
-          e.preventDefault(); select(0, true);
+          e.preventDefault(); select(0, true, true);
         } else if (e.key === 'End') {
-          e.preventDefault(); select(tabs.length - 1, true);
+          e.preventDefault(); select(tabs.length - 1, true, true);
         } else if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault(); select(i);
+          e.preventDefault(); select(i, false, true);
         }
       });
     });
@@ -2058,11 +2097,16 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     // replies are sent separately — during the intro they stream in after the
     // terminal startup; resetBot() appends them straight away.)
     function botOpening() {
+      botEmpty();
+      meAttach('notes.pdf', 'Biology · Ch. 4 — Cell Organelles');
+      meMsg('Can you make an interactive quiz from this? 🙏');
+    }
+    // empty chat with just the day pill — the intro then streams the
+    // opening student messages in, instead of rendering them up-front.
+    function botEmpty() {
       bot.innerHTML = '';
       clk = 9 * 60 + 41;
       dayPill('Today');
-      meAttach('notes.pdf', 'Biology · Ch. 4 — Cell Organelles');
-      meMsg('Can you make an interactive quiz from this? 🙏');
     }
     // the bot's three replies — processing the PDF and handing back a pane link.
     function botReplies() {
@@ -2326,13 +2370,14 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       if (introState !== 'idle') return;
       introState = 'playing';
 
-      // STAGE 1 — only Telegram: student already uploaded notes + asked
-      // (botOpening ran at init); the bot shows a typing indicator.
+      // STAGE 1 — only Telegram. the chat starts EMPTY (just the day pill);
+      // the student's opening messages stream in below, then the bot starts
+      // "typing".
       setCols(1);
       colBot.classList.remove('quiz-pending');
       colPane.classList.add('quiz-pending');
       colTerm.classList.add('quiz-pending');
-      var typing = botTyping();
+      var typing = null;
 
       // helpers used by the step script -------------------------------------
       function term(html, cls, wait) {
@@ -2352,6 +2397,12 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       // d is scaled to 0 under reduced motion.
       var L = DELAYS.termLine, B = DELAYS.betweenBot;
       var script = [
+        // the student sends the PDF and asks for a quiz, then the bot "types"
+        { d: B,  fn: function () {
+            meAttach('notes.pdf', 'Biology · Ch. 4 — Cell Organelles'); } },
+        { d: B,  fn: function () {
+            meMsg('Can you make an interactive quiz from this? 🙏'); } },
+        { d: 350, fn: function () { typing = botTyping(); } },
         // the terminal panel joins, openclaw boots
         { d: DELAYS.termIn, fn: function () {
             setCols(2); enterCol(colTerm); } },
@@ -2407,11 +2458,12 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
       })();
     }
 
-    // start the panels hidden; the intro reveals them.
+    // start the panels hidden; the intro reveals them. the chat starts EMPTY
+    // (just the day pill) — the intro streams the student's opening in.
     colPane.classList.add('quiz-pending');
     colTerm.classList.add('quiz-pending');
     setCols(1);
-    botOpening();
+    botEmpty();
 
     // expose the intro trigger so the tab-switch IIFE can auto-play it.
     window.__paneQuizIntro = playIntro;
@@ -2541,6 +2593,12 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     // the streamed deploy timeline — terminal pane.send lines paired with
     // browser progress-bar updates, in sync.
     function streamDeploy() {
+      // the agent isn't waiting anymore — it's pushing. drop the resting
+      // "streaming progress…" cursor line so the streamed pane.send lines
+      // become the live tail.
+      var wait = document.getElementById('mon-wait');
+      if (wait && wait.parentNode) wait.parentNode.removeChild(wait);
+
       var S = DELAYS.step;
       var seq = [
         { d: 200, fn: function () { setStage('build', 100); } },
@@ -2581,6 +2639,9 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
             termGap();
             termLine('<span class="cc-dot">⏺</span> <span class="ok">Done.</span> ' +
               'v2.4.0 is live in <span class="ev">production</span>.');
+            // a fresh prompt with the blinking cursor at the bottom — the
+            // session ended, the cursor is back where it belongs.
+            termLine('<span class="pr">$</span> <span class="term-cursor"></span>');
             introState = 'done';
         } }
       ];
