@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { Prisma } from "@prisma/client";
-import { createSessionSchema } from "@pane/core";
+import { createSessionSchema } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
@@ -26,7 +26,7 @@ import type { EventSchema } from "../../types.js";
 const sessions = new Hono<AuthEnv>();
 
 // `createSessionSchema` (request shape for POST /v1/sessions) is the single
-// source of truth in @pane/core/schemas — the relay imports it so the
+// source of truth in @paneui/core/schemas — the relay imports it so the
 // server-side validator and the client-facing types can never drift. See
 // packages/core/src/schemas.ts.
 

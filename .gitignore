@@ -5,10 +5,12 @@ coverage/
 .turbo/
 *.tsbuildinfo
 
-# env
+# env / secrets
 .env
 .env.*
 !.env.example
+.secrets
+*.bak
 
 # local data (sqlite)
 data/
@@ -23,6 +25,10 @@ data/
 # logs / os
 *.log
 .DS_Store
+
+# editors
+.vscode/
+.idea/
 
 # playwright browser-test artifacts
 test-results/

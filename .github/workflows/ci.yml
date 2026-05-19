@@ -60,7 +60,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate --workspace @pane/relay -- sqlite
+      - run: npm run generate --workspace @paneui/relay -- sqlite
 
       - run: npm run typecheck
 
@@ -83,9 +83,9 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate --workspace @pane/relay -- sqlite
+      - run: npm run generate --workspace @paneui/relay -- sqlite
 
-      # pane-cli's unit tests import @pane/core's compiled output; build all
+      # @paneui/cli's unit tests import @paneui/core's compiled output; build all
       # workspaces first so the import resolves.
       - run: npm run build
 
@@ -106,9 +106,9 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate --workspace @pane/relay -- sqlite
+      - run: npm run generate --workspace @paneui/relay -- sqlite
 
-      # relay's e2e suite imports @pane/core's compiled output; build all
+      # relay's e2e suite imports @paneui/core's compiled output; build all
       # workspaces first so the import resolves.
       - run: npm run build
 
@@ -146,9 +146,9 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate:postgres --workspace @pane/relay
+      - run: npm run generate:postgres --workspace @paneui/relay
 
-      # relay's e2e suite imports @pane/core's compiled output; build all
+      # relay's e2e suite imports @paneui/core's compiled output; build all
       # workspaces first so the import resolves.
       - run: npm run build
 

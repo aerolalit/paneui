@@ -27,9 +27,9 @@ This matters most for agents that live **outside a GUI host app**: cron agents, 
 
 The repo is an npm-workspaces monorepo with three packages:
 
-- **`@pane/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
-- **`@pane/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
-- **`pane-cli`** — the `pane` command-line tool. `npm i -g pane-cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
+- **`@paneui/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
+- **`@paneui/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
+- **`@paneui/cli`** — the `pane` command-line tool. `npm i -g @paneui/cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
 
 The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process-monitoring tool, with nothing to install but one binary. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands; pipe it into whatever supervises your agent. A LangChain tool wrapper may come later (v2).
 
@@ -51,7 +51,7 @@ An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
 **Claude Code** — install the skill from the plugin marketplace:
 
 ```text
-/plugin marketplace add aerolalit/pane
+/plugin marketplace add aerolalit/paneui
 /plugin install pane@pane
 ```
 
@@ -59,13 +59,13 @@ An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
 with the cross-agent [`skills`](https://github.com/vercel-labs/skills) tool:
 
 ```sh
-npx skills add aerolalit/pane --skill pane
+npx skills add aerolalit/paneui --skill pane
 ```
 
 Then install and register the CLI:
 
 ```sh
-npm i -g pane-cli
+npm i -g @paneui/cli
 pane register
 ```
 
@@ -95,7 +95,7 @@ reference.
 
 ## Business model
 
-Open-core. MIT core (this repo, minus the `/ee/` directory) + a managed hosted version for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
+Open-core. This repo is the MIT core; a managed hosted version (with org/compliance and scale extras) is offered for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
 
 ## Contributing
 

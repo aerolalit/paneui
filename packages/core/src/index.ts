@@ -1,4 +1,4 @@
-// @pane/core — typed client for the Pane relay HTTP + WebSocket API.
+// @paneui/core — typed client for the Pane relay HTTP + WebSocket API.
 // Pure and framework-free: no argv, no MCP, no server deps.
 
 export { PaneClient, PaneApiError } from "./client.js";

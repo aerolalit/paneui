@@ -7,10 +7,10 @@ name: release-image
 # Two variants are published from the one Dockerfile, selected by the
 # DATABASE_PROVIDER build arg:
 #
-#   ghcr.io/<owner>/pane:<version>            — SQLite (the self-host default)
-#   ghcr.io/<owner>/pane:latest
-#   ghcr.io/<owner>/pane:<version>-postgres   — Postgres (the hosted build)
-#   ghcr.io/<owner>/pane:latest-postgres
+#   ghcr.io/<owner>/paneui:<version>            — SQLite (the self-host default)
+#   ghcr.io/<owner>/paneui:latest
+#   ghcr.io/<owner>/paneui:<version>-postgres   — Postgres (the hosted build)
+#   ghcr.io/<owner>/paneui:latest-postgres
 #
 # No secrets to configure: GHCR auth uses the built-in GITHUB_TOKEN.
 #
@@ -65,7 +65,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/pane
+          images: ghcr.io/${{ github.repository_owner }}/paneui
           flavor: |
             latest=true
             suffix=${{ matrix.tag-suffix }}

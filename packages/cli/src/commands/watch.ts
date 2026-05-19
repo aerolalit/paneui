@@ -4,10 +4,10 @@
 // pipe-reader (Claude Code's Monitor tool, `while read line`, jq -c, ...)
 // sees each event the instant it lands.
 
-import { openStream, type PaneEvent } from "@pane/core";
+import { openStream, type PaneEvent } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { resolveConfig } from "../config.js";
-import { PaneClient } from "@pane/core";
+import { PaneClient } from "@paneui/core";
 import { printJsonLine, fail } from "../output.js";
 
 export const watchHelp = `pane watch — stream a session's events as JSON-lines

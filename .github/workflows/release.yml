@@ -1,16 +1,24 @@
 name: release
 
-# Publishes @pane/core and pane-cli to npm when a v* tag is pushed.
+# Publishes @paneui/core and @paneui/cli to npm when a v* tag is pushed.
 #
-# Release procedure (manual):
+# This is the canonical release path. Procedure:
 #   1. Bump the "version" field in packages/core, packages/cli (and, for
-#      consistency, packages/relay + the root) to the new version.
-#   2. Commit, then tag: `git tag v0.1.0 && git push origin main --tags`.
-#   3. This workflow builds, runs the full test suite, and publishes.
+#      consistency, packages/relay + the root) to the new version. Bump the
+#      `VERSION` constant in packages/cli/src/index.ts to match.
+#   2. Update the `@paneui/core` dependency in packages/cli/package.json to the
+#      same new version. Run `npm install` so package-lock.json picks it up.
+#   3. Commit, then tag and push:
+#         git tag v0.1.0 && git push origin main --tags
+#   4. This workflow builds, runs unit tests, and publishes both packages with
+#      npm provenance attached.
 #
-# Requires an NPM_TOKEN repository secret (npm automation token with
-# publish rights). @pane/relay and the root stay private and are never
-# published.
+# Setup (one-time):
+#   - Repo secret NPM_TOKEN — an npm automation token with publish rights on
+#     the @paneui scope. Generate at https://www.npmjs.com/settings/<user>/tokens
+#     (type: "Automation").
+#
+# @paneui/relay stays `private: true` and is never published.
 
 on:
   push:
@@ -23,6 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Required for npm provenance: GitHub mints an OIDC token that npm
+      # verifies against this workflow run, so the published package carries
+      # a cryptographic proof of where it came from.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -34,19 +46,19 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run generate --workspace @pane/relay -- sqlite
+      - run: npm run generate --workspace @paneui/relay -- sqlite
 
       - run: npm run build
 
       - run: npm run test:unit
 
-      # @pane/core must publish before pane-cli — pane-cli depends on it.
-      - name: publish @pane/core
-        run: npm publish --workspace @pane/core
+      # @paneui/core must publish before @paneui/cli — @paneui/cli depends on it.
+      - name: publish @paneui/core
+        run: npm publish --workspace @paneui/core --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: publish pane-cli
-        run: npm publish --workspace pane-cli
+      - name: publish @paneui/cli
+        run: npm publish --workspace @paneui/cli --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

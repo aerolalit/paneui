@@ -133,9 +133,9 @@ The hosted/operator path runs on **PostgreSQL**. A `-postgres` image variant is
 published to GHCR on every release alongside the SQLite default:
 
 ```
-ghcr.io/aerolalit/pane:<version>            # SQLite — the single-box self-host default
-ghcr.io/aerolalit/pane:<version>-postgres   # Postgres — the hosted/operator build
-ghcr.io/aerolalit/pane:latest-postgres
+ghcr.io/aerolalit/paneui:<version>            # SQLite — the single-box self-host default
+ghcr.io/aerolalit/paneui:<version>-postgres   # Postgres — the hosted/operator build
+ghcr.io/aerolalit/paneui:latest-postgres
 ```
 
 The two differ only in the Prisma client baked at build time (the datasource
@@ -295,7 +295,7 @@ Run the Postgres migrations against the Flexible Server before/with the first
 rollout:
 
 ```bash
-npm run migrate:postgres:deploy --workspace @pane/relay
+npm run migrate:postgres:deploy --workspace @paneui/relay
 ```
 
 (or run it as a one-off ACA job / init container — pick one and keep it

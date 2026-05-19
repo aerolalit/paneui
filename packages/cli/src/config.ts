@@ -1,7 +1,7 @@
 // Relay connection config: PANE_URL / PANE_API_KEY from the environment,
 // overridable per-invocation with --url / --api-key.
 
-import { PaneClient } from "@pane/core";
+import { PaneClient } from "@paneui/core";
 import type { ParsedArgs } from "./argv.js";
 import { fail } from "./output.js";
 import { readStore, storePath } from "./store.js";

@@ -8,9 +8,9 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
 
 Pane is an npm-workspaces monorepo with three packages:
 
-- **`packages/core`** (`@pane/core`) — framework-free HTTP + WebSocket client library.
-- **`packages/relay`** (`@pane/relay`) — the relay server (Hono + Prisma, SQLite by default).
-- **`packages/cli`** (`pane-cli`) — the `pane` command-line tool.
+- **`packages/core`** (`@paneui/core`) — framework-free HTTP + WebSocket client library.
+- **`packages/relay`** (`@paneui/relay`) — the relay server (Hono + Prisma, SQLite by default).
+- **`packages/cli`** (`@paneui/cli`) — the `pane` command-line tool.
 
 ## Development setup
 
@@ -31,7 +31,7 @@ npm run generate            # generates the Prisma client for the relay
 Common root-level scripts:
 
 ```sh
-npm run build               # build @pane/core, @pane/relay, and pane-cli
+npm run build               # build @paneui/core, @paneui/relay, and @paneui/cli
 npm run typecheck           # type-check every workspace
 npm test                    # run all test suites
 npm run dev                 # run the relay in watch mode

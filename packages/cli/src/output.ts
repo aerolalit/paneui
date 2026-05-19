@@ -1,7 +1,7 @@
 // stdout/stderr helpers. The CLI is JSON-by-default: machine-readable on
 // stdout, human errors on stderr.
 
-import { PaneApiError } from "@pane/core";
+import { PaneApiError } from "@paneui/core";
 
 /** Print a value as pretty JSON to stdout. */
 export function printJson(value: unknown): void {

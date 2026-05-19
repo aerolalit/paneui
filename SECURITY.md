@@ -6,7 +6,7 @@ Please report security vulnerabilities **privately** — do not open a public is
 
 The preferred channel is **GitHub Private Vulnerability Reporting**:
 
-1. Go to the [Security tab](https://github.com/aerolalit/pane/security) of the `aerolalit/pane` repository.
+1. Go to the [Security tab](https://github.com/aerolalit/paneui/security) of the `aerolalit/paneui` repository.
 2. Click **"Report a vulnerability"**.
 3. Describe the issue, including steps to reproduce and affected versions/components (`relay`, `cli`, or `core`).
 
@@ -100,7 +100,7 @@ configured to derive client IPs from the proxy's forwarded headers; without
 that, every request appears to come from the proxy's IP and the rate limit
 collapses to a single shared bucket. If you do not need open self-registration,
 disable or block the endpoint at the proxy and provision API keys out of band.
-See issue #48 for the trusted-proxy / forwarded-IP configuration work.
+Trusted-proxy / forwarded-IP configuration is tracked as future work on the roadmap.
 
 ## Supported versions
 
