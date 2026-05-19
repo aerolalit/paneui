@@ -50,6 +50,14 @@ interface PaneApi {
     last(type?: string): SerializedEvent | undefined;
     subscribe(fn: () => void): () => void;
   };
+  /**
+   * The session's per-instance seed data — the `input_data` the agent passed
+   * to `POST /v1/sessions`, validated by the relay against the artifact
+   * version's `input_schema`. `null` when the session was created without
+   * `input_data`. Read it to render this instance, e.g. a PR-review artifact
+   * does `window.pane.inputData.prTitle`.
+   */
+  readonly inputData: unknown;
 }
 
 interface PendingEmit {
@@ -76,6 +84,12 @@ declare global {
   const stateSubscribers = new Set<() => void>();
   const lastByType = new Map<string, SerializedEvent>();
   let nextCorr = 1;
+  // The session's per-instance input_data. Unknown until the 'init' frame
+  // arrives (the relay validated it against the artifact version's
+  // input_schema at session-create time). Exposed on the frozen `window.pane`
+  // via a getter (see below) so the value can be filled in after `window.pane`
+  // is already published — the getter reads this mutable backing variable.
+  let inputData: unknown = null;
   // Shell origin is unknown until 'init' arrives — the very first 'ready'
   // post is sent with target "*" (no secrets) and outbound posts after init
   // are pinned to the shell origin learnt from the handshake.
@@ -183,6 +197,13 @@ declare global {
       if (m.payload && typeof m.payload.shell_origin === "string") {
         shellOrigin = m.payload.shell_origin;
       }
+      // The init frame carries this session's `input_data` — the per-instance
+      // seed data the agent passed at session-create, already validated by the
+      // relay against the artifact version's `input_schema`. Store it so the
+      // `window.pane.inputData` getter can surface it to the artifact.
+      if (m.payload && "input_data" in m.payload) {
+        inputData = m.payload.input_data;
+      }
       // Replay each event through the normal ingest path so handlers
       // registered before init still fire for historical events.
       const replay: SerializedEvent[] = (m.payload && m.payload.replay) || [];
@@ -224,7 +245,22 @@ declare global {
     }
   });
 
-  window.pane = Object.freeze({ emit, on, state });
+  // `window.pane` is frozen so the artifact can't tamper with the bridge. But
+  // `inputData` only becomes known when the `init` frame arrives — after this
+  // object is published. So `inputData` is exposed as a GETTER over the
+  // mutable `inputData` backing variable: the property descriptor is frozen
+  // (the artifact can't replace the getter), yet the value it returns reflects
+  // whatever `init` delivered. An artifact reads its per-instance seed data as
+  // `window.pane.inputData` — e.g. a PR-review page does
+  // `window.pane.inputData.prTitle`.
+  window.pane = Object.freeze({
+    emit,
+    on,
+    state,
+    get inputData(): unknown {
+      return inputData;
+    },
+  });
 
   function announceReady(): void {
     const frame: OutboundFrame = { __pane: 1, v: 1, kind: "ready" };
