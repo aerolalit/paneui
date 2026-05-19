@@ -76,7 +76,7 @@
     @media (max-width: 720px) { .nav-links { display: none; } }
 
     /* ---------- hero ---------- */
-    .hero { padding: 72px 0 88px; overflow: hidden; }
+    .hero { position: relative; padding: 72px 0 88px; overflow: hidden; }
     .hero::before {
       content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
       background:
@@ -98,6 +98,47 @@
     .cta-row .btn { padding: 12px 22px; font-size: 15px; }
     .hero-note { font-size: 13.5px; color: var(--faint); }
     .hero-note code { background: var(--code); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; color: var(--fg); }
+
+    /* ambient agent/human icons tucked into the hero side gutters */
+    .hero-fx-icon {
+      position: absolute; top: 168px; z-index: 0; pointer-events: none;
+      width: 70px; height: 70px; border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border);
+    }
+    .hero-fx-icon svg { width: 34px; height: 34px; }
+    .hero-fx-agent {
+      left: 40px;
+      background: linear-gradient(150deg, rgba(167,139,250,.28), rgba(167,139,250,.06));
+      box-shadow: 0 0 38px -6px rgba(167,139,250,.55), inset 0 0 0 1px rgba(167,139,250,.35);
+      color: var(--agent);
+      animation: hero-fx-float-a 6s ease-in-out infinite;
+    }
+    .hero-fx-human {
+      right: 40px;
+      background: linear-gradient(150deg, rgba(34,211,238,.28), rgba(34,211,238,.06));
+      box-shadow: 0 0 38px -6px rgba(34,211,238,.55), inset 0 0 0 1px rgba(34,211,238,.35);
+      color: var(--human);
+      animation: hero-fx-float-b 6s ease-in-out infinite;
+    }
+    @keyframes hero-fx-float-a {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-9px); }
+    }
+    @keyframes hero-fx-float-b {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(9px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .hero-fx-agent, .hero-fx-human { animation: none; }
+    }
+    @media (max-width: 1100px) {
+      .hero-fx-agent { left: 12px; }
+      .hero-fx-human { right: 12px; }
+    }
+    @media (max-width: 900px) {
+      .hero-fx-icon { display: none; }
+    }
 
     /* ---------- the demo stage: browser + terminal side by side ---------- */
     /* every demo card is a FIXED-HEIGHT window — its inner content scrolls,
@@ -809,6 +850,12 @@
 
   <!-- ============ HERO ============ -->
   <section class="hero" id="top">
+    <div class="hero-fx-icon hero-fx-agent" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+    </div>
+    <div class="hero-fx-icon hero-fx-human" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
+    </div>
     <div class="wrap">
       <div class="hero-top">
         <span class="tag"><span class="dot"></span>Open-core · MIT licensed</span>
@@ -2809,6 +2856,7 @@ npx skills add aerolalit/pane <span class="a">--skill</span> pane</code></pre>
     window.__paneReportIntro = playReportIntro;
   })();
   </script>
+
 
 </body>
 </html>
