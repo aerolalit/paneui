@@ -370,3 +370,112 @@ describe("POST /v1/sessions — input_schema validation", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// View-only artifacts: an inline artifact created with NO event_schema declares
+// an empty, strictly-enforced event vocabulary. The session rejects every
+// page/agent emit; system events keep flowing; input_schema is independent.
+describe("POST /v1/sessions — view-only artifact (no event_schema)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  // Create a view-only session (inline form, omitting event_schema) and return
+  // its id + the agent participant token.
+  async function createViewOnlySession(
+    apiKey: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<{ sessionId: string; agentToken: string }> {
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: { type: "html-inline", source: "<html>report</html>" },
+      ...extra,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      session_id: string;
+      tokens: { agent: string };
+    };
+    return { sessionId: body.session_id, agentToken: body.tokens.agent };
+  }
+
+  it("creates a session when the inline artifact omits event_schema", async () => {
+    const apiKey = await seedAgent();
+    const { sessionId } = await createViewOnlySession(apiKey);
+    expect(sessionId).toBeTruthy();
+    // The pinned version persisted a null event_schema.
+    const version = await prisma.artifactVersion.findFirstOrThrow();
+    expect(version.eventSchema).toBeNull();
+  });
+
+  it("rejects an agent emit on a view-only session with 422 unknown_event_type", async () => {
+    const apiKey = await seedAgent();
+    const { sessionId, agentToken } = await createViewOnlySession(apiKey);
+    const res = await app.fetch(
+      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        method: "POST",
+        headers: bearer(agentToken),
+        body: JSON.stringify({ type: "anything.atall", data: {} }),
+      }),
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("unknown_event_type");
+  });
+
+  it("still emits system events on a view-only session (Invariant 1)", async () => {
+    const apiKey = await seedAgent();
+    const { sessionId, agentToken } = await createViewOnlySession(apiKey);
+    // DELETE writes a system.session.expired event directly.
+    const del = await app.fetch(
+      new Request(`http://t/v1/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: bearer(apiKey),
+      }),
+    );
+    expect(del.status).toBe(204);
+    const get = await app.fetch(
+      new Request(`http://t/v1/sessions/${sessionId}/events?since=0`, {
+        headers: bearer(agentToken),
+      }),
+    );
+    const body = (await get.json()) as { events: { type: string }[] };
+    expect(body.events.some((e) => e.type === "system.session.expired")).toBe(
+      true,
+    );
+  });
+
+  it("validates input_data against input_schema on a view-only artifact (Invariant 2)", async () => {
+    const apiKey = await seedAgent();
+    // A view-only artifact may still declare an input_schema (reusable report
+    // template) — input validation is independent of the event schema.
+    const created = await post("/v1/artifacts", apiKey, {
+      name: "Sales Report",
+      slug: "sales-report",
+      source: "<html>report</html>",
+      type: "html-inline",
+      input_schema: {
+        type: "object",
+        properties: { quarter: { type: "string" } },
+        required: ["quarter"],
+      },
+    });
+    expect(created.status).toBe(201);
+    const { artifact_id } = (await created.json()) as { artifact_id: string };
+
+    // input_data that violates the input_schema is rejected.
+    const bad = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifact_id },
+      input_data: { quarter: 4 },
+    });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { error: { code: string } }).error.code).toBe(
+      "input_schema_violation",
+    );
+
+    // input_data that satisfies it is accepted.
+    const ok = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifact_id },
+      input_data: { quarter: "Q4" },
+    });
+    expect(ok.status).toBe(201);
+  });
+});

@@ -68,7 +68,7 @@ describe("create — inline artifact form", () => {
     await run([
       "--artifact",
       "<html></html>",
-      "--schema",
+      "--event-schema",
       '{"events":{}}',
       "--ttl",
       "600",
@@ -87,7 +87,7 @@ describe("create — inline artifact form", () => {
     await run([
       "--artifact",
       "<html></html>",
-      "--schema",
+      "--event-schema",
       '{"events":{}}',
       "--input-data",
       '{"prTitle":"x"}',
@@ -96,11 +96,17 @@ describe("create — inline artifact form", () => {
     expect(req["input_data"]).toEqual({ prTitle: "x" });
   });
 
-  it("fails when --schema is missing in the inline path", async () => {
+  it("omits event_schema entirely for a view-only artifact (no --event-schema)", async () => {
     await run(["--artifact", "<html></html>"]);
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("missing --schema");
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
+    // event_schema must be ABSENT, not set to undefined.
+    expect(req.artifact).toEqual({
+      type: "html-inline",
+      source: "<html></html>",
+    });
+    expect("event_schema" in req.artifact).toBe(false);
+    expect(JSON.parse(stdout).session_id).toBe("ses_1");
   });
 });
 
@@ -129,7 +135,7 @@ describe("create — reference artifact form", () => {
     expect(req["input_data"]).toEqual({ diffUrl: "u" });
   });
 
-  it("does not require --artifact or --schema in the reference path", async () => {
+  it("does not require --artifact or --event-schema in the reference path", async () => {
     await run(["--artifact-id", "pr-review"]);
     expect(exitCode).toBeUndefined();
     expect(calls).toHaveLength(1);
@@ -144,7 +150,7 @@ describe("create — reference artifact form", () => {
 
 describe("create — exactly-one-of enforcement", () => {
   it("fails when neither --artifact nor --artifact-id is given", async () => {
-    await run(["--schema", "{}"]);
+    await run(["--event-schema", "{}"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing artifact");
     expect(calls).toHaveLength(0);
@@ -156,7 +162,7 @@ describe("create — exactly-one-of enforcement", () => {
       "pr-review",
       "--artifact",
       "<html></html>",
-      "--schema",
+      "--event-schema",
       "{}",
     ]);
     expect(exitCode).toBe(1);

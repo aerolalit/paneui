@@ -38,12 +38,14 @@ Subcommands:
   list       List the agent's named artifacts (search with no query).
   show       Show a full artifact: head metadata + its version list.
 
-  pane artifact create --name <n> --artifact <path|inline> --schema <path|json>
-                       [--slug <s>] [--description <d>] [--tags <t1,t2>]
+  pane artifact create --name <n> --artifact <path|inline>
+                       [--event-schema <path|json>] [--slug <s>]
+                       [--description <d>] [--tags <t1,t2>]
                        [--input-schema <path|json>] [--artifact-type <t>]
       Creates a named artifact. Prints { artifact_id, slug, version }.
 
-  pane artifact version <id|slug> --artifact <path|inline> --schema <path|json>
+  pane artifact version <id|slug> --artifact <path|inline>
+                        [--event-schema <path|json>]
                         [--input-schema <path|json>] [--artifact-type <t>]
       Appends a new immutable version. Prints { artifact_id, version }.
 
@@ -70,7 +72,10 @@ Options:
                       deciding whether to reuse it.
   --tags <t1,t2,...>  Comma-separated keywords for search.
   --artifact <v>      HTML artifact body — a file path, or inline HTML.
-  --schema <v>        Event schema — a .json file path, or inline JSON.
+  --event-schema <v>  Event schema — a .json file path, or inline JSON.
+                      Optional: omit for a view-only artifact (a
+                      report/dashboard the human only views — no page/agent
+                      events).
   --input-schema <v>  JSON Schema for this artifact's per-session input_data —
                       a file path, or inline JSON. Optional.
   --artifact-type <t> "html-inline" (default) or "html-ref".
@@ -105,12 +110,17 @@ function resolveSource(
   }
 }
 
-/** Resolve --schema (event schema) — file path or inline JSON. */
+/**
+ * Resolve --event-schema — file path or inline JSON. --event-schema is
+ * optional: when absent this returns `undefined`, which makes a view-only
+ * artifact (no event vocabulary — the human only views it). The caller must
+ * omit `event_schema` from the request entirely when this returns `undefined`.
+ */
 function resolveEventSchema(args: ParsedArgs): unknown {
-  const schemaVal = args.flags.get("schema");
-  if (!schemaVal) fail("missing --schema", "invalid_args");
+  const schemaVal = args.flags.get("event-schema");
+  if (!schemaVal) return undefined;
   try {
-    return resolveJson(schemaVal, "--schema");
+    return resolveJson(schemaVal, "--event-schema");
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e), "invalid_args");
   }
@@ -160,8 +170,10 @@ async function runArtifactCreate(args: ParsedArgs): Promise<void> {
     name,
     source,
     type,
-    event_schema: eventSchema,
   };
+  // event_schema is OMITTED entirely when --event-schema is absent — a view-only
+  // artifact. Setting it to `undefined` would still add the key.
+  if (eventSchema !== undefined) candidate["event_schema"] = eventSchema;
   if (slug !== undefined) candidate["slug"] = slug;
   if (description !== undefined) candidate["description"] = description;
   if (tags !== undefined) candidate["tags"] = tags;
@@ -210,8 +222,10 @@ async function runArtifactVersion(args: ParsedArgs): Promise<void> {
   const candidate: Record<string, unknown> = {
     source,
     type,
-    event_schema: eventSchema,
   };
+  // event_schema is OMITTED entirely when --event-schema is absent — a view-only
+  // version. Setting it to `undefined` would still add the key.
+  if (eventSchema !== undefined) candidate["event_schema"] = eventSchema;
   if (inputSchema !== undefined) candidate["input_schema"] = inputSchema;
 
   const parsed = createArtifactVersionSchema.safeParse(candidate);

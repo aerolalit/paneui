@@ -111,7 +111,7 @@ describe("artifact create", () => {
       "pr, review ,code",
       "--artifact",
       "<html></html>",
-      "--schema",
+      "--event-schema",
       '{"events":{}}',
     ]);
     expect(calls).toHaveLength(1);
@@ -139,7 +139,7 @@ describe("artifact create", () => {
       "Form",
       "--artifact",
       "<html></html>",
-      "--schema",
+      "--event-schema",
       '{"events":{}}',
       "--input-schema",
       '{"type":"object"}',
@@ -149,16 +149,26 @@ describe("artifact create", () => {
   });
 
   it("fails when --name is missing", async () => {
-    await run(["create", "--artifact", "<html></html>", "--schema", "{}"]);
+    await run([
+      "create",
+      "--artifact",
+      "<html></html>",
+      "--event-schema",
+      "{}",
+    ]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing --name");
     expect(calls).toHaveLength(0);
   });
 
-  it("fails when --schema is missing", async () => {
+  it("creates a view-only artifact when --event-schema is omitted", async () => {
     await run(["create", "--name", "X", "--artifact", "<html></html>"]);
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("missing --schema");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("createArtifact");
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    // event_schema must be ABSENT, not set to undefined.
+    expect("event_schema" in req).toBe(false);
+    expect(req).toMatchObject({ name: "X", type: "html-inline" });
   });
 });
 
@@ -169,7 +179,7 @@ describe("artifact version", () => {
       "pr-review",
       "--artifact",
       "<html>v2</html>",
-      "--schema",
+      "--event-schema",
       '{"events":{}}',
     ]);
     expect(calls[0]!.method).toBe("createArtifactVersion");
@@ -178,9 +188,25 @@ describe("artifact version", () => {
   });
 
   it("fails when the id/slug positional is missing", async () => {
-    await run(["version", "--artifact", "<html></html>", "--schema", "{}"]);
+    await run([
+      "version",
+      "--artifact",
+      "<html></html>",
+      "--event-schema",
+      "{}",
+    ]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing artifact <id|slug>");
+  });
+
+  it("appends a view-only version when --event-schema is omitted", async () => {
+    await run(["version", "pr-review", "--artifact", "<html>v2</html>"]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("createArtifactVersion");
+    const req = calls[0]!.args[1] as Record<string, unknown>;
+    // event_schema must be ABSENT, not set to undefined.
+    expect("event_schema" in req).toBe(false);
+    expect(req).toMatchObject({ type: "html-inline" });
   });
 });
 

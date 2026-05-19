@@ -211,6 +211,61 @@ describe("validateEvent", () => {
       }),
     ).not.toThrow();
   });
+
+  // View-only artifact: a session with no event schema declares an empty,
+  // strictly-enforced vocabulary — every page/agent emit is rejected.
+  // The error's `code`/`message` is `unknown_event_type`; the view-only
+  // explanation rides in the `hint`.
+  it("rejects an agent emit on a schemaless (view-only) session", () => {
+    let caught: { code: string; hint: string } | undefined;
+    try {
+      validateEvent({
+        sessionId: "ses_viewonly",
+        schemaVersion: 1,
+        schema: null,
+        type: "anything.atall",
+        data: {},
+        authorKind: "agent",
+      });
+    } catch (e) {
+      caught = e as { code: string; hint: string };
+    }
+    expect(caught?.code).toBe("unknown_event_type");
+    expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
+  });
+
+  it("rejects a human emit on a schemaless (view-only) session", () => {
+    let caught: { code: string; hint: string } | undefined;
+    try {
+      validateEvent({
+        sessionId: "ses_viewonly",
+        schemaVersion: 1,
+        schema: null,
+        type: "anything.atall",
+        data: {},
+        authorKind: "human",
+      });
+    } catch (e) {
+      caught = e as { code: string; hint: string };
+    }
+    expect(caught?.code).toBe("unknown_event_type");
+    expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
+  });
+
+  it("does NOT reject a system event on a schemaless session", () => {
+    // System events bypass the view-only guard — they keep flowing so
+    // system.session.expired, participant.joined, etc. still work.
+    expect(() =>
+      validateEvent({
+        sessionId: "ses_viewonly",
+        schemaVersion: 1,
+        schema: null,
+        type: "system.note",
+        data: {},
+        authorKind: "system",
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("mergeSchemaAdditive", () => {

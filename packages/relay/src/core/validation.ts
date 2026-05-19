@@ -75,7 +75,10 @@ export const __schemaCacheInternals = {
 export interface ValidateEventArgs {
   sessionId: string;
   schemaVersion: number;
-  schema: EventSchema;
+  // `null` = the pinned artifact version declares no event schema (a view-only
+  // artifact). validateEvent rejects every page/agent emit against such a
+  // session; only system events flow (they bypass validateEvent entirely).
+  schema: EventSchema | null;
   type: string;
   data: unknown;
   authorKind: AuthorKind;
@@ -86,7 +89,25 @@ export interface ValidateEventArgs {
 const TYPE_RX = /^[a-z][a-zA-Z0-9.]*[a-zA-Z0-9]$/;
 
 export function validateEvent(args: ValidateEventArgs): void {
-  const entry = args.schema.events[args.type];
+  // A schemaless session is view-only: it declares an empty event vocabulary,
+  // strictly enforced. Every page/agent emit is rejected — there is no type it
+  // could possibly match. System events never reach here (appendSystemEvent
+  // writes directly), so the `!== "system"` guard is belt-and-braces.
+  if (args.schema === null) {
+    if (args.authorKind !== "system") {
+      throw errors.schemaViolation(
+        "unknown_event_type",
+        { type: args.type },
+        "this session declares no event schema; it is view-only and accepts no page/agent events",
+      );
+    }
+    // A system author against a schemaless session: nothing to validate
+    // against, and system events bypass schema rules anyway — accept it.
+    return;
+  }
+  // Past this point the schema is non-null.
+  const schema = args.schema;
+  const entry = schema.events[args.type];
   if (!entry) {
     throw errors.schemaViolation(
       "unknown_event_type",
@@ -106,11 +127,7 @@ export function validateEvent(args: ValidateEventArgs): void {
     }
   }
 
-  const compilers = getCompilers(
-    args.sessionId,
-    args.schemaVersion,
-    args.schema,
-  );
+  const compilers = getCompilers(args.sessionId, args.schemaVersion, schema);
   const validate = compilers.get(args.type)!;
   if (!validate(args.data)) {
     throw errors.schemaViolation(
@@ -279,6 +296,12 @@ export function validateInputData(inputSchema: object, data: unknown): void {
 // existing type (even with an identical payload schema) is rejected — clients
 // pinned to an older `schemaVersion` would break if the payload shape changed,
 // and we don't try to prove deep JSON-Schema compatibility here.
+//
+// Note: `prev` is typed `EventSchema` (non-null). A schemaless (view-only)
+// `prev` is not currently reachable — there is no schema-PATCH route, and a
+// view-only session has no event vocabulary to extend. A future PATCH route
+// that wants to let a view-only artifact gain a schema must decide the
+// semantics (a first PATCH could *establish* a schema rather than merge).
 export function mergeSchemaAdditive(
   prev: EventSchema,
   patch: { events?: Record<string, unknown> },

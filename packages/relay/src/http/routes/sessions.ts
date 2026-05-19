@@ -98,7 +98,7 @@ sessions.post("/", requireAgent, async (c) => {
     const inline = artifact as {
       source: string;
       type: "html-inline" | "html-ref";
-      event_schema: unknown;
+      event_schema?: unknown;
     };
     if (Buffer.byteLength(inline.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
       throw errors.payloadTooLarge();
@@ -112,11 +112,18 @@ sessions.post("/", requireAgent, async (c) => {
         "use artifact.type 'html-inline' and pass the artifact HTML in artifact.source",
       );
     }
-    assertSchemaWithinLimits(inline.event_schema, {
-      maxBytes: config.MAX_SCHEMA_BYTES,
-      maxDepth: config.MAX_SCHEMA_DEPTH,
-    });
-    const eventSchema: EventSchema = validateSchemaShape(inline.event_schema);
+    // An absent event_schema = a view-only one-off (a report/dashboard the
+    // human only views). Skip schema-shape validation and persist null; the
+    // session then rejects every page/agent emit. A present-but-malformed
+    // schema is still rejected as today.
+    let eventSchema: EventSchema | null = null;
+    if (inline.event_schema !== undefined) {
+      assertSchemaWithinLimits(inline.event_schema, {
+        maxBytes: config.MAX_SCHEMA_BYTES,
+        maxDepth: config.MAX_SCHEMA_DEPTH,
+      });
+      eventSchema = validateSchemaShape(inline.event_schema);
+    }
 
     const created = await prisma.$transaction(async (tx) => {
       const head = await tx.artifact.create({
@@ -128,7 +135,10 @@ sessions.post("/", requireAgent, async (c) => {
           version: 1,
           artifactType: inline.type,
           artifactSource: inline.source,
-          eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
+          eventSchema:
+            eventSchema !== null
+              ? (eventSchema as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
           inputSchema: Prisma.JsonNull,
         },
       });

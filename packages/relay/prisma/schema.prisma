@@ -59,7 +59,7 @@ model ArtifactVersion {
   version        Int
   artifactType   String    @map("artifact_type")
   artifactSource String    @map("artifact_source")
-  eventSchema    Json      @map("event_schema")
+  eventSchema    Json?     @map("event_schema")
   inputSchema    Json?     @map("input_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
   sessions       Session[]

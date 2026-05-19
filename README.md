@@ -35,7 +35,7 @@ The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harn
 
 ```sh
 # create a session, hand the URL to a human, wait for the answer
-pane create --artifact ./form.html --schema ./schema.json --ttl 600
+pane create --artifact ./form.html --event-schema ./schema.json --ttl 600
 pane watch ses_xxxx --type form.submitted   # one JSON line per event; exits on the submit
 ```
 

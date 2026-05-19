@@ -210,6 +210,23 @@ describe("PaneClient artifact operations", () => {
     );
   });
 
+  it("createArtifact omits event_schema for a view-only artifact", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ artifact_id: "art_1", version: 1 }),
+      201,
+    );
+    const out = await c.createArtifact({
+      name: "Sales Dashboard",
+      source: "<html>dashboard</html>",
+      type: "html-inline",
+      // event_schema omitted — a view-only artifact.
+    });
+    expect(out).toEqual({ artifact_id: "art_1", version: 1 });
+    expect(seen().method).toBe("POST");
+    const body = seen().body as Record<string, unknown>;
+    expect("event_schema" in body).toBe(false);
+  });
+
   it("updateArtifact PATCHes /v1/artifacts/:id and returns the summary", async () => {
     const { c, seen } = capturingClient(
       JSON.stringify({

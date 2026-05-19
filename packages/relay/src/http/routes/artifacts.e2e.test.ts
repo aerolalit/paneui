@@ -136,6 +136,72 @@ describe("/v1/artifacts", () => {
     expect(res.status).toBe(400);
   });
 
+  // View-only artifact: created with no event_schema. The version persists a
+  // null event_schema and GET serializes it as `event_schema: null`.
+  it("creates a view-only artifact when event_schema is omitted", async () => {
+    const apiKey = await seedAgent();
+    // Build the body directly — createArtifact() always spreads in an
+    // event_schema, and a spread cannot remove the key.
+    const res = await req("POST", "/v1/artifacts", apiKey, {
+      name: "Sales Dashboard",
+      slug: "sales-dashboard",
+      source: "<html><body>dashboard</body></html>",
+      type: "html-inline",
+    });
+    expect(res.status).toBe(201);
+    const { artifact_id } = (await res.json()) as { artifact_id: string };
+
+    const get = await req("GET", `/v1/artifacts/${artifact_id}`, apiKey);
+    const full = (await get.json()) as {
+      versions: { event_schema: unknown }[];
+    };
+    expect(full.versions[0]!.event_schema).toBeNull();
+
+    // The single-version endpoint serializes it as null too.
+    const ver = await req(
+      "GET",
+      `/v1/artifacts/${artifact_id}/versions/1`,
+      apiKey,
+    );
+    expect(((await ver.json()) as { event_schema: unknown }).event_schema).toBe(
+      null,
+    );
+  });
+
+  it("appends a view-only version when event_schema is omitted", async () => {
+    const apiKey = await seedAgent();
+    const created = (await (await createArtifact(apiKey)).json()) as {
+      artifact_id: string;
+    };
+    const res = await req(
+      "POST",
+      `/v1/artifacts/${created.artifact_id}/versions`,
+      apiKey,
+      {
+        source: "<html><body>view-only v2</body></html>",
+        type: "html-inline",
+      },
+    );
+    expect(res.status).toBe(201);
+    const ver = await req(
+      "GET",
+      `/v1/artifacts/${created.artifact_id}/versions/2`,
+      apiKey,
+    );
+    expect(((await ver.json()) as { event_schema: unknown }).event_schema).toBe(
+      null,
+    );
+  });
+
+  it("still rejects a present-but-malformed event_schema with 400", async () => {
+    const apiKey = await seedAgent();
+    // An absent schema is fine (view-only); a present, malformed one is not.
+    const res = await createArtifact(apiKey, {
+      event_schema: { events: {} },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("appends a new version and bumps latest_version", async () => {
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {

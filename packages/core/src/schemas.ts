@@ -27,7 +27,9 @@ export const callbackSchema = z.object({
 const inlineArtifactSchema = z.object({
   source: z.string().min(1),
   type: artifactTypeSchema,
-  event_schema: z.unknown(),
+  // Optional: omit for a view-only one-off (a report/dashboard the human only
+  // views — the session then accepts no page/agent events).
+  event_schema: z.unknown().optional(),
 });
 
 // The reference form for POST /v1/sessions — instances an existing named
@@ -72,7 +74,8 @@ export const createArtifactSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
   source: z.string().min(1),
   type: artifactTypeSchema,
-  event_schema: z.unknown(),
+  // Optional: omit for a view-only artifact (no event vocabulary).
+  event_schema: z.unknown().optional(),
   input_schema: z.record(z.unknown()).optional(),
 });
 
@@ -80,7 +83,8 @@ export const createArtifactSchema = z.object({
 export const createArtifactVersionSchema = z.object({
   source: z.string().min(1),
   type: artifactTypeSchema,
-  event_schema: z.unknown(),
+  // Optional: omit for a view-only artifact (no event vocabulary).
+  event_schema: z.unknown().optional(),
   input_schema: z.record(z.unknown()).optional(),
 });
 

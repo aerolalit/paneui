@@ -21,7 +21,9 @@ artifacts.use("*", requireAgent);
 
 // Shared validation for an artifact version's content (POST /v1/artifacts and
 // POST /v1/artifacts/:id/versions). Throws an ApiError on any violation.
-// Returns the normalized event schema to persist.
+// Returns the normalized event schema to persist, or `null` when the version
+// declares no event schema — a view-only artifact (report/dashboard/chart) the
+// human only views. A present-but-malformed schema is still rejected.
 function validateVersionContent(
   config: Config,
   content: {
@@ -30,7 +32,7 @@ function validateVersionContent(
     event_schema: unknown;
     input_schema?: unknown;
   },
-): EventSchema {
+): EventSchema | null {
   if (Buffer.byteLength(content.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
     throw errors.payloadTooLarge();
   }
@@ -43,11 +45,18 @@ function validateVersionContent(
       "use type 'html-inline' and pass the artifact HTML in source",
     );
   }
-  assertSchemaWithinLimits(content.event_schema, {
-    maxBytes: config.MAX_SCHEMA_BYTES,
-    maxDepth: config.MAX_SCHEMA_DEPTH,
-  });
-  const eventSchema = validateSchemaShape(content.event_schema);
+  // An absent event_schema = a view-only artifact: no event vocabulary. Skip
+  // schema-shape validation entirely and persist null. input_schema is
+  // independent — a view-only artifact may still carry one (reusable report
+  // template), so it is validated below regardless.
+  let eventSchema: EventSchema | null = null;
+  if (content.event_schema !== undefined) {
+    assertSchemaWithinLimits(content.event_schema, {
+      maxBytes: config.MAX_SCHEMA_BYTES,
+      maxDepth: config.MAX_SCHEMA_DEPTH,
+    });
+    eventSchema = validateSchemaShape(content.event_schema);
+  }
   if (content.input_schema !== undefined) {
     assertValidInputSchema(content.input_schema);
   }
@@ -95,7 +104,8 @@ function serializeVersion(v: {
     version: v.version,
     type: v.artifactType,
     source: v.artifactSource,
-    event_schema: v.eventSchema,
+    // null = view-only artifact (no event vocabulary).
+    event_schema: v.eventSchema ?? null,
     input_schema: v.inputSchema ?? null,
     created_at: v.createdAt.toISOString(),
   };
@@ -166,7 +176,10 @@ artifacts.post("/", async (c) => {
           version: 1,
           artifactType: type,
           artifactSource: source,
-          eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
+          eventSchema:
+            eventSchema !== null
+              ? (eventSchema as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
           inputSchema:
             input_schema !== undefined
               ? (input_schema as Prisma.InputJsonValue)
@@ -238,7 +251,10 @@ artifacts.post("/:id/versions", async (c) => {
         version: nextVersion,
         artifactType: type,
         artifactSource: source,
-        eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
+        eventSchema:
+          eventSchema !== null
+            ? (eventSchema as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         inputSchema:
           input_schema !== undefined
             ? (input_schema as Prisma.InputJsonValue)
