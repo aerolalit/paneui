@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   validateEvent,
   validateSchemaShape,
+  validateInputData,
   assertSchemaWithinLimits,
   mergeSchemaAdditive,
   invalidateSchemaCache,
@@ -320,5 +321,63 @@ describe("compiled-validator cache (LRU)", () => {
     expect(__schemaCacheInternals.has("sess_0", 1)).toBe(true);
     expect(__schemaCacheInternals.has("sess_1", 1)).toBe(false);
     expect(__schemaCacheInternals.has("overflow", 1)).toBe(true);
+  });
+});
+
+describe("validateInputData", () => {
+  const inputSchema = {
+    type: "object",
+    properties: {
+      prTitle: { type: "string" },
+      diffUrl: { type: "string" },
+    },
+    required: ["prTitle"],
+    additionalProperties: false,
+  };
+
+  it("accepts input_data that satisfies the schema", () => {
+    expect(() =>
+      validateInputData(inputSchema, { prTitle: "Fix the bug" }),
+    ).not.toThrow();
+  });
+
+  it("rejects input_data missing a required field", () => {
+    expect(() => validateInputData(inputSchema, {})).toThrow();
+  });
+
+  it("rejects input_data with an unexpected property", () => {
+    expect(() =>
+      validateInputData(inputSchema, { prTitle: "x", bogus: 1 }),
+    ).toThrow();
+  });
+
+  it("rejects input_data with a wrong-typed field", () => {
+    expect(() => validateInputData(inputSchema, { prTitle: 123 })).toThrow();
+  });
+
+  it("throws a 422 schema-violation with details on mismatch", () => {
+    try {
+      validateInputData(inputSchema, {});
+      expect.unreachable("validateInputData should have thrown");
+    } catch (err) {
+      const e = err as {
+        status?: number;
+        code?: string;
+        details?: unknown;
+      };
+      expect(e.status).toBe(422);
+      expect(e.code).toBe("input_schema_violation");
+      expect(e.details).toBeTruthy();
+    }
+  });
+
+  it("throws a 400 when given a malformed JSON Schema", () => {
+    try {
+      validateInputData({ type: "not-a-real-type" }, { prTitle: "x" });
+      expect.unreachable("validateInputData should have thrown");
+    } catch (err) {
+      const e = err as { status?: number };
+      expect(e.status).toBe(400);
+    }
   });
 });

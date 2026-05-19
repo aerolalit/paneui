@@ -41,3 +41,26 @@ export interface PaneFrameEnvelope {
   /** Discriminates the frame; the remaining fields depend on it. */
   kind: ShimToShellKind | ShellToShimKind;
 }
+
+/**
+ * The `payload` carried by the shell -> iframe `init` frame. The shell sends
+ * this exactly once, after the iframe has signalled `ready` and event replay
+ * has completed.
+ */
+export interface PaneInitPayload {
+  /** The session id. */
+  session_id: string;
+  /** The session's event schema (the event vocabulary). */
+  schema: unknown;
+  /** Historical events to replay through the shim's ingest path. */
+  replay: unknown[];
+  /** Origin of the shell page — outbound posts from the shim pin to it. */
+  shell_origin: string;
+  /**
+   * The session's per-instance `input_data` — validated by the relay against
+   * the artifact version's `input_schema` at session-create time. `null` when
+   * the session was created without `input_data`. The shim exposes it on the
+   * frozen `window.pane` as `pane.inputData`.
+   */
+  input_data: unknown;
+}

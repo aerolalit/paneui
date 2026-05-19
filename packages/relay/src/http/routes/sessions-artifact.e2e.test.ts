@@ -255,3 +255,118 @@ describe("POST /v1/sessions — reference form", () => {
     expect(after.lastUsedAt).not.toBeNull();
   });
 });
+
+// Phase C — POST /v1/sessions validates the session's `input_data` against the
+// pinned artifact version's `input_schema` before the session row is created.
+describe("POST /v1/sessions — input_schema validation", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  const inputSchema = {
+    type: "object",
+    properties: {
+      prTitle: { type: "string" },
+      diffUrl: { type: "string" },
+    },
+    required: ["prTitle"],
+    additionalProperties: false,
+  };
+
+  // Create a named artifact that declares an input_schema; returns its id.
+  async function createArtifactWithInputSchema(
+    apiKey: string,
+  ): Promise<string> {
+    const res = await post("/v1/artifacts", apiKey, {
+      name: "PR Review",
+      slug: "pr-review-c",
+      source: "<html>v1</html>",
+      type: "html-inline",
+      event_schema: eventSchema,
+      input_schema: inputSchema,
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { artifact_id: string }).artifact_id;
+  }
+
+  it("accepts a session whose input_data satisfies the input_schema", async () => {
+    const apiKey = await seedAgent();
+    const artifactId = await createArtifactWithInputSchema(apiKey);
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifactId },
+      input_data: { prTitle: "Fix the bug", diffUrl: "https://x/diff" },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects a session whose input_data violates the input_schema", async () => {
+    const apiKey = await seedAgent();
+    const artifactId = await createArtifactWithInputSchema(apiKey);
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifactId },
+      input_data: { prTitle: 123 },
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("input_schema_violation");
+  });
+
+  it("rejects a session that omits input_data a required field needs", async () => {
+    const apiKey = await seedAgent();
+    const artifactId = await createArtifactWithInputSchema(apiKey);
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifactId },
+    });
+    expect(res.status).toBe(422);
+    // No session row created — validation runs before the insert.
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("rejects an unexpected property when the schema forbids it", async () => {
+    const apiKey = await seedAgent();
+    const artifactId = await createArtifactWithInputSchema(apiKey);
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: { id: artifactId },
+      input_data: { prTitle: "ok", bogus: true },
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it("accepts a session with no input_data when the version has no input_schema", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("accepts arbitrary input_data unvalidated when the version has no input_schema", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      input_data: { anything: "goes", n: 7 },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects a malformed input_schema at artifact-write time, not session-create", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/artifacts", apiKey, {
+      name: "Bad",
+      slug: "bad-schema",
+      source: "<html></html>",
+      type: "html-inline",
+      event_schema: eventSchema,
+      input_schema: { type: "not-a-real-type" },
+    });
+    expect(res.status).toBe(400);
+  });
+});

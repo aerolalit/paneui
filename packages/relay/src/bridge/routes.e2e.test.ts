@@ -55,6 +55,7 @@ async function seedSession(opts?: {
   closed?: boolean;
   expired?: boolean;
   artifactSource?: string;
+  inputData?: object | null;
 }): Promise<{
   token: string;
   agentId: string;
@@ -73,6 +74,7 @@ async function seedSession(opts?: {
     agentId: agent.id,
     artifactSource: opts?.artifactSource ?? "<html></html>",
     eventSchema: minimalSchema,
+    inputData: opts?.inputData ?? null,
     status: opts?.closed ? "closed" : "open",
     expiresAt: opts?.expired
       ? new Date(Date.now() - 60 * 60 * 1000)
@@ -193,6 +195,37 @@ describe("bridge shell GET /s/:token", () => {
     const body = await res.text();
     expect(body).toContain('<script type="application/json" id="pane-cfg">');
     expect(body).toContain(token);
+  });
+
+  // Phase C — the shell config carries the session's input_data so the shim
+  // can expose it to the artifact as `window.pane.inputData`.
+  it("inlines the session's input_data into the pane-cfg block", async () => {
+    const { token } = await seedSession({
+      inputData: { prTitle: "Fix the bug", files: ["a.ts"] },
+    });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    const m = body.match(
+      /<script type="application\/json" id="pane-cfg">(.*?)<\/script>/s,
+    );
+    expect(m).toBeTruthy();
+    const cfg = JSON.parse(m![1]!.replace(/\\u003c/g, "<")) as {
+      inputData: unknown;
+    };
+    expect(cfg.inputData).toEqual({ prTitle: "Fix the bug", files: ["a.ts"] });
+  });
+
+  it("sets pane-cfg inputData to null when the session has no input_data", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    const m = body.match(
+      /<script type="application\/json" id="pane-cfg">(.*?)<\/script>/s,
+    );
+    const cfg = JSON.parse(m![1]!.replace(/\\u003c/g, "<")) as {
+      inputData: unknown;
+    };
+    expect(cfg.inputData).toBeNull();
   });
 
   it("renders an iframe pointing at the content route", async () => {

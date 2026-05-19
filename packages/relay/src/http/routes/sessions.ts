@@ -16,6 +16,7 @@ import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
   validateSchemaShape,
+  validateInputData,
 } from "../../core/validation.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
@@ -67,6 +68,9 @@ sessions.post("/", requireAgent, async (c) => {
   // session pins. Either path ends with a concrete artifact_version_id.
   let artifactVersionId: string;
   let artifactId: string;
+  // The pinned version's input_schema, if it declares one. Null = the version
+  // has no input contract, so `input_data` (if any) is accepted unvalidated.
+  let inputSchema: unknown = null;
 
   if ("id" in artifact && artifact.id !== undefined) {
     // Reference form — instance an existing named artifact owned by this agent.
@@ -87,6 +91,7 @@ sessions.post("/", requireAgent, async (c) => {
     if (!version) throw errors.notFound();
     artifactVersionId = version.id;
     artifactId = head.id;
+    inputSchema = version.inputSchema;
   } else {
     // Inline form — a one-off UI. Validate the inline content, then
     // transparently create an anonymous artifact (name/slug null) + v1.
@@ -133,6 +138,16 @@ sessions.post("/", requireAgent, async (c) => {
     artifactId = created.headId;
   }
 
+  // Phase C — input contract enforcement. If the pinned version declares an
+  // `input_schema`, the session's `input_data` must satisfy it; validate now,
+  // BEFORE the session row is created, so a bad request creates nothing. A
+  // missing `input_data` is validated as `{}` so the schema's `required`
+  // fields fail naturally. When the version has NO `input_schema` there is no
+  // input contract — `input_data` (if supplied) passes through unvalidated.
+  if (inputSchema != null && typeof inputSchema === "object") {
+    validateInputData(inputSchema as object, input_data ?? {});
+  }
+
   const ttlSeconds = Math.min(
     Math.max(1, ttl ?? config.DEFAULT_TTL_SECONDS),
     config.MAX_TTL_SECONDS,
@@ -163,8 +178,8 @@ sessions.post("/", requireAgent, async (c) => {
   );
   const agentToken = generateAgentParticipantToken();
 
-  // NOTE (Phase C): `input_data` is stored verbatim here; validation against
-  // the pinned version's `input_schema` is deferred to Phase C.
+  // `input_data` was validated above against the pinned version's
+  // `input_schema` (when the version declares one) — it is safe to store.
   await prisma.session.create({
     data: {
       id: sessionId,
