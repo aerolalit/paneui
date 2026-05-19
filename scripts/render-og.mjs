@@ -48,7 +48,9 @@ try {
     type: "png",
     clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
   });
-  console.log(`wrote ${path.relative(repoRoot, OUT)}  (${WIDTH}×${HEIGHT} @${DPR}x)`);
+  console.log(
+    `wrote ${path.relative(repoRoot, OUT)}  (${WIDTH}×${HEIGHT} @${DPR}x)`,
+  );
 } finally {
   await browser.close();
 }
