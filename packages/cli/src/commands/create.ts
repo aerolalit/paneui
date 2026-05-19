@@ -61,7 +61,10 @@ Options:
                       the --artifact value is treated as a URL. Note: the relay
                       does not serve "html-ref" artifacts in this release and
                       will reject the session — use "html-inline".
-  --ttl <seconds>     Session time-to-live in seconds.
+  --ttl <seconds>     Session time-to-live in seconds. The relay clamps this
+                      to its configured MAX_TTL_SECONDS (defaults: 1 h
+                      requested, 24 h max for self-host; hosted may differ).
+                      The returned \`expires_at\` is the authoritative value.
   --participants <n>  Number of human participants (default 1).
   --metadata <path|json>  Arbitrary metadata object (file path or inline JSON).
   --callback <path|json>  Webhook callback config: { url, events[], secret }.
