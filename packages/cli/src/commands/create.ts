@@ -15,7 +15,7 @@ A session is one use of an artifact. Supply the artifact in ONE of two ways:
     pane create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
 
   Inline form — a one-off artifact, defined on this call:
-    pane create --artifact <path|inline> --schema <path|json> [options]
+    pane create --artifact <path|inline> [--event-schema <path|json>] [options]
 
 Exactly one of --artifact-id / --artifact must be given.
 
@@ -28,8 +28,10 @@ Artifact (choose one):
                       the artifact's latest version.
   --artifact <v>      Inline HTML artifact. Either a file path / URL, or inline
                       HTML. Combine with --artifact-type to control reading.
-  --schema <v>        Inline-form event schema. A .json file, or inline JSON.
-                      Required with --artifact; ignored with --artifact-id.
+  --event-schema <v>  Inline-form event schema. A .json file, or inline JSON.
+                      Optional with --artifact. Omit for a view-only artifact
+                      (a report/dashboard the human only views — no page/agent
+                      events). Ignored with --artifact-id.
 
 Options:
   --input-data <v>    This instance's seed data — a JSON object (file path or
@@ -79,7 +81,7 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
 
   if (artifactIdVal !== undefined) {
     // Reference form — instance an existing named artifact. --artifact /
-    // --schema are not needed here.
+    // --event-schema are not needed here.
     const ref: Record<string, unknown> = { id: artifactIdVal };
     const versionRaw = args.flags.get("version");
     if (versionRaw !== undefined) {
@@ -93,10 +95,10 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   } else {
     // Inline form — the event schema rides inside the `artifact` object; the
     // relay transparently creates an anonymous artifact behind it.
-    const schemaVal = args.flags.get("schema");
-    if (!schemaVal) {
-      fail("missing --schema (required with --artifact)", "invalid_args");
-    }
+    // --event-schema is optional: omitting it makes a view-only one-off (a
+    // report/dashboard the human only views), and the relay then rejects every
+    // page/agent emit.
+    const schemaVal = args.flags.get("event-schema");
 
     const artifactType = (args.flags.get("artifact-type") ?? "html-inline") as
       | "html-inline"
@@ -117,18 +119,23 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       fail(e instanceof Error ? e.message : String(e), "invalid_args");
     }
 
-    let schema: unknown;
-    try {
-      schema = resolveJson(schemaVal, "--schema");
-    } catch (e) {
-      fail(e instanceof Error ? e.message : String(e), "invalid_args");
-    }
-
-    candidate["artifact"] = {
+    // Build the inline artifact object. event_schema is OMITTED entirely (not
+    // set to undefined) when --event-schema is absent — a view-only artifact.
+    const inlineArtifact: Record<string, unknown> = {
       type: artifactType,
       source,
-      event_schema: schema,
     };
+    if (schemaVal !== undefined) {
+      try {
+        inlineArtifact["event_schema"] = resolveJson(
+          schemaVal,
+          "--event-schema",
+        );
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e), "invalid_args");
+      }
+    }
+    candidate["artifact"] = inlineArtifact;
   }
 
   // --input-data — per-instance seed data, applies to either form (the relay

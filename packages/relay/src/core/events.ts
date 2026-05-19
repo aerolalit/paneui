@@ -132,10 +132,15 @@ export async function writeEvent(
     }
   }
 
+  // The pinned version's eventSchema is nullable since view-only artifacts —
+  // null means "no event vocabulary", and validateEvent's guard rejects every
+  // page/agent emit against such a session. System events never reach here
+  // (appendSystemEvent writes directly), so they are unaffected.
   validateEvent({
     sessionId: session.id,
     schemaVersion: session.artifactVersion.version,
-    schema: session.artifactVersion.eventSchema as unknown as EventSchema,
+    schema: session.artifactVersion
+      .eventSchema as unknown as EventSchema | null,
     type: input.type,
     data: input.data,
     authorKind: author.kind,

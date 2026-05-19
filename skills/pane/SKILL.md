@@ -79,21 +79,27 @@ too).
 
 ## Artifacts and sessions — the model
 
-An **artifact** is a reusable UI template: the HTML, its event schema, and an
-optional input schema. A **session** is one _use_ of an artifact — one context,
-one human, one event log, one TTL. Many sessions per artifact.
+An **artifact** is a reusable UI template: the HTML, an optional event schema,
+and an optional input schema. A **session** is one _use_ of an artifact — one
+context, one human, one event log, one TTL. Many sessions per artifact.
 
-You author the HTML once (as an artifact); each new use is a cheap
-`pane create --artifact-id <id|slug>` call — no HTML re-sent, no regeneration.
-Per-instance data (the "PR metadata" that makes the same PR-review page show
-_this_ PR) rides in `--input-data`; the page reads it as `window.pane.inputData`.
+The reusable artifact is the unit you should think in. **Start every task with
+`pane artifact list`** (or `pane artifact search <keywords>`) to see what
+already exists — a previous run may have authored exactly the UI you need. The
+intended flow is: author an artifact **once** with `pane artifact create`, then
+instance it **many times** with `pane create --artifact-id <slug>` — no HTML
+re-sent, no regeneration. Per-instance data (the "PR metadata" that makes the
+same PR-review page show _this_ PR) rides in `--input-data`; the page reads it
+as `window.pane.inputData`.
 
 There are two ways to give `pane create` an artifact:
 
 - **By reference** — `--artifact-id <id|slug>` — instance an existing reusable
-  artifact. The reuse path.
+  artifact. The reuse path, and the one you should reach for first.
 - **Inline** — `--artifact <path|inline>` — a one-off UI, defined on the call.
-  The relay creates an anonymous artifact behind it; you never manage it.
+  The relay creates an anonymous artifact behind it; you never manage it. Use
+  the inline form only for a **genuine one-off** — a UI you are sure you will
+  never want again. Anything reusable belongs in `pane artifact create`.
 
 ## Search before you generate — the load-bearing rule
 
@@ -141,16 +147,18 @@ pane create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
 Or inline a one-off artifact:
 
 ```sh
-pane create --artifact ./form.html --schema ./schema.json --ttl 600
+pane create --artifact ./form.html --event-schema ./schema.json --ttl 600
 ```
 
 - `--artifact-id <v>` — reference an existing artifact by id or slug. Pair with
   `--version <n>` to pin a specific version (defaults to the latest).
 - `--artifact <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
   type, `html-ref`, exists in the schema but the relay does not serve it in
-  this release — pass the HTML inline.) Requires `--schema`.
-- `--schema <v>` — the event vocabulary (see **The schema** below). A `.json`
+  this release — pass the HTML inline.)
+- `--event-schema <v>` — the event vocabulary (see **The schema** below). A `.json`
   file or inline JSON. Used with `--artifact`; not needed with `--artifact-id`.
+  **Optional** — omit it for a view-only artifact (see **View-only artifacts**
+  below); the session then accepts no `page`/`agent` events.
 - `--input-data <v>` — this instance's seed data, a JSON object (file or inline
   JSON). The relay validates it against the artifact version's `input_schema`;
   the page reads it as `window.pane.inputData`. Works with either form.
@@ -180,13 +188,13 @@ pane artifact show pr-review
 pane artifact create --name "PR Review" --slug pr-review \
   --description "PR review page: diff + approve/request-changes" \
   --tags pr,review,code \
-  --artifact ./pr-review.html --schema ./pr-review-schema.json \
+  --artifact ./pr-review.html --event-schema ./pr-review-schema.json \
   --input-schema ./pr-review-input.json
 #   -> prints { artifact_id, slug, version }
 
 # version — append a new immutable version (existing versions never change)
 pane artifact version pr-review --artifact ./pr-review-v2.html \
-  --schema ./pr-review-schema.json
+  --event-schema ./pr-review-schema.json
 
 # update — change head metadata only (never the content)
 pane artifact update pr-review --description "..." --tags pr,review
@@ -247,6 +255,25 @@ Each entry under `events` declares:
   }
 }
 ```
+
+## View-only artifacts (reports, dashboards, charts)
+
+The event schema is **optional**. An artifact created with no `--event-schema` is
+**view-only**: a report, dashboard, or chart the human only _reads_ — there is
+nothing to submit back.
+
+- Omit `--event-schema` on `pane create --artifact ...` or `pane artifact create` to
+  make a view-only artifact. The CLI sends no event schema.
+- A view-only session declares an **empty event vocabulary, strictly enforced**.
+  Every `page`/`agent` emit is rejected `422 unknown_event_type` — `pane.emit`
+  in the page and `pane send` from the agent both fail. There is no event type
+  the session will accept.
+- A view-only artifact can still carry an `--input-schema` and be seeded per
+  session with `--input-data` — that is how one report template renders many
+  different reports. The input contract is independent of the event schema.
+- Use this for anything the human only consumes: a status dashboard, a metrics
+  chart, a generated report. If you need an answer back, give the artifact an
+  event schema instead.
 
 ## Writing the artifact
 
@@ -479,7 +506,7 @@ you with the result.
 
 ```sh
 # 1. create the session
-OUT=$(pane create --artifact ./review.html --schema ./review-schema.json --ttl 900)
+OUT=$(pane create --artifact ./review.html --event-schema ./review-schema.json --ttl 900)
 SID=$(echo "$OUT" | jq -r .session_id)
 URL=$(echo "$OUT" | jq -r '.urls.humans[0]')
 

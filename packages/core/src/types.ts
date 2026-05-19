@@ -81,6 +81,8 @@ export interface ArtifactVersion {
   version: number;
   type: ArtifactType;
   source: string;
+  // null = view-only artifact (no event vocabulary). The `unknown` type
+  // subsumes null, so no separate union is needed.
   event_schema: unknown;
   input_schema: Record<string, unknown> | null;
   created_at: string;
