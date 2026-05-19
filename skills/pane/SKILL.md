@@ -415,6 +415,49 @@ pane send ses_xxxx --type assistant.reply \
 with `agent` in its `emittedBy`. Use this to update the UI live while the human
 works.
 
+### `pane delete <id>` — close a session
+
+```sh
+pane delete ses_xxxx
+```
+
+Closes the session and tears it down (`DELETE /v1/sessions/:id`). Idempotent —
+re-deleting an already-closed session is a no-op. Use it to clean up a session
+you are done with rather than waiting for its TTL to expire.
+
+### `pane config` — inspect the resolved config
+
+```sh
+pane config
+```
+
+Prints the relay URL and API-key prefix the CLI is currently using, where each
+came from (`flag` / `env` / `store`), and the config-file path. Makes **no
+network call**. The full API key is never printed — only a masked prefix. Run
+it when a command fails with `config_error` to see what is actually set.
+
+### `pane logout` — clear the saved credentials
+
+```sh
+pane logout
+```
+
+Deletes the locally-saved relay URL + API key from the CLI config file. This is
+**local only** — it does not revoke the key on the relay; the key still works
+if used again. To actually revoke the key, use `pane keys revoke`.
+
+### `pane keys` — inspect or revoke your API key
+
+```sh
+pane keys list                 # show your agent's key info (one key per agent)
+pane keys revoke --yes         # REVOKE your own key — a self-destruct
+```
+
+A pane agent has exactly one API key. `keys list` shows its metadata
+(`key_prefix`, created/last-used, etc.) — never the full key. `keys revoke`
+**permanently revokes your own key**; it stops working immediately and you
+would have to `pane register` again. It refuses to run without `--yes`.
+
 ## The watch → Monitor pattern
 
 `pane watch` is built to be a **monitored subprocess**. It blocks until the

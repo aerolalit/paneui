@@ -10,6 +10,7 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   EventsPage,
+  KeyInfo,
   PaneEvent,
   SessionState,
 } from "./types.js";
@@ -404,5 +405,37 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<ArtifactVersion>(r);
+  }
+
+  /**
+   * GET /v1/keys — the calling agent's own key info. The relay scopes this to
+   * the authenticated agent: it returns one key (the caller's), not a list.
+   */
+  async listKeys(): Promise<KeyInfo> {
+    const r = await this.call("GET", "/v1/keys");
+    if (!r.ok) this.fail(r);
+    return this.asObject<KeyInfo>(r);
+  }
+
+  /**
+   * DELETE /v1/keys/:id — revoke an API key. The relay only permits revoking
+   * the caller's OWN key (any other id is rejected 403): this is a
+   * self-destruct. Returns 204 with no body on success.
+   */
+  async revokeKey(id: string): Promise<void> {
+    const r = await this.call("DELETE", `/v1/keys/${encodeURIComponent(id)}`);
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * DELETE /v1/sessions/:id — close/delete a session. Idempotent on the relay
+   * side (an already-closed session still returns 204 with no body).
+   */
+  async deleteSession(id: string): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/sessions/${encodeURIComponent(id)}`,
+    );
+    if (!r.ok) this.fail(r);
   }
 }

@@ -47,6 +47,7 @@ export type {
   ArtifactRecord,
   ArtifactSummary,
   CreateArtifactResponse,
+  KeyInfo,
   Callback,
   CreateSessionRequest,
   CreateSessionResponse,

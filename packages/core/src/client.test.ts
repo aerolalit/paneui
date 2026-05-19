@@ -280,6 +280,81 @@ describe("PaneClient artifact operations", () => {
   });
 });
 
+describe("PaneClient key + session-delete operations", () => {
+  /** Capture the request method/path of a single call. */
+  function capturingClient(opts: { status: number; body?: string }) {
+    let seen: { method: string; url: string } | undefined;
+    const c = clientWith(async (url, init) => {
+      seen = { method: (init?.method as string) ?? "GET", url: String(url) };
+      return res({ status: opts.status, body: opts.body });
+    });
+    return { c, seen: () => seen! };
+  }
+
+  it("listKeys GETs /v1/keys and returns the key info", async () => {
+    const { c, seen } = capturingClient({
+      status: 200,
+      body: JSON.stringify({
+        agent_id: "agt_1",
+        name: "agent",
+        key_prefix: "pk_abc1234",
+        created_at: "2026-01-01T00:00:00.000Z",
+        last_used_at: null,
+        revoked_at: null,
+      }),
+    });
+    const out = await c.listKeys();
+    expect(out.agent_id).toBe("agt_1");
+    expect(out.key_prefix).toBe("pk_abc1234");
+    expect(seen().method).toBe("GET");
+    expect(seen().url).toBe("https://relay.test/v1/keys");
+  });
+
+  it("revokeKey DELETEs /v1/keys/:id and handles a 204 without throwing", async () => {
+    const { c, seen } = capturingClient({ status: 204 });
+    await expect(c.revokeKey("agt_1")).resolves.toBeUndefined();
+    expect(seen().method).toBe("DELETE");
+    expect(seen().url).toBe("https://relay.test/v1/keys/agt_1");
+  });
+
+  it("revokeKey throws PaneApiError on a 403 (revoking another agent's key)", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 403,
+        ok: false,
+        body: JSON.stringify({ error: { code: "forbidden" } }),
+      }),
+    );
+    await expect(c.revokeKey("agt_other")).rejects.toMatchObject({
+      name: "PaneApiError",
+      status: 403,
+      code: "forbidden",
+    });
+  });
+
+  it("deleteSession DELETEs /v1/sessions/:id and handles a 204 without throwing", async () => {
+    const { c, seen } = capturingClient({ status: 204 });
+    await expect(c.deleteSession("ses_1")).resolves.toBeUndefined();
+    expect(seen().method).toBe("DELETE");
+    expect(seen().url).toBe("https://relay.test/v1/sessions/ses_1");
+  });
+
+  it("deleteSession throws PaneApiError on a 404", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 404,
+        ok: false,
+        body: JSON.stringify({ error: { code: "not_found" } }),
+      }),
+    );
+    await expect(c.deleteSession("ses_missing")).rejects.toMatchObject({
+      name: "PaneApiError",
+      status: 404,
+      code: "not_found",
+    });
+  });
+});
+
 describe("PaneClient.wsBaseUrl", () => {
   it("maps https to wss", () => {
     expect(

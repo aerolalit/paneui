@@ -11,6 +11,10 @@ import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
 import { runRegister, registerHelp } from "./commands/register.js";
 import { runArtifact, artifactHelp } from "./commands/artifact.js";
+import { runConfig, configHelp } from "./commands/config.js";
+import { runLogout, logoutHelp } from "./commands/logout.js";
+import { runKeys, keysHelp } from "./commands/keys.js";
+import { runDelete, deleteHelp } from "./commands/delete.js";
 
 const VERSION = "0.0.1";
 
@@ -30,6 +34,10 @@ Commands:
   send <id>         Emit an agent event into a session.
   watch <id>        Stream a session's events as JSON-lines on stdout
                     (long-lived; the building block for pipe-readers).
+  delete <id>       Close/delete a session (DELETE /v1/sessions/:id).
+  keys              Inspect or revoke YOUR agent's API key (list / revoke).
+  config            Show the resolved relay config (no network call).
+  logout            Clear the locally-saved relay URL + API key.
 
 Run \`pane <command> --help\` for command-specific options.
 
@@ -56,7 +64,7 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 // handled from rawArgv[0] before parseArgs runs, so it never needs to be a
 // boolean flag — and keeping it out lets `pane create --version <n>` /
 // `pane artifact version` consume a value as a normal value-flag.
-const BOOLEAN_FLAGS = new Set(["json", "once", "help", "print-key"]);
+const BOOLEAN_FLAGS = new Set(["json", "once", "help", "print-key", "yes"]);
 
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
@@ -102,6 +110,10 @@ async function main(): Promise<void> {
     state: stateHelp,
     send: sendHelp,
     watch: watchHelp,
+    delete: deleteHelp,
+    keys: keysHelp,
+    config: configHelp,
+    logout: logoutHelp,
   };
 
   if (!(command in helps)) {
@@ -139,6 +151,18 @@ async function main(): Promise<void> {
       break;
     case "watch":
       await runWatch(args);
+      break;
+    case "delete":
+      await runDelete(args);
+      break;
+    case "keys":
+      await runKeys(args);
+      break;
+    case "config":
+      await runConfig(args);
+      break;
+    case "logout":
+      await runLogout();
       break;
   }
 }

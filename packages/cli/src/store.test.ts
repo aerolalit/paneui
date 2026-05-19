@@ -11,7 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readStore, writeStore, storePath } from "./store.js";
+import { existsSync } from "node:fs";
+import { readStore, writeStore, storePath, clearStore } from "./store.js";
 import { resolveConfig } from "./config.js";
 import type { ParsedArgs } from "./argv.js";
 
@@ -85,6 +86,21 @@ describe("store", () => {
     writeStore({ apiKey: "secret" });
     const mode = statSync(storePath()).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it("clearStore deletes the config file and returns its path", () => {
+    writeStore({ url: "https://relay.test", apiKey: "pk_abc" });
+    expect(existsSync(storePath())).toBe(true);
+    const path = clearStore();
+    expect(path).toBe(storePath());
+    expect(existsSync(storePath())).toBe(false);
+    expect(readStore()).toEqual({});
+  });
+
+  it("clearStore is idempotent when no file exists", () => {
+    expect(existsSync(storePath())).toBe(false);
+    expect(() => clearStore()).not.toThrow();
+    expect(clearStore()).toBe(storePath());
   });
 });
 
