@@ -191,14 +191,15 @@ artifacts.post("/", async (c) => {
 });
 
 // POST /v1/artifacts/:id/versions — append a new immutable version.
+// `:id` accepts the artifact id OR its slug (matches GET /:id).
 artifacts.post("/:id/versions", async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
   const agent = c.get("agent");
-  const id = c.req.param("id");
+  const idOrSlug = c.req.param("id");
 
   const artifact = await prisma.artifact.findFirst({
-    where: { id, ownerId: agent.id },
+    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
   });
   if (!artifact) throw errors.notFound();
 
@@ -254,13 +255,14 @@ artifacts.post("/:id/versions", async (c) => {
 });
 
 // PATCH /v1/artifacts/:id — update head metadata only.
+// `:id` accepts the artifact id OR its slug (matches GET /:id).
 artifacts.patch("/:id", async (c) => {
   const prisma = c.get("prisma");
   const agent = c.get("agent");
-  const id = c.req.param("id");
+  const idOrSlug = c.req.param("id");
 
   const artifact = await prisma.artifact.findFirst({
-    where: { id, ownerId: agent.id },
+    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
   });
   if (!artifact) throw errors.notFound();
 
@@ -282,7 +284,10 @@ artifacts.patch("/:id", async (c) => {
 
   let updated;
   try {
-    updated = await prisma.artifact.update({ where: { id }, data });
+    updated = await prisma.artifact.update({
+      where: { id: artifact.id },
+      data,
+    });
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&

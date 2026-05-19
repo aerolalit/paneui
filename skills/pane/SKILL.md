@@ -77,19 +77,84 @@ too).
 - The relay rate-limits `/v1/register` per IP; if you hit it, `pane register`
   fails with `rate_limited` — wait and retry.
 
-## The four commands
+## Artifacts and sessions — the model
+
+An **artifact** is a reusable UI template: the HTML, its event schema, and an
+optional input schema. A **session** is one _use_ of an artifact — one context,
+one human, one event log, one TTL. Many sessions per artifact.
+
+You author the HTML once (as an artifact); each new use is a cheap
+`pane create --artifact-id <id|slug>` call — no HTML re-sent, no regeneration.
+Per-instance data (the "PR metadata" that makes the same PR-review page show
+_this_ PR) rides in `--input-data`; the page reads it as `window.pane.inputData`.
+
+There are two ways to give `pane create` an artifact:
+
+- **By reference** — `--artifact-id <id|slug>` — instance an existing reusable
+  artifact. The reuse path.
+- **Inline** — `--artifact <path|inline>` — a one-off UI, defined on the call.
+  The relay creates an anonymous artifact behind it; you never manage it.
+
+## Search before you generate — the load-bearing rule
+
+**Before you generate any artifact HTML, search for one that already exists.**
+
+```sh
+pane artifact search <keywords>     # e.g. pane artifact search "pr review"
+pane artifact list                  # all your artifacts, recent first
+```
+
+You are ephemeral; the relay is durable. A previous session of yours (or this
+agent on another run) may have already authored exactly the artifact you are
+about to build — a PR-review page, an approval form, a survey. Regenerating it
+from scratch wastes tokens and causes drift: ten separately-generated copies of
+"the same" page will not stay the same. The artifact on the relay is the one
+source of truth.
+
+So the workflow is:
+
+1. `pane artifact search <keywords>` — does a suitable artifact already exist?
+2. **If yes** — use it: `pane create --artifact-id <id|slug>` (optionally
+   `--input-data` for this instance's data). Inspect it first with
+   `pane artifact show <id|slug>` — the `description` and each version's
+   `input_schema` tell you what it does and what data it needs. Done — no HTML
+   written.
+3. **If nothing fits** — only then author. If the UI is genuinely a one-off,
+   use the inline `pane create --artifact ...` form. If it is something you (or
+   the operator) will want again, register it: `pane artifact create` — so the
+   next session can find and reuse it.
+
+A reusable artifact is only reusable if you look for it. Skipping the search
+makes the whole feature dead weight.
+
+## The commands
 
 ### `pane create` — start a session
+
+Reference an existing artifact (the reuse path — see "Search before you
+generate" above):
+
+```sh
+pane create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
+```
+
+Or inline a one-off artifact:
 
 ```sh
 pane create --artifact ./form.html --schema ./schema.json --ttl 600
 ```
 
-- `--artifact <v>` — the HTML UI. A file path, or inline HTML. (A remote-URL
-  artifact type, `html-ref`, exists in the schema but the relay does not serve
-  it in this release — pass the HTML inline.)
-- `--schema <v>` — the per-session event vocabulary (see **The schema** below).
-  A `.json` file or inline JSON.
+- `--artifact-id <v>` — reference an existing artifact by id or slug. Pair with
+  `--version <n>` to pin a specific version (defaults to the latest).
+- `--artifact <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
+  type, `html-ref`, exists in the schema but the relay does not serve it in
+  this release — pass the HTML inline.) Requires `--schema`.
+- `--schema <v>` — the event vocabulary (see **The schema** below). A `.json`
+  file or inline JSON. Used with `--artifact`; not needed with `--artifact-id`.
+- `--input-data <v>` — this instance's seed data, a JSON object (file or inline
+  JSON). The relay validates it against the artifact version's `input_schema`;
+  the page reads it as `window.pane.inputData`. Works with either form.
+- Exactly one of `--artifact-id` / `--artifact` must be given.
 - Optional: `--ttl <seconds>`, `--participants <n>`, `--metadata <path|json>`,
   `--callback <path|json>`.
 
@@ -98,6 +163,46 @@ to the human** over whatever channel you already have (Telegram, Slack, email).
 Keep `session_id`. `tokens` are per-participant auth already baked into the
 `urls` — you don't normally use them directly; the CLI authenticates with
 `PANE_API_KEY`.
+
+### `pane artifact` — manage reusable artifacts
+
+`pane artifact <subcommand>` — one command, several subcommands:
+
+```sh
+# search / list — find an existing artifact before generating one
+pane artifact search "pr review"
+pane artifact list
+
+# show — full artifact: head metadata + every version (HTML, schemas)
+pane artifact show pr-review
+
+# create — register a named, reusable artifact (its v1)
+pane artifact create --name "PR Review" --slug pr-review \
+  --description "PR review page: diff + approve/request-changes" \
+  --tags pr,review,code \
+  --artifact ./pr-review.html --schema ./pr-review-schema.json \
+  --input-schema ./pr-review-input.json
+#   -> prints { artifact_id, slug, version }
+
+# version — append a new immutable version (existing versions never change)
+pane artifact version pr-review --artifact ./pr-review-v2.html \
+  --schema ./pr-review-schema.json
+
+# update — change head metadata only (never the content)
+pane artifact update pr-review --description "..." --tags pr,review
+```
+
+- `search`/`list` return a **lean** list — `id, slug, name, description, tags,
+latest_version, last_used_at` — no HTML. Fetch the HTML with `show` once you
+  have chosen one.
+- The `slug` is the durable handle: record it (`pr-review`) and later
+  `pane create --artifact-id pr-review` with no search at all.
+- `--input-schema` is optional JSON Schema describing the `input_data` the
+  artifact needs. It doubles as documentation — it tells a future you exactly
+  what data to pass.
+- Editing an artifact **appends a version**; it never mutates an existing one.
+  Sessions pin the version they were created with, so old sessions are
+  unaffected by a new version.
 
 ## The schema
 

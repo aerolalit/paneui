@@ -159,6 +159,127 @@ describe("PaneClient typed operations", () => {
   });
 });
 
+describe("PaneClient artifact operations", () => {
+  /** Capture the request method/path/body of a single call. */
+  function capturingClient(body: string, status = 200) {
+    let seen: { method: string; url: string; body: unknown } | undefined;
+    const c = clientWith(async (url, init) => {
+      seen = {
+        method: (init?.method as string) ?? "GET",
+        url: String(url),
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+      };
+      return res({ status, body });
+    });
+    return { c, seen: () => seen! };
+  }
+
+  it("createArtifact POSTs /v1/artifacts and returns artifact_id + version", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ artifact_id: "art_1", version: 1 }),
+      201,
+    );
+    const out = await c.createArtifact({
+      name: "PR Review",
+      slug: "pr-review",
+      tags: ["pr", "review"],
+      source: "<html></html>",
+      type: "html-inline",
+      event_schema: { events: {} },
+    });
+    expect(out).toEqual({ artifact_id: "art_1", version: 1 });
+    expect(seen().method).toBe("POST");
+    expect(seen().url).toBe("https://relay.test/v1/artifacts");
+    expect(seen().body).toMatchObject({ name: "PR Review", slug: "pr-review" });
+  });
+
+  it("createArtifactVersion POSTs /v1/artifacts/:id/versions", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ artifact_id: "art_1", version: 2 }),
+      201,
+    );
+    const out = await c.createArtifactVersion("pr-review", {
+      source: "<html>v2</html>",
+      type: "html-inline",
+      event_schema: { events: {} },
+    });
+    expect(out.version).toBe(2);
+    expect(seen().method).toBe("POST");
+    expect(seen().url).toBe(
+      "https://relay.test/v1/artifacts/pr-review/versions",
+    );
+  });
+
+  it("updateArtifact PATCHes /v1/artifacts/:id and returns the summary", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({
+        id: "art_1",
+        slug: "pr-review",
+        name: "Renamed",
+        description: null,
+        tags: null,
+        latest_version: 1,
+        last_used_at: null,
+      }),
+    );
+    const out = await c.updateArtifact("art_1", { name: "Renamed" });
+    expect(out.name).toBe("Renamed");
+    expect(seen().method).toBe("PATCH");
+    expect(seen().url).toBe("https://relay.test/v1/artifacts/art_1");
+    expect(seen().body).toEqual({ name: "Renamed" });
+  });
+
+  it("searchArtifacts unwraps the { artifacts: [] } envelope", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ artifacts: [{ id: "art_1", slug: "pr-review" }] }),
+    );
+    const out = await c.searchArtifacts("review");
+    expect(out).toHaveLength(1);
+    expect(out[0]!.slug).toBe("pr-review");
+    expect(seen().url).toBe("https://relay.test/v1/artifacts?q=review");
+  });
+
+  it("searchArtifacts omits the query string when no query is given", async () => {
+    const { c, seen } = capturingClient(JSON.stringify({ artifacts: [] }));
+    await c.searchArtifacts();
+    expect(seen().url).toBe("https://relay.test/v1/artifacts");
+  });
+
+  it("getArtifact GETs /v1/artifacts/:id", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ id: "art_1", versions: [] }),
+    );
+    const out = await c.getArtifact("pr-review");
+    expect(out.id).toBe("art_1");
+    expect(seen().method).toBe("GET");
+    expect(seen().url).toBe("https://relay.test/v1/artifacts/pr-review");
+  });
+
+  it("getArtifactVersion GETs /v1/artifacts/:id/versions/:version", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ id: "ver_1", version: 3 }),
+    );
+    const out = await c.getArtifactVersion("art_1", 3);
+    expect(out.version).toBe(3);
+    expect(seen().url).toBe("https://relay.test/v1/artifacts/art_1/versions/3");
+  });
+
+  it("throws PaneApiError on a 404 from an artifact route", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 404,
+        ok: false,
+        body: JSON.stringify({ error: { code: "not_found" } }),
+      }),
+    );
+    await expect(c.getArtifact("missing")).rejects.toMatchObject({
+      name: "PaneApiError",
+      status: 404,
+      code: "not_found",
+    });
+  });
+});
+
 describe("PaneClient.wsBaseUrl", () => {
   it("maps https to wss", () => {
     expect(

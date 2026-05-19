@@ -168,6 +168,30 @@ describe("/v1/artifacts", () => {
     expect(full.versions.map((v) => v.version)).toEqual([1, 2]);
   });
 
+  it("appends a version addressed by slug, not just id", async () => {
+    const apiKey = await seedAgent();
+    await createArtifact(apiKey, { slug: "by-slug" });
+    const res = await req("POST", "/v1/artifacts/by-slug/versions", apiKey, {
+      source: "<html><body>v2</body></html>",
+      type: "html-inline",
+      event_schema: eventSchema,
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { version: number }).version).toBe(2);
+  });
+
+  it("patches head metadata addressed by slug", async () => {
+    const apiKey = await seedAgent();
+    await createArtifact(apiKey, { slug: "patch-by-slug" });
+    const res = await req("PATCH", "/v1/artifacts/patch-by-slug", apiKey, {
+      description: "patched via slug",
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { description: string }).description).toBe(
+      "patched via slug",
+    );
+  });
+
   it("patches head metadata", async () => {
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {

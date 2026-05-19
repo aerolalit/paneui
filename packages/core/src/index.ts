@@ -2,7 +2,13 @@
 // Pure and framework-free: no argv, no MCP, no server deps.
 
 export { PaneClient, PaneApiError } from "./client.js";
-export type { ClientOptions, RelayResponse } from "./client.js";
+export type {
+  ClientOptions,
+  RelayResponse,
+  CreateArtifactRequest,
+  CreateArtifactVersionRequest,
+  PatchArtifactMetadataRequest,
+} from "./client.js";
 
 export { openStream } from "./stream.js";
 export type {

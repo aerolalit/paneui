@@ -228,7 +228,13 @@ All agent endpoints require `Authorization: Bearer <api_key>` from `agents`.
 | Method | Path | Description |
 |---|---|---|
 | `POST`   | `/v1/register` | Self-provision an API key. Gated by `REGISTRATION_MODE`: `closed` (default) → 404; `secret` → requires a bearer registration secret; `open` → public, per-IP rate-limited. |
-| `POST`   | `/v1/sessions` | Create session (artifact + schema + participants). |
+| `POST`   | `/v1/artifacts` | Create a named, reusable artifact + its v1 content. |
+| `POST`   | `/v1/artifacts/{id}/versions` | Append a new immutable version (content only). |
+| `PATCH`  | `/v1/artifacts/{id}` | Update head metadata (`name`, `slug`, `description`, `tags`). Never the content. |
+| `GET`    | `/v1/artifacts?q=<query>` | Search/list the agent's named artifacts. Lean response (no `source`); ranked by `last_used_at`. |
+| `GET`    | `/v1/artifacts/{id}` | Get an artifact + its version list. `{id}` accepts the artifact id or its slug. |
+| `GET`    | `/v1/artifacts/{id}/versions/{version}` | Get one version's full content. |
+| `POST`   | `/v1/sessions` | Create a session — one use of an artifact version (see below). |
 | `GET`    | `/v1/sessions/{id}` | Session metadata. |
 | `PATCH`  | `/v1/sessions/{id}/schema`   | Additive schema update. |
 | `PATCH`  | `/v1/sessions/{id}/artifact` | Replace artifact. |
@@ -247,28 +253,66 @@ Human-facing (no agent auth; URL token IS the auth):
 | `GET` | `/s/{human_token}`         | Shell page. Loads bridge + iframe. |
 | `GET` | `/s/{human_token}/content` | Streams artifact under sandbox CSP. |
 
+### Artifacts and sessions
+
+An **artifact** is a reusable, versioned UI template owned by an agent: HTML +
+an event schema + an optional `input_schema`. An **artifact version** is the
+immutable content of one revision. A **session** is one *use* of one version of
+an artifact, in one context. Many sessions reference one artifact version.
+
+Editing an artifact never mutates an existing version — it appends a new
+`artifact_version` row and advances `artifacts.latest_version`. A session pins
+the version it was created with, so sessions running on an old version are
+unaffected by later edits.
+
+`/v1/artifacts` is scoped to the calling agent: an agent sees and uses only its
+own artifacts. Referencing another agent's artifact id is a `404`.
+
 ### `POST /v1/sessions` request
 
-```json
+The `artifact` field takes **one of two forms** — exactly one of `artifact.id`
+/ `artifact.source` must be present:
+
+```jsonc
+// Form 1 — reference: instance an existing named artifact (the reuse path).
+{
+  "artifact":   { "id": "art_abc", "version": 3 },  // version optional → latest
+  "input_data": { "prTitle": "..." },               // optional, see below
+  "participants": { "humans": 1 },
+  "ttl":          3600,
+  "metadata":     { "label": "PR #42 review" },
+  "callback":     { "url": "...", "events": ["..."], "secret": "..." }
+}
+
+// Form 2 — inline: a one-off artifact defined on this call. The relay
+// transparently creates an anonymous artifact (name = null) behind it,
+// owned by the calling agent, and the session pins its single version.
 {
   "artifact": {
-    "type":   "html-inline",
-    "source": "<...html...>"
-  },
-  "schema": {
-    "events": {
-      "review.commentAdded": {
-        "payload":   { "...": "JSON Schema" },
-        "emittedBy": ["page", "agent"]
+    "type":         "html-inline",
+    "source":       "<...html...>",
+    "event_schema": {
+      "events": {
+        "review.commentAdded": {
+          "payload":   { "...": "JSON Schema" },
+          "emittedBy": ["page", "agent"]
+        }
       }
     }
   },
-  "participants": { "humans": 1 },
-  "ttl":         3600,
-  "metadata":    { "label": "PR #42 review" },
-  "callback":    { "url": "...", "events": ["..."], "secret": "..." }
+  "input_data": { "...": "..." }
 }
 ```
+
+`input_data` is this instance's per-render seed data. When given, the relay
+validates it against the pinned version's `input_schema` at create time (a
+clear error on mismatch, exactly like a rejected event). It is distinct from
+`metadata`, which the relay never reads or validates. The page reads
+`input_data` via the `window.pane.inputData` bridge field.
+
+Either form, the session ends up FK'd to an `artifact_version` — there is no
+nullable-FK branch. The inline form is sugar over the same model, not a
+parallel code path.
 
 `participants.humans` is a count; the relay issues that many human tokens. The agent that created the session is implicitly the only agent participant. Multi-agent sessions are v2.
 
@@ -292,8 +336,8 @@ Human-facing (no agent auth; URL token IS the auth):
 ## Data model (v1)
 
 ```
-agents 1 ──< sessions 1 ──< events
-                       1 ──< participants
+agents 1 ──< artifacts 1 ──< artifact_versions 1 ──< sessions 1 ──< events
+                                                              1 ──< participants
 ```
 
 ### `agents` (one row per API key issued)
@@ -309,24 +353,53 @@ agents 1 ──< sessions 1 ──< events
 | `revoked_at`    | nullable; non-null = revoked. |
 | `rate_limit`    | nullable int. Per-agent sessions-per-hour cap. |
 
+### `artifacts` (the head — mutable identity, no content)
+
+| column | notes |
+|---|---|
+| `id`             | cuid. FK target. |
+| `owner_id`       | FK → `agents`. The owning agent. |
+| `name`          | nullable. `null` = anonymous (inline-created, an implementation detail); set = a named, reusable artifact. |
+| `slug`          | nullable. Agent-chosen stable handle; unique per owner; `null` for anonymous. |
+| `description`   | nullable. Prose: what the artifact is and does. |
+| `tags`          | nullable JSON string array. Keywords for search. |
+| `latest_version`| int. Newest version number. |
+| `last_used_at`  | nullable. Bumped when a session is created; ranks search results. |
+| `created_at`    | |
+| `updated_at`    | |
+
+### `artifact_versions` (the child — immutable per-version content)
+
+| column | notes |
+|---|---|
+| `id`             | cuid. FK target. |
+| `artifact_id`    | FK → `artifacts`, `ON DELETE CASCADE`. |
+| `version`        | int. 1, 2, 3, …; unique per `(artifact_id, version)`. |
+| `artifact_type`  | `html-inline` or `html-ref`. |
+| `artifact_source`| TEXT (inline) or URL (ref); capped 2 MB. |
+| `event_schema`   | JSON. The event vocabulary for sessions on this version. |
+| `input_schema`   | nullable JSON Schema. Shape of `sessions.input_data`. |
+| `created_at`     | |
+
 ### `sessions`
+
+A session is one use of one `artifact_version`.
 
 | column | notes |
 |---|---|
 | `id`                   | cuid. |
 | `agent_id`             | FK → `agents`. |
-| `artifact_type`        | `html-inline` or `html-ref`. |
-| `artifact_source`      | TEXT (inline) or URL (ref); capped 2 MB. |
-| `artifact_version`     | int; bumps on PATCH. |
-| `event_schema`         | JSON. The per-session vocabulary. |
-| `schema_version`       | int. |
+| `artifact_version_id`  | FK → `artifact_versions`. The pinned version this session instantiates. |
+| `input_data`           | nullable JSON. This instance's render data; validated against the version's `input_schema` at create time. |
 | `status`               | `open` or `closed`. |
 | `created_at`           | |
 | `expires_at`           | |
-| `metadata`             | JSON. |
+| `metadata`             | JSON. Arbitrary agent bookkeeping the relay never reads. |
 | `callback_url`         | nullable. |
 | `callback_secret_hash` | nullable. |
 | `callback_filter`      | nullable. |
+
+The artifact content columns (`artifact_type`, `artifact_source`, `event_schema`) moved to `artifact_versions`; the obsolete per-session `artifact_version` / `schema_version` counters were dropped in favour of real artifact versioning + the version pin.
 
 ### `participants` (one row per identity that may connect)
 
