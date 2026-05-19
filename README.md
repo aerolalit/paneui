@@ -36,6 +36,29 @@ pane watch ses_xxxx --type form.submitted   # one JSON line per event; exits on 
 
 Config is `PANE_URL` + `PANE_API_KEY` (env), overridable with `--url` / `--api-key`. Run `pane --help` or `pane <command> --help` for details.
 
+### Teaching an agent to use pane
+
+An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill in
+its skills directory. Every relay serves the skill at `GET /skill/pane/SKILL.md`,
+so onboarding is a self-contained snippet you can paste to any agent:
+
+```text
+Set up the `pane` CLI so you can hand interactive UIs to humans:
+
+1. Install the CLI:     npm i -g pane-cli
+2. Download the skill:  mkdir -p ~/.claude/skills/pane && \
+                          curl -fsSL <your-relay>/skill/pane/SKILL.md \
+                          -o ~/.claude/skills/pane/SKILL.md
+3. Register:            pane register --url <your-relay>
+4. Read the skill you just downloaded and follow it from now on.
+```
+
+`pane register` provisions an API key and saves it (with the relay URL) to the
+CLI config file, so every later command works with no env vars. Adjust the
+skills path to your agent runtime (`~/.claude/skills/pane/` for Claude Code).
+The skill file is pure skill content — it documents the `pane` workflow and
+assumes the CLI is already installed and registered.
+
 ## Stack
 
 TypeScript. Runtime: Node 20+ (Bun fine too). Web: Hono (tiny, fast, container/edge-friendly). ORM: Prisma. SQLite for self-host (default), PostgreSQL for the hosted build. npm workspaces for the monorepo. See `docs/SPEC.md`.
