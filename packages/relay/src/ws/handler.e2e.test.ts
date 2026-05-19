@@ -126,8 +126,11 @@ async function createSession(apiKey: string): Promise<{
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      artifact: { type: "html-inline", source: "<html></html>" },
-      schema: minimalSchema,
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: minimalSchema,
+      },
       participants: { humans: 1 },
     }),
   });

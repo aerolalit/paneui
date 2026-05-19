@@ -97,6 +97,7 @@ async function loadByToken(prisma: PrismaClient, token: string) {
   if (!participant || participant.revokedAt) throw errors.notFound();
   const session = await prisma.session.findUnique({
     where: { id: participant.sessionId },
+    include: { artifactVersion: true },
   });
   if (!session) throw errors.notFound();
   return { participant, session };
@@ -164,7 +165,7 @@ bridge.get("/:token", async (c) => {
   const isClosed =
     session.status !== "open" || session.expiresAt.getTime() < Date.now();
   const wsUrl = publicWsBase(config) + "/v1/sessions/" + session.id + "/stream";
-  const schema = session.eventSchema as unknown as EventSchema;
+  const schema = session.artifactVersion.eventSchema as unknown as EventSchema;
   // 16 bytes of entropy, base64url so the value is safe inside both CSP and
   // an HTML attribute without escaping.
   const nonceBuf = new Uint8Array(16);
@@ -230,8 +231,8 @@ bridge.get("/:token/content", async (c) => {
   }
 
   let artifactBody: string;
-  if (session.artifactType === "html-inline") {
-    artifactBody = session.artifactSource;
+  if (session.artifactVersion.artifactType === "html-inline") {
+    artifactBody = session.artifactVersion.artifactSource;
   } else {
     // html-ref is rejected at POST /v1/sessions in this release, so no new
     // session reaches here with that type. Kept as defence-in-depth for any

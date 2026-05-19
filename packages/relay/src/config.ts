@@ -62,6 +62,12 @@ const schema = z.object({
   MAX_EVENTS_PER_SESSION: z.coerce.number().int().min(0).default(10_000),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
+  // Max number of artifacts (named + anonymous) a single agent may own.
+  // MAX_ARTIFACTS_PER_AGENT=0 disables the cap.
+  MAX_ARTIFACTS_PER_AGENT: z.coerce.number().int().min(0).default(100),
+  // Max number of versions a single artifact may accumulate.
+  // MAX_VERSIONS_PER_ARTIFACT=0 disables the cap.
+  MAX_VERSIONS_PER_ARTIFACT: z.coerce.number().int().min(0).default(50),
   // Caps on the agent-supplied per-session JSON Schema. The schema is compiled
   // by Ajv at session-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.

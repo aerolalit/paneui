@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
+import { seedSessionRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { reconcileOrphanedParticipants } from "./reconcile.js";
 
@@ -39,18 +40,12 @@ async function seedSession(
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const session = await prisma.session.create({
-    data: {
-      id: `ses_${randomBytes(8).toString("hex")}`,
-      agentId: agent.id,
-      artifactType: "html-inline",
-      artifactSource: "<html></html>",
-      eventSchema: { events: {} },
-      status,
-      expiresAt: new Date(Date.now() + 3_600_000),
-    },
+  const { sessionId } = await seedSessionRow(prisma, {
+    agentId: agent.id,
+    eventSchema: { events: {} },
+    status: status as "open" | "closed",
   });
-  return { sessionId: session.id, agentId: agent.id };
+  return { sessionId, agentId: agent.id };
 }
 
 function joined(sessionId: string, author: { kind: string; id: string }) {

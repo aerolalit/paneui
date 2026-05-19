@@ -18,6 +18,10 @@ export {
   artifactSchema,
   callbackSchema,
   createSessionSchema,
+  artifactTypeSchema,
+  createArtifactSchema,
+  createArtifactVersionSchema,
+  patchArtifactMetadataSchema,
 } from "./schemas.js";
 export type { CreateSessionInput } from "./schemas.js";
 
@@ -32,6 +36,11 @@ export type {
   AuthorKind,
   PaneEvent,
   Artifact,
+  ArtifactType,
+  ArtifactVersion,
+  ArtifactRecord,
+  ArtifactSummary,
+  CreateArtifactResponse,
   Callback,
   CreateSessionRequest,
   CreateSessionResponse,

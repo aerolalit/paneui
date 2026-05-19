@@ -1,9 +1,9 @@
 // prisma/schema.postgres.prisma
 // Postgres variant for the hosted build and for CI cross-engine coverage.
 // Kept in sync with prisma/schema.prisma. Generation flow:
-//   npx prisma generate --schema prisma/schema.postgres.prisma
-//   npx prisma migrate dev --schema prisma/schema.postgres.prisma --name <name>
-// Migrations live in prisma/migrations-postgres/ (separate from the sqlite set).
+//   npx prisma generate --schema prisma/postgres/schema.prisma
+//   npx prisma migrate dev --schema prisma/postgres/schema.prisma --name <name>
+// Migrations live in prisma/postgres/migrations/ (separate from the sqlite set).
 
 generator client {
   provider = "prisma-client-js"
@@ -24,8 +24,52 @@ model Agent {
   revokedAt  DateTime? @map("revoked_at")
   rateLimit  Int?      @map("rate_limit")
   sessions   Session[]
+  artifacts  Artifact[]
 
   @@map("agents")
+}
+
+// A reusable, versioned artifact owned by an agent. The head row carries the
+// mutable identity (name, slug, description, tags); the per-version content
+// lives in ArtifactVersion. An anonymous artifact (name/slug null) is created
+// transparently for an inline one-off session.
+model Artifact {
+  id            String            @id @default(cuid())
+  ownerId       String            @map("owner_id")
+  owner         Agent             @relation(fields: [ownerId], references: [id])
+  name          String?
+  slug          String?
+  description   String?
+  tags          Json?
+  latestVersion Int               @default(1) @map("latest_version")
+  lastUsedAt    DateTime?         @map("last_used_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  versions      ArtifactVersion[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@map("artifacts")
+}
+
+// One immutable version of an artifact's content. Editing an artifact appends
+// a new row; existing rows are never mutated. A session pins exactly one of
+// these.
+model ArtifactVersion {
+  id             String    @id @default(cuid())
+  artifactId     String    @map("artifact_id")
+  artifact       Artifact  @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  version        Int
+  artifactType   String    @map("artifact_type")
+  artifactSource String    @map("artifact_source")
+  eventSchema    Json      @map("event_schema")
+  inputSchema    Json?     @map("input_schema")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  sessions       Session[]
+
+  @@unique([artifactId, version])
+  @@index([artifactId])
+  @@map("artifact_versions")
 }
 
 enum SessionStatus {
@@ -38,14 +82,12 @@ model Session {
   agentId         String        @map("agent_id")
   agent           Agent         @relation(fields: [agentId], references: [id])
 
-  // Artifact: the HTML/JS the agent wants rendered.
-  artifactType    String        @map("artifact_type")
-  artifactSource  String        @map("artifact_source")
-  artifactVersion Int           @default(1) @map("artifact_version")
+  // The pinned artifact version this session instantiates.
+  artifactVersionId String          @map("artifact_version_id")
+  artifactVersion   ArtifactVersion @relation(fields: [artifactVersionId], references: [id])
 
-  // Schema: the per-session event vocabulary.
-  eventSchema     Json          @map("event_schema")
-  schemaVersion   Int           @default(1) @map("schema_version")
+  // This instance's render data — validated against the version's input_schema.
+  inputData         Json?         @map("input_data")
 
   status          SessionStatus @default(open)
   createdAt       DateTime      @default(now()) @map("created_at")
@@ -62,6 +104,7 @@ model Session {
 
   @@index([agentId])
   @@index([expiresAt])
+  @@index([artifactVersionId])
   @@map("sessions")
 }
 

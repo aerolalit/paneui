@@ -1,7 +1,6 @@
 import { Hono } from "hono";
-import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { artifactSchema, createSessionSchema } from "@pane/core";
+import { createSessionSchema } from "@pane/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
@@ -16,8 +15,6 @@ import { errors } from "../errors.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
-  invalidateSchemaCache,
-  mergeSchemaAdditive,
   validateSchemaShape,
 } from "../../core/validation.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
@@ -27,10 +24,10 @@ import type { EventSchema } from "../../types.js";
 
 const sessions = new Hono<AuthEnv>();
 
-// `artifactSchema` and `createSessionSchema` (request shapes for POST/PATCH
-// /v1/sessions) are the single source of truth in @pane/core/schemas — the
-// relay imports them so the server-side validator and the client-facing
-// types can never drift. See packages/core/src/schemas.ts.
+// `createSessionSchema` (request shape for POST /v1/sessions) is the single
+// source of truth in @pane/core/schemas — the relay imports it so the
+// server-side validator and the client-facing types can never drift. See
+// packages/core/src/schemas.ts.
 
 function publicWsUrl(config: Config): string {
   const u = new URL(config.publicUrl);
@@ -41,6 +38,7 @@ function publicWsUrl(config: Config): string {
 sessions.post("/", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
+  const agent = c.get("agent");
   const body = await c.req.json().catch(() => null);
   const parsed = createSessionSchema.safeParse(body);
   if (!parsed.success) {
@@ -51,24 +49,8 @@ sessions.post("/", requireAgent, async (c) => {
     );
   }
 
-  const { artifact, participants, ttl, metadata, callback } = parsed.data;
-
-  if (Buffer.byteLength(artifact.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
-    throw errors.payloadTooLarge();
-  }
-  if (artifact.type === "html-ref") {
-    // v1 does not serve html-ref artifacts — the shell would render a blank
-    // iframe with no error (see issue #24). Reject at create time rather than
-    // hand back a session that silently shows nothing. The artifactSchema in
-    // @pane/core still admits html-ref so the type can be re-enabled in a
-    // later phase without a client-side change; the SSRF guard
-    // (assertSafeArtifactUrl) is kept for when the relay actually fetches it.
-    throw errors.invalidRequest(
-      "artifact.type 'html-ref' is not supported in this release",
-      undefined,
-      "use artifact.type 'html-inline' and pass the artifact HTML in artifact.source",
-    );
-  }
+  const { artifact, participants, ttl, metadata, callback, input_data } =
+    parsed.data;
 
   const requestedHumans = participants?.humans ?? 1;
   if (requestedHumans > config.MAX_PARTICIPANTS_PER_SESSION) {
@@ -81,19 +63,81 @@ sessions.post("/", requireAgent, async (c) => {
     await assertSafeWebhookUrl(callback.url);
   }
 
-  assertSchemaWithinLimits(parsed.data.schema, {
-    maxBytes: config.MAX_SCHEMA_BYTES,
-    maxDepth: config.MAX_SCHEMA_DEPTH,
-  });
-  const eventSchema: EventSchema = validateSchemaShape(parsed.data.schema);
+  // Resolve (reference form) or create (inline form) the artifact version this
+  // session pins. Either path ends with a concrete artifact_version_id.
+  let artifactVersionId: string;
+  let artifactId: string;
+
+  if ("id" in artifact && artifact.id !== undefined) {
+    // Reference form — instance an existing named artifact owned by this agent.
+    // `artifact.id` accepts the artifact id or its slug.
+    const head = await prisma.artifact.findFirst({
+      where: {
+        ownerId: agent.id,
+        OR: [{ id: artifact.id }, { slug: artifact.id }],
+      },
+    });
+    if (!head) throw errors.notFound();
+    const wantVersion = artifact.version ?? head.latestVersion;
+    const version = await prisma.artifactVersion.findUnique({
+      where: {
+        artifactId_version: { artifactId: head.id, version: wantVersion },
+      },
+    });
+    if (!version) throw errors.notFound();
+    artifactVersionId = version.id;
+    artifactId = head.id;
+  } else {
+    // Inline form — a one-off UI. Validate the inline content, then
+    // transparently create an anonymous artifact (name/slug null) + v1.
+    const inline = artifact as {
+      source: string;
+      type: "html-inline" | "html-ref";
+      event_schema: unknown;
+    };
+    if (Buffer.byteLength(inline.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
+      throw errors.payloadTooLarge();
+    }
+    if (inline.type === "html-ref") {
+      // v1 does not serve html-ref artifacts — the shell would render a blank
+      // iframe with no error (see issue #24). Reject at create time.
+      throw errors.invalidRequest(
+        "artifact.type 'html-ref' is not supported in this release",
+        undefined,
+        "use artifact.type 'html-inline' and pass the artifact HTML in artifact.source",
+      );
+    }
+    assertSchemaWithinLimits(inline.event_schema, {
+      maxBytes: config.MAX_SCHEMA_BYTES,
+      maxDepth: config.MAX_SCHEMA_DEPTH,
+    });
+    const eventSchema: EventSchema = validateSchemaShape(inline.event_schema);
+
+    const created = await prisma.$transaction(async (tx) => {
+      const head = await tx.artifact.create({
+        data: { ownerId: agent.id, name: null, slug: null, latestVersion: 1 },
+      });
+      const version = await tx.artifactVersion.create({
+        data: {
+          artifactId: head.id,
+          version: 1,
+          artifactType: inline.type,
+          artifactSource: inline.source,
+          eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
+          inputSchema: Prisma.JsonNull,
+        },
+      });
+      return { headId: head.id, versionId: version.id };
+    });
+    artifactVersionId = created.versionId;
+    artifactId = created.headId;
+  }
 
   const ttlSeconds = Math.min(
     Math.max(1, ttl ?? config.DEFAULT_TTL_SECONDS),
     config.MAX_TTL_SECONDS,
   );
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
-
-  const agent = c.get("agent");
 
   // Per-agent session cap: bound how many open sessions a single agent can
   // hold so a compromised/abusive key cannot exhaust storage. Closed/expired
@@ -119,13 +163,16 @@ sessions.post("/", requireAgent, async (c) => {
   );
   const agentToken = generateAgentParticipantToken();
 
+  // NOTE (Phase C): `input_data` is stored verbatim here; validation against
+  // the pinned version's `input_schema` is deferred to Phase C.
   await prisma.session.create({
     data: {
       id: sessionId,
       agentId: agent.id,
-      artifactType: artifact.type,
-      artifactSource: artifact.source,
-      eventSchema: eventSchema as unknown as Prisma.InputJsonValue,
+      artifactVersionId,
+      inputData: input_data
+        ? (input_data as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       expiresAt,
       metadata: metadata
         ? (metadata as Prisma.InputJsonValue)
@@ -152,6 +199,12 @@ sessions.post("/", requireAgent, async (c) => {
         ],
       },
     },
+  });
+
+  // Bump the artifact's last-used timestamp — search ranks by it.
+  await prisma.artifact.update({
+    where: { id: artifactId },
+    data: { lastUsedAt: new Date() },
   });
 
   recordSessionCreated();
@@ -208,105 +261,23 @@ sessions.get("/:id", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
-  const session = await prisma.session.findUnique({ where: { id } });
+  const session = await prisma.session.findUnique({
+    where: { id },
+    include: { artifactVersion: true },
+  });
   if (!session || session.agentId !== me.id) throw errors.notFound();
   const isExpired = session.expiresAt.getTime() < Date.now();
   return c.json({
     session_id: session.id,
     status: isExpired ? "closed" : session.status,
-    schema_version: session.schemaVersion,
-    artifact_version: session.artifactVersion,
+    artifact_id: session.artifactVersion.artifactId,
+    artifact_version_id: session.artifactVersionId,
+    artifact_version: session.artifactVersion.version,
     metadata: session.metadata,
+    input_data: session.inputData,
     created_at: session.createdAt.toISOString(),
     expires_at: session.expiresAt.toISOString(),
   });
-});
-
-const patchSchemaBody = z.object({
-  add: z.object({ events: z.record(z.unknown()) }),
-});
-
-sessions.patch("/:id/schema", requireAgent, async (c) => {
-  const prisma = c.get("prisma");
-  const config = c.get("config");
-  const id = c.req.param("id");
-  const me = c.get("agent");
-  const session = await prisma.session.findUnique({ where: { id } });
-  if (!session || session.agentId !== me.id) throw errors.notFound();
-  if (session.status !== "open") throw errors.gone();
-
-  const body = await c.req.json().catch(() => null);
-  const parsed = patchSchemaBody.safeParse(body);
-  if (!parsed.success) {
-    throw errors.invalidRequest(
-      "invalid body",
-      parsed.error.flatten(),
-      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
-    );
-  }
-
-  assertSchemaWithinLimits(parsed.data.add, {
-    maxBytes: config.MAX_SCHEMA_BYTES,
-    maxDepth: config.MAX_SCHEMA_DEPTH,
-  });
-  const current = session.eventSchema as unknown as EventSchema;
-  const merged = mergeSchemaAdditive(current, parsed.data.add);
-  const added = Object.keys(parsed.data.add.events).filter(
-    (t) => !current.events[t],
-  );
-  const updated = await prisma.session.update({
-    where: { id },
-    data: {
-      eventSchema: merged as unknown as Prisma.InputJsonValue,
-      schemaVersion: { increment: 1 },
-    },
-  });
-  invalidateSchemaCache(id);
-  await appendSystemEvent(prisma, id, "system.schema.updated", {
-    version: updated.schemaVersion,
-    added,
-  });
-  return c.json({ schema_version: updated.schemaVersion });
-});
-
-const patchArtifactBody = z.object({ artifact: artifactSchema });
-
-sessions.patch("/:id/artifact", requireAgent, async (c) => {
-  const prisma = c.get("prisma");
-  const config = c.get("config");
-  const id = c.req.param("id");
-  const me = c.get("agent");
-  const session = await prisma.session.findUnique({ where: { id } });
-  if (!session || session.agentId !== me.id) throw errors.notFound();
-  if (session.status !== "open") throw errors.gone();
-
-  const body = await c.req.json().catch(() => null);
-  const parsed = patchArtifactBody.safeParse(body);
-  if (!parsed.success) {
-    throw errors.invalidRequest(
-      "invalid body",
-      parsed.error.flatten(),
-      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
-    );
-  }
-  const a = parsed.data.artifact;
-  if (Buffer.byteLength(a.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
-    throw errors.payloadTooLarge();
-  }
-
-  const updated = await prisma.session.update({
-    where: { id },
-    data: {
-      artifactType: a.type,
-      artifactSource: a.source,
-      artifactVersion: { increment: 1 },
-    },
-  });
-  await appendSystemEvent(prisma, id, "system.artifact.updated", {
-    version: updated.artifactVersion,
-    type: updated.artifactType,
-  });
-  return c.json({ artifact_version: updated.artifactVersion });
 });
 
 sessions.delete("/:id", requireAgent, async (c) => {
@@ -320,7 +291,6 @@ sessions.delete("/:id", requireAgent, async (c) => {
     where: { id },
     data: { status: "closed", expiresAt: new Date() },
   });
-  invalidateSchemaCache(id);
   await appendSystemEvent(prisma, id, "system.session.expired", {});
   return c.body(null, 204);
 });

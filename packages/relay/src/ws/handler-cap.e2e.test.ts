@@ -148,10 +148,16 @@ async function createSession(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      artifact: { type: "html-inline", source: "<html></html>" },
-      schema: {
-        events: {
-          ping: { payload: { type: "object" }, emittedBy: ["page", "agent"] },
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: {
+          events: {
+            ping: {
+              payload: { type: "object" },
+              emittedBy: ["page", "agent"],
+            },
+          },
         },
       },
     }),

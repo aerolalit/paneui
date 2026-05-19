@@ -227,6 +227,24 @@ export function validateSchemaShape(raw: unknown): EventSchema {
   return out;
 }
 
+// Compile an artifact's `input_schema` to confirm it is a valid JSON Schema.
+// Used by the /v1/artifacts routes at create/version time so a malformed
+// input_schema is rejected up front rather than at session-create time. The
+// schema itself is not retained — only its validity is asserted here. Phase C
+// will use the compiled validator to check session.input_data.
+export function assertValidInputSchema(raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw errors.invalidRequest("input_schema must be an object");
+  }
+  try {
+    ajv.compile(raw as object);
+  } catch (err) {
+    throw errors.invalidRequest(
+      `input_schema is not a valid JSON Schema: ${(err as Error).message}`,
+    );
+  }
+}
+
 // Additive merge: the patch may only ADD new event types. Re-declaring an
 // existing type (even with an identical payload schema) is rejected — clients
 // pinned to an older `schemaVersion` would break if the payload shape changed,

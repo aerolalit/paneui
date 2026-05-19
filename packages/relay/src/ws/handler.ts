@@ -28,7 +28,8 @@ import { redeemTicket } from "./ticket.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
-import type { Participant, PrismaClient, Session } from "@prisma/client";
+import type { Participant, PrismaClient } from "@prisma/client";
+import type { SessionWithArtifactVersion } from "../core/events.js";
 
 // Injected dependencies for the WebSocket transport. The WS upgrade path runs
 // outside the Hono request lifecycle, so config + the Prisma client are passed
@@ -185,7 +186,7 @@ async function handleUpgrade(
     }
 
     let author: Author;
-    let session: Session;
+    let session: SessionWithArtifactVersion;
     let participant: Participant | null = null;
 
     if (cred.kind === "ticket") {
@@ -200,7 +201,10 @@ async function handleUpgrade(
         return;
       }
       author = redeemed;
-      const s = await prisma.session.findUnique({ where: { id: sessionId } });
+      const s = await prisma.session.findUnique({
+        where: { id: sessionId },
+        include: { artifactVersion: true },
+      });
       if (!s) {
         sendUpgradeError(socket, 404);
         return;
@@ -231,7 +235,10 @@ async function handleUpgrade(
           id: participant.identityId,
         };
       } else {
-        const s = await prisma.session.findUnique({ where: { id: sessionId } });
+        const s = await prisma.session.findUnique({
+          where: { id: sessionId },
+          include: { artifactVersion: true },
+        });
         if (!s || s.agentId !== resolved.agent.id) {
           sendUpgradeError(socket, 404);
           return;
@@ -563,7 +570,10 @@ async function handleFrame(
   // Re-read the session so writeEvent sees the latest schema/status.
   // (writeEvent itself throws errors.gone() if the session is closed/expired,
   // so we don't double-check that here.)
-  const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: { artifactVersion: true },
+  });
   if (!session) {
     sendJson(ws, {
       error: serializeApiError(errors.notFound()),
