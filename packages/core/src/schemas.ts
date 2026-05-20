@@ -96,5 +96,19 @@ export const patchArtifactMetadataSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
 });
 
+// POST /v1/feedback — an agent submits a bug report, feature request, or note
+// to the relay operator. Message is trimmed before length check so whitespace
+// padding cannot bypass the 1..4000 cap.
+export const feedbackTypeSchema = z.enum(["bug", "feature", "note"]);
+
+export const submitFeedbackSchema = z.object({
+  type: feedbackTypeSchema,
+  message: z
+    .string()
+    .transform((s) => s.trim())
+    .pipe(z.string().min(1).max(4000)),
+  session_id: z.string().min(1).optional(),
+});
+
 /** @deprecated use `CreateSessionRequest` from ./types.js (same type). */
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;

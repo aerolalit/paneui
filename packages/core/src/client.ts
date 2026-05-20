@@ -10,6 +10,9 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   EventsPage,
+  FeedbackPage,
+  FeedbackSubmission,
+  FeedbackType,
   KeyInfo,
   PaneEvent,
   SessionState,
@@ -476,6 +479,41 @@ export class PaneClient {
   async clearTaste(): Promise<void> {
     const r = await this.call("DELETE", "/v1/taste");
     if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * POST /v1/feedback — submit a one-shot bug report, feature request, or
+   * note to the relay operator. Returns the new row's id, type, and
+   * created_at; the message is not echoed.
+   */
+  async submitFeedback(req: {
+    type: FeedbackType;
+    message: string;
+    sessionId?: string;
+  }): Promise<FeedbackSubmission> {
+    const r = await this.call("POST", "/v1/feedback", {
+      type: req.type,
+      message: req.message,
+      session_id: req.sessionId,
+    });
+    if (!r.ok) this.fail(r);
+    return this.asObject<FeedbackSubmission>(r);
+  }
+
+  /**
+   * GET /v1/feedback — the calling agent's own submissions, newest first.
+   * `before` is an opaque cursor from a previous page's `next_before`.
+   */
+  async listFeedback(
+    opts: { limit?: number; before?: string } = {},
+  ): Promise<FeedbackPage> {
+    const q = new URLSearchParams();
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    if (opts.before != null && opts.before !== "") q.set("before", opts.before);
+    const qs = q.toString();
+    const r = await this.call("GET", `/v1/feedback${qs ? "?" + qs : ""}`);
+    if (!r.ok) this.fail(r);
+    return this.asObject<FeedbackPage>(r);
   }
 
   /**

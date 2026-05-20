@@ -155,6 +155,31 @@ export interface TasteInfo {
   bytes: number;
 }
 
+/** A feedback `type` discriminant accepted by POST /v1/feedback. */
+export type FeedbackType = "bug" | "feature" | "note";
+
+/** Response from POST /v1/feedback — id, type, created_at only (no message echo). */
+export interface FeedbackSubmission {
+  id: string;
+  type: FeedbackType;
+  created_at: string;
+}
+
+/** A row from GET /v1/feedback — full record including message. */
+export interface FeedbackRecord {
+  id: string;
+  type: FeedbackType;
+  message: string;
+  session_id: string | null;
+  created_at: string;
+}
+
+/** Response from GET /v1/feedback — page of the calling agent's own submissions. */
+export interface FeedbackPage {
+  items: FeedbackRecord[];
+  next_before?: string;
+}
+
 /** A relay error envelope. */
 export interface RelayError {
   code: string;

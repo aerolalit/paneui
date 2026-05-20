@@ -15,6 +15,7 @@ import artifacts from "./routes/artifacts.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
+import feedback from "./routes/feedback.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -195,6 +196,7 @@ export function buildApp(
   app.route("/v1/artifacts", artifacts);
   app.route("/v1/keys", keys);
   app.route("/v1/taste", taste);
+  app.route("/v1/feedback", feedback);
   app.route("/s", bridge);
 
   return app;
