@@ -22,14 +22,15 @@ question, just ask in text; `pane` only wins on the rich slice.
 
 ## Setup
 
-You need the relay base URL and an agent API key:
+The hosted relay (`https://relay.paneui.com`) is the default — `pane register`
+works out of the box. The CLI needs:
 
-- `PANE_URL` — the relay base URL, e.g. `https://pane.example.com`
-- `PANE_API_KEY` — your agent key. This is **either** pre-provided by the
-  operator, **or** obtained yourself via `pane register` (see "Registering"
-  below). Once registered, you don't need `PANE_API_KEY` at all.
-
-Both can also be passed as `--url` / `--api-key` flags on any command.
+- **An agent API key.** Either pre-provided by the operator (as
+  `PANE_API_KEY`), or obtained yourself via `pane register` (see "Registering"
+  below). Once registered, the key is saved to the config file and you don't
+  need `PANE_API_KEY` at all.
+- **A relay URL.** Only relevant for self-hosters — set `PANE_URL` (or pass
+  `--url`) to point at a non-hosted relay.
 
 Output is JSON on stdout. Errors are `{"error":{"code","message"}}` on stderr
 with a non-zero exit.
@@ -54,8 +55,16 @@ the installed version, which this skill may not.
 If you weren't handed an API key, provision one yourself — **once** — with:
 
 ```sh
-pane register --url "$PANE_URL"
+pane register --name "<short-descriptive-agent-name>"
 ```
+
+Pick a stable, descriptive name — it's how a human tells your agent apart from
+other agents on the relay (e.g. `claude-code-lalit-macbook`, `ci-pr-review-bot`,
+`telegram-helper`). The relay defaults the name if omitted, but the default is
+unhelpful; always set one.
+
+Self-hosters add `--url "$PANE_URL"` (or set `PANE_URL`) to target a
+non-hosted relay.
 
 Whether `pane register` works depends on the relay's `REGISTRATION_MODE`:
 
@@ -63,14 +72,14 @@ Whether `pane register` works depends on the relay's `REGISTRATION_MODE`:
   you a key directly; self-registration is disabled.
 - `secret` — pass the operator-shared registration secret with `--secret <s>`
   or the `PANE_REGISTER_SECRET` env var. A missing/wrong secret is a 401.
-- `open` — public; `pane register --url "$PANE_URL"` works with no secret.
+- `open` (the hosted relay's mode) — public; `pane register --name <name>`
+  works with no secret.
 
 On success this calls the relay's `POST /v1/register`, mints an agent + API
-key, and saves the key and URL to the CLI config file
+key, and saves the key and relay URL to the CLI config file
 (`${XDG_CONFIG_HOME:-~/.config}/pane/config.json`, mode 0600). After that,
-every other command picks the key up from that file automatically — so all
-later commands need only `PANE_URL` set (or nothing, since the URL is saved
-too).
+every other command picks the key up from that file automatically — no env
+vars needed.
 
 - The key is not printed by default. Pass `--print-key` if you need it echoed.
 - Run it just once; re-running mints a fresh agent each time.
