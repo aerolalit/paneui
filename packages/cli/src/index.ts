@@ -18,6 +18,8 @@ import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
+import { PaneApiError } from "@paneui/core";
+import { failUpgradeRequired } from "./output.js";
 
 const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
 
@@ -183,6 +185,17 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // Funnel 426 cli_upgrade_required through the dedicated upgrade-message
+  // path so a command that throws raw (instead of going through
+  // failFromError) still produces the exact stderr block + exit 75 the
+  // SKILL.md tells the agent's harness to expect.
+  if (
+    err instanceof PaneApiError &&
+    err.code === "cli_upgrade_required" &&
+    err.status === 426
+  ) {
+    failUpgradeRequired(err);
+  }
   process.stderr.write(
     JSON.stringify({
       error: {
