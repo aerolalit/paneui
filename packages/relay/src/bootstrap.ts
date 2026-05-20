@@ -3,6 +3,24 @@ import type { Config } from "./config.js";
 import { generateApiKey, hashKey, keyPrefix } from "./keys.js";
 import { log } from "./log.js";
 
+/**
+ * First-boot agent provisioning. Runs every boot but is idempotent.
+ *
+ * Decision matrix:
+ *
+ *   API_KEY  REGISTRATION_MODE   Action
+ *   -------  ------------------  --------------------------------------------
+ *   set      any                 upsert "default" agent against the key hash
+ *                                (idempotent — same key in, same agent)
+ *   unset    open                NO-OP — agents register themselves via
+ *                                POST /v1/register; minting a bootstrap key
+ *                                would be redundant and seed an unowned
+ *                                "default" agent nobody asked for.
+ *   unset    closed | secret     Mint a fresh key + create the default agent
+ *                                (only when no agents exist yet). This is the
+ *                                operator's one way in when self-registration
+ *                                is gated.
+ */
 export async function runBootstrap(
   prisma: PrismaClient,
   config: Config,
@@ -19,6 +37,17 @@ export async function runBootstrap(
       update: {},
     });
     log.info("bootstrap: ensured default agent from API_KEY");
+    return;
+  }
+
+  // Open registration means agents self-provision via POST /v1/register.
+  // Minting a bootstrap key here would create an unowned "default" agent and
+  // print its key to stdout — both unwanted in this mode.
+  if (config.REGISTRATION_MODE === "open") {
+    log.info(
+      "bootstrap: REGISTRATION_MODE=open — agents will self-register via " +
+        "POST /v1/register; no bootstrap key minted",
+    );
     return;
   }
 
