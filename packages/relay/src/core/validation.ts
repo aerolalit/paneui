@@ -11,9 +11,17 @@ const AjvCtor: new (opts?: object) => {
   compile: (schema: object) => ValidateFunction;
 } = require("ajv");
 
+// allErrors: true reports every failing JSON Schema path, not just the first.
+// Both schema_violation (event data) and input_schema_violation (session
+// input_data) callers already pass the full `validate.errors` array through
+// to the error envelope's `details`, so flipping this flag is the only
+// change needed for callers to receive all errors at once. Reporter (#137)
+// observed only `/n must be integer` for an input that also violated /name
+// — without this flag, Ajv short-circuits on first failure and callers
+// have to fix-and-retry one field at a time.
 const ajv = new AjvCtor({
   strict: false,
-  allErrors: false,
+  allErrors: true,
   removeAdditional: false,
 });
 

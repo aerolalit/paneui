@@ -478,12 +478,23 @@ the human.
 pane watch ses_xxxx --type form.submitted
 ```
 
-- `--type <t>` — exit 0 after the first event of that type. Use this to wait
-  for the human's terminal action.
+- `--type <t[,t2,…]>` — exit 0 after the first event whose type is in this
+  comma-separated set. Use this to wait for the human's terminal action.
+  Pass multiple types when you want to exit on any of several outcomes
+  (e.g. `--type form.submitted,form.cancelled`).
+- `--filter-type <t[,t2,…]>` — restrict the STDOUT stream to events whose
+  type is in this set. `system.*` events (participant joined, session
+  expired) and the terminal `_closed` line always pass through so the
+  harness still sees lifecycle signals. `--type` controls the EXIT
+  condition; `--filter-type` controls the OUTPUT. Combine them
+  (`--type X --filter-type X`) for "stream only X events and exit on
+  the first one".
 - `--once` — exit 0 after the very first event.
-- `--timeout <seconds>` — exit if no event arrives within the window (fails
-  with code `ws_timeout`). Use it so you don't wait forever for a human who
-  never opens the URL.
+- `--timeout <seconds>` — wall-clock max wait. Exits with code `ws_timeout`
+  if the awaited terminal condition (`--once`, `--type`, session close)
+  hasn't happened by then. Frames arriving do NOT reset the timer — this
+  is the budget for "give up on the human", not an idle detector. Use it
+  so you don't wait forever for a human who never acts.
 - bare — stream until interrupted (`SIGINT`).
 
 **Outcomes — branch on these:**
@@ -498,15 +509,28 @@ pane watch ses_xxxx --type form.submitted
 - The relay drops the connection abnormally → `ws_closed_abnormally` on
   stderr, non-zero exit (distinct from a clean `_closed`).
 
-### `pane state <id>` — non-blocking snapshot
+### `pane state <id>` — snapshot, optionally long-polled
 
 ```sh
-pane state ses_xxxx
-pane state ses_xxxx --since <next_cursor>
+pane state ses_xxxx                          # snapshot, returns immediately
+pane state ses_xxxx --since <next_cursor>    # only events past the cursor
+pane state ses_xxxx --since <next_cursor> --wait 30
 ```
 
-Prints `{ meta, events, next_cursor }` without holding a connection. Use it for
-a one-off check, or poll it with `--since <next_cursor>` instead of `watch`.
+Prints `{ meta, events, next_cursor }` without holding a WebSocket. Two
+modes:
+
+- **Default (non-blocking).** Returns whatever exists right now. Use for
+  a one-off "is the session still alive?" check.
+- **`--wait <secs>` (long-poll).** The relay holds the request open for
+  up to that many seconds — capped server-side at 30 — and returns as
+  soon as a new event arrives. Use this for **headless polling agents
+  that can't keep a WebSocket open** (cron, FaaS, slow links): call,
+  re-call with the previous `next_cursor` as `--since`, repeat. Higher
+  latency per round-trip than `pane watch` but no long-lived connection.
+
+Choose `watch` (streaming) when you can hold a process; choose
+`state --wait` (polling) when you can't.
 
 ### `pane send <id>` — emit your own event
 
@@ -601,9 +625,11 @@ you with the result.
   as a monitored process. When the human submits, the line is printed, the
   process exits 0, and you are re-invoked with the event payload. No polling.
 - **Shell pipeline**: `pane watch <id> | while read -r line; do ...; done`.
-- **`jq` filter**: `pane watch <id> | jq -c 'select(.type=="comment.added")'`.
-- **Polling alternative**: loop `pane state <id> --since <cursor>` where a held
-  connection is awkward.
+- **`--filter-type` for clean stdout**: `pane watch <id> --filter-type comment.added`
+  (built-in equivalent of `jq -c 'select(.type=="comment.added")'`; `system.*`
+  lifecycle events still pass through so the harness sees them).
+- **Polling alternative**: loop `pane state <id> --since <cursor> --wait 30`
+  for environments that can't hold a WebSocket (cron, FaaS, slow links).
 
 ## Typical round trip
 

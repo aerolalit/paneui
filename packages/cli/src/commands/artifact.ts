@@ -1,7 +1,8 @@
 // `pane artifact` — manage reusable, versioned artifacts.
 //
 // Flat command namespace: `artifact` is one top-level command that branches on
-// a positional subcommand (create / version / update / search / list / show).
+// a positional subcommand (create / version / update / search / list / show /
+// delete).
 // An artifact is a reusable UI template (HTML + event schema + optional input
 // schema); a session is one *use* of one version of it. Authoring an artifact
 // once and instancing it via `pane create --artifact-id` removes the per-use
@@ -37,6 +38,9 @@ Subcommands:
   search     Search the agent's named artifacts (lean — no HTML).
   list       List the agent's named artifacts (search with no query).
   show       Show a full artifact: head metadata + its version list.
+  delete     Permanently delete an artifact and ALL its versions. Requires
+             --yes. Refused with 409 conflict if any session (open or
+             closed) still references the artifact — delete those first.
 
   pane artifact create --name <n> --artifact <path|inline>
                        [--event-schema <path|json>] [--slug <s>]
@@ -63,6 +67,13 @@ Subcommands:
 
   pane artifact show <id|slug>
       Prints the full artifact: head metadata + every version's content.
+
+  pane artifact delete <id|slug> --yes
+      Permanently deletes the artifact and all its versions. Refused
+      (409 conflict) if any session in any state still references one
+      of the artifact's versions — run 'pane delete <session-id>' on
+      each first, or wait for the relay's TTL sweeper to reclaim them.
+      Prints { artifact, deleted: true } on success.
 
 Options:
   --name <n>          Artifact display name (required for 'create').
@@ -347,6 +358,34 @@ async function runArtifactShow(args: ParsedArgs): Promise<void> {
   }
 }
 
+// `pane artifact delete <id|slug> --yes` — remove an artifact (and, server-
+// side, all its versions). The relay refuses with 409 conflict if any
+// session still references it; the CLI surfaces that as the relay-supplied
+// envelope. `--yes` is required because there's no Undo button on a delete
+// and the same `pane artifact create` slug isn't reservable once gone.
+async function runArtifactDelete(args: ParsedArgs): Promise<void> {
+  const idOrSlug = args.positionals[1];
+  if (!idOrSlug) {
+    fail(
+      "missing artifact <id|slug> — usage: pane artifact delete <id|slug> --yes",
+      "invalid_args",
+    );
+  }
+  if (!args.bools.has("yes")) {
+    fail(
+      "'pane artifact delete' permanently removes the artifact and all its versions — it is destructive. Pass --yes to confirm.",
+      "invalid_args",
+    );
+  }
+  const client = makeClient(args);
+  try {
+    await client.deleteArtifact(idOrSlug!);
+    printJson({ artifact: idOrSlug, deleted: true });
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
 export async function runArtifact(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
@@ -368,15 +407,18 @@ export async function runArtifact(args: ParsedArgs): Promise<void> {
     case "show":
       await runArtifactShow(args);
       break;
+    case "delete":
+      await runArtifactDelete(args);
+      break;
     case undefined:
       fail(
-        "missing subcommand — usage: pane artifact <create|version|update|search|list|show> (run 'pane artifact --help')",
+        "missing subcommand — usage: pane artifact <create|version|update|search|list|show|delete> (run 'pane artifact --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown artifact subcommand '${sub}' — expected create|version|update|search|list|show (run 'pane artifact --help')`,
+        `unknown artifact subcommand '${sub}' — expected create|version|update|search|list|show|delete (run 'pane artifact --help')`,
         "invalid_args",
       );
   }

@@ -29,6 +29,10 @@ const fakeClient = {
     calls.push({ method: "getArtifact", args: [id] });
     return Promise.resolve({ id: "art_1", versions: [] });
   }),
+  deleteArtifact: vi.fn((id: unknown) => {
+    calls.push({ method: "deleteArtifact", args: [id] });
+    return Promise.resolve();
+  }),
 };
 
 vi.mock("../config.js", () => ({
@@ -38,7 +42,7 @@ vi.mock("../config.js", () => ({
 import { runArtifact } from "./artifact.js";
 import { parseArgs } from "../argv.js";
 
-const BOOLS = new Set(["json", "once", "help", "print-key"]);
+const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
 
 /** Build ParsedArgs from raw tokens, as index.ts does. */
 function argv(tokens: string[]) {
@@ -251,5 +255,41 @@ describe("artifact show", () => {
     await run(["show"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing artifact <id|slug>");
+  });
+});
+
+describe("artifact delete (#137)", () => {
+  it("calls deleteArtifact when --yes is given", async () => {
+    await run(["delete", "pr-review", "--yes"]);
+    expect(calls[0]!.method).toBe("deleteArtifact");
+    expect(calls[0]!.args[0]).toBe("pr-review");
+    expect(JSON.parse(stdout)).toEqual({
+      artifact: "pr-review",
+      deleted: true,
+    });
+  });
+
+  it("refuses without --yes (destructive guard)", async () => {
+    // No relay call should fire — the CLI rejects locally so a typo
+    // can't accidentally drop a real artifact.
+    await run(["delete", "pr-review"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--yes");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails when the id/slug positional is missing", async () => {
+    await run(["delete", "--yes"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing artifact <id|slug>");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("artifact unknown subcommand", () => {
+  it("lists 'delete' in the error message (so users learn it exists)", async () => {
+    await run(["nope"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("delete");
   });
 });
