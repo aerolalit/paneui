@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 const calls: { method: string; args: unknown[] }[] = [];
 const tasteInfo = {
@@ -106,15 +107,15 @@ describe("taste get", () => {
 });
 
 describe("taste set", () => {
-  it("refuses without stdin or --file", async () => {
+  it("refuses with no --file and an interactive stdin", async () => {
     await run(["set"]);
     expect(exitCode).toBe(1);
     expect(JSON.parse(stderr).error.code).toBe("invalid_args");
-    expect(stderr).toContain("pipe markdown on stdin or pass --file");
+    expect(stderr).toContain("--file");
     expect(calls).toHaveLength(0);
   });
 
-  it("reads from --file and PUTs the contents", async () => {
+  it("reads from --file and PUTs the contents (interactive TTY)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "taste-test-"));
     const file = join(dir, "taste.md");
     writeFileSync(file, "- denser\n- no rounded corners\n", "utf8");
@@ -124,6 +125,28 @@ describe("taste set", () => {
       expect(calls[0]!.method).toBe("setTaste");
       expect(calls[0]!.args[0]).toBe("- denser\n- no rounded corners\n");
       expect(JSON.parse(stdout).taste).toBe("- denser\n- no rounded corners\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads from --file when stdin is non-TTY (issue #148 regression)", async () => {
+    // The bug: the old code OR'd `!process.stdin.isTTY` into a "hasStdin"
+    // signal and refused `--file` whenever the CLI ran under pipes,
+    // redirects, CI, an agent harness — anything non-interactive. Verify
+    // the fix keeps `--file <path>` working when stdin is NOT a TTY.
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      get: () => false,
+    });
+    const dir = mkdtempSync(join(tmpdir(), "taste-test-"));
+    const file = join(dir, "taste.md");
+    writeFileSync(file, "- non-tty\n", "utf8");
+    try {
+      await run(["set", "--file", file]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("setTaste");
+      expect(calls[0]!.args[0]).toBe("- non-tty\n");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -141,6 +164,66 @@ describe("taste set", () => {
       expect(calls).toHaveLength(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails clearly when --file points at a missing path", async () => {
+    await run(["set", "--file", "/tmp/this-path-should-not-exist-xyz"]);
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stderr).error.code).toBe("invalid_args");
+    expect(stderr).toContain("failed to read --file");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reads stdin when --file - is the explicit sentinel", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      get: () => false,
+    });
+    const piped = Readable.from([
+      "- via --file -\n",
+    ]) as unknown as typeof process.stdin;
+    const originalStdin = process.stdin;
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      get: () => piped,
+    });
+    try {
+      await run(["set", "--file", "-"]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("setTaste");
+      expect(calls[0]!.args[0]).toBe("- via --file -\n");
+    } finally {
+      Object.defineProperty(process, "stdin", {
+        configurable: true,
+        get: () => originalStdin,
+      });
+    }
+  });
+
+  it("falls back to piped stdin when no --file is given", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      get: () => false,
+    });
+    const piped = Readable.from([
+      "- via bare pipe\n",
+    ]) as unknown as typeof process.stdin;
+    const originalStdin = process.stdin;
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      get: () => piped,
+    });
+    try {
+      await run(["set"]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.method).toBe("setTaste");
+      expect(calls[0]!.args[0]).toBe("- via bare pipe\n");
+    } finally {
+      Object.defineProperty(process, "stdin", {
+        configurable: true,
+        get: () => originalStdin,
+      });
     }
   });
 });
