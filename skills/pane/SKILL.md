@@ -615,6 +615,27 @@ Keyed today by the calling agent's API key — per-agent, not per-human (pane
 v1 has no first-class human identity yet). Expect this to move to per-human
 later; the CLI surface won't change.
 
+### `pane feedback` — product feedback to pane's maintainers
+
+```sh
+pane feedback create --type bug --message "watch dropped at 30s"
+echo "long note" | pane feedback create --type note --message -
+pane feedback list
+```
+
+Bugs, feature requests, or notes about **pane itself** (CLI, relay, docs,
+this skill) — not about the human's task.
+
+**Prefer GitHub Issues** at `github.com/aerolalit/paneui` for bugs and
+features — that's the maintainers' primary triage. Use `pane feedback`
+only when you can't reach GitHub in this run (no `gh`, no auth, headless).
+Notes are fine to send directly.
+
+`--type` ∈ {`bug`, `feature`, `note`}. `--message -` reads stdin.
+`--session-id` is optional. No reply channel — don't use this for anything
+you need an answer to, or for the human's answer to a session question
+(use events). UI preferences belong in `pane taste`, not here.
+
 ## The watch → Monitor pattern
 
 `pane watch` is built to be a **monitored subprocess**. It blocks until the

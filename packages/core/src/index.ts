@@ -28,6 +28,8 @@ export {
   createArtifactSchema,
   createArtifactVersionSchema,
   patchArtifactMetadataSchema,
+  feedbackTypeSchema,
+  submitFeedbackSchema,
 } from "./schemas.js";
 export type { CreateSessionInput } from "./schemas.js";
 
@@ -49,6 +51,10 @@ export type {
   CreateArtifactResponse,
   KeyInfo,
   TasteInfo,
+  FeedbackType,
+  FeedbackSubmission,
+  FeedbackRecord,
+  FeedbackPage,
   Callback,
   CreateSessionRequest,
   CreateSessionResponse,

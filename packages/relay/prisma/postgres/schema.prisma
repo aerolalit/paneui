@@ -27,8 +27,26 @@ model Agent {
   tasteUpdatedAt  DateTime? @map("taste_updated_at")
   sessions   Session[]
   artifacts  Artifact[]
+  feedback   Feedback[]
 
   @@map("agents")
+}
+
+model Feedback {
+  id             String   @id @default(cuid())
+  agentId        String?  @map("agent_id")
+  type           String
+  message        String
+  sessionId      String?  @map("session_id")
+  githubIssueUrl String?  @map("github_issue_url")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  agent   Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([agentId, createdAt])
+  @@index([createdAt])
+  @@map("feedback")
 }
 
 // A reusable, versioned artifact owned by an agent. The head row carries the
@@ -103,6 +121,7 @@ model Session {
 
   participants    Participant[]
   events          Event[]
+  feedback        Feedback[]
 
   @@index([agentId])
   @@index([expiresAt])

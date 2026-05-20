@@ -15,6 +15,7 @@ import { runConfig, configHelp } from "./commands/config.js";
 import { runLogout, logoutHelp } from "./commands/logout.js";
 import { runKeys, keysHelp } from "./commands/keys.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
+import { runFeedback, feedbackHelp } from "./commands/feedback.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
@@ -43,6 +44,8 @@ Commands:
                     (get / set / clear) — presentation preferences the agent
                     has learned from human feedback and reads before
                     generating a pane artifact.
+  feedback          Submit / list one-shot feedback to the relay operator
+                    (create / list) — bug reports, feature requests, notes.
   config            Show the resolved relay config (no network call).
   logout            Clear the locally-saved relay URL + API key.
   skill             Print the relay's current SKILL.md to stdout (the
@@ -122,6 +125,7 @@ async function main(): Promise<void> {
     delete: deleteHelp,
     keys: keysHelp,
     taste: tasteHelp,
+    feedback: feedbackHelp,
     config: configHelp,
     logout: logoutHelp,
     skill: skillHelp,
@@ -171,6 +175,9 @@ async function main(): Promise<void> {
       break;
     case "taste":
       await runTaste(args);
+      break;
+    case "feedback":
+      await runFeedback(args);
       break;
     case "config":
       await runConfig(args);
