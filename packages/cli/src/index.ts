@@ -17,7 +17,7 @@ import { runKeys, keysHelp } from "./commands/keys.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 
-const VERSION = "0.0.2";
+const VERSION = "0.0.3";
 
 const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
 
