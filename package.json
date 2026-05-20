@@ -1,6 +1,6 @@
 {
   "name": "pane",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A round-trip UI channel between agents and humans.",
   "private": true,
   "license": "MIT",
