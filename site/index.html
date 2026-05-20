@@ -2743,7 +2743,8 @@ npx skills add aerolalit/paneui
     }
 
     // the streamed deploy timeline — terminal pane.send lines paired with
-    // browser progress-bar updates, in sync.
+    // browser progress-bar updates. The wire log fires FIRST and the matching
+    // setStage runs S ms later: the agent sends, the pane reflects it.
     function streamDeploy() {
       // the agent isn't waiting anymore — it's pushing. drop the resting
       // "streaming progress…" cursor line so the streamed pane.send lines
@@ -2753,37 +2754,37 @@ npx skills add aerolalit/paneui
 
       var S = DELAYS.step;
       var seq = [
-        { d: 200, fn: function () { setStage('build', 100); } },
-        { d: S,   fn: function () {
+        { d: 200, fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:build 100%</span>'); } },
-        { d: S,   fn: function () { setStage('migrate', 100); } },
+        { d: S,   fn: function () { setStage('build', 100); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:migrate 100%</span>  ' +
               '<span class="cc-meta">2 applied</span>'); } },
-        { d: S,   fn: function () { setStage('canary', 40); } },
+        { d: S,   fn: function () { setStage('migrate', 100); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:canary 40%</span>'); } },
-        { d: S,   fn: function () { setStage('canary', 100); } },
+        { d: S,   fn: function () { setStage('canary', 40); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:canary 100%</span>  ' +
               '<span class="cc-meta">5xx nominal</span>'); } },
-        { d: S,   fn: function () { setStage('full', 70); } },
+        { d: S,   fn: function () { setStage('canary', 100); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:full 70%</span>'); } },
-        { d: S,   fn: function () { setStage('full', 100); } },
+        { d: S,   fn: function () { setStage('full', 70); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:full 100%</span>'); } },
-        { d: S,   fn: function () { setStage('health', 100); } },
+        { d: S,   fn: function () { setStage('full', 100); } },
         { d: S,   fn: function () {
             termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">pane.send</span>' +
               ' → <span class="ev">stage:health 100%</span>  ' +
               '<span class="cc-meta">all checks green</span>'); } },
+        { d: S,   fn: function () { setStage('health', 100); } },
         { d: S,   fn: function () {
             var b = document.getElementById('mon-banner');
             if (b) b.classList.add('show'); } },
