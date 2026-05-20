@@ -134,32 +134,52 @@ async function applyMigration(
   prisma: PrismaClient,
   engine: Engine,
 ): Promise<void> {
-  // Guard: if migrations already ran on this DB, do nothing. This is the
-  // primary defence against the issue-#118 re-entry race — without it, a
-  // second pass through the per-statement loop can hit the third migration's
-  // RedefineTables pattern (CREATE new_x; INSERT … FROM x; DROP x; RENAME)
-  // half-way through and produce either "already exists" or, worse,
-  // "no such table" depending on which step the re-entry collides with.
+  // Guard: skip if already applied to this DB (re-entry safety).
   if (await migrationsAlreadyApplied(prisma, engine)) return;
 
-  for (const file of findMigrationSqlFiles(engine)) {
-    const raw = readFileSync(file, "utf8");
-    const cleaned = raw
-      .split("\n")
-      .filter((l) => !l.trim().startsWith("--"))
-      .join("\n");
-    for (const stmt of cleaned
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean)) {
-      try {
-        await prisma.$executeRawUnsafe(stmt);
-      } catch (err) {
-        if (isIdempotentMigrationError(err)) continue;
-        throw err;
+  // Root cause of issue #118 (sqlite leg): Prisma's query engine maintains
+  // a connection pool per PrismaClient. Each `$executeRawUnsafe` call may
+  // grab a different connection. With per-connection SQLite snapshots
+  // (WAL mode), the third migration's RedefineTables sequence
+  //
+  //   CREATE TABLE new_x; INSERT FROM x; DROP x; RENAME new_x → x; CREATE INDEX … ON x;
+  //
+  // can interleave across connections such that CREATE INDEX runs on a
+  // connection that hasn't yet observed the RENAME, producing
+  //   "no such table: main.artifact_versions"
+  // on a freshly-created database.
+  //
+  // Fix: drive every statement through `$transaction(async (tx) => …)`.
+  // Prisma's interactive transactions are pinned to a single connection,
+  // so the RedefineTables sequence is observed atomically — every DDL
+  // step sees the prior steps' effects.
+  //
+  // The per-statement regex-tolerance is preserved for the few residual
+  // shapes (re-applied seed rows, ALTER ADD COLUMN race) that can still
+  // throw inside the transaction; we re-throw anything else.
+
+  const migrationFiles = findMigrationSqlFiles(engine);
+
+  await prisma.$transaction(async (tx) => {
+    for (const file of migrationFiles) {
+      const raw = readFileSync(file, "utf8");
+      const cleaned = raw
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("--"))
+        .join("\n");
+      for (const stmt of cleaned
+        .split(";")
+        .map((s) => s.trim())
+        .filter(Boolean)) {
+        try {
+          await tx.$executeRawUnsafe(stmt);
+        } catch (err) {
+          if (isIdempotentMigrationError(err)) continue;
+          throw err;
+        }
       }
     }
-  }
+  });
 
   await markMigrationsApplied(prisma);
 }
