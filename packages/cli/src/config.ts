@@ -5,6 +5,7 @@ import { PaneClient } from "@paneui/core";
 import type { ParsedArgs } from "./argv.js";
 import { fail } from "./output.js";
 import { readStore, storePath } from "./store.js";
+import { VERSION } from "./version.js";
 
 export interface ResolvedConfig {
   url: string;
@@ -101,5 +102,12 @@ export function resolveConfig(args: ParsedArgs): ResolvedConfig {
 /** Build a PaneClient from resolved config. */
 export function makeClient(args: ParsedArgs): PaneClient {
   const cfg = resolveConfig(args);
-  return new PaneClient({ url: cfg.url, apiKey: cfg.apiKey });
+  return new PaneClient({
+    url: cfg.url,
+    apiKey: cfg.apiKey,
+    // Sent as `x-pane-cli-version` on every relay request so the relay can
+    // return 426 cli_upgrade_required when this CLI is too old. Single
+    // source: ./version.ts.
+    cliVersion: VERSION,
+  });
 }

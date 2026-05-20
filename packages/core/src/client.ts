@@ -24,6 +24,15 @@ export interface ClientOptions {
   apiKey: string;
   /** Optional fetch override (defaults to global fetch). */
   fetch?: typeof fetch;
+  /**
+   * Optional client version string sent as `x-pane-cli-version` on every
+   * request. The CLI passes its own `VERSION` constant here so a relay can
+   * detect version skew and respond with a `cli_upgrade_required` error
+   * (HTTP 426) when the CLI is below the relay's minimum supported version.
+   * Library callers (non-CLI) can leave this unset — the header is omitted
+   * and the relay treats the request as version-unknown.
+   */
+  cliVersion?: string;
 }
 
 /** Low-level relay response: ok flag, HTTP status, parsed JSON body. */
@@ -108,11 +117,13 @@ export class PaneClient {
   private readonly base: string;
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly cliVersion: string | undefined;
 
   constructor(opts: ClientOptions) {
     this.base = opts.url.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
     this.fetchImpl = opts.fetch ?? fetch;
+    this.cliVersion = opts.cliVersion;
   }
 
   /** Relay base URL (trailing slash trimmed). */
@@ -145,6 +156,10 @@ export class PaneClient {
         headers: {
           authorization: "Bearer " + this.apiKey,
           ...(body ? { "content-type": "application/json" } : {}),
+          // x-pane-cli-version drives the relay's version-skew check. Header
+          // is omitted entirely when no version was supplied so the relay
+          // can distinguish "old CLI" from "non-CLI caller".
+          ...(this.cliVersion ? { "x-pane-cli-version": this.cliVersion } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       });

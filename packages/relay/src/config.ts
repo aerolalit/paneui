@@ -82,6 +82,25 @@ const schema = z.object({
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
+  // Lowest @paneui/cli version this relay accepts. When a /v1/* request
+  // arrives with `x-pane-cli-version` set to a strictly-lower semver, the
+  // relay responds with 426 cli_upgrade_required and the CLI prints an
+  // actionable upgrade message (exit 75 — sysexits `EX_TEMPFAIL`).
+  //
+  // Default `0.0.0` opts the relay out — every header is accepted. Operators
+  // bump this when they ship a relay that depends on a newer CLI behaviour
+  // (a new endpoint, a changed payload shape). Requests with the header
+  // ABSENT are NEVER rejected — that signals a library / non-CLI caller.
+  //
+  // The check uses strict semver comparison (no prerelease tags); values that
+  // don't parse as semver are rejected at boot.
+  MIN_CLI_VERSION: z
+    .string()
+    .regex(
+      /^\d+\.\d+\.\d+$/,
+      "MIN_CLI_VERSION must be a plain semver string like 0.1.0",
+    )
+    .default("0.0.0"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   // Optional Redis connection string for multi-replica deployments. When set,
   // the relay backs its cross-process state (event pub/sub, the rate limiter

@@ -11,6 +11,7 @@ import type { ParsedArgs } from "../argv.js";
 import { DEFAULT_RELAY_URL } from "../config.js";
 import { printJson, fail } from "../output.js";
 import { readStore, writeStore } from "../store.js";
+import { VERSION } from "../version.js";
 
 export const registerHelp = `pane register — register this agent with the relay and save the key locally
 
@@ -56,6 +57,7 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
       url: url.replace(/\/$/, ""),
       ...(name !== undefined ? { name } : {}),
       ...(secret !== undefined && secret !== "" ? { secret } : {}),
+      cliVersion: VERSION,
     });
   } catch (e) {
     if (e instanceof PaneApiError) {

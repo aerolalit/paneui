@@ -18,6 +18,7 @@ import taste from "./routes/taste.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
+import { cliVersionMiddleware } from "./cli-version.js";
 
 // Build the Hono app with its dependencies injected. `config` and `prisma` are
 // placed on the request context by the first middleware so every route and
@@ -164,6 +165,13 @@ export function buildApp(
   // stricter per-IP limiter applied inside the route module.
   app.use("/v1/*", generalRateLimit);
   app.use("/s/*", generalRateLimit);
+
+  // CLI-version skew check on the agent-facing API. Runs after the rate
+  // limiter so a hostile too-old CLI also pays the per-IP cost; runs before
+  // the routes so the 426 lands before any expensive work. Bridge routes
+  // (/s/*) are human-facing and have no CLI version to check; the skill +
+  // health routes are mounted above and stay unmetered.
+  app.use("/v1/*", cliVersionMiddleware(config));
 
   // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
   // the route module: `closed` (default) returns 404; `secret` requires an

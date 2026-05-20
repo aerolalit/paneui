@@ -130,6 +130,22 @@ export const errors = {
       false,
       DOCS.schema,
     ),
+
+  // Returned when an /v1/* request arrives with `x-pane-cli-version` lower
+  // than the relay's MIN_CLI_VERSION. The 426 status is the HTTP-spec
+  // "Upgrade Required". `details` carries both versions so the CLI can
+  // render a precise message; the hint repeats the actionable command in
+  // English for callers that don't recognize the code.
+  cliUpgradeRequired: (minVersion: string, yourVersion: string) =>
+    new ApiError(
+      426,
+      "cli_upgrade_required",
+      `this relay requires @paneui/cli >= ${minVersion} (you sent ${yourVersion})`,
+      { min_version: minVersion, your_version: yourVersion },
+      `upgrade the @paneui/cli package to >= ${minVersion} and retry; non-CLI library callers can omit the x-pane-cli-version header to opt out of this check`,
+      false,
+      DOCS.api,
+    ),
 };
 
 /** The wire shape of a serialised error envelope's `error` object. */
