@@ -394,12 +394,13 @@ function renderShell(args: ShellArgs): string {
 <body>
 <header>
   <span class="brand">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="17" height="17" rx="4" fill="none" stroke="#2b3445" stroke-width="1.5"/>
-      <rect x="4.5" y="4.5" width="5" height="5" rx="1" fill="#7CE3B1"/>
-      <rect x="10.5" y="4.5" width="5" height="5" rx="1" fill="#4a5670"/>
-      <rect x="4.5" y="10.5" width="5" height="5" rx="1" fill="#4a5670"/>
-      <rect x="10.5" y="10.5" width="5" height="5" rx="1" fill="#4a5670"/>
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
+      <rect width="100" height="100" rx="22" fill="#0f172a"/>
+      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
+      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
+      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
+      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
+      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
     </svg>
     <span class="brand-name">Pane</span>
   </span>
