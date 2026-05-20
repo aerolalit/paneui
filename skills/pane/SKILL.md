@@ -382,11 +382,19 @@ A minimal working artifact for the schema above:
     white-space: pre-wrap;
   }
 </style>
-<form id="f">
-  <input name="name" placeholder="Your name" required />
-  <input name="rating" type="number" min="1" max="5" required />
-  <button>Submit</button>
-</form>
+<!--
+  Note: the artifact runs in a sandboxed iframe. The relay grants `allow-forms`
+  alongside `allow-scripts` so a real <form> + Enter-to-submit works, but the
+  iframe has no `allow-same-origin`, so a form's *native* submission can't
+  reach any origin anyway. Either pattern is fine — we use a plain
+  <button type="button"> + click handler below so the example doesn't depend
+  on form-submission semantics at all.
+-->
+<div id="f">
+  <input id="name" placeholder="Your name" required />
+  <input id="rating" type="number" min="1" max="5" required />
+  <button type="button" id="submit">Submit</button>
+</div>
 <p id="status"></p>
 
 <!-- The agent's reply renders here -->
@@ -408,13 +416,16 @@ A minimal working artifact for the schema above:
     document.getElementById("reply").hidden = false;
   });
 
-  document.getElementById("f").addEventListener("submit", async (e) => {
-    e.preventDefault();
+  document.getElementById("submit").addEventListener("click", async () => {
+    const name = document.getElementById("name").value;
+    const rating = Number(document.getElementById("rating").value);
+    // Basic validation — the sandbox doesn't give us native form validation
+    // here because we're not using <form>'s submit pipeline.
+    if (!name || !(rating >= 1 && rating <= 5)) return;
     // Emit the terminal event — this is what `pane watch --type` waits for.
-    await pane.emit("form.submitted", {
-      name: e.target.name.value,
-      rating: Number(e.target.rating.value),
-    });
+    // Await it: pane.emit resolves only once the relay has accepted the
+    // event, and rejects if delivery fails. Only show "Sent" after that.
+    await pane.emit("form.submitted", { name, rating });
     document.getElementById("status").textContent = "Sent — thank you.";
   });
 </script>
