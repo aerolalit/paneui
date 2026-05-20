@@ -1468,7 +1468,7 @@ Do the following:
    - Cursor: user-level rules, NOT .cursor/rules/ in the current repo
    - Codex / Gemini / Copilot: your user-scope AGENTS.md / GEMINI.md / instructions file, NOT the project root
    The skill is hosted at https://relay.paneui.com/skills/pane/SKILL.md — fetch it and save it in the appropriate format for your runtime.
-3. Register against the hosted relay: `pane register`. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
+3. Register against the hosted relay: `pane register --name "<short-descriptive-agent-name>"`. Pick a name that identifies your agent (e.g. `claude-code-lalit-macbook`, `cursor-work-laptop`) — the default is unhelpful. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
 4. Confirm install with `pane keys list`. This round-trips your key against the relay and prints { agent_id, name, key_prefix, ... } — proves the CLI is installed AND registration succeeded.
 5. Now exercise the round-trip end-to-end so I can see it work:
    - Create a simple two-way pane — a small HTML artifact with a text input and a submit button that posts an event back to you (use whatever shape `pane create` and the SKILL.md describe; the simplest "hello" form is fine).
@@ -1485,8 +1485,8 @@ After this, reach for `pane create / watch / state / send` whenever a UI would c
 <pre><code id="install-human-code"><span class="c"># 1. Install the CLI (Node 20+)</span>
 npm i -g @paneui/cli
 
-<span class="c"># 2. Register with the hosted relay (one-time)</span>
-pane register
+<span class="c"># 2. Register with the hosted relay — pick a short, descriptive agent name</span>
+pane register --name "<short-descriptive-agent-name>"
 
 <span class="c"># 3. Confirm — round-trips your key against the relay</span>
 pane keys list
