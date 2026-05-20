@@ -2,6 +2,13 @@
 // stdout, human errors on stderr.
 
 import { PaneApiError } from "@paneui/core";
+import { fileURLToPath } from "node:url";
+import {
+  detectInstallMethod,
+  upgradeCommandFor,
+  formatUpgradeMessage,
+  EXIT_CLI_UPGRADE_REQUIRED,
+} from "./upgrade.js";
 
 /** Print a value as pretty JSON to stdout. */
 export function printJson(value: unknown): void {
@@ -45,6 +52,18 @@ export function fail(
 
 /** Translate a thrown error (incl. PaneApiError) into a fail() exit. */
 export function failFromError(err: unknown): never {
+  // 426 cli_upgrade_required gets its own dedicated exit path: a
+  // human-readable upgrade message on stderr and a stable exit code
+  // (sysexits EX_TEMPFAIL = 75) that the SKILL.md instructs the agent's
+  // harness to branch on. Everything else falls through to the generic
+  // JSON envelope below.
+  if (
+    err instanceof PaneApiError &&
+    err.code === "cli_upgrade_required" &&
+    err.status === 426
+  ) {
+    failUpgradeRequired(err);
+  }
   if (err instanceof PaneApiError) {
     fail(err.message, err.code, err.details, {
       hint: err.hint,
@@ -53,4 +72,31 @@ export function failFromError(err: unknown): never {
     });
   }
   fail(err instanceof Error ? err.message : String(err), "internal");
+}
+
+/**
+ * Print the upgrade message to stderr and exit 75. Pulled out of
+ * failFromError so the top-level main().catch can also funnel through it
+ * — the two entry points must produce identical output for the SKILL.md's
+ * "if you see exit 75…" instructions to be reliable.
+ *
+ * The install-method detection reads `import.meta.url` of the CLI entry,
+ * resolved from the call site that imports this module. Inlining the
+ * resolution here keeps each command's own error-handling free of the
+ * detail.
+ */
+export function failUpgradeRequired(err: PaneApiError): never {
+  // The CLI entry is packages/cli/dist/index.js (after build) or
+  // packages/cli/src/index.ts (when running from source via tsx). Either
+  // way, the detector only looks at the path's shape, so resolving from
+  // *this* file works — output.ts sits alongside index.ts/index.js in
+  // both layouts.
+  const entryPath = fileURLToPath(import.meta.url);
+  const method = detectInstallMethod(entryPath);
+  const details = (err.details ?? {}) as { min_version?: unknown };
+  const minVersion =
+    typeof details.min_version === "string" ? details.min_version : "0.0.0";
+  const command = upgradeCommandFor(method, minVersion);
+  process.stderr.write(formatUpgradeMessage(err, method, command) + "\n");
+  process.exit(EXIT_CLI_UPGRADE_REQUIRED);
 }

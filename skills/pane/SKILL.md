@@ -50,6 +50,25 @@ If a command errors or you are unsure of an option name, **run `--help`
 instead of guessing** — the CLI is self-documenting and the help text reflects
 the installed version, which this skill may not.
 
+### If `pane` exits 75 ("CLI upgrade required")
+
+The relay you're talking to needs a newer `@paneui/cli` than you have
+installed. The CLI signals this with **exit code 75** (`EX_TEMPFAIL`) and a
+stderr message that starts with `pane: this relay requires @paneui/cli >=
+<version>`. If that message includes a `To upgrade: <command>` line, the
+command is correct for how `pane` was installed on this machine — there's
+nothing to guess.
+
+What to do, in this order:
+
+1. **Run the printed upgrade command once.** If no command is printed (the
+   message says "vendored" or "unknown" install), stop and ask the human to
+   bump `@paneui/cli` — don't try to install one yourself.
+2. **Re-run your original `pane` command once.** If it succeeds, continue.
+3. **If it still fails with exit 75 after one upgrade + retry**, stop and
+   surface the error to the human. Do not loop — repeated upgrade attempts
+   in the same session are a bug, not a recovery strategy.
+
 ## Registering
 
 If you weren't handed an API key, provision one yourself — **once** — with:
