@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>404 · Pane</title>
+  <meta name="description" content="The page you were looking for doesn't exist on paneui.com." />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="color-scheme" content="dark" />
+
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <style>
+    :root {
+      --bg: #0b1020; --fg: #eef1fb; --muted: #99a2c4; --faint: #6b7399;
+      --panel: #131c38; --border: #25305c;
+      --agent: #a78bfa; --human: #22d3ee;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--fg); background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 32px; text-align: center; position: relative; overflow: hidden;
+    }
+    body::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(620px 320px at 75% 10%, rgba(34,211,238,.14), transparent 70%),
+        radial-gradient(560px 360px at 15% 25%, rgba(167,139,250,.18), transparent 70%);
+    }
+    .wrap { position: relative; z-index: 1; max-width: 560px; }
+    .logo svg { width: 56px; height: 56px; margin-bottom: 28px; }
+    .code {
+      display: inline-block; font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em; color: var(--agent);
+      padding: 6px 12px; border: 1px solid var(--border); background: var(--panel);
+      border-radius: 999px; margin-bottom: 22px;
+    }
+    h1 {
+      font-size: 38px; line-height: 1.12; letter-spacing: -0.025em; font-weight: 800;
+      margin: 0 0 14px;
+    }
+    h1 .grad {
+      background: linear-gradient(120deg, var(--agent), var(--human));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    p.lede { font-size: 17px; color: var(--muted); margin: 0 0 32px; }
+    .cta {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-weight: 600; font-size: 14.5px; color: #0a0f1f;
+      background: linear-gradient(135deg, var(--agent), #818cf8);
+      padding: 11px 22px; border-radius: 10px; text-decoration: none;
+      transition: transform .08s ease, filter .15s ease;
+    }
+    .cta:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .url {
+      margin-top: 28px; font: 12.5px/1.5 ui-monospace, Menlo, monospace;
+      color: var(--faint); word-break: break-all;
+    }
+    .url code { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="logo">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <rect width="100" height="100" rx="22" fill="#0f172a" />
+        <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+        <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+        <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+        <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+        <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+      </svg>
+    </span>
+    <span class="code">404 · NOT FOUND</span>
+    <h1>This pane doesn't <span class="grad">exist</span>.</h1>
+    <p class="lede">
+      The URL you followed isn't on <strong>paneui.com</strong> — it may have moved,
+      or the link might be a typo.
+    </p>
+    <a class="cta" href="/">← Back to paneui.com</a>
+    <div class="url">
+      Looking for the agent skill?
+      <code>relay.paneui.com/skills/pane/SKILL.md</code>
+    </div>
+  </div>
+</body>
+</html>
