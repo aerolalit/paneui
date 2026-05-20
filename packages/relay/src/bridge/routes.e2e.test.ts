@@ -236,6 +236,24 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain(`src="/s/${token}/content"`);
   });
 
+  it("sandboxes the artifact iframe with allow-scripts and allow-forms", async () => {
+    // The artifact runs in a sandboxed iframe. `allow-scripts` is required so
+    // the inline <script> in the artifact (and the pane shim) can run.
+    // `allow-forms` lets natural `<form>` UIs dispatch their `submit` event to
+    // JS — without it, Chrome blocks the submission *before* the handler runs,
+    // so `pane.emit(...)` never fires. The iframe has no `allow-same-origin`,
+    // so forms still can't reach a real origin even with this flag.
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    const m = body.match(/<iframe[^>]*\ssandbox="([^"]+)"/);
+    expect(m).not.toBeNull();
+    const tokens = (m![1] ?? "").split(/\s+/);
+    expect(tokens).toContain("allow-scripts");
+    expect(tokens).toContain("allow-forms");
+    expect(tokens).not.toContain("allow-same-origin");
+  });
+
   it("renders the closed banner and no iframe for a closed session", async () => {
     const { token } = await seedSession({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}`));

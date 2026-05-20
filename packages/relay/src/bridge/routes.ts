@@ -431,7 +431,7 @@ function renderShell(args: ShellArgs): string {
 ${
   args.isClosed
     ? `<div class="closed">This session is closed. It cannot accept new events.</div>`
-    : `<iframe id="frame" sandbox="allow-scripts" src="/s/${args.token}/content"></iframe>`
+    : `<iframe id="frame" sandbox="allow-scripts allow-forms" src="/s/${args.token}/content"></iframe>`
 }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>
