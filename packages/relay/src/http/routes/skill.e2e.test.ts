@@ -62,3 +62,79 @@ describe("GET /skills/pane/SKILL.md", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// GET /skills/pane/SKILL.md/version — the version-only probe used by
+// `pane skill version` for the agent's "is my local skill stale?" check.
+describe("GET /skills/pane/SKILL.md/version", () => {
+  it("returns the skill version as JSON", async () => {
+    const res = await app.fetch(
+      new Request("http://t/skills/pane/SKILL.md/version"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { version: string };
+    // The shipped skill carries `<!-- pane skill vX.Y.Z -->`. We pin the
+    // parsed shape, not a specific value — bumping the skill mustn't
+    // break this test.
+    expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("is cacheable (the relay reads the skill once at boot)", async () => {
+    const res = await app.fetch(
+      new Request("http://t/skills/pane/SKILL.md/version"),
+    );
+    expect(res.headers.get("cache-control")).toContain("max-age=");
+  });
+
+  it("the documented SKILL.md shell snippet extracts the same version the relay serves", async () => {
+    // Regression test for #142 review feedback. The SKILL.md "Keeping
+    // this skill up to date" section documents a shell snippet:
+    //   grep -m1 -oE '<!-- pane skill v[0-9]+\.[0-9]+\.[0-9]+' \
+    //     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$'
+    // The previous loose pattern (`v[0-9.]*` then `[0-9.]*$`) matched
+    // four lines in SKILL.md itself — the real version, the vX.Y.Z
+    // documentation example, the snippet's own literal pattern, and a
+    // prose mention — so an agent running the snippet got a multi-line
+    // LOCAL_VER and re-downloaded every session.
+    //
+    // We mirror the snippet's two-step logic in JS here (rather than
+    // shell out) and assert it returns a single, non-empty value that
+    // matches what the relay parses with its OWN regex. If anyone edits
+    // SKILL.md and reintroduces an ambiguous match, this test fails.
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    // src/http/routes/skill.e2e.test.ts → up four → packages/relay → ../..
+    const skillPath = path.resolve(
+      here,
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "skills",
+      "pane",
+      "SKILL.md",
+    );
+    const body = fs.readFileSync(skillPath, "utf8");
+
+    // Step 1: grep -m1 -oE '<!-- pane skill v[0-9]+\.[0-9]+\.[0-9]+'
+    const firstMatch = body.match(/<!-- pane skill v[0-9]+\.[0-9]+\.[0-9]+/);
+    expect(firstMatch).not.toBeNull();
+    // Step 2: grep -oE '[0-9]+\.[0-9]+\.[0-9]+$'
+    const tail = firstMatch![0].match(/[0-9]+\.[0-9]+\.[0-9]+$/);
+    expect(tail).not.toBeNull();
+    const fromSnippet = tail![0];
+    // Single-line, non-empty (the original bug surfaced as multi-line).
+    expect(fromSnippet).not.toContain("\n");
+    expect(fromSnippet.length).toBeGreaterThan(0);
+
+    // Cross-check against the relay's own boot-time parser.
+    const res = await app.fetch(
+      new Request("http://t/skills/pane/SKILL.md/version"),
+    );
+    const relayBody = (await res.json()) as { version: string };
+    expect(fromSnippet).toBe(relayBody.version);
+  });
+});
