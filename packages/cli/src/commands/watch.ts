@@ -24,14 +24,22 @@ exits 0.
 Modes:
   (bare)              Run until SIGINT (Ctrl-C). Exit 0.
   --once              Exit 0 after the first event.
-  --type <t>          Exit 0 after the first event whose type equals <t>.
-                      stdout still prints EVERY event until the match
-                      (system.participant.joined, other types, etc.) —
-                      --type controls the exit condition, not output
-                      filtering. Pipe to jq -c 'select(.type=="<t>")'
-                      if you only want matching lines.
+  --type <t[,t2,…]>   Exit 0 after the first event whose type is in this
+                      comma-separated set. Without --filter-type, stdout
+                      still prints EVERY event until the match — --type
+                      controls the EXIT condition, --filter-type controls
+                      the OUTPUT.
 
 Options:
+  --filter-type <t[,t2,…]>
+                      Print only events whose type is in this set.
+                      system.* events (lifecycle: participant.joined,
+                      session.expired, …) and the terminal {"type":
+                      "_closed"} line always pass through, so the
+                      harness still sees them. Combine with --type X
+                      --filter-type X for "stream only X events and
+                      exit on the first one" — the literal-reading of
+                      --type alone that agents often expect.
   --since <cursor>    Replay only events after this opaque cursor.
   --timeout <secs>    Wall-clock max wait. Fail with code ws_timeout if
                       the natural exit condition (--once, --type, session
@@ -48,7 +56,42 @@ Each line is one event envelope: { id, session_id, author, ts, type, data,
 causation_id, idempotency_key }. The terminal line is {"type":"_closed"}.
 
 Pattern — Claude Code Monitor tool: run \`pane watch <id> --type form.submitted\`
-as a monitored process; the harness re-invokes the model when the line lands.`;
+as a monitored process; the harness re-invokes the model when the line lands.
+
+Wait for any of several events:
+  pane watch <id> --type form.submitted,form.cancelled --timeout 60
+
+Stream only matching events to stdout, exit on the first:
+  pane watch <id> --type form.submitted --filter-type form.submitted`;
+
+// Parse a comma-separated event-type list (e.g. "form.submitted,form.cancelled")
+// into a Set. Empty/whitespace entries are dropped. Returns null when the flag
+// wasn't given (so callers can distinguish "no filter" from "empty filter").
+// Exported for unit-test coverage; the wrapper around the actual openStream
+// integration is hard to test in isolation.
+export function parseTypeList(raw: string | undefined): Set<string> | null {
+  if (raw === undefined) return null;
+  const types = raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  return new Set(types);
+}
+
+/**
+ * Decide whether `--filter-type` lets this event through to stdout. Lifecycle
+ * `system.*` events always pass — without that an agent waiting on
+ * `--filter-type form.submitted` would never see `system.participant.joined`
+ * and miss the "the human opened the URL" signal. Exported for testing.
+ */
+export function shouldPrintEvent(
+  eventType: string,
+  filterTypes: Set<string> | null,
+): boolean {
+  if (filterTypes === null) return true;
+  if (eventType.startsWith("system.")) return true;
+  return filterTypes.has(eventType);
+}
 
 export async function runWatch(args: ParsedArgs): Promise<void> {
   const sessionId = args.positionals[0];
@@ -56,7 +99,12 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
 
   const cfg = resolveConfig(args);
   const since = args.flags.get("since") ?? null;
-  const waitType = args.flags.get("type") ?? null;
+  // --type controls the EXIT condition (set of types that trigger exit 0
+  // on first match). --filter-type controls OUTPUT (the only event types
+  // printed to stdout; system.* and _closed always pass through). Each
+  // flag is independent — combine them only if you really want both.
+  const exitTypes = parseTypeList(args.flags.get("type"));
+  const filterTypes = parseTypeList(args.flags.get("filter-type"));
   const once = args.bools.has("once");
 
   let timeoutSec: number | null = null;
@@ -123,7 +171,11 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
         // No-op: replay-complete is informational, no timer interaction.
       },
       onEvent: (event: PaneEvent) => {
-        printJsonLine(event);
+        // Output filter: print only events the agent asked for. See
+        // shouldPrintEvent — system.* lifecycle events always pass.
+        if (shouldPrintEvent(event.type, filterTypes)) {
+          printJsonLine(event);
+        }
         // A system.session.expired event means the session is closing.
         if (event.type === "system.session.expired") {
           sawSessionExpired = true;
@@ -134,7 +186,7 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
           finish(0);
           return;
         }
-        if (waitType !== null && event.type === waitType) {
+        if (exitTypes !== null && exitTypes.has(event.type)) {
           finish(0);
         }
       },
