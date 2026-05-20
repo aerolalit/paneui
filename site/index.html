@@ -2330,12 +2330,11 @@ npx skills add aerolalit/paneui
       var right = picked === item.correct;
       if (right) score++;
 
+      // lock the options so the user can't re-pick mid-flight, but do NOT
+      // reveal correct/wrong yet — that's the agent's job, painted back
+      // after the round-trip below.
       var opts = pane.querySelectorAll('.quiz-opt');
-      opts.forEach(function (o, i) {
-        o.classList.add('locked');
-        if (i === item.correct) o.classList.add('correct');
-        else if (i === picked) o.classList.add('wrong');
-      });
+      opts.forEach(function (o) { o.classList.add('locked'); });
       var last = idx === TOTAL - 1;
 
       // --- the agent's feedback, shown right here in the pane ---
@@ -2370,9 +2369,13 @@ npx skills add aerolalit/paneui
       var roundTrip = 400 + Math.random() * 900;
       var qNum = idx + 1;
 
-      // drive the OpenClaw terminal: the agent RECEIVES the answer event now.
-      // (it does NOT send the next question yet — that happens only when the
-      // student clicks "Next question".)
+      // drive the OpenClaw terminal: the page emits the answer over the pane
+      // channel FIRST, then the agent receives it. The UI deliberately does
+      // not reveal correct/wrong yet — that's painted back after the agent
+      // grades the answer below.
+      termLine('<span class="pr">$</span> <span class="cmd">pane send ' +
+        'ses_q7m2x9 --type quiz.answered --data \'{"q":' + qNum +
+        ', "choice":' + picked + '}\'</span>');
       termLine('<span class="ok">✓</span> <span class="ev">quiz.answered</span>  ' +
         '<span class="json">{ "q": ' + qNum + ', "choice": ' + picked +
         ', "correct": ' + right + ' }</span>');
@@ -2381,7 +2384,6 @@ npx skills add aerolalit/paneui
       // the answer is in flight to MyClawAi.
       if (submit) {
         submit.disabled = true;
-        submit.classList.toggle('done', right);
         submit.textContent = 'Sending to MyClawAi…';
       }
       // the agent's feedback card lands only after the round-trip completes
@@ -2390,6 +2392,14 @@ npx skills add aerolalit/paneui
         termLine('<span class="ev">●</span> graded answer ' + qNum + ' — ' +
           (right ? 'correct' : 'incorrect') +
           '; sent feedback to the pane', 'dim');
+
+        // NOW the pane shows the verdict — correct/wrong styling on the
+        // option pills lands together with the agent's feedback card.
+        opts.forEach(function (o, i) {
+          if (i === item.correct) o.classList.add('correct');
+          else if (i === picked) o.classList.add('wrong');
+        });
+        if (submit) submit.classList.toggle('done', right);
 
         if (optsWrap && optsWrap.parentNode) {
           optsWrap.parentNode.insertBefore(fb, optsWrap.nextSibling);
