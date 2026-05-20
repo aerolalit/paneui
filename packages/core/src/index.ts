@@ -48,6 +48,7 @@ export type {
   ArtifactSummary,
   CreateArtifactResponse,
   KeyInfo,
+  TasteInfo,
   Callback,
   CreateSessionRequest,
   CreateSessionResponse,

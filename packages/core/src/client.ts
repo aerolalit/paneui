@@ -13,6 +13,7 @@ import type {
   KeyInfo,
   PaneEvent,
   SessionState,
+  TasteInfo,
 } from "./types.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
 
@@ -424,6 +425,41 @@ export class PaneClient {
    */
   async revokeKey(id: string): Promise<void> {
     const r = await this.call("DELETE", `/v1/keys/${encodeURIComponent(id)}`);
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * GET /v1/taste — the calling agent's freeform "taste notes" markdown blob:
+   * presentation preferences the agent has picked up from human feedback over
+   * time. Returns `{ taste: null, updated_at: null, bytes: 0 }` when the
+   * agent has never written notes. Read this before generating an artifact so
+   * the agent applies prior feedback.
+   */
+  async getTaste(): Promise<TasteInfo> {
+    const r = await this.call("GET", "/v1/taste");
+    if (!r.ok) this.fail(r);
+    return this.asObject<TasteInfo>(r);
+  }
+
+  /**
+   * PUT /v1/taste — whole-blob replace of the calling agent's taste notes.
+   * Empty/whitespace-only values are rejected by the relay; callers asking to
+   * clear must use {@link clearTaste}. The relay caps the payload at the
+   * server's `MAX_TASTE_BYTES` (utf8 bytes).
+   */
+  async setTaste(taste: string): Promise<TasteInfo> {
+    const r = await this.call("PUT", "/v1/taste", { taste });
+    if (!r.ok) this.fail(r);
+    return this.asObject<TasteInfo>(r);
+  }
+
+  /**
+   * DELETE /v1/taste — clear the calling agent's taste notes (idempotent on
+   * the relay; clearing already-empty notes still succeeds). Returns 204 with
+   * no body.
+   */
+  async clearTaste(): Promise<void> {
+    const r = await this.call("DELETE", "/v1/taste");
     if (!r.ok) this.fail(r);
   }
 
