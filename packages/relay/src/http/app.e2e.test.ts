@@ -486,7 +486,7 @@ describe("HTTP e2e", () => {
       expect(body.error.docs_url).toContain("docs/SPEC.md#");
     });
 
-    it("404 is not retryable and has a hint", async () => {
+    it("404 on a missing session uses session_not_found", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
         new Request("http://t/v1/sessions/ses_does_not_exist", {
@@ -495,7 +495,11 @@ describe("HTTP e2e", () => {
       );
       expect(res.status).toBe(404);
       const body = (await res.json()) as ErrBody;
-      expect(body.error.code).toBe("not_found");
+      // session_not_found (#137) distinguishes "the session id is wrong /
+      // expired" from "this resource type was wrong" so agents can branch.
+      // Auth-leak safe: both "doesn't exist" and "not yours" return the
+      // same code, so the caller learns nothing they didn't already know.
+      expect(body.error.code).toBe("session_not_found");
       expect(body.error.retryable).toBe(false);
       expect(body.error.hint).toBeTruthy();
     });

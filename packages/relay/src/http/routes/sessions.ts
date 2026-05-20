@@ -82,14 +82,14 @@ sessions.post("/", requireAgent, async (c) => {
         OR: [{ id: artifact.id }, { slug: artifact.id }],
       },
     });
-    if (!head) throw errors.notFound();
+    if (!head) throw errors.artifactNotFound();
     const wantVersion = artifact.version ?? head.latestVersion;
     const version = await prisma.artifactVersion.findUnique({
       where: {
         artifactId_version: { artifactId: head.id, version: wantVersion },
       },
     });
-    if (!version) throw errors.notFound();
+    if (!version) throw errors.artifactVersionNotFound();
     artifactVersionId = version.id;
     artifactId = head.id;
     inputSchema = version.inputSchema;
@@ -303,7 +303,7 @@ sessions.get("/:id", requireAgent, async (c) => {
     where: { id },
     include: { artifactVersion: true },
   });
-  if (!session || session.agentId !== me.id) throw errors.notFound();
+  if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
   const isExpired = session.expiresAt.getTime() < Date.now();
   return c.json({
     session_id: session.id,
@@ -323,7 +323,7 @@ sessions.delete("/:id", requireAgent, async (c) => {
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
-  if (!session || session.agentId !== me.id) throw errors.notFound();
+  if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
   if (session.status === "closed") return c.body(null, 204);
   await prisma.session.update({
     where: { id },

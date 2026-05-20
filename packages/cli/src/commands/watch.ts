@@ -25,6 +25,11 @@ Modes:
   (bare)              Run until SIGINT (Ctrl-C). Exit 0.
   --once              Exit 0 after the first event.
   --type <t>          Exit 0 after the first event whose type equals <t>.
+                      stdout still prints EVERY event until the match
+                      (system.participant.joined, other types, etc.) —
+                      --type controls the exit condition, not output
+                      filtering. Pipe to jq -c 'select(.type=="<t>")'
+                      if you only want matching lines.
 
 Options:
   --since <cursor>    Replay only events after this opaque cursor.
