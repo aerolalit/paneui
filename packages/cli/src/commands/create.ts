@@ -6,6 +6,43 @@ import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
 
+// Translate a Zod schema path (e.g. ["participants","humans"]) back to the
+// public CLI flag the user actually typed. Without this, a `--participants 0`
+// rejection surfaces as `participants.humans: ...` — which leaks the wire
+// shape and refers to no flag the user could fix.
+//
+// Match strategy: longest prefix wins. Schema paths whose top segment isn't
+// in the table fall back to dotted notation so we degrade gracefully on
+// fields that don't have a single corresponding flag (e.g. `artifact.source`
+// — there's no single --artifact-source flag for the inline form, just
+// --artifact pointing at the whole blob).
+const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
+  participants: "--participants",
+  "participants.humans": "--participants",
+  ttl: "--ttl",
+  metadata: "--metadata",
+  callback: "--callback",
+  input_data: "--input-data",
+  "artifact.id": "--artifact-id",
+  "artifact.version": "--version",
+  "artifact.type": "--artifact-type",
+  "artifact.source": "--artifact",
+  "artifact.event_schema": "--event-schema",
+};
+
+function schemaPathToFlag(path: (string | number)[]): string {
+  const dotted = path.map(String).join(".");
+  // Longest prefix that has a mapping. Try the full path first, then strip
+  // one trailing segment at a time. Falls back to dotted notation as the
+  // honest default.
+  for (let i = path.length; i > 0; i--) {
+    const prefix = path.slice(0, i).map(String).join(".");
+    const flag = SCHEMA_PATH_TO_FLAG[prefix];
+    if (flag !== undefined) return flag;
+  }
+  return dotted;
+}
+
 export const createHelp = `pane create — create a Pane session
 
 A session is one use of an artifact. Supply the artifact in ONE of two ways:
@@ -208,7 +245,7 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const where =
-      issue && issue.path.length > 0 ? issue.path.join(".") : "request";
+      issue && issue.path.length > 0 ? schemaPathToFlag(issue.path) : "request";
     fail(
       `invalid create request: ${where}: ${issue ? issue.message : "validation failed"}`,
       "invalid_args",

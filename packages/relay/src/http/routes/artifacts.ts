@@ -214,7 +214,7 @@ artifacts.post("/:id/versions", async (c) => {
   const artifact = await prisma.artifact.findFirst({
     where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
   });
-  if (!artifact) throw errors.notFound();
+  if (!artifact) throw errors.artifactNotFound();
 
   const body = await c.req.json().catch(() => null);
   const parsed = createArtifactVersionSchema.safeParse(body);
@@ -280,7 +280,7 @@ artifacts.patch("/:id", async (c) => {
   const artifact = await prisma.artifact.findFirst({
     where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
   });
-  if (!artifact) throw errors.notFound();
+  if (!artifact) throw errors.artifactNotFound();
 
   const body = await c.req.json().catch(() => null);
   const parsed = patchArtifactMetadataSchema.safeParse(body);
@@ -366,7 +366,7 @@ artifacts.get("/:id", async (c) => {
     },
     include: { versions: { orderBy: { version: "asc" } } },
   });
-  if (!artifact) throw errors.notFound();
+  if (!artifact) throw errors.artifactNotFound();
 
   return c.json({
     ...summarize(artifact),
@@ -393,12 +393,12 @@ artifacts.get("/:id/versions/:version", async (c) => {
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
-  if (!artifact) throw errors.notFound();
+  if (!artifact) throw errors.artifactNotFound();
 
   const v = await prisma.artifactVersion.findUnique({
     where: { artifactId_version: { artifactId: artifact.id, version } },
   });
-  if (!v) throw errors.notFound();
+  if (!v) throw errors.artifactVersionNotFound();
 
   return c.json(serializeVersion(v));
 });

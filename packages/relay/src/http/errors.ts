@@ -52,13 +52,53 @@ export const errors = {
       DOCS.auth,
     ),
 
+  // Generic 404 — still used for endpoints where the missing resource kind
+  // isn't worth distinguishing (e.g. a bridge token). For artifacts, artifact
+  // versions, and sessions, prefer the dedicated constructors below so an
+  // agent can branch on the code instead of parsing the hint.
   notFound: () =>
     new ApiError(
       404,
       "not_found",
       undefined,
       undefined,
-      "the session or resource id may be wrong, or the session expired and was cleaned up; verify the id and create a new session if needed",
+      "the resource id may be wrong, or the resource was cleaned up; verify the id and try again",
+      false,
+      DOCS.api,
+    ),
+
+  // Distinct from `not_found` so an agent can act differently when the
+  // missing thing is a session (likely expired/cleaned up) vs an artifact
+  // (likely wrong slug/id) vs an artifact version (likely wrong --version).
+  sessionNotFound: () =>
+    new ApiError(
+      404,
+      "session_not_found",
+      undefined,
+      undefined,
+      "the session id may be wrong, or the session expired and was cleaned up; verify the id and create a new session if needed",
+      false,
+      DOCS.api,
+    ),
+
+  artifactNotFound: () =>
+    new ApiError(
+      404,
+      "artifact_not_found",
+      undefined,
+      undefined,
+      "the artifact id or slug is wrong, or the artifact does not belong to the calling agent; run 'pane artifact list' or 'pane artifact search' to find the right id",
+      false,
+      DOCS.api,
+    ),
+
+  artifactVersionNotFound: () =>
+    new ApiError(
+      404,
+      "artifact_version_not_found",
+      undefined,
+      undefined,
+      "the requested --version does not exist for this artifact; run 'pane artifact show <id|slug>' to list its versions",
       false,
       DOCS.api,
     ),
