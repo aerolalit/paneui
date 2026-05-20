@@ -20,6 +20,8 @@ model Agent {
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
   rateLimit  Int?      @map("rate_limit")
+  taste           String?   @map("taste")
+  tasteUpdatedAt  DateTime? @map("taste_updated_at")
   sessions   Session[]
   artifacts  Artifact[]
 

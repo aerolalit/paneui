@@ -62,6 +62,11 @@ const schema = z.object({
   MAX_EVENTS_PER_SESSION: z.coerce.number().int().min(0).default(10_000),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
+  // Cap on a single agent's freeform "taste notes" markdown blob (see
+  // /v1/taste). Stored verbatim on the Agent row, fetched and rewritten by
+  // the agent itself, so this needs to fit comfortably in a prompt while
+  // still bounding storage. 8 KiB is plenty for presentation-taste notes.
+  MAX_TASTE_BYTES: z.coerce.number().int().positive().default(8_192),
   // Max number of artifacts (named + anonymous) a single agent may own.
   // MAX_ARTIFACTS_PER_AGENT=0 disables the cap.
   MAX_ARTIFACTS_PER_AGENT: z.coerce.number().int().min(0).default(100),
