@@ -62,3 +62,27 @@ describe("GET /skills/pane/SKILL.md", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// GET /skills/pane/SKILL.md/version — the version-only probe used by
+// `pane skill version` for the agent's "is my local skill stale?" check.
+describe("GET /skills/pane/SKILL.md/version", () => {
+  it("returns the skill version as JSON", async () => {
+    const res = await app.fetch(
+      new Request("http://t/skills/pane/SKILL.md/version"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { version: string };
+    // The shipped skill carries `<!-- pane skill vX.Y.Z -->`. We pin the
+    // parsed shape, not a specific value — bumping the skill mustn't
+    // break this test.
+    expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("is cacheable (the relay reads the skill once at boot)", async () => {
+    const res = await app.fetch(
+      new Request("http://t/skills/pane/SKILL.md/version"),
+    );
+    expect(res.headers.get("cache-control")).toContain("max-age=");
+  });
+});

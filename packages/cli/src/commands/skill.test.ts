@@ -26,7 +26,7 @@ vi.mock("../version.js", () => ({
 import { runSkill } from "./skill.js";
 import { parseArgs } from "../argv.js";
 
-const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
+const BOOLS = new Set(["json", "once", "help", "print-key", "yes", "plain"]);
 function argv(tokens: string[]) {
   return parseArgs(tokens, BOOLS);
 }
@@ -62,7 +62,9 @@ afterEach(() => {
 });
 
 function stubFetch(
-  res: { status: number; ok?: boolean; body?: string } | "throw",
+  res:
+    | { status: number; ok?: boolean; body?: string; json?: unknown }
+    | "throw",
 ): void {
   // Replace global fetch (Node 20+ has it; tests run on Node 20+).
   // @ts-expect-error — overriding the global for test scope.
@@ -77,6 +79,14 @@ function stubFetch(
       status: res.status,
       ok: res.ok ?? (res.status >= 200 && res.status < 300),
       text: async () => res.body ?? "",
+      // `pane skill version` reads JSON; provide it if the test supplied
+      // one. A test that gives a body string but no `json` falls through
+      // to a JSON.parse(body) so the realistic { "version": "..." } shape
+      // works without duplicating it in both fields.
+      json: async () => {
+        if (res.json !== undefined) return res.json;
+        return JSON.parse(res.body ?? "null");
+      },
     } as unknown as Response;
   };
 }
@@ -146,5 +156,86 @@ describe("runSkill", () => {
     const err = JSON.parse(stderr).error as { code: string; message: string };
     expect(err.code).toBe("fetch_error");
     expect(err.message).toContain("https://relay.test/skills/pane/SKILL.md");
+  });
+});
+
+// `pane skill version` — the version-only probe that drives the agent's
+// "is my local skill stale?" check.
+describe("runSkill — version subcommand", () => {
+  it("GETs /skills/pane/SKILL.md/version and prints the JSON envelope by default", async () => {
+    stubFetch({ status: 200, body: JSON.stringify({ version: "1.2.3" }) });
+    await run(["version"]);
+    expect(exitCode).toBeUndefined();
+    expect(lastFetchUrl).toBe(
+      "https://relay.test/skills/pane/SKILL.md/version",
+    );
+    // Default envelope — easy to consume from anything reading the CLI's
+    // JSON-on-stdout contract.
+    expect(stdout.trim()).toBe('{"version":"1.2.3"}');
+  });
+
+  it("with --plain prints just the version string + newline", async () => {
+    // The shell-pipeline form. An agent's session-start hook does:
+    //   if [ "$(pane skill version --plain)" != "$LOCAL" ]; then ...
+    // — so --plain MUST emit a bare line, no JSON braces, no trailing
+    // whitespace beyond the newline.
+    stubFetch({ status: 200, body: JSON.stringify({ version: "1.2.3" }) });
+    await run(["version", "--plain"]);
+    expect(stdout).toBe("1.2.3\n");
+  });
+
+  it("sends x-pane-cli-version on the version probe too (for audit logs)", async () => {
+    stubFetch({ status: 200, body: JSON.stringify({ version: "1.0.0" }) });
+    await run(["version"]);
+    const headers = lastFetchInit?.headers as
+      | Record<string, string>
+      | undefined;
+    expect(headers?.["x-pane-cli-version"]).toBe("9.9.9");
+  });
+
+  it("falls through to 0.0.0 on a malformed version payload (defensive)", async () => {
+    // A misbehaving relay returning { version: 42 } or {} must not crash
+    // the probe. Same fallback the relay itself uses when its SKILL.md
+    // lacks a version comment — the agent comparing its (presumably
+    // newer) local version to 0.0.0 will skip the update rather than
+    // loop on a broken contract.
+    stubFetch({ status: 200, body: JSON.stringify({ version: 42 }) });
+    await run(["version", "--plain"]);
+    expect(stdout).toBe("0.0.0\n");
+  });
+
+  it("falls through to 0.0.0 when the body isn't valid JSON", async () => {
+    stubFetch({ status: 200, body: "not json" });
+    await run(["version", "--plain"]);
+    expect(stdout).toBe("0.0.0\n");
+  });
+
+  it("exits non-zero with relay_error on a 404", async () => {
+    // Same shape as `pane skill` itself — an operator that strips
+    // /skills/pane/SKILL.md will usually strip /version too.
+    stubFetch({ status: 404, body: "not found" });
+    await run(["version"]);
+    expect(exitCode).toBe(1);
+    const err = JSON.parse(stderr).error as { code: string; message: string };
+    expect(err.code).toBe("relay_error");
+    expect(err.message).toContain("404");
+  });
+
+  it("exits non-zero with fetch_error when the relay is unreachable", async () => {
+    stubFetch("throw");
+    await run(["version"]);
+    expect(exitCode).toBe(1);
+    const err = JSON.parse(stderr).error as { code: string; message: string };
+    expect(err.code).toBe("fetch_error");
+  });
+
+  it("rejects an unknown subcommand with invalid_args", async () => {
+    // Future-proofs the subcommand dispatch: typos shouldn't silently
+    // fall through to the default fetch.
+    await run(["nope"]);
+    expect(exitCode).toBe(1);
+    const err = JSON.parse(stderr).error as { code: string; message: string };
+    expect(err.code).toBe("invalid_args");
+    expect(err.message).toContain("unknown skill subcommand");
   });
 });
