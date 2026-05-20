@@ -13,6 +13,7 @@ import { buildApp } from "../app.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 let app: Hono;
 
 beforeAll(async () => {
@@ -20,7 +21,7 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
 
   app = buildApp(
@@ -33,7 +34,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 

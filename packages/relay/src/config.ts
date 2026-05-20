@@ -5,6 +5,12 @@ const schema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   DATABASE_URL: z.string().default("file:./data/pane.db"),
+  // Max connections in the postgres `pg.Pool` used by @prisma/adapter-pg.
+  // Default 10 matches the upstream `pg` library default. Tune up for hosted
+  // deployments behind an autoscaler / under sustained load; tune down to fit
+  // the upstream postgres max_connections. Ignored entirely on the sqlite
+  // path (the Rust engine manages its own concurrency).
+  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   PUBLIC_URL: z.string().url().optional(),
   API_KEY: z.string().optional(),

@@ -14,6 +14,7 @@ import { setupTestDb, type TestDb } from "../test-helpers/db.js";
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -28,7 +29,7 @@ beforeAll(async () => {
   // here because initTelemetry() registers a PROCESS-GLOBAL MeterProvider — a
   // fresh module registry keeps the metrics-off path isolated.
   const { createPrismaClient } = await import("../db.js");
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
 
   const { loadConfig } = await import("../config.js");
@@ -41,7 +42,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 

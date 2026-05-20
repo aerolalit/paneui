@@ -19,18 +19,19 @@ import { createPrismaClient } from "../db.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
 });
 
 afterAll(async () => {
-  if (prisma) await prisma.$disconnect();
+  if (closeDb) await closeDb();
   if (testDb) await testDb.cleanup();
 });
 

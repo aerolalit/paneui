@@ -21,6 +21,7 @@ import {
 
 let testDb: TestDb;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 let config: Config;
 
 const CAP = 5;
@@ -39,7 +40,7 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = "error";
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   config = loadConfig({
     DATABASE_URL: testDb.dbUrl,
     MAX_EVENTS_PER_SESSION: String(CAP),
@@ -48,7 +49,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 

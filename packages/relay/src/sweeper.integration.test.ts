@@ -14,6 +14,7 @@ import { seedSessionRow } from "./test-helpers/seed.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 let sweepExpiredSessions: typeof import("./index.js").sweepExpiredSessions;
 let validateEvent: typeof import("./core/validation.js").validateEvent;
 let __schemaCacheInternals: typeof import("./core/validation.js").__schemaCacheInternals;
@@ -39,7 +40,7 @@ beforeAll(async () => {
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
 
   const { createPrismaClient } = await import("./db.js");
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
 
   ({ sweepExpiredSessions } = await import("./index.js"));
@@ -48,7 +49,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 
@@ -115,5 +116,37 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     const count = await sweepExpiredSessions(prisma);
     expect(count).toBe(0);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
+  });
+
+  // Locks in error-shape parity across engines: a unique-constraint violation
+  // must surface as Prisma error code P2002 whether we're on the Rust engine
+  // (sqlite path) or the `pg` driver adapter (postgres path). Piggybacks on
+  // the sweeper integration fixture rather than adding a dedicated test file.
+  it("surfaces unique-constraint violations as P2002 on both engines", async () => {
+    const duplicateHash = randomBytes(32).toString("hex");
+    const duplicatePrefix = `pane_${randomBytes(3).toString("hex")}`;
+    await prisma.agent.create({
+      data: {
+        name: `agent-${randomBytes(4).toString("hex")}`,
+        keyHash: duplicateHash,
+        keyPrefix: duplicatePrefix,
+      },
+    });
+    let caught: unknown;
+    try {
+      await prisma.agent.create({
+        data: {
+          name: `agent-${randomBytes(4).toString("hex")}`,
+          keyHash: duplicateHash, // collides with the @unique key_hash above
+          keyPrefix: duplicatePrefix,
+        },
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    // Prisma's PrismaClientKnownRequestError exposes `code`; on the adapter
+    // path the same shape must be preserved end-to-end.
+    expect((caught as { code?: string }).code).toBe("P2002");
   });
 });

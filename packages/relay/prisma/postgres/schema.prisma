@@ -7,6 +7,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  // NOTE: the postgres path uses @prisma/adapter-pg (the node `pg` driver)
+  // instead of the Rust query engine — see src/db.ts. Driver adapters are
+  // GA in Prisma 6.x, so no previewFeatures flag is required. SQLite stays
+  // on the Rust engine — see prisma/schema.prisma.
 }
 
 datasource db {

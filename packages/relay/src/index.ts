@@ -78,7 +78,9 @@ async function main(): Promise<void> {
   // relay singleton is constructed; everything downstream receives them via
   // dependency injection (function parameters or the Hono request context).
   const config = loadConfigOrExit();
-  const prisma = createPrismaClient(config.DATABASE_URL);
+  const { prisma, close: closeDb } = createPrismaClient(config.DATABASE_URL, {
+    poolMax: config.DATABASE_POOL_MAX,
+  });
 
   log.info("starting pane relay", { config: redactConfig(config) });
 
@@ -142,6 +144,10 @@ async function main(): Promise<void> {
         shutdownTracing(),
         shutdownLogs(),
         shutdownRedis(),
+        // Drain the postgres `pg.Pool` (sqlite path is a no-op beyond
+        // prisma.$disconnect()). Done alongside telemetry so an in-flight
+        // request can complete its DB call before the pool tears down.
+        closeDb(),
       ]).finally(() => process.exit(0));
     });
   }

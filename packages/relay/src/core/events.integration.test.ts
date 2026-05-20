@@ -32,6 +32,7 @@ import {
 
 let testDb: TestDb;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 let config: Config;
 
 // Thin wrapper that binds writeEvent to the injected { prisma, config } deps so
@@ -74,13 +75,13 @@ beforeAll(async () => {
 
   _resetKeyCacheForTests();
 
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   config = loadConfig({ ...process.env, DATABASE_URL: testDb.dbUrl });
   await testDb.applyMigration(prisma);
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 

@@ -5,8 +5,11 @@
 // Usage from a test file:
 //
 //   const testDb = await setupTestDb();
-//   const prisma = createPrismaClient(testDb.dbUrl);
+//   const { prisma, close } = createPrismaClient(testDb.dbUrl);
 //   await testDb.applyMigration(prisma);
+//   // ... after the suite:
+//   await close();
+//   await testDb.cleanup();
 //
 // The Prisma client and config are dependency-injected (createPrismaClient +
 // buildApp(config, prisma) / attachWs(server, { config, prisma })), so tests
@@ -24,6 +27,7 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { createPrismaClient } from "../db.js";
 
 export type Engine = "sqlite" | "postgresql";
 
@@ -149,10 +153,12 @@ export async function setupTestDb(): Promise<TestDb> {
   const dbUrl = u.toString();
 
   // We need a one-shot connection on the BASE url to CREATE SCHEMA, then the
-  // returned dbUrl is what tests actually use.
-  const admin = new PrismaClient({ datasourceUrl: base });
+  // returned dbUrl is what tests actually use. Routed through
+  // createPrismaClient so the admin connection rides the same `pg` adapter /
+  // pool plumbing as the rest of the suite.
+  const { prisma: admin, close: closeAdmin } = createPrismaClient(base);
   await admin.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
-  await admin.$disconnect();
+  await closeAdmin();
 
   return {
     dbUrl,
@@ -167,11 +173,12 @@ export async function setupTestDb(): Promise<TestDb> {
       );
     },
     cleanup: async () => {
-      const cleanupAdmin = new PrismaClient({ datasourceUrl: base });
+      const { prisma: cleanupAdmin, close: closeCleanupAdmin } =
+        createPrismaClient(base);
       await cleanupAdmin.$executeRawUnsafe(
         `DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`,
       );
-      await cleanupAdmin.$disconnect();
+      await closeCleanupAdmin();
     },
   };
 }

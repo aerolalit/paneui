@@ -15,6 +15,7 @@ import { buildApp } from "./app.js";
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -25,13 +26,13 @@ beforeAll(async () => {
 
   // Inject the Prisma client + config directly — no module singleton, no
   // `delete globalThis.prisma` dance, no dynamic imports.
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
   app = buildApp(loadConfig(), prisma);
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 

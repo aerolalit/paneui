@@ -14,8 +14,9 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { runBootstrap } from "./bootstrap.js";
+import { createPrismaClient } from "./db.js";
 import { hashKey } from "./keys.js";
 import type { Config } from "./config.js";
 import { setupTestDb, type TestDb } from "./test-helpers/db.js";
@@ -40,17 +41,18 @@ const baseConfig: Config = {
 describe("bootstrap (integration, real DB)", () => {
   let testDb: TestDb;
   let prisma: PrismaClient;
+  let closeDb: () => Promise<void>;
   let stdoutSpy: ReturnType<typeof vi.spyOn>;
   let stdoutBuffer: string;
 
   beforeAll(async () => {
     testDb = await setupTestDb();
-    prisma = new PrismaClient({ datasourceUrl: testDb.dbUrl });
+    ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
     await testDb.applyMigration(prisma);
   });
 
   afterAll(async () => {
-    await prisma.$disconnect();
+    await closeDb();
     await testDb.cleanup();
   });
 

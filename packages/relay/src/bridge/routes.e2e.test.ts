@@ -16,6 +16,7 @@ import { buildApp } from "../http/app.js";
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
+let closeDb: () => Promise<void>;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -24,13 +25,13 @@ beforeAll(async () => {
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.PUBLIC_URL = "http://localhost:3000";
 
-  prisma = createPrismaClient(testDb.dbUrl);
+  ({ prisma, close: closeDb } = createPrismaClient(testDb.dbUrl));
   await testDb.applyMigration(prisma);
   app = buildApp(loadConfig(), prisma);
 });
 
 afterAll(async () => {
-  await prisma.$disconnect();
+  await closeDb();
   await testDb.cleanup();
 });
 
