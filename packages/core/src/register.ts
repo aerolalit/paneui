@@ -23,6 +23,13 @@ export interface RegisterAgentOptions {
   secret?: string;
   /** Optional fetch override (defaults to global fetch). */
   fetch?: typeof fetch;
+  /**
+   * Optional client version string. Sent as `x-pane-cli-version` so the
+   * relay's version-skew check can flag a too-old CLI even on the
+   * un-authenticated register endpoint. See `PaneClient`'s `cliVersion`
+   * option for the parent contract.
+   */
+  cliVersion?: string;
 }
 
 export interface RegisterAgentResult {
@@ -50,6 +57,9 @@ export async function registerAgent(
   // Sent only when the relay runs REGISTRATION_MODE=secret; harmless otherwise.
   if (opts.secret !== undefined && opts.secret !== "") {
     headers["authorization"] = `Bearer ${opts.secret}`;
+  }
+  if (opts.cliVersion !== undefined && opts.cliVersion !== "") {
+    headers["x-pane-cli-version"] = opts.cliVersion;
   }
 
   let res: Response;

@@ -9,6 +9,7 @@ import type { ParsedArgs } from "../argv.js";
 import { resolveConfig } from "../config.js";
 import { PaneClient } from "@paneui/core";
 import { printJsonLine, fail } from "../output.js";
+import { VERSION } from "../version.js";
 
 export const watchHelp = `pane watch — stream a session's events as JSON-lines
 
@@ -57,7 +58,11 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
     timeoutSec = t;
   }
 
-  const client = new PaneClient({ url: cfg.url, apiKey: cfg.apiKey });
+  const client = new PaneClient({
+    url: cfg.url,
+    apiKey: cfg.apiKey,
+    cliVersion: VERSION,
+  });
 
   let exited = false;
   const finish = (code: number): void => {

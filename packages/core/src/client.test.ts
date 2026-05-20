@@ -80,6 +80,39 @@ describe("PaneClient.call", () => {
     expect(headers["content-type"]).toBe("application/json");
     expect(seen!.body).toBe(JSON.stringify({ a: 1 }));
   });
+
+  it("sends x-pane-cli-version when cliVersion is supplied", async () => {
+    // Drives the relay's version-skew check. The CLI passes its own VERSION
+    // here so a relay can return 426 cli_upgrade_required when the CLI is
+    // too old to talk to it.
+    let seen: RequestInit | undefined;
+    const c = new PaneClient({
+      url: "https://relay.test/",
+      apiKey: "k_test",
+      cliVersion: "0.0.5",
+      fetch: async (_url, init) => {
+        seen = init;
+        return res({ status: 200, body: "{}" });
+      },
+    });
+    await c.call("GET", "/v1/x");
+    const headers = seen!.headers as Record<string, string>;
+    expect(headers["x-pane-cli-version"]).toBe("0.0.5");
+  });
+
+  it("omits x-pane-cli-version when cliVersion is not supplied", async () => {
+    // The header MUST be absent (not "" or "unknown") when no version was
+    // passed — the relay distinguishes "old CLI" from "library / non-CLI
+    // caller" by header presence.
+    let seen: RequestInit | undefined;
+    const c = clientWith(async (_url, init) => {
+      seen = init;
+      return res({ status: 200, body: "{}" });
+    });
+    await c.call("GET", "/v1/x");
+    const headers = seen!.headers as Record<string, string>;
+    expect("x-pane-cli-version" in headers).toBe(false);
+  });
 });
 
 describe("PaneClient typed operations", () => {

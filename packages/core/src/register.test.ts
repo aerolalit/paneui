@@ -120,6 +120,53 @@ describe("registerAgent", () => {
     ).toBeUndefined();
   });
 
+  it("sends x-pane-cli-version when cliVersion is supplied", async () => {
+    // Same header semantics as PaneClient — present means "version-known
+    // CLI", absent means "library / non-CLI caller". The relay's
+    // version-skew check covers /v1/register too, so registering with an
+    // ancient CLI surfaces 426 just like any other endpoint.
+    let seenInit: RequestInit | undefined;
+    await registerAgent({
+      url: "https://relay.test",
+      cliVersion: "0.0.5",
+      fetch: async (_url, init) => {
+        seenInit = init;
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
+      },
+    });
+    expect(
+      (seenInit!.headers as Record<string, string>)["x-pane-cli-version"],
+    ).toBe("0.0.5");
+  });
+
+  it("omits x-pane-cli-version when cliVersion is not supplied", async () => {
+    let seenInit: RequestInit | undefined;
+    await registerAgent({
+      url: "https://relay.test",
+      fetch: async (_url, init) => {
+        seenInit = init;
+        return res({
+          status: 201,
+          body: JSON.stringify({
+            agent_id: "a",
+            api_key: "k",
+            key_prefix: "p",
+          }),
+        });
+      },
+    });
+    expect(
+      (seenInit!.headers as Record<string, string>)["x-pane-cli-version"],
+    ).toBeUndefined();
+  });
+
   it("throws PaneApiError on 429 (rate limited)", async () => {
     try {
       await registerAgent({
