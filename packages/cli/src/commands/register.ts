@@ -9,7 +9,7 @@
 import { registerAgent, PaneApiError } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { DEFAULT_RELAY_URL } from "../config.js";
-import { printJson, fail } from "../output.js";
+import { printJson, fail, failUpgradeRequired } from "../output.js";
 import { readStore, writeStore } from "../store.js";
 import { VERSION } from "../version.js";
 
@@ -61,6 +61,12 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
     });
   } catch (e) {
     if (e instanceof PaneApiError) {
+      // 426 cli_upgrade_required goes through the shared upgrade-message
+      // path (stderr block + exit 75) so the SKILL.md's instructions to the
+      // agent's harness fire on `pane register` too.
+      if (e.status === 426 && e.code === "cli_upgrade_required") {
+        failUpgradeRequired(e);
+      }
       if (e.status === 429) {
         fail(
           "registration rate limit exceeded — try again later",
