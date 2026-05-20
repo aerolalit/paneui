@@ -220,10 +220,40 @@ describe("per-session WebSocket connection cap", () => {
       a.once("close", () => resolve());
       a.close();
     });
-    // Small grace for the server-side 'close' handler to run removeConnection.
-    await new Promise((r) => setTimeout(r, 150));
 
-    const c = await open(sessionId, agentToken);
+    // Poll-until-slot-is-free instead of a fixed grace timer. The previous
+    // `setTimeout(150)` was a guess at how long the server's WS 'close'
+    // handler needs to run `removeConnection` — on a busy postgres CI runner
+    // that budget isn't always enough, and a 429 leaks through (issue #145).
+    // Re-attempt the open with a deadline; treat 429s as "slot not yet free,
+    // try again" and surface anything else verbatim.
+    const c = await openWhenSlotFree(sessionId, agentToken, 2000);
     expect(c.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+// Retry `open(...)` until it succeeds, swallowing only the "cap not yet
+// drained" 429. Any other failure (different status, connection refused,
+// wrong token) propagates immediately. Bounded by `deadlineMs` so a real
+// deadlock still surfaces as a test failure within a sane budget.
+async function openWhenSlotFree(
+  sessionId: string,
+  token: string,
+  deadlineMs: number,
+): Promise<WebSocket> {
+  const giveUpAt = Date.now() + deadlineMs;
+  for (;;) {
+    try {
+      return await open(sessionId, token);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/upgrade rejected: 429/.test(msg) || Date.now() >= giveUpAt) {
+        throw err;
+      }
+      // 25ms is short enough that the typical drain (<150ms) doesn't add
+      // noticeable test latency, but long enough to avoid hammering the
+      // server in a tight loop.
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+}
