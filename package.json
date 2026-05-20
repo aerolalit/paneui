@@ -27,6 +27,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "site:og": "node scripts/render-og.mjs",
+    "site:favicons": "node scripts/render-favicons.mjs",
     "prepare": "husky"
   },
   "lint-staged": {
