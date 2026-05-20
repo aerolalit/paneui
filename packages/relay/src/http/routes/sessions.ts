@@ -12,7 +12,6 @@ import {
 } from "../../keys.js";
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
-import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
@@ -159,22 +158,26 @@ sessions.post("/", requireAgent, async (c) => {
     validateInputData(inputSchema as object, input_data ?? {});
   }
 
-  // TTL is silently clamped to [1, MAX_TTL_SECONDS]. We log a warn when a
-  // requested TTL gets clamped so operators can spot clients hitting the cap
-  // (e.g. an agent asking for 7 days against a 24h-capped relay). The
-  // response's `expires_at` is the authoritative value for the caller.
+  // TTL behaviour:
+  //   ≤ 0           → already rejected by the Zod schema (positive int).
+  //   > MAX_TTL_SECONDS → REJECTED with invalid_request. The relay used to
+  //                    silently clamp this, but an automated agent reading
+  //                    a 24-hour `expires_at` after asking for 7 days has
+  //                    no easy way to notice the discrepancy until the
+  //                    session is already gone (#137). An authoritative
+  //                    400 is friendlier — the agent can pass the cap-or-
+  //                    lower value explicitly.
+  //   in range     → used as-is.
+  //   unset        → DEFAULT_TTL_SECONDS.
   const ttlRequested = ttl ?? config.DEFAULT_TTL_SECONDS;
-  const ttlSeconds = Math.min(
-    Math.max(1, ttlRequested),
-    config.MAX_TTL_SECONDS,
-  );
   if (ttlRequested > config.MAX_TTL_SECONDS) {
-    log.warn("ttl clamped to MAX_TTL_SECONDS", {
-      requested: ttlRequested,
-      max: config.MAX_TTL_SECONDS,
-      applied: ttlSeconds,
-    });
+    throw errors.invalidRequest(
+      `ttl ${ttlRequested}s exceeds this relay's MAX_TTL_SECONDS (${config.MAX_TTL_SECONDS}s)`,
+      { ttl: ttlRequested, max: config.MAX_TTL_SECONDS },
+      `pass a ttl <= ${config.MAX_TTL_SECONDS} (in seconds), or omit --ttl to get the default of ${config.DEFAULT_TTL_SECONDS}s`,
+    );
   }
+  const ttlSeconds = Math.max(1, ttlRequested);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
   // Per-agent session cap: bound how many open sessions a single agent can

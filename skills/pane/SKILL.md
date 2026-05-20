@@ -462,9 +462,11 @@ pane watch ses_xxxx --type form.submitted
 - `--type <t>` — exit 0 after the first event of that type. Use this to wait
   for the human's terminal action.
 - `--once` — exit 0 after the very first event.
-- `--timeout <seconds>` — exit if no event arrives within the window (fails
-  with code `ws_timeout`). Use it so you don't wait forever for a human who
-  never opens the URL.
+- `--timeout <seconds>` — wall-clock max wait. Exits with code `ws_timeout`
+  if the awaited terminal condition (`--once`, `--type`, session close)
+  hasn't happened by then. Frames arriving do NOT reset the timer — this
+  is the budget for "give up on the human", not an idle detector. Use it
+  so you don't wait forever for a human who never acts.
 - bare — stream until interrupted (`SIGINT`).
 
 **Outcomes — branch on these:**

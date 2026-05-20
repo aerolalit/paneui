@@ -128,6 +128,40 @@ describe("HTTP e2e", () => {
       expect(body.error.message).toContain("html-ref");
     });
 
+    it("rejects ttl > MAX_TTL_SECONDS with 400 invalid_request (#137)", async () => {
+      // Previously this was silently clamped to MAX_TTL_SECONDS and the
+      // caller had to read `expires_at` to notice. Now the relay returns
+      // 400 with the cap surfaced in details, so an automated agent gets
+      // an immediate signal instead of a session that quietly expires
+      // earlier than requested.
+      const { apiKey } = await seedAgent();
+      const res = await app.fetch(
+        new Request("http://t/v1/sessions", {
+          method: "POST",
+          headers: bearer(apiKey),
+          body: JSON.stringify({
+            artifact: {
+              type: "html-inline",
+              source: "<html></html>",
+              event_schema: minimalSchema,
+            },
+            ttl: 999_999_999,
+          }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: {
+          code: string;
+          message: string;
+          details?: { ttl: number; max: number };
+        };
+      };
+      expect(body.error.code).toBe("invalid_request");
+      expect(body.error.message).toMatch(/ttl.*exceeds.*MAX_TTL_SECONDS/);
+      expect(body.error.details?.max).toBeGreaterThan(0);
+    });
+
     it("rejects an unauthenticated request with 401", async () => {
       const res = await app.fetch(
         new Request("http://t/v1/sessions", {

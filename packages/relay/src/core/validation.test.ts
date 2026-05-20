@@ -179,6 +179,44 @@ describe("validateEvent", () => {
     ).toThrow(/schema_violation/);
   });
 
+  it("schema_violation details lists ALL failing fields, not just the first (#137)", () => {
+    // Multi-field schema in a one-off session so we can violate two
+    // constraints simultaneously and verify both are surfaced.
+    const multiFieldSchema: EventSchema = {
+      events: {
+        "form.submitted": {
+          payload: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              n: { type: "integer" },
+            },
+            required: ["name", "n"],
+            additionalProperties: false,
+          },
+          emittedBy: ["page"],
+        },
+      },
+    };
+    try {
+      validateEvent({
+        sessionId: "ses_multi",
+        schemaVersion: 1,
+        schema: multiFieldSchema,
+        type: "form.submitted",
+        // name should be string (sending number); n should be integer
+        // (sending string). Pre-Ajv-allErrors only the first one surfaced.
+        data: { name: 42, n: "oops" },
+        authorKind: "human",
+      });
+      expect.unreachable("validateEvent should have thrown");
+    } catch (err) {
+      const e = err as { details?: unknown[] };
+      expect(Array.isArray(e.details)).toBe(true);
+      expect(e.details!.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   it("rejects an author kind not in emittedBy", () => {
     // review.approved is page-only; an agent cannot emit it.
     expect(() =>
@@ -423,6 +461,30 @@ describe("validateInputData", () => {
       expect(e.status).toBe(422);
       expect(e.code).toBe("input_schema_violation");
       expect(e.details).toBeTruthy();
+    }
+  });
+
+  it("reports ALL failing fields, not just the first (#137)", () => {
+    // Two simultaneous violations: prTitle is the wrong type AND diffUrl is
+    // the wrong type. Pre-fix (Ajv default allErrors:false) Ajv short-
+    // circuits and details has length 1 — caller has to fix-and-retry one
+    // field at a time. After the fix details lists both.
+    const schema = {
+      type: "object",
+      properties: {
+        prTitle: { type: "string" },
+        diffUrl: { type: "string" },
+      },
+      required: ["prTitle", "diffUrl"],
+      additionalProperties: false,
+    };
+    try {
+      validateInputData(schema, { prTitle: 42, diffUrl: 99 });
+      expect.unreachable("validateInputData should have thrown");
+    } catch (err) {
+      const e = err as { details?: unknown[] };
+      expect(Array.isArray(e.details)).toBe(true);
+      expect(e.details!.length).toBeGreaterThanOrEqual(2);
     }
   });
 

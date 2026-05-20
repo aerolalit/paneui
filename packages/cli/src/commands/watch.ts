@@ -33,8 +33,13 @@ Modes:
 
 Options:
   --since <cursor>    Replay only events after this opaque cursor.
-  --timeout <secs>    Fail with code ws_timeout if no frame (not even the
-                      replay-complete marker) arrives within this window.
+  --timeout <secs>    Wall-clock max wait. Fail with code ws_timeout if
+                      the natural exit condition (--once, --type, session
+                      close) doesn't happen within this many seconds.
+                      Frames arriving DO NOT reset the timer — this is
+                      the budget for "give up on the human", not an idle
+                      detector. Without --once or --type, bare watch
+                      will simply exit non-zero at the deadline.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
   -h, --help          Show this help.
@@ -91,19 +96,20 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   // closed — a 1006/1008/1011 close after that is still a clean shutdown.
   let sawSessionExpired = false;
 
-  // Connection timeout: fail if no frame at all arrives within the window.
+  // Wall-clock timeout. The reporter's mental model (#137) and the skill
+  // text both treat this as "max wait until something happens" — i.e. an
+  // agent giving up on a human who never acts. The previous behaviour
+  // (clear the timer on first frame, never re-arm) made `--timeout`
+  // useless once any frame arrived, even a system.participant.joined
+  // emitted the moment a human connected. Frames now DO NOT reset the
+  // timer; the only ways `--timeout` doesn't fire are the natural exit
+  // conditions (--once, --type match, session close) finishing first.
   let timer: NodeJS.Timeout | undefined;
   if (timeoutSec !== null) {
     timer = setTimeout(() => {
-      fail(`no stream frame within ${timeoutSec}s`, "ws_timeout");
+      fail(`no terminal condition met within ${timeoutSec}s`, "ws_timeout");
     }, timeoutSec * 1000);
   }
-  const sawFrame = (): void => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
 
   const handle = openStream(
     {
@@ -114,10 +120,9 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
     },
     {
       onReplayComplete: () => {
-        sawFrame();
+        // No-op: replay-complete is informational, no timer interaction.
       },
       onEvent: (event: PaneEvent) => {
-        sawFrame();
         printJsonLine(event);
         // A system.session.expired event means the session is closing.
         if (event.type === "system.session.expired") {
