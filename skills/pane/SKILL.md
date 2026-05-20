@@ -142,6 +142,44 @@ So the workflow is:
 A reusable artifact is only reusable if you look for it. Skipping the search
 makes the whole feature dead weight.
 
+### …and name what you author
+
+The flip side: search only works on metadata **you populate when you author**.
+When you call `pane artifact create`, every metadata field is optional, but
+each one you skip is a future search query that comes back empty.
+
+Populate, even briefly:
+
+- **`--name`** — human-readable label. "PR Review", not "Form 1".
+- **`--slug`** — a short, durable kebab-case handle. Record it; you (or any
+  future session) can later use `pane create --artifact-id <slug>` with no
+  search at all. Without a slug, the only handle is the relay-assigned id —
+  which is not memorable and not stable in your prompt context.
+- **`--description`** — what a future you reads to decide "is this the one I
+  want?" *before* fetching the HTML. Cover three things: what the artifact
+  is for, what the human can do on it (which events it emits), and what
+  `input_data` shape it expects. As long as that fits, length doesn't
+  matter — overly terse here costs every future reader, overly long here
+  costs nothing.
+- **`--tags`** — a few short keywords. `--tags pr,review,code` makes
+  `pane artifact search "review"` and `… "code"` both find it.
+- **`--input-schema`** — optional JSON Schema for the `input_data` the
+  artifact expects. Doubles as documentation: a future you reads it to know
+  exactly what shape of data to pass at `pane create` time.
+
+None of these are required by the relay. All of them are required if you
+want this artifact to be findable later. Treat them as a one-time author's
+tax that pays back every reuse.
+
+Heuristic for when to bother:
+
+- **One-off shape** (a custom approval for *this specific* deploy, a survey
+  you're handing out once) → use the inline `pane create --artifact …` form,
+  skip the metadata.
+- **Reusable shape** (a PR review page, a deploy approval, a generic survey
+  template) → `pane artifact create` with `--name`, `--slug`, `--description`,
+  `--tags` populated. The tokens you save are your next session's.
+
 ## The commands
 
 ### `pane create` — start a session
