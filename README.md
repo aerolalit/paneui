@@ -23,56 +23,69 @@ This matters most for agents that live **outside a GUI host app**: cron agents, 
 > same event. Clients de-duplicate on the event `id` — treat the `id`, not
 > arrival order, as the source of truth.
 
+## Install
+
+No build step, no host app. Pick your audience — paste the agent block into your AI agent's chat, or run the human block yourself.
+
+### Paste to your AI agent
+
+Paste the block below into your AI agent's chat. It will install the CLI, register against the hosted relay, and install the Pane skill into its own skill directory.
+
+````text
+Install Pane for me. Pane is a round-trip UI channel between you (the agent) and me (the human) — you hand me a rich interactive UI by URL and, if the UI captures input, get my response back as structured data. Use it whenever a text reply is the wrong shape: forms, pickers, dashboards, doc or diff review, approvals, status pages, multi-step wizards, file uploads — anything better seen than described. Input is optional; a read-only dashboard or status view is a valid Pane.
+
+Install everything at GLOBAL / USER scope, not in the current workspace. Pane is a personal capability I want available in every project, not a per-repo dependency. Do not create files in the current working directory or commit anything to this repo.
+
+Do the following:
+1. Install the CLI globally: `npm i -g @paneui/cli` (needs Node 20+). The binary is `pane`. Do not add it to the current project's package.json.
+2. Install the Pane skill into your agent's GLOBAL / USER skill directory, not a project-local one. For example:
+   - Claude Code: ~/.claude/skills/pane/SKILL.md  (NOT .claude/skills/ in the current repo)
+   - Cursor: user-level rules, NOT .cursor/rules/ in the current repo
+   - Codex / Gemini / Copilot: your user-scope AGENTS.md / GEMINI.md / instructions file, NOT the project root
+   The skill is hosted at https://relay.paneui.com/skills/pane/SKILL.md — fetch it and save it in the appropriate format for your runtime.
+3. Register against the hosted relay: `pane register --name "<short-descriptive-agent-name>"`. Pick a name that identifies your agent (e.g. `claude-code-lalit-macbook`, `cursor-work-laptop`) — the default is unhelpful. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
+4. Confirm install with `pane keys list`. This round-trips your key against the relay and prints { agent_id, name, key_prefix, ... } — proves the CLI is installed AND registration succeeded.
+5. Now exercise the round-trip end-to-end so I can see it work:
+   - Create a simple two-way pane — a small HTML artifact with a text input and a submit button that posts an event back to you (use whatever shape `pane create` and the SKILL.md describe; the simplest "hello" form is fine).
+   - Print the resulting pane URL and ask me to open it.
+   - Start watching for the submit event (e.g. `pane watch <session-id>`).
+   - When I submit, show me the structured event payload you received. That's the "aha" moment — confirms the full round-trip works.
+
+After this, reach for `pane create / watch / state / send` whenever a UI would communicate better than text. Run `pane <cmd> --help` for authoritative options.
+````
+
+### Run yourself (human)
+
+Five commands. Needs Node 20+. The skill-install step auto-detects your agent (Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, Continue, …) and installs in the right place.
+
+```sh
+# 1. Install the CLI (Node 20+)
+npm i -g @paneui/cli
+
+# 2. Register with the hosted relay — pick a short, descriptive agent name
+pane register --name "<short-descriptive-agent-name>"
+
+# 3. Confirm — round-trips your key against the relay
+pane keys list
+
+# 4. Install the skill into your agent (auto-detects Claude Code,
+#    Cursor, Codex, Gemini, Copilot, Windsurf, Continue, …)
+npx skills add aerolalit/paneui
+
+# 5. Try it — create a tiny round-trip pane, then watch for the event.
+#    Open the urls.humans link it prints, type something, hit submit.
+pane create --artifact '<form onsubmit="event.preventDefault();pane.send({type:\"hello\",payload:{msg:this.m.value}})"><input name=m><button>send</button></form>' --event-schema '{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'
+
+pane watch <session-id> --type hello
+```
+
 ## Distribution
 
 The repo is an npm-workspaces monorepo with three packages:
 
 - **`@paneui/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
 - **`@paneui/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
-- **`@paneui/cli`** — the `pane` command-line tool. `npm i -g @paneui/cli` gives you `pane create` / `pane state` / `pane send` / `pane watch`.
-
-The `pane` CLI is the agent's entry point. It emits JSON on stdout, so it's harness-agnostic — it works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process-monitoring tool, with nothing to install but one binary. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands; pipe it into whatever supervises your agent. A LangChain tool wrapper may come later (v2).
-
-```sh
-# create a session, hand the URL to a human, wait for the answer
-pane create --artifact ./form.html --event-schema ./schema.json --ttl 600
-pane watch ses_xxxx --type form.submitted   # one JSON line per event; exits on the submit
-```
-
-The CLI defaults to the hosted relay, so `pane register` alone gets you a key.
-Self-hosting? Pass `--url <your-relay>` once (see [Self-hosting](#self-hosting)).
-Run `pane --help` or `pane <command> --help` for details.
-
-### Teaching an agent to use pane
-
-An agent needs two things: the `pane` CLI on its `PATH`, and the pane skill
-([Agent Skills](https://agentskills.io) format) in its skills directory.
-
-**Claude Code** — install the skill from the plugin marketplace:
-
-```text
-/plugin marketplace add aerolalit/paneui
-/plugin install pane@pane
-```
-
-**Other agents** (Codex, Cursor, Copilot, Gemini CLI, …) — install the skill
-with the cross-agent [`skills`](https://github.com/vercel-labs/skills) tool:
-
-```sh
-npx skills add aerolalit/paneui --skill pane
-```
-
-Then install and register the CLI:
-
-```sh
-npm i -g @paneui/cli
-pane register
-```
-
-`pane register` provisions an API key against the hosted relay and saves it to
-the CLI config file, so every later command works with no env vars. The skill
-file is pure skill content — it documents the `pane` workflow and assumes the
-CLI is already installed and registered.
+- **`@paneui/cli`** — the `pane` command-line tool. The agent's entry point: emits JSON on stdout, so it's harness-agnostic — works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process supervisor. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands. A LangChain tool wrapper may come later (v2).
 
 ## Stack
 
@@ -92,10 +105,6 @@ done. But Pane is open-core (MIT) and self-hosts with no paid dependencies:
 The relay is configured entirely through environment variables —
 [`packages/relay/.env.example`](packages/relay/.env.example) is the full
 reference.
-
-## Business model
-
-Open-core. This repo is the MIT core; a managed hosted version (with org/compliance and scale extras) is offered for people who don't want to deploy. The OSS version must do the entire core job standalone, forever, no asterisks; closed = convenience, scale, org/compliance, never core capability. See `docs/SPEC.md` for where the open/closed line sits, `docs/ROADMAP.md` for sequencing.
 
 ## Contributing
 
