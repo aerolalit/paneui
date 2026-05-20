@@ -489,4 +489,19 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
   }
+
+  /**
+   * DELETE /v1/artifacts/:id — remove an artifact and (server-side) all its
+   * versions. Strict cascade: the relay refuses with 409 conflict if any
+   * session in any state still references one of the artifact's versions —
+   * surface that as a typed PaneApiError so the CLI can render a hint
+   * instead of swallowing it.
+   */
+  async deleteArtifact(idOrSlug: string): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
 }
