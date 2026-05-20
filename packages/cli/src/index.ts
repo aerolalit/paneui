@@ -16,7 +16,7 @@ import { runLogout, logoutHelp } from "./commands/logout.js";
 import { runKeys, keysHelp } from "./commands/keys.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 
-const VERSION = "0.0.1";
+const VERSION = "0.0.2";
 
 const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
 
