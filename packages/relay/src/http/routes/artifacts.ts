@@ -403,4 +403,50 @@ artifacts.get("/:id/versions/:version", async (c) => {
   return c.json(serializeVersion(v));
 });
 
+// DELETE /v1/artifacts/:id — remove an artifact (and, via Prisma's
+// onDelete:Cascade on ArtifactVersion, all its versions). Strict cascade:
+// the deletion is REFUSED with 409 conflict if any session in any state
+// references any version of this artifact. The reporter (#137) wanted a
+// way to clean up test/stale artifacts — strict mode is the safe first
+// cut: it never drops session history that a human or operator might
+// care about. Users delete the referencing sessions first, then the
+// artifact. A future PR may add a `cascade=true` flag or a separate
+// "purge everything" semantic; that's a one-direction change so we
+// don't want to bake it in by default.
+//
+// Auth: requireAgent is applied at the route group; the artifact must
+// also belong to the calling agent. Idempotency: a second DELETE of a
+// just-deleted artifact returns artifact_not_found (404), matching the
+// pattern used by other DELETE endpoints elsewhere in the API.
+artifacts.delete("/:id", async (c) => {
+  const prisma = c.get("prisma");
+  const agent = c.get("agent");
+  const idOrSlug = c.req.param("id");
+
+  const artifact = await prisma.artifact.findFirst({
+    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    select: { id: true, name: true, slug: true },
+  });
+  if (!artifact) throw errors.artifactNotFound();
+
+  // Strict-cascade refuse: any session (open OR closed) that pins one of
+  // this artifact's versions blocks the delete. We count rather than fetch
+  // a representative session — the count is cheap with the index on
+  // `sessions.artifact_version_id` and the agent doesn't need session ids
+  // to act on the refusal.
+  const referencingSessions = await prisma.session.count({
+    where: { artifactVersion: { artifactId: artifact.id } },
+  });
+  if (referencingSessions > 0) {
+    throw errors.conflict(
+      `artifact has ${referencingSessions} referencing session(s) — delete or wait for them to expire first`,
+      false,
+      `run 'pane state <session-id>' or 'pane delete <session-id>' on each referencing session before deleting the artifact; closed/expired sessions count too and must be removed by the TTL sweeper or an explicit DELETE`,
+    );
+  }
+
+  await prisma.artifact.delete({ where: { id: artifact.id } });
+  return c.body(null, 204);
+});
+
 export default artifacts;

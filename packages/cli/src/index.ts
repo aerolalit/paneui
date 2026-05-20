@@ -30,7 +30,7 @@ Commands:
   create            Create a session (POST /v1/sessions). Prints session_id,
                     urls, tokens, expires_at.
   artifact          Manage reusable, versioned artifacts (create / version /
-                    update / search / list / show).
+                    update / search / list / show / delete).
   state <id>        Non-blocking snapshot: session metadata + event log.
   send <id>         Emit an agent event into a session.
   watch <id>        Stream a session's events as JSON-lines on stdout

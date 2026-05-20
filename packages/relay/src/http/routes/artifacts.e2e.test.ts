@@ -404,3 +404,147 @@ describe("/v1/artifacts", () => {
     expect(over.status).toBe(429);
   });
 });
+
+// DELETE /v1/artifacts/:id — strict cascade: refuse if any session refs it.
+describe("DELETE /v1/artifacts/:id (#137)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("deletes an artifact that has no referencing session (204)", async () => {
+    const apiKey = await seedAgent();
+    const created = (await (await createArtifact(apiKey)).json()) as {
+      artifact_id: string;
+    };
+
+    const del = await req(
+      "DELETE",
+      `/v1/artifacts/${created.artifact_id}`,
+      apiKey,
+    );
+    expect(del.status).toBe(204);
+
+    // Subsequent GET returns 404 artifact_not_found, confirming the row is
+    // gone (and via Prisma's onDelete:Cascade, its ArtifactVersion rows
+    // too — see schema.prisma).
+    const after = await req(
+      "GET",
+      `/v1/artifacts/${created.artifact_id}`,
+      apiKey,
+    );
+    expect(after.status).toBe(404);
+    const body = (await after.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("artifact_not_found");
+  });
+
+  it("also accepts a slug", async () => {
+    const apiKey = await seedAgent();
+    await createArtifact(apiKey);
+    const del = await req("DELETE", "/v1/artifacts/pr-review", apiKey);
+    expect(del.status).toBe(204);
+  });
+
+  it("returns 404 artifact_not_found on the second delete (not idempotent at the row level)", async () => {
+    // We deliberately DO NOT make this 204-on-already-gone like
+    // DELETE /v1/sessions, because the resource state semantics differ:
+    // a session is a stateful row that can transition to 'closed' (still
+    // present), whereas an artifact is fully removed. The second DELETE
+    // can't tell "you already deleted it" from "you sent the wrong id"
+    // — surface 404 either way and let the caller decide.
+    const apiKey = await seedAgent();
+    const created = (await (await createArtifact(apiKey)).json()) as {
+      artifact_id: string;
+    };
+    expect(
+      (await req("DELETE", `/v1/artifacts/${created.artifact_id}`, apiKey))
+        .status,
+    ).toBe(204);
+    const second = await req(
+      "DELETE",
+      `/v1/artifacts/${created.artifact_id}`,
+      apiKey,
+    );
+    expect(second.status).toBe(404);
+    const body = (await second.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("artifact_not_found");
+  });
+
+  it("refuses with 409 conflict when a session still references the artifact", async () => {
+    // Strict-cascade behaviour: any session (open OR closed) referencing
+    // a version blocks deletion. The error envelope carries a count and a
+    // hint telling the caller what to do.
+    const apiKey = await seedAgent();
+    const created = (await (await createArtifact(apiKey)).json()) as {
+      artifact_id: string;
+    };
+    const sessRes = await req("POST", "/v1/sessions", apiKey, {
+      artifact: { id: created.artifact_id },
+    });
+    expect(sessRes.status).toBe(201);
+
+    const del = await req(
+      "DELETE",
+      `/v1/artifacts/${created.artifact_id}`,
+      apiKey,
+    );
+    expect(del.status).toBe(409);
+    const body = (await del.json()) as {
+      error: { code: string; message: string; hint?: string };
+    };
+    expect(body.error.code).toBe("conflict");
+    expect(body.error.message).toMatch(/1 referencing session/);
+    // The hint points at the recovery action.
+    expect(body.error.hint).toMatch(/pane delete/);
+  });
+
+  it("refuses with 409 even after the referencing session is CLOSED", async () => {
+    // 'pane delete <session>' marks the session status=closed but the row
+    // (and its FK to artifact_version_id) stays. Strict-cascade still
+    // refuses; the reporter's "stale test artifacts" complaint is only
+    // partially addressed until session rows are actually dropped, but
+    // that's a separate PR (see #137 follow-up).
+    const apiKey = await seedAgent();
+    const created = (await (await createArtifact(apiKey)).json()) as {
+      artifact_id: string;
+    };
+    const sessRes = await req("POST", "/v1/sessions", apiKey, {
+      artifact: { id: created.artifact_id },
+    });
+    const sess = (await sessRes.json()) as { session_id: string };
+    expect(
+      (await req("DELETE", `/v1/sessions/${sess.session_id}`, apiKey)).status,
+    ).toBe(204);
+
+    const del = await req(
+      "DELETE",
+      `/v1/artifacts/${created.artifact_id}`,
+      apiKey,
+    );
+    expect(del.status).toBe(409);
+  });
+
+  it("404 artifact_not_found for an unknown id", async () => {
+    const apiKey = await seedAgent();
+    const del = await req("DELETE", "/v1/artifacts/art_bogus", apiKey);
+    expect(del.status).toBe(404);
+  });
+
+  it("404 (not 403) when the artifact belongs to a different agent", async () => {
+    // Ownership leak: distinguishing "not yours" from "doesn't exist"
+    // would tell a probing caller which slugs exist. Treat both as 404
+    // artifact_not_found — same pattern as sessionNotFound.
+    const ownerKey = await seedAgent();
+    const intruderKey = await seedAgent();
+    const created = (await (await createArtifact(ownerKey)).json()) as {
+      artifact_id: string;
+    };
+    const del = await req(
+      "DELETE",
+      `/v1/artifacts/${created.artifact_id}`,
+      intruderKey,
+    );
+    expect(del.status).toBe(404);
+    const body = (await del.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("artifact_not_found");
+  });
+});
