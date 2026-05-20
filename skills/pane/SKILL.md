@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.0.0 -->
+<!-- pane skill v1.0.1 -->
 
 # pane
 
@@ -49,12 +49,17 @@ The relay you talk to publishes its own version of this skill at
 `GET /skills/pane/SKILL.md/version`. **At session start, check whether your
 local copy is behind, and if so refresh it.**
 
-The check is a one-line shell:
+The check is a short shell snippet:
 
 ```sh
-LOCAL_VER=$(grep -o '<!-- pane skill v[0-9.]*' <path-to-your-local-skill> | grep -o '[0-9.]*$')
+LOCAL_VER=$(grep -m1 -oE '<!-- pane skill v[0-9]+\.[0-9]+\.[0-9]+' <path-to-your-local-skill> | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')
 REMOTE_VER=$(pane skill version --plain)
-if [ "$LOCAL_VER" != "$REMOTE_VER" ]; then
+# If the relay is on an old image that lacks a version comment, the probe
+# returns "0.0.0". Don't clobber a newer local copy with the older relay
+# skill — skip the update and proceed with what's local.
+if [ "$REMOTE_VER" = "0.0.0" ]; then
+  : # nothing to do
+elif [ "$LOCAL_VER" != "$REMOTE_VER" ]; then
   pane skill > <path-to-your-local-skill>   # overwrites with the relay's current skill
 fi
 ```
@@ -64,10 +69,25 @@ skill (e.g. `~/.claude/skills/pane/SKILL.md` for Claude Code,
 `~/.cursor/rules/pane.mdc` for Cursor, the relevant section of
 `~/.codex/AGENTS.md` for Codex / Gemini-style concatenated files).
 
+The two `grep`s above are intentionally strict:
+
+- `-m1` stops at the first match in the file, so prose mentions of the
+  pattern (this very section!) don't double-count.
+- `[0-9]+\.[0-9]+\.[0-9]+` only matches a real semver triple, so a
+  literal `<!-- pane skill vX.Y.Z -->` in documentation is skipped.
+
+The strict matcher does NOT accept prerelease tags (e.g. `1.0.0-rc1`).
+If we ever ship those, both this snippet and the relay's parser need a
+matching update.
+
 Rules:
 
 - If the local file has no `<!-- pane skill v... -->` comment, treat it as
   stale and run `pane skill > <path>`.
+- If `REMOTE_VER` is `0.0.0`, skip the update — the relay is on an old
+  image without a version comment, and clobbering your (presumably newer)
+  local copy with that would be a downgrade. The snippet above guards
+  this; if you're rolling your own check, do the same.
 - If the network is unreachable or `pane skill version` fails, **do not
   update** — proceed with the local skill you have. Skipping a check is
   always safer than half-writing the file.
