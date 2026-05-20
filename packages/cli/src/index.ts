@@ -14,6 +14,7 @@ import { runArtifact, artifactHelp } from "./commands/artifact.js";
 import { runConfig, configHelp } from "./commands/config.js";
 import { runLogout, logoutHelp } from "./commands/logout.js";
 import { runKeys, keysHelp } from "./commands/keys.js";
+import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 
 const VERSION = "0.0.2";
@@ -36,6 +37,10 @@ Commands:
                     (long-lived; the building block for pipe-readers).
   delete <id>       Close/delete a session (DELETE /v1/sessions/:id).
   keys              Inspect or revoke YOUR agent's API key (list / revoke).
+  taste             Read / write / clear YOUR agent's UI taste notes
+                    (get / set / clear) — presentation preferences the agent
+                    has learned from human feedback and reads before
+                    generating a pane artifact.
   config            Show the resolved relay config (no network call).
   logout            Clear the locally-saved relay URL + API key.
 
@@ -112,6 +117,7 @@ async function main(): Promise<void> {
     watch: watchHelp,
     delete: deleteHelp,
     keys: keysHelp,
+    taste: tasteHelp,
     config: configHelp,
     logout: logoutHelp,
   };
@@ -157,6 +163,9 @@ async function main(): Promise<void> {
       break;
     case "keys":
       await runKeys(args);
+      break;
+    case "taste":
+      await runTaste(args);
       break;
     case "config":
       await runConfig(args);

@@ -543,6 +543,35 @@ A pane agent has exactly one API key. `keys list` shows its metadata
 **permanently revokes your own key**; it stops working immediately and you
 would have to `pane register` again. It refuses to run without `--yes`.
 
+### `pane taste` — remembering UI preferences across sessions
+
+```sh
+pane taste get                              # read current notes (JSON)
+echo "- denser tables\n- no rounded corners" | pane taste set
+pane taste set --file ./taste.md            # read from a file instead of stdin
+pane taste clear --yes                      # forget everything
+```
+
+`taste` is a small markdown blob — **your** agent's accumulated *presentation
+taste*: how the human you serve likes pane artifacts to look. The intended
+loop is:
+
+1. **Before generating an artifact**, run `pane taste get` and fold the
+   `taste` field into the prompt that authors the HTML. Past feedback ("dark
+   header", "no emoji", "tighter spacing") shapes the new artifact.
+2. **When the human gives presentation feedback**, run `pane taste get`,
+   merge the new guidance into the existing notes *in your prompt*, then
+   write the WHOLE updated blob back with `pane taste set`. Don't append
+   blindly — taste set is whole-blob replace on purpose, so the notes stay
+   curated and don't rot into a transcript.
+3. **Keep entries about presentation only** — colours, density, component
+   choices, layout. Project context, todos, and per-session state belong
+   somewhere else (your own memory, the session's events, etc.).
+
+Keyed today by the calling agent's API key — per-agent, not per-human (pane
+v1 has no first-class human identity yet). Expect this to move to per-human
+later; the CLI surface won't change.
+
 ## The watch → Monitor pattern
 
 `pane watch` is built to be a **monitored subprocess**. It blocks until the

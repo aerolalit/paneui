@@ -142,6 +142,19 @@ export interface KeyInfo {
   revoked_at: string | null;
 }
 
+/**
+ * Response from GET /v1/taste, PUT /v1/taste — the calling agent's freeform
+ * "taste notes" markdown blob (presentation preferences the agent has picked
+ * up from human feedback over time). `taste` and `updated_at` are null when
+ * the agent has never written notes; `bytes` is the utf8 byte length and 0
+ * when `taste` is null.
+ */
+export interface TasteInfo {
+  taste: string | null;
+  updated_at: string | null;
+  bytes: number;
+}
+
 /** A relay error envelope. */
 export interface RelayError {
   code: string;
