@@ -16,6 +16,7 @@ import { runLogout, logoutHelp } from "./commands/logout.js";
 import { runKeys, keysHelp } from "./commands/keys.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
+import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
 import { failUpgradeRequired } from "./output.js";
@@ -44,6 +45,8 @@ Commands:
                     generating a pane artifact.
   config            Show the resolved relay config (no network call).
   logout            Clear the locally-saved relay URL + API key.
+  skill             Print the relay's current SKILL.md to stdout (the
+                    auto-updating agent skill; no API key needed).
 
 Run \`pane <command> --help\` for command-specific options.
 
@@ -121,6 +124,7 @@ async function main(): Promise<void> {
     taste: tasteHelp,
     config: configHelp,
     logout: logoutHelp,
+    skill: skillHelp,
   };
 
   if (!(command in helps)) {
@@ -173,6 +177,9 @@ async function main(): Promise<void> {
       break;
     case "logout":
       await runLogout();
+      break;
+    case "skill":
+      await runSkill(args);
       break;
   }
 }

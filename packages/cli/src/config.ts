@@ -111,3 +111,18 @@ export function makeClient(args: ParsedArgs): PaneClient {
     cliVersion: VERSION,
   });
 }
+
+/**
+ * Resolve just the relay URL — same precedence as `resolveConfig` but
+ * without insisting on an API key. For commands that hit unauthenticated
+ * relay routes (e.g. `pane skill` → GET /skills/pane/SKILL.md).
+ */
+export function resolveRelayUrl(args: ParsedArgs): string {
+  const store = readStore();
+  const url =
+    args.flags.get("url") ??
+    process.env.PANE_URL ??
+    store.url ??
+    DEFAULT_RELAY_URL;
+  return url.replace(/\/$/, "");
+}
