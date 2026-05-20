@@ -12,6 +12,7 @@ import {
 } from "../../keys.js";
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
+import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
@@ -158,10 +159,22 @@ sessions.post("/", requireAgent, async (c) => {
     validateInputData(inputSchema as object, input_data ?? {});
   }
 
+  // TTL is silently clamped to [1, MAX_TTL_SECONDS]. We log a warn when a
+  // requested TTL gets clamped so operators can spot clients hitting the cap
+  // (e.g. an agent asking for 7 days against a 24h-capped relay). The
+  // response's `expires_at` is the authoritative value for the caller.
+  const ttlRequested = ttl ?? config.DEFAULT_TTL_SECONDS;
   const ttlSeconds = Math.min(
-    Math.max(1, ttl ?? config.DEFAULT_TTL_SECONDS),
+    Math.max(1, ttlRequested),
     config.MAX_TTL_SECONDS,
   );
+  if (ttlRequested > config.MAX_TTL_SECONDS) {
+    log.warn("ttl clamped to MAX_TTL_SECONDS", {
+      requested: ttlRequested,
+      max: config.MAX_TTL_SECONDS,
+      applied: ttlSeconds,
+    });
+  }
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
   // Per-agent session cap: bound how many open sessions a single agent can
