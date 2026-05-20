@@ -132,4 +132,55 @@ describe("bootstrap (integration, real DB)", () => {
     expect(afterSecond).toBe(1);
     expect(stdoutBuffer).not.toContain("Generated one:");
   });
+
+  // REGISTRATION_MODE=open means agents self-provision via POST /v1/register,
+  // so the bootstrap should NOT mint a fresh key + create an unowned default
+  // agent. Two cases: empty DB, and DB with existing agents (no-op either way).
+  it("no API_KEY + REGISTRATION_MODE=open + empty DB: does NOT mint a key", async () => {
+    const cfg = { ...baseConfig, REGISTRATION_MODE: "open" as const };
+    await runBootstrap(prisma, cfg);
+
+    const rows = await prisma.agent.findMany();
+    expect(rows).toHaveLength(0);
+    expect(stdoutBuffer).not.toContain("Generated one:");
+    expect(stdoutBuffer).not.toContain("No API_KEY set");
+  });
+
+  it("no API_KEY + REGISTRATION_MODE=open + existing agents: no-op", async () => {
+    // Seed an agent that self-registered.
+    await prisma.agent.create({
+      data: {
+        name: "self-registered",
+        keyHash: "y".repeat(64),
+        keyPrefix: "pane_self0",
+      },
+    });
+
+    const cfg = { ...baseConfig, REGISTRATION_MODE: "open" as const };
+    await runBootstrap(prisma, cfg);
+
+    const rows = await prisma.agent.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.name).toBe("self-registered");
+    expect(stdoutBuffer).not.toContain("Generated one:");
+  });
+
+  it("API_KEY set + REGISTRATION_MODE=open: still upserts the default agent", async () => {
+    // API_KEY is the operator's personal key. It's legitimate to set it
+    // alongside REGISTRATION_MODE=open ("I want a personal key AND let
+    // others register themselves"). API_KEY wins; bootstrap upserts.
+    const apiKey = "pane_test1234567890abcdef1234567890ab";
+    const cfg = {
+      ...baseConfig,
+      API_KEY: apiKey,
+      REGISTRATION_MODE: "open" as const,
+    };
+
+    await runBootstrap(prisma, cfg);
+
+    const rows = await prisma.agent.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.name).toBe("default");
+    expect(rows[0]!.keyHash).toBe(hashKey(apiKey));
+  });
 });
