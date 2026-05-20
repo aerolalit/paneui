@@ -43,12 +43,40 @@ function loadSkill(): string {
 
 const SKILL_MD = loadSkill();
 
+// The skill carries its own version in a plain HTML comment near the top:
+//   <!-- pane skill v1.0.0 -->
+// We parse it at boot. Stored in an HTML comment (not YAML frontmatter)
+// because the local file on the agent's machine may have been format-
+// converted by its runtime (Cursor rewrites frontmatter, AGENTS.md
+// concatenators strip it) — comments survive every markdown flavour and
+// stay readable inline by both humans and the CLI's same-regex parser.
+//
+// Falls back to "0.0.0" if the comment is missing — an old image without
+// the comment still serves a sane version, and the agent comparing its
+// (presumably newer) local version to 0.0.0 will skip update rather than
+// loop. The relay doesn't validate that the version exists; the bump
+// discipline lives in PR review.
+const SKILL_VERSION_RE = /<!--\s*pane skill v([0-9]+\.[0-9]+\.[0-9]+)\s*-->/;
+const SKILL_VERSION_MATCH = SKILL_MD.match(SKILL_VERSION_RE);
+const SKILL_VERSION = SKILL_VERSION_MATCH ? SKILL_VERSION_MATCH[1]! : "0.0.0";
+
 const skill = new Hono<AppEnv>();
 
 skill.get("/pane/SKILL.md", (c) =>
   c.body(SKILL_MD, 200, {
     "Content-Type": "text/markdown; charset=utf-8",
     // Non-secret static content — safe to cache, unlike the bridge routes.
+    "Cache-Control": "public, max-age=3600",
+  }),
+);
+
+// GET /skills/pane/SKILL.md/version — the version-only probe used by
+// `pane skill version` for the "is my local skill stale?" check. Tiny
+// payload (~30 bytes) so an agent can call it at every session start
+// without thinking about the bandwidth. Same 1-hour cache as the full
+// skill — they share the same boot-snapshot lifecycle.
+skill.get("/pane/SKILL.md/version", (c) =>
+  c.json({ version: SKILL_VERSION }, 200, {
     "Cache-Control": "public, max-age=3600",
   }),
 );

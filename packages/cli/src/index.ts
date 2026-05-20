@@ -45,8 +45,9 @@ Commands:
                     generating a pane artifact.
   config            Show the resolved relay config (no network call).
   logout            Clear the locally-saved relay URL + API key.
-  skill             Print the relay's current SKILL.md to stdout (the
-                    auto-updating agent skill; no API key needed).
+  skill             Fetch the relay's SKILL.md to stdout, or just its
+                    version with 'pane skill version'. Used to install
+                    and keep the local skill copy in sync; no API key.
 
 Run \`pane <command> --help\` for command-specific options.
 
@@ -73,7 +74,14 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 // handled from rawArgv[0] before parseArgs runs, so it never needs to be a
 // boolean flag — and keeping it out lets `pane create --version <n>` /
 // `pane artifact version` consume a value as a normal value-flag.
-const BOOLEAN_FLAGS = new Set(["json", "once", "help", "print-key", "yes"]);
+const BOOLEAN_FLAGS = new Set([
+  "json",
+  "once",
+  "help",
+  "print-key",
+  "yes",
+  "plain",
+]);
 
 async function main(): Promise<void> {
   const rawArgv = process.argv.slice(2);
