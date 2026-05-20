@@ -81,7 +81,7 @@ export const errors = {
       "payload_too_large",
       undefined,
       undefined,
-      "the payload exceeds the configured size cap (MAX_ARTIFACT_BYTES for artifacts, MAX_EVENT_DATA_BYTES for event data); send a smaller payload",
+      "the payload exceeds the configured size cap (MAX_ARTIFACT_BYTES for artifacts, MAX_EVENT_DATA_BYTES for event data, MAX_TASTE_BYTES for taste notes); send a smaller payload",
       false,
       DOCS.api,
     ),
