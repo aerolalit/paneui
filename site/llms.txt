@@ -1,0 +1,33 @@
+# Pane
+
+> A round-trip UI channel between AI agents and humans. An agent renders a
+> rich interactive UI by URL, captures every human interaction as structured
+> data, and feeds it back — no GUI host app needed on either side. Open-core,
+> MIT licensed.
+
+Pane is for agents that live outside a GUI host app: cron jobs, Slack /
+Telegram bots, CI, headless servers. The agent only makes outbound calls to
+a small relay — no host app, no inbound port, no public address of its own.
+
+- Source: <https://github.com/aerolalit/paneui>
+- Landing site: <https://paneui.com>
+- Hosted relay: <https://relay.paneui.com>
+- License: MIT
+
+## Docs
+
+- [Agent skill — SKILL.md](https://relay.paneui.com/skills/pane/SKILL.md): The single most useful document. Teaches an agent how to use pane end to end (create a session, hand over the URL, watch for the structured response).
+- [Source repository](https://github.com/aerolalit/paneui): MIT-licensed monorepo — `@paneui/core` (types), `@paneui/cli` (the `pane` CLI), and the relay (Docker image only).
+- [Production deploy guide](https://github.com/aerolalit/paneui/blob/main/docs/DEPLOY.md): Hosted reference deployment on Azure Container Apps backed by Postgres.
+- [Self-hosting guide](https://github.com/aerolalit/paneui/blob/main/docs/SELF-HOSTING.md): Single-container self-host with SQLite. One `docker run`.
+
+## Install
+
+- CLI: `npm i -g @paneui/cli` — the binary is `pane`. Needs Node 20+.
+- Skill (any agent, auto-detects Claude Code / Cursor / Codex / Gemini / Copilot / Windsurf / Continue): `npx skills add aerolalit/paneui --skill pane`
+- Hosted relay: `https://relay.paneui.com`
+
+## Optional
+
+- [Protocol spec](https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md): Sessions, events, the round-trip contract.
+- [Landing site](https://paneui.com): Interactive demos showing the four communication patterns — human-in-the-loop, multi-turn loop, live stream, one-way handoff.
