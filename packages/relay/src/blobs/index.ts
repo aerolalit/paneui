@@ -28,3 +28,4 @@ export {
   ImageNormalisationError,
   type NormaliseResult,
 } from "./normalize.js";
+export { collectBlobRefs, assertBlobsAccessibleByAgent } from "./ref-access.js";

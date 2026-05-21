@@ -18,6 +18,10 @@ import {
   validateSchemaShape,
   validateInputData,
 } from "../../core/validation.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../../blobs/ref-access.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
@@ -156,6 +160,16 @@ sessions.post("/", requireAgent, async (c) => {
   // input contract — `input_data` (if supplied) passes through unvalidated.
   if (inputSchema != null && typeof inputSchema === "object") {
     validateInputData(inputSchema as object, input_data ?? {});
+
+    // Follow-up B of #156 — blob-ref DB access check. After Ajv shape
+    // validation passes on the input_data, walk the input_schema for
+    // `format: pane-blob-id` sites and verify every referenced blob is
+    // accessible to this agent. Same rationale as the event path: the
+    // Ajv format is purely syntactic; DB lookups belong here.
+    const refs = collectBlobRefs(inputSchema as object, input_data ?? {});
+    if (refs.length > 0) {
+      await assertBlobsAccessibleByAgent(prisma, agent.id, refs);
+    }
   }
 
   // TTL behaviour:

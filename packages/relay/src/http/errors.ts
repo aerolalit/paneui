@@ -271,6 +271,24 @@ export const errors = {
       DOCS.api,
     ),
 
+  // A blob_id baked into an event payload or session input_data points to
+  // a blob the calling agent can't access (wrong id, wrong owner, or
+  // soft-deleted). Surfaces *after* Ajv shape validation has passed but
+  // *before* the row hits Prisma — see packages/relay/src/blobs/ref-access.ts
+  // for the walker + batch check. 422 because the payload is structurally
+  // valid but semantically broken: it references a blob that does not
+  // exist (from this agent's vantage point).
+  blobRefNotAccessible: (inaccessibleIds: string[]) =>
+    new ApiError(
+      422,
+      "blob_ref_not_accessible",
+      `blob ref(s) not accessible: ${inaccessibleIds.join(", ")}`,
+      { inaccessible_ids: inaccessibleIds },
+      "the payload references one or more blob ids the calling agent does not own (or that have been deleted); upload the blob with POST /v1/blobs and use the returned blob_id, or check 'pane blob list' for ids you actually own",
+      false,
+      DOCS.api,
+    ),
+
   // Per-scope aggregate quota exceeded (per-agent, per-session, or
   // per-artifact). `scope` carries which one.
   quotaExceeded: (scope: "agent" | "session" | "artifact", maxBytes: number) =>

@@ -105,6 +105,47 @@ the underlying library is patched.
 - Major bumps go through a full security review (the encoder semantics
   may shift between sharp majors).
 
+## Blob-reference access check (events + session input_data)
+
+Phase D of #156 registered a JSON-Schema vocabulary — `format: pane-blob-id`
+— that event and input schemas use to mark a string field as a blob
+reference (`{ "type": "string", "format": "pane-blob-id" }`). Ajv's
+format validator is purely **syntactic**: it accepts cuid-shaped strings.
+
+That alone is not enough. Without a DB lookup, an attacker could enumerate
+blob ids inside event payloads and land on another agent's blob, or
+re-attach a soft-deleted blob by baking its id into a page-emitted event.
+
+Follow-up B of #156 closes that gap with a **route-layer DB check** that
+runs *after* Ajv validates the payload's shape and *before* the row hits
+Prisma:
+
+1. Walk the event payload schema (or the version's `input_schema` for
+   session-create) for every site marked `format: pane-blob-id`.
+2. Collect every concrete string at those sites in the payload.
+3. Batch-query the `Blob` table for those ids, filtered by
+   `ownerId = <session's agent> AND deletedAt IS NULL`.
+4. Any id that doesn't come back → 422 `blob_ref_not_accessible`.
+
+Implementation: `packages/relay/src/blobs/ref-access.ts` (the walker +
+the DB check). The check is wired into `writeEvent` (so HTTP + WS event
+paths both get it) and into `POST /v1/sessions` after Ajv-validating
+`input_data`.
+
+The 422 error response collapses three failure modes into one — wrong
+id, wrong owner, soft-deleted — so an attacker probing blob ids can't
+distinguish "this id exists but isn't mine" from "this id doesn't
+exist at all".
+
+### Known limitation: scope is NOT enforced (yet)
+
+The check verifies **ownership**, not **scope**. A session-scope blob
+created for session A is currently accepted in an event on session B
+as long as the calling agent owns it. The cross-tenant story is
+already gated (agent X can never reference agent Y's blob), and that's
+the load-bearing property; tightening session-scope to "must match THIS
+session" is a follow-up.
+
 ## Related
 
 - [`docs/BLOB_BACKENDS.md`](./BLOB_BACKENDS.md) — backend compatibility matrix
