@@ -371,7 +371,7 @@ sessions.post("/", requireAgent, async (c) => {
     throw errors.invalidRequest(
       "title is required",
       undefined,
-      "pass `title` on the request body (or `--title` on `pane create`); reference-form sessions can omit it only when the artifact has a `name`",
+      "pass `title` on the request body (or `--title` on `pane session create`); reference-form sessions can omit it only when the artifact has a `name`",
     );
   }
 

@@ -1,12 +1,20 @@
-// `pane participant new|revoke` — mint or invalidate one participant URL on
-// an existing session. Recovery + leak-containment primitives that together
-// replace the destructive `pane delete + create` workaround.
+// `pane session participant <new|revoke>` — mint or invalidate one
+// participant URL on an existing session. Recovery + leak-containment
+// primitives that together replace the destructive `pane session delete +
+// pane session create` workaround for the lost-URL case.
+//
+// This file is a sub-noun dispatcher under `pane session`. The session
+// dispatcher hands us a ParsedArgs whose positionals[0] is "participant"
+// (our sub-noun marker), so we read the verb from positionals[1] and the
+// args from positionals[2..]. This mirrors the way every other sub-verb
+// runner (runState, runDelete, ...) reads positionals[0] as its first arg
+// after a single shift.
 
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-export const participantHelp = `pane participant — manage one session's participant URLs
+export const participantHelp = `pane session participant — manage one session's participant URLs
 
 Participant tokens are stored hashed on the relay and CANNOT be recovered.
 If you lost the create-response (and the URL with it), use 'new' to mint a
@@ -14,9 +22,9 @@ fresh URL — the session keeps its event log, artifact pin, and created_at.
 Use 'revoke' to invalidate a single URL while keeping the session alive.
 
 Usage:
-  pane participant <subcommand> <args>
+  pane session participant <verb> <args>
 
-Subcommands:
+Verbs:
   new <session-id>            Mint a fresh human URL on an existing session.
                               Returns { participant_id, kind, token, url,
                               created_at } — ONCE. The plaintext token is
@@ -39,9 +47,11 @@ Options:
   -h, --help                  Show this help.
 
 Recovery recipe:
-  pane list                                          # find session_id + p_id
-  pane participant new <session-id>                  # mint a new URL
-  pane participant revoke <session-id> <p-id>        # invalidate the old URL
+  pane session list                                       # find session_id +
+                                                          #   p_id
+  pane session participant new <session-id>               # mint a new URL
+  pane session participant revoke <session-id> <p-id>     # invalidate the
+                                                          #   old URL
 
 Output: stdout is machine-readable JSON.`;
 
@@ -49,7 +59,7 @@ async function runParticipantNew(args: ParsedArgs): Promise<void> {
   const sessionId = args.positionals[1];
   if (!sessionId) {
     fail(
-      "missing <session-id> — usage: pane participant new <session-id>",
+      "missing <session-id> — usage: pane session participant new <session-id>",
       "invalid_args",
     );
   }
@@ -68,7 +78,7 @@ async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
   const participantId = args.positionals[2];
   if (!sessionId || !participantId) {
     fail(
-      "missing arguments — usage: pane participant revoke <session-id> <participant-id>",
+      "missing arguments — usage: pane session participant revoke <session-id> <participant-id>",
       "invalid_args",
     );
   }
@@ -87,8 +97,10 @@ async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
 }
 
 export async function runParticipant(args: ParsedArgs): Promise<void> {
-  const sub = args.positionals[0];
-  switch (sub) {
+  // positionals[0] is the literal "participant" marker; positionals[1] is
+  // the verb (new | revoke); positionals[2..] are the verb's args.
+  const verb = args.positionals[0];
+  switch (verb) {
     case "new":
       await runParticipantNew(args);
       break;
@@ -97,13 +109,13 @@ export async function runParticipant(args: ParsedArgs): Promise<void> {
       break;
     case undefined:
       fail(
-        "missing subcommand — usage: pane participant <new|revoke> (run 'pane participant --help')",
+        "missing verb — usage: pane session participant <new|revoke> (run 'pane session participant --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown participant subcommand '${sub}' — expected new|revoke (run 'pane participant --help')`,
+        `unknown participant verb '${verb}' — expected new|revoke (run 'pane session participant --help')`,
         "invalid_args",
       );
   }

@@ -1,13 +1,13 @@
-// `pane state <id>` — snapshot of a session, optionally long-polled.
+// `pane session show <id>` — snapshot of a session, optionally long-polled.
 
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-export const stateHelp = `pane state — show a session's metadata and event log
+export const stateHelp = `pane session show — show a session's metadata and event log
 
 Usage:
-  pane state <session-id> [options]
+  pane session show <session-id> [options]
 
 By default non-blocking: fetches session metadata (GET /v1/sessions/:id) plus
 the event log (GET /v1/sessions/:id/events) and prints them together.
@@ -16,8 +16,8 @@ With --wait, blocks at the relay for up to <secs> if no new events are
 available since the cursor — returns as soon as something lands. Use this
 for headless polling agents that can't keep a WebSocket open (cron,
 FaaS, slow links): poll, then re-poll using next_cursor as --since on the
-next call. Compared to 'pane watch', it's higher latency per round-trip
-but no long-lived connection.
+next call. Compared to 'pane session watch', it's higher latency per
+round-trip but no long-lived connection.
 
 Options:
   --since <cursor>    Only return events after this opaque cursor. Pass

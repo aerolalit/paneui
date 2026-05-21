@@ -51,7 +51,7 @@ afterEach(() => {
 
 describe("runConfig", () => {
   it("reports source 'none' when nothing is configured", async () => {
-    await runConfig(argv([]));
+    await runConfig(argv(["show"]));
     const out = JSON.parse(stdout);
     expect(out).toEqual({
       url: null,
@@ -67,7 +67,7 @@ describe("runConfig", () => {
       url: "https://stored.test",
       apiKey: "pk_storedsecret_abcdef",
     });
-    await runConfig(argv([]));
+    await runConfig(argv(["show"]));
     const out = JSON.parse(stdout);
     expect(out.url).toBe("https://stored.test");
     expect(out.url_source).toBe("store");
@@ -77,7 +77,7 @@ describe("runConfig", () => {
   it("reports source 'env' when env vars are set", async () => {
     process.env.PANE_URL = "https://env.test";
     process.env.PANE_API_KEY = "pk_envsecret_value";
-    await runConfig(argv([]));
+    await runConfig(argv(["show"]));
     const out = JSON.parse(stdout);
     expect(out.url_source).toBe("env");
     expect(out.key_source).toBe("env");
@@ -88,7 +88,13 @@ describe("runConfig", () => {
     process.env.PANE_URL = "https://env.test";
     process.env.PANE_API_KEY = "pk_env";
     await runConfig(
-      argv(["--url", "https://flag.test", "--api-key", "pk_flagsecret"]),
+      argv([
+        "show",
+        "--url",
+        "https://flag.test",
+        "--api-key",
+        "pk_flagsecret",
+      ]),
     );
     const out = JSON.parse(stdout);
     expect(out.url).toBe("https://flag.test");
@@ -99,7 +105,7 @@ describe("runConfig", () => {
   it("never prints the full API key — only a masked prefix", async () => {
     const fullKey = "pk_thisisaverylongsecretkey_DO_NOT_LEAK_1234567890";
     writeStore({ url: "https://stored.test", apiKey: fullKey });
-    await runConfig(argv([]));
+    await runConfig(argv(["show"]));
     expect(stdout).not.toContain(fullKey);
     expect(stdout).not.toContain("DO_NOT_LEAK");
     const out = JSON.parse(stdout);

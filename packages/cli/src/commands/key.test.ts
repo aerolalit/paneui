@@ -1,4 +1,4 @@
-// Tests for `pane keys` — subcommand dispatch, key display, revoke guard.
+// Tests for `pane key` — verb dispatch, key display, revoke guard.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -26,7 +26,7 @@ vi.mock("../config.js", () => ({
   makeClient: () => fakeClient,
 }));
 
-import { runKeys } from "./keys.js";
+import { runKey } from "./key.js";
 import { parseArgs } from "../argv.js";
 
 const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
@@ -64,28 +64,28 @@ afterEach(() => {
 
 async function run(tokens: string[]): Promise<void> {
   try {
-    await runKeys(argv(tokens));
+    await runKey(argv(tokens));
   } catch (e) {
     if (!(e instanceof Error && e.message.startsWith("__exit_"))) throw e;
   }
 }
 
-describe("runKeys dispatch", () => {
-  it("rejects a missing subcommand", async () => {
+describe("runKey dispatch", () => {
+  it("rejects a missing verb", async () => {
     await run([]);
     expect(exitCode).toBe(1);
     expect(JSON.parse(stderr).error.code).toBe("invalid_args");
-    expect(stderr).toContain("missing subcommand");
+    expect(stderr).toContain("missing verb");
   });
 
-  it("rejects an unknown subcommand", async () => {
+  it("rejects an unknown verb", async () => {
     await run(["frobnicate"]);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("unknown keys subcommand");
+    expect(stderr).toContain("unknown key verb");
   });
 });
 
-describe("keys list", () => {
+describe("key list", () => {
   it("prints the caller's own key info", async () => {
     await run(["list"]);
     expect(calls).toHaveLength(1);
@@ -94,7 +94,7 @@ describe("keys list", () => {
   });
 });
 
-describe("keys revoke", () => {
+describe("key revoke", () => {
   it("refuses without --yes and does not call the relay", async () => {
     await run(["revoke"]);
     expect(exitCode).toBe(1);

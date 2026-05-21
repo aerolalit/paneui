@@ -330,6 +330,67 @@ describe("PaneClient artifact operations", () => {
   });
 });
 
+describe("PaneClient.createSession", () => {
+  // Body-capturing helper, scoped to this describe — the key+delete describe
+  // below only captures method/url and would miss the body-passthrough
+  // contract this block exists to pin.
+  function capturingClient(body: string, status = 201) {
+    let seen: { method: string; url: string; body: unknown } | undefined;
+    const c = clientWith(async (url, init) => {
+      seen = {
+        method: (init?.method as string) ?? "GET",
+        url: String(url),
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+      };
+      return res({ status, body });
+    });
+    return { c, seen: () => seen! };
+  }
+
+  it("POSTs /v1/sessions with the title field on the body", async () => {
+    // Regression for the docker-smoke finding on PR #166: createSession built
+    // its POST body from an explicit allowlist (artifact, input_data,
+    // participants, ttl, metadata, callback) and silently dropped `title`.
+    // Inline-form sessions then failed at the relay with "title is required"
+    // because the relay only falls back to Artifact.name on the reference
+    // form, and the inline form never has a name. Pin `title` into the body
+    // so `pane session create --artifact <inline> --title <t>` stops 4xx-ing.
+    const { c, seen } = capturingClient(
+      JSON.stringify({
+        session_id: "ses_1",
+        urls: { humans: ["https://r/s/abc"] },
+        tokens: { agent: "t_agent", humans: ["t_h"] },
+        expires_at: "2026-01-01T01:00:00.000Z",
+      }),
+    );
+    await c.createSession({
+      artifact: { type: "html-inline", source: "<html></html>" },
+      title: "Quick poll",
+    });
+    expect(seen().method).toBe("POST");
+    expect(seen().url).toBe("https://relay.test/v1/sessions");
+    expect(seen().body).toMatchObject({ title: "Quick poll" });
+  });
+
+  it("omits title from the body when the caller didn't pass one", async () => {
+    // Reference-form sessions (--artifact-id) are allowed to omit title;
+    // the relay falls back to Artifact.name. We must not silently inject a
+    // string here — undefined stays undefined on the wire.
+    const { c, seen } = capturingClient(
+      JSON.stringify({
+        session_id: "ses_1",
+        urls: { humans: ["https://r/s/abc"] },
+        tokens: { agent: "t_agent", humans: ["t_h"] },
+        expires_at: "2026-01-01T01:00:00.000Z",
+      }),
+    );
+    await c.createSession({
+      artifact: { id: "pr-review" },
+    });
+    expect(seen().body).not.toHaveProperty("title");
+  });
+});
+
 describe("PaneClient key + session-delete operations", () => {
   /** Capture the request method/path of a single call. */
   function capturingClient(opts: { status: number; body?: string }) {

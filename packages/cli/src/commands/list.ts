@@ -1,24 +1,24 @@
-// `pane list` — enumerate YOUR agent's sessions.
+// `pane session list` — enumerate YOUR agent's sessions.
 //
 // The recovery primitive when the create-response was dropped: the URL itself
 // is unrecoverable (the relay stores only the token hash), but every other
 // field of the session is intact and listable here. Pair with
-// `pane participant new` to mint a fresh URL on a session whose original was
-// lost.
+// `pane session participant new` to mint a fresh URL on a session whose
+// original was lost.
 
 import type { ListSessionsStatus } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-export const listHelp = `pane list — list YOUR agent's sessions
+export const listHelp = `pane session list — list YOUR agent's sessions
 
 Prints sessions (newest first) with no secrets in the response. Participant
 tokens are stored hashed and CANNOT be recovered — if you lost a session URL,
-mint a fresh one with 'pane participant new <session-id>'.
+mint a fresh one with 'pane session participant new <session-id>'.
 
 Usage:
-  pane list [options]
+  pane session list [options]
 
 Options:
   --status <s>      open | closed | all. Default: open. The status reported
@@ -35,12 +35,13 @@ Options:
   -h, --help        Show this help.
 
 Recovery recipe (lost the URL but the session is still alive):
-  pane list                                       # find the session_id and
-                                                  #   participant_id you lost
-  pane participant new <session-id>               # mint a fresh URL —
-                                                  #   the old one is still
-                                                  #   valid until you revoke
-  pane participant revoke <session-id> <p-id>     # invalidate the old URL
+  pane session list                                       # find the
+                                                          #   session_id +
+                                                          #   participant_id
+                                                          #   you lost
+  pane session participant new <session-id>               # mint a fresh URL
+  pane session participant revoke <session-id> <p-id>     # invalidate the
+                                                          #   old URL
 
 Output (stdout, JSON):
   {

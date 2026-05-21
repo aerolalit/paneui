@@ -102,7 +102,7 @@ async function run(tokens: string[]): Promise<void> {
 describe("runSkill", () => {
   it("GETs <relay>/skills/pane/SKILL.md and writes the body to stdout", async () => {
     stubFetch({ status: 200, body: "# pane\n\nbody\n" });
-    await run([]);
+    await run(["show"]);
     expect(exitCode).toBeUndefined();
     expect(lastFetchUrl).toBe("https://relay.test/skills/pane/SKILL.md");
     expect(stdout).toBe("# pane\n\nbody\n");
@@ -113,7 +113,7 @@ describe("runSkill", () => {
     // header is informational here, but we still send it so a relay's
     // access log can see which CLI versions are reading the skill.
     stubFetch({ status: 200, body: "ok\n" });
-    await run([]);
+    await run(["show"]);
     const headers = lastFetchInit?.headers as
       | Record<string, string>
       | undefined;
@@ -124,13 +124,13 @@ describe("runSkill", () => {
     // Cat-friendly: piping into another tool should always see a clean line
     // boundary. A trailing newline already present is preserved as-is.
     stubFetch({ status: 200, body: "no trailing newline" });
-    await run([]);
+    await run(["show"]);
     expect(stdout).toBe("no trailing newline\n");
   });
 
   it("does NOT add a second newline when the body already ends in one", async () => {
     stubFetch({ status: 200, body: "ends with newline\n" });
-    await run([]);
+    await run(["show"]);
     expect(stdout).toBe("ends with newline\n");
   });
 
@@ -138,7 +138,7 @@ describe("runSkill", () => {
     // The skill route is optional in principle — surface the relay's
     // status + body snippet rather than just "command failed".
     stubFetch({ status: 404, body: "not found" });
-    await run([]);
+    await run(["show"]);
     expect(exitCode).toBe(1);
     const err = JSON.parse(stderr).error as { code: string; message: string };
     expect(err.code).toBe("relay_error");
@@ -151,7 +151,7 @@ describe("runSkill", () => {
 
   it("exits non-zero with fetch_error when the relay is unreachable", async () => {
     stubFetch("throw");
-    await run([]);
+    await run(["show"]);
     expect(exitCode).toBe(1);
     const err = JSON.parse(stderr).error as { code: string; message: string };
     expect(err.code).toBe("fetch_error");
@@ -229,13 +229,22 @@ describe("runSkill — version subcommand", () => {
     expect(err.code).toBe("fetch_error");
   });
 
-  it("rejects an unknown subcommand with invalid_args", async () => {
-    // Future-proofs the subcommand dispatch: typos shouldn't silently
-    // fall through to the default fetch.
+  it("rejects an unknown verb with invalid_args", async () => {
+    // Future-proofs the verb dispatch: typos shouldn't silently fall through.
     await run(["nope"]);
     expect(exitCode).toBe(1);
     const err = JSON.parse(stderr).error as { code: string; message: string };
     expect(err.code).toBe("invalid_args");
-    expect(err.message).toContain("unknown skill subcommand");
+    expect(err.message).toContain("unknown skill verb");
+  });
+
+  it("rejects a missing verb with invalid_args", async () => {
+    // Bare `pane skill` is no longer an implicit fetch — the verb is now
+    // explicit (`show` vs `version`) so a typo doesn't mask intent.
+    await run([]);
+    expect(exitCode).toBe(1);
+    const err = JSON.parse(stderr).error as { code: string; message: string };
+    expect(err.code).toBe("invalid_args");
+    expect(err.message).toContain("missing verb");
   });
 });

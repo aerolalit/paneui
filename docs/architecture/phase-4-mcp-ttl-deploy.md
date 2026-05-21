@@ -8,7 +8,7 @@ In:
   client wrapper.
 - The npm-workspaces monorepo layout (`@paneui/core`, `@paneui/relay`, `@paneui/cli`).
 - The Dockerfile + `.dockerignore` + single-container deploy story.
-- The `claudeclaw` dogfood: wiring `pane watch` into a real claw instance and
+- The `claudeclaw` dogfood: wiring `pane session watch` into a real claw instance and
   doing one genuine round trip.
 - The hosted-lite demo instance.
 - README polish + the 30-second demo clip + flipping the repo public + MIT license.
@@ -91,7 +91,7 @@ the three operations) now lives in `@paneui/core` and is reused unchanged.
 
 Four commands.
 
-**`pane create`** — wraps `POST /v1/sessions`. Flags for the artifact, schema,
+**`pane session create`** — wraps `POST /v1/sessions`. Flags for the artifact, schema,
 TTL, participant count, metadata, and webhook callback. `--artifact` and
 `--schema` (and `--metadata` / `--callback`) accept either a file path or an
 inline literal — inline JSON for the structured ones, inline HTML for the
@@ -99,17 +99,17 @@ artifact body. Prints `{ session_id, urls, tokens, expires_at }`. The caller
 delivers `urls.humans` to the human(s) over its own channel (Telegram, Slack,
 email); `tokens.agent` is the bearer for the WS stream.
 
-**`pane state <id>`** — non-blocking. Fetches session metadata
+**`pane session show <id>`** — non-blocking. Fetches session metadata
 (`GET /v1/sessions/:id`) plus the event log (`GET /v1/sessions/:id/events`,
 optionally `--since <cursor>`) and prints `{ meta, events, next_cursor }`. For
 agents that don't want to hold a connection open.
 
-**`pane send <id>`** — `POST`s an agent event (`--type` + `--data`, with
+**`pane session send <id>`** — `POST`s an agent event (`--type` + `--data`, with
 optional `--causation-id` / `--idempotency-key`) into the session. The relay
 stamps the author from the API key; identity cannot be spoofed, and the event
 type must exist in the schema with `agent` in its `emittedBy`.
 
-**`pane watch <id>`** — long-lived. Holds a WebSocket via `@paneui/core`'s
+**`pane session watch <id>`** — long-lived. Holds a WebSocket via `@paneui/core`'s
 `openStream` (replay-on-connect, then live). Prints **one compact JSON object
 per line** to stdout, flushing after each. On session close it prints a final
 `{"type":"_closed"}` line and exits 0. Flags:
@@ -121,21 +121,21 @@ This JSON-lines stdout is the core contract. In v1, "submit" is not magic; the
 agent tells `watch` which event type to wait for (`--type review.submitted`).
 The artifact's schema declares what that type is.
 
-### `pane watch` → Claude Code Monitor / any pipe-reader
+### `pane session watch` → Claude Code Monitor / any pipe-reader
 
-`pane watch` is built to be a monitored subprocess. The general pattern: run
-`pane watch <id> --type <terminal-event>` as a long-running process; a
+`pane session watch` is built to be a monitored subprocess. The general pattern: run
+`pane session watch <id> --type <terminal-event>` as a long-running process; a
 supervising harness re-invokes the model (or runs the next step) when the
 matching line lands on stdout, because the process exits 0 at that point.
 
-- **Claude Code Monitor tool**: launch `pane watch <id> --type form.submitted`
+- **Claude Code Monitor tool**: launch `pane session watch <id> --type form.submitted`
   as a monitored process. When the human submits, the line is printed, the
   process exits 0, and the harness wakes the model with the event payload.
-- **Shell**: `pane watch <id> | while read -r line; do ...; done` — react to
+- **Shell**: `pane session watch <id> | while read -r line; do ...; done` — react to
   every event as it arrives.
-- **`jq`**: `pane watch <id> | jq -c 'select(.type=="comment.added")'`.
+- **`jq`**: `pane session watch <id> | jq -c 'select(.type=="comment.added")'`.
 - **Polling alternative**: where a held connection is awkward, loop
-  `pane state <id> --since <cursor>` instead.
+  `pane session show <id> --since <cursor>` instead.
 
 ### CLI config & errors
 
@@ -194,9 +194,9 @@ Wire `pane` into one `claudeclaw` instance, pointed at a locally-running relay
 needs Lalit to pick from options or review something richer than text. The claw
 builds an HTML artifact + schema (e.g. one event type `review.commentAdded`
 from `["page","agent"]` and one `review.submitted` from `["page"]`), runs
-`pane create`, sends Lalit the URL over the existing Telegram channel, then runs
-`pane watch <id> --type review.submitted` as a monitored process and acts on
-the resulting event when the process exits. Bonus: the claw can `pane send` into
+`pane session create`, sends Lalit the URL over the existing Telegram channel, then runs
+`pane session watch <id> --type review.submitted` as a monitored process and acts on
+the resulting event when the process exits. Bonus: the claw can `pane session send` into
 the same session to reply to Lalit's comments live; the schema's
 `emittedBy: ["page", "agent"]` is what makes that possible.
 
@@ -219,19 +219,19 @@ may change or disappear."
   `npm run build` / `npm run typecheck` are clean for all three; `npm test`
   runs the relay suite green.
 - **Sweeper**: create a session with `--ttl 2`, wait past one sweep interval →
-  the session row and its events / participants are gone; `pane state` during
+  the session row and its events / participants are gone; `pane session show` during
   the gap reports `status: "closed"`.
-- **CLI**: against a running relay, `pane create` returns `urls.humans`; a human
-  opens one and emits a `review.submitted` event; `pane watch <id> --type
-  review.submitted` prints the event as a JSON line and exits 0. `pane state`
-  returns the same state without blocking. `pane send` emits an agent event.
+- **CLI**: against a running relay, `pane session create` returns `urls.humans`; a human
+  opens one and emits a `review.submitted` event; `pane session watch <id> --type
+  review.submitted` prints the event as a JSON line and exits 0. `pane session show`
+  returns the same state without blocking. `pane session send` emits an agent event.
 - **Docker**: `docker build -f packages/relay/Dockerfile -t pane .` then
   `docker run` with the documented env → relay up, migrations applied,
   `GET /healthz` → 200, a full session round-trip works against the container.
   After `docker restart`, prior data is still there (the volume).
 - **claudeclaw**: one real round trip where Lalit answers via the UI and the
   claw acts on the resulting event. Bonus: the claw replies live to one of
-  Lalit's comments via `pane send`.
+  Lalit's comments via `pane session send`.
 - **hosted-lite**: a second machine (or a stranger) can `POST /v1/register`
   (open, no secret), get a key, create a session, complete it, with
   zero involvement from Lalit.
