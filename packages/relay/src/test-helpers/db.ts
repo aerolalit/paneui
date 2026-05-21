@@ -218,6 +218,11 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.feedback.deleteMany();
         await p.event.deleteMany();
         await p.participant.deleteMany();
+        // Blobs FK agent with ON DELETE RESTRICT (an agent cannot be deleted
+        // while it still owns blobs) — must go before the agent purge. Blobs
+        // also FK session + artifact (ON DELETE CASCADE), so per-table order
+        // for those doesn't matter for the blob rows themselves.
+        await p.blob.deleteMany();
         await p.session.deleteMany();
         await p.artifactVersion.deleteMany();
         await p.artifact.deleteMany();
@@ -253,7 +258,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "feedback", "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "blobs", "feedback", "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

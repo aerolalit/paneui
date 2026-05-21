@@ -171,6 +171,74 @@ export const errors = {
       DOCS.schema,
     ),
 
+  // Distinct from `not_found` so an agent can branch on the kind of missing
+  // resource (a blob lookup typically follows a known blob_id, so a 404 here
+  // means the agent guessed wrong or the blob was deleted).
+  blobNotFound: () =>
+    new ApiError(
+      404,
+      "blob_not_found",
+      undefined,
+      undefined,
+      "the blob id is wrong, the blob was deleted, or it does not belong to the calling agent; run 'pane blob list' to find the right id",
+      false,
+      DOCS.api,
+    ),
+
+  // Server-side MIME sniff disagreed with the client's declared Content-Type.
+  // Closes the "HTML labelled as image/jpeg" attack class — the sniff result
+  // is the source of truth and the route refuses the upload here.
+  mimeMismatch: (declared: string, sniffed: string) =>
+    new ApiError(
+      415,
+      "mime_mismatch",
+      `declared Content-Type '${declared}' does not match the sniffed '${sniffed}'`,
+      { declared, sniffed },
+      "send a Content-Type that matches the file's actual format; the server validates leading bytes and refuses the upload on mismatch",
+      false,
+      DOCS.api,
+    ),
+
+  // Sniffed MIME isn't in BLOB_MIME_ALLOWLIST. Distinct from mimeMismatch so
+  // operators can tell "client lied about Content-Type" from "this format is
+  // not accepted by this relay" in the logs.
+  mimeDisallowed: (mime: string, allowlist: string[]) =>
+    new ApiError(
+      415,
+      "mime_disallowed",
+      `MIME '${mime}' is not in this relay's BLOB_MIME_ALLOWLIST`,
+      { mime, allowlist },
+      "upload a file matching one of the allowed MIME prefixes; ask the operator to widen BLOB_MIME_ALLOWLIST if a missing prefix is legitimate",
+      false,
+      DOCS.api,
+    ),
+
+  // Per-blob size cap exceeded. Distinct hint from generic payloadTooLarge so
+  // a blob caller doesn't go hunting for MAX_ARTIFACT_BYTES / MAX_TASTE_BYTES.
+  blobSizeExceeded: (maxBytes: number) =>
+    new ApiError(
+      413,
+      "blob_size_exceeded",
+      `blob exceeds the per-blob cap of ${maxBytes} bytes`,
+      { max_bytes: maxBytes },
+      "downscale or compress the blob to fit; for images, the client SDK does this automatically (max dimension + JPEG quality)",
+      false,
+      DOCS.api,
+    ),
+
+  // Per-scope aggregate quota exceeded (per-agent, per-session, or
+  // per-artifact). `scope` carries which one.
+  quotaExceeded: (scope: "agent" | "session" | "artifact", maxBytes: number) =>
+    new ApiError(
+      413,
+      "quota_exceeded",
+      `${scope} blob quota of ${maxBytes} bytes reached`,
+      { scope, max_bytes: maxBytes },
+      "delete unused blobs in this scope and retry, or ask the operator to widen the configured quota",
+      false,
+      DOCS.api,
+    ),
+
   // Returned when an /v1/* request arrives with `x-pane-cli-version` lower
   // than the relay's MIN_CLI_VERSION. The 426 status is the HTTP-spec
   // "Upgrade Required". `details` carries both versions so the CLI can

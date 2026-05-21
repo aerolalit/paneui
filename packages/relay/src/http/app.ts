@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { ZodError } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
+import type { BlobStore } from "../blobs/index.js";
 import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
@@ -16,6 +17,7 @@ import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
+import blobs from "./routes/blobs.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -34,6 +36,7 @@ export function buildApp(
   config: Config,
   prisma: PrismaClient,
   generalLimiter?: SlidingWindowLimiter,
+  blobStore?: BlobStore,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -58,6 +61,7 @@ export function buildApp(
     c.set("prisma", prisma);
     c.set("registerLimiter", registerLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
+    if (blobStore) c.set("blobStore", blobStore);
     await next();
   });
 
@@ -141,13 +145,15 @@ export function buildApp(
   app.route("/skills", skill);
 
   // Global request-body size cap. Routes parse JSON bodies with c.req.json();
-  // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES) are only
-  // checked AFTER a full parse, so without this an oversized body is buffered
-  // and JSON.parse'd in memory before being rejected — a trivial OOM DoS. This
-  // ceiling sits a little above MAX_ARTIFACT_BYTES (the largest legitimate
-  // body) to leave room for JSON envelope/escaping overhead. The tighter
-  // /events limit is applied on that route below.
-  const globalBodyLimit = config.MAX_ARTIFACT_BYTES + 256 * 1024;
+  // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES,
+  // MAX_BLOB_BYTES) are only checked AFTER a full parse, so without this an
+  // oversized body is buffered and JSON.parse'd in memory before being
+  // rejected — a trivial OOM DoS. This ceiling sits a little above the
+  // largest legitimate body (max of artifacts and blob uploads) to leave room
+  // for JSON envelope / multipart boundary overhead. The tighter /events
+  // limit is applied on that route below.
+  const globalBodyLimit =
+    Math.max(config.MAX_ARTIFACT_BYTES, config.MAX_BLOB_BYTES) + 256 * 1024;
   app.use(
     "/v1/*",
     bodyLimit({
@@ -197,6 +203,7 @@ export function buildApp(
   app.route("/v1/keys", keys);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
+  app.route("/v1/blobs", blobs);
   app.route("/s", bridge);
 
   return app;

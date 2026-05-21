@@ -16,6 +16,7 @@ import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { createRateLimiter } from "./http/rate-limit.js";
+import { makeBlobStore } from "./blobs/index.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
@@ -125,7 +126,13 @@ async function main(): Promise<void> {
     config.RATE_LIMIT_WINDOW_SECONDS * 1000,
   );
 
-  const app = buildApp(config, prisma, generalLimiter);
+  // Construct the configured BlobStore. Filesystem self-host validates +
+  // creates BLOB_STORE_FS_DIR and refuses to start if it's world-readable;
+  // azure is wired in PR feat/blobs-azure-sas and throws here for now.
+  const blobStore = await makeBlobStore(config);
+  log.info("blob store ready", { backend: config.BLOB_STORE });
+
+  const app = buildApp(config, prisma, generalLimiter, blobStore);
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     log.info("listening", { port: info.port, publicUrl: config.publicUrl });

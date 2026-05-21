@@ -82,6 +82,66 @@ const schema = z.object({
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  // ------------------------------------------------------------------
+  // Blob attachments (v0.1.0)
+  // ------------------------------------------------------------------
+  // Selects the BlobStore implementation. "filesystem" is the zero-config
+  // self-host default (single-VM only — does not work behind a multi-replica
+  // autoscaler). "azure" requires the @azure/storage-blob runtime and is
+  // gated behind this setting so a filesystem self-host never loads the SDK.
+  // Other backends (s3, r2, gcs) are not implemented in v0.1.0 — see #152.
+  BLOB_STORE: z.enum(["filesystem", "azure"]).default("filesystem"),
+
+  // Per-blob upload size cap. 5 MB covers any reasonable image or short PDF
+  // and bounds the cost of being wrong about a single blob. Raise per-relay
+  // if needed; lower is the right v0.1.0 default.
+  MAX_BLOB_BYTES: z.coerce.number().int().positive().default(5_000_000),
+
+  // Per-session aggregate cap on attached blobs. 100 MB ≈ 20 max-size blobs.
+  MAX_BLOBS_PER_SESSION_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(100_000_000),
+
+  // Per-agent aggregate cap (across all of the agent's blobs in every scope).
+  // 500 MB ≈ 100 max-size blobs. LRU eviction kicks in at this ceiling in a
+  // later PR (#152 hardening section); v0.0-foundation just rejects at the cap.
+  MAX_BLOBS_PER_AGENT_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(500_000_000),
+
+  // Per-artifact aggregate cap (icons / fonts / static assets a UI needs to
+  // render). Smaller than session by design — artifact assets should be
+  // lightweight.
+  MAX_BLOBS_PER_ARTIFACT_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50_000_000),
+
+  // Filesystem backend root directory. Created on boot if missing; the relay
+  // refuses to start if it exists with world-readable permissions (mode bits
+  // & 0o007 !== 0). Files inside are written 0600.
+  BLOB_STORE_FS_DIR: z.string().default("./data/blobs"),
+
+  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
+  // covers images and PDFs. Comma-separated for the env var; an empty string
+  // disables the allowlist (every sniffed MIME is accepted — only sensible
+  // for closed self-host).
+  BLOB_MIME_ALLOWLIST: z
+    .string()
+    .default("image/,application/pdf")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+    ),
+
   // Lowest @paneui/cli version this relay accepts. When a /v1/* request
   // arrives with `x-pane-cli-version` set to a strictly-lower semver, the
   // relay responds with 426 cli_upgrade_required and the CLI prints an
