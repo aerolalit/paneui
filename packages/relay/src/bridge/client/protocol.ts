@@ -23,7 +23,11 @@ export type PaneFrameMarker = 1;
 export type PaneProtocolVersion = 1;
 
 /** Frame kinds the shim sends to the shell (iframe -> shell). */
-export type ShimToShellKind = "ready" | "emit" | "upload-blob-request";
+export type ShimToShellKind =
+  | "ready"
+  | "emit"
+  | "upload-blob-request"
+  | "download-blob-request";
 
 /** Frame kinds the shell sends to the shim (shell -> iframe). */
 export type ShellToShimKind =
@@ -31,7 +35,8 @@ export type ShellToShimKind =
   | "event"
   | "ack"
   | "error"
-  | "upload-blob-result";
+  | "upload-blob-result"
+  | "download-blob-result";
 
 /**
  * The envelope every Pane protocol frame carries. Concrete frame types in each
@@ -108,6 +113,41 @@ export type UploadBlobResultFrame = {
   id: string;
 } & (
   | { ok: true; blob: BlobRefLike }
+  | { ok: false; error: { code: string; message: string } }
+);
+
+/**
+ * The shape of a `download-blob-request` frame the shim posts to the shell.
+ * The shell brokers a `GET /s/:participantToken/blobs/:blob_id` fetch on
+ * the iframe's behalf and posts the bytes back as a `Blob` (structured-
+ * cloneable across postMessage, same as `File` in the upload direction).
+ *
+ * Follow-up D of #156 — the symmetric counterpart to UploadBlobRequestFrame.
+ */
+export interface DownloadBlobRequestFrame {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "download-blob-request";
+  /** RPC correlation id — the shim's resolver matches against this. */
+  id: string;
+  /** The blob id to fetch. Must be referenced from this session. */
+  blob_id: string;
+}
+
+/**
+ * The shape of the shell's reply. Discriminated by `ok` (matches the
+ * upload-blob-result frame's pattern). On success, the iframe receives a
+ * live `Blob` it can hand to `URL.createObjectURL()` and set as `img.src`
+ * — the iframe's CSP allows `blob:` URLs in `img-src`.
+ */
+export type DownloadBlobResultFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "download-blob-result";
+  /** Matches the request's `id`. */
+  id: string;
+} & (
+  | { ok: true; blob: Blob; mime: string; size: number }
   | { ok: false; error: { code: string; message: string } }
 );
 

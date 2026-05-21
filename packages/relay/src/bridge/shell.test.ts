@@ -285,3 +285,202 @@ describe("shell — upload-blob-request handler", () => {
     expect(uploadCalls).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// shell — download-blob-request handler (follow-up D of #156). Symmetric to
+// the upload handler tests above; the shell brokers a GET to /s/:token/blobs/
+// :blob_id and posts the resulting Blob back to the iframe via structured
+// clone.
+// ===========================================================================
+
+describe("shell — download-blob-request handler", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let iframePostSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    bootShell();
+    fetchSpy = vi.fn();
+    (window as unknown as { fetch: typeof fetchSpy }).fetch = fetchSpy;
+    const iframe = document.getElementById("frame") as HTMLIFrameElement;
+    const cw = iframe.contentWindow!;
+    iframePostSpy = vi.fn();
+    (cw as unknown as { postMessage: typeof iframePostSpy }).postMessage =
+      iframePostSpy;
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function dispatchFromIframe(data: unknown): void {
+    const iframe = document.getElementById("frame") as HTMLIFrameElement;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow as Window,
+      }),
+    );
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    for (let i = 0; i < 8; i++) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  }
+
+  it("posts download-blob-result ok:true with a Blob on 2xx", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/blobs/")) {
+        return new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "content-type": "image/jpeg" },
+        });
+      }
+      return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-request",
+      id: "d1",
+      blob_id: "blob_abc",
+    });
+
+    await flushMicrotasks();
+
+    const downloadCall = fetchSpy.mock.calls.find(
+      (c) =>
+        typeof c[0] === "string" &&
+        (c[0] as string).includes("/blobs/blob_abc"),
+    );
+    expect(downloadCall).toBeTruthy();
+    expect(downloadCall![0] as string).toContain("/s/");
+    // cache: 'no-store' is set on the fetch options.
+    expect((downloadCall![1] as RequestInit).cache).toBe("no-store");
+
+    const reply = iframePostSpy.mock.calls.find(
+      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+    );
+    expect(reply).toBeTruthy();
+    const payload = reply![0] as {
+      kind: string;
+      id: string;
+      ok: boolean;
+      blob: Blob;
+      mime: string;
+      size: number;
+    };
+    expect(payload).toMatchObject({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-result",
+      id: "d1",
+      ok: true,
+    });
+    expect(payload.blob).toBeInstanceOf(Blob);
+    expect(payload.blob.type).toBe("image/jpeg");
+    expect(payload.size).toBe(4);
+  });
+
+  it("posts ok:false with the relay's error code on a 4xx response", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/blobs/")) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "blob_ref_not_accessible",
+              message: "blob ref(s) not accessible: blob_abc",
+            },
+          }),
+          {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-request",
+      id: "d2",
+      blob_id: "blob_abc",
+    });
+    await flushMicrotasks();
+
+    const reply = iframePostSpy.mock.calls.find(
+      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+    );
+    expect(reply).toBeTruthy();
+    expect(reply![0]).toMatchObject({
+      kind: "download-blob-result",
+      id: "d2",
+      ok: false,
+      error: { code: "blob_ref_not_accessible" },
+    });
+  });
+
+  it("posts ok:false with code='fetch_error' when the fetch rejects", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/blobs/")) {
+        throw new TypeError("network failed");
+      }
+      return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-request",
+      id: "d3",
+      blob_id: "blob_abc",
+    });
+    await flushMicrotasks();
+
+    const reply = iframePostSpy.mock.calls.find(
+      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+    );
+    expect(reply).toBeTruthy();
+    expect(reply![0]).toMatchObject({
+      kind: "download-blob-result",
+      id: "d3",
+      ok: false,
+      error: { code: "fetch_error" },
+    });
+  });
+
+  it("replies with invalid_request when the request lacks blob_id", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 }),
+    );
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-request",
+      id: "d4",
+      // blob_id is missing
+    });
+    await flushMicrotasks();
+
+    const reply = iframePostSpy.mock.calls.find(
+      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+    );
+    expect(reply).toBeTruthy();
+    expect(reply![0]).toMatchObject({
+      kind: "download-blob-result",
+      id: "d4",
+      ok: false,
+      error: { code: "invalid_request" },
+    });
+
+    // No download fetch should have been made — only the ws-ticket mint.
+    const downloadCalls = fetchSpy.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("/blobs/"),
+    );
+    expect(downloadCalls).toHaveLength(0);
+  });
+});

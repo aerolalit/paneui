@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.2.0 -->
+<!-- pane skill v1.3.0 -->
 
 # pane
 
@@ -855,6 +855,89 @@ session, count against the AGENT's quota (not the participant), and
 run through the same MIME-sniff + polyglot-defense + EXIF-strip
 pipeline as `pane blob upload`. See `docs/CAPABILITY-URLS.md` for the
 threat model.
+
+### Lazy image fetch in a pane
+
+The reverse direction — the **agent** has an image (e.g. a chart it
+generated, an attachment downloaded from somewhere, output of an image
+pipeline) and wants the pane to render it. There are two ways:
+
+1. **Inline the bytes in the event payload as `data:image/...;base64`.**
+   Don't. The iframe CSP allows it, but: it costs 33% on base64, the
+   bytes get duplicated on disk (encrypted blob store + event row), the
+   bytes replay over WebSocket on every reconnect, and a 1 MB image
+   won't fit under `MAX_EVENT_DATA_BYTES` (default 64 KB). The whole
+   point of blob storage is to avoid this.
+
+2. **Upload as a blob, send just the `BlobRef` on the event, fetch
+   lazily in the pane.** This is the preferred shape. The pane runs
+   `await window.pane.downloadBlob(blob_id)` and gets a real browser
+   `Blob` it can render via `URL.createObjectURL(blob)`.
+
+**1. Declare the event with a blob field (same shape as uploads).**
+
+```json
+{
+  "events": {
+    "image.delivered": {
+      "emittedBy": ["agent"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+**2. Agent uploads the bytes and emits a thin event with just the BlobRef.**
+
+```sh
+# Upload — get back a BlobRef bound to the session.
+REF=$(pane blob upload ./weather-chart.png --session "$SID" --json)
+BLOB_ID=$(echo "$REF" | jq -r .blob_id)
+
+# Emit an event that only carries the id — no inline bytes.
+pane send "$SID" image.delivered --data "{\"blob\":{\"blob_id\":\"$BLOB_ID\"}}"
+```
+
+**3. Inside the artifact, lazy-fetch the bytes and render.**
+
+```html
+<img id="chart" alt="weather chart">
+<script>
+  window.pane.on("image.delivered", async (ev) => {
+    try {
+      // window.pane.downloadBlob() returns a real browser Blob. The iframe
+      // CSP allows blob: URLs in img-src, so createObjectURL is safe.
+      const blob = await window.pane.downloadBlob(ev.data.blob.blob_id);
+      document.getElementById("chart").src = URL.createObjectURL(blob);
+    } catch (e) {
+      // e.code is the relay's error code (e.g. "blob_ref_not_accessible",
+      // "participant_token_invalid"). Branch on it to render a useful
+      // fallback.
+      console.warn("could not fetch image:", e.code || e.message);
+    }
+  });
+</script>
+```
+
+The shell brokers the fetch with the participant token; the bytes are
+decrypted by the relay (when `BLOB_ENCRYPT_AT_REST` is on) and arrive
+as a fresh Blob the iframe can render. **The blob must be referenced
+from this session** — either via an event the agent emitted or via the
+session's initial `inputData`. A participant token cannot enumerate
+arbitrary blobs the agent owns. See `docs/CAPABILITY-URLS.md` for the
+full trust model.
 
 ## The watch → Monitor pattern
 

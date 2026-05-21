@@ -677,6 +677,147 @@ interface SerializedEvent {
       })();
       return;
     }
+    // download-blob-request: the iframe is asking the shell to GET blob
+    // bytes by id. The shell holds the participant token (it lives only in
+    // the shell, never reaches the iframe) so the iframe cannot make this
+    // request directly. We fetch, then post the resulting Blob back via
+    // structured clone — the iframe receives a live Blob it can render
+    // with `URL.createObjectURL` (the iframe CSP allows `blob:` URLs in
+    // `img-src`). ALWAYS post a reply, even on network failure — otherwise
+    // the iframe's promise sits hanging until its 2-minute timeout.
+    // Follow-up D of #156. Symmetric to upload-blob-request.
+    if (m.kind === "download-blob-request") {
+      const downloadId =
+        typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
+          ? m.id
+          : null;
+      const blobId =
+        typeof m.blob_id === "string" &&
+        m.blob_id.length > 0 &&
+        m.blob_id.length <= 64
+          ? m.blob_id
+          : null;
+      if (!downloadId || !blobId) {
+        if (downloadId && frame && frame.contentWindow) {
+          const errFrame: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "download-blob-result",
+            id: downloadId,
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "download-blob-request requires { id, blob_id }",
+            },
+          };
+          frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
+        }
+        return;
+      }
+
+      const downloadUrl =
+        window.location.origin +
+        "/s/" +
+        encodeURIComponent(CFG.token) +
+        "/blobs/" +
+        encodeURIComponent(blobId);
+
+      // Fire the fetch in a sibling task — never await on the message
+      // listener thread so a hung relay can't block other shim frames.
+      void (async () => {
+        let res: Response;
+        try {
+          // `cache: 'no-store'` matches the route's `Cache-Control: private,
+          // no-store` — participant-token-authed bytes must never be
+          // cached by the browser.
+          res = await fetch(downloadUrl, { cache: "no-store" });
+        } catch (e) {
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "download-blob-result",
+              id: downloadId,
+              ok: false,
+              error: {
+                code: "fetch_error",
+                message:
+                  e instanceof Error ? e.message : "network request failed",
+              },
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        if (res.ok) {
+          let blobBody: Blob;
+          try {
+            blobBody = await res.blob();
+          } catch (e) {
+            if (frame && frame.contentWindow) {
+              const reply: OutboundFrame = {
+                __pane: 1,
+                v: 1,
+                kind: "download-blob-result",
+                id: downloadId,
+                ok: false,
+                error: {
+                  code: "fetch_error",
+                  message:
+                    e instanceof Error ? e.message : "could not read body",
+                },
+              };
+              frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+            }
+            return;
+          }
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "download-blob-result",
+              id: downloadId,
+              ok: true,
+              blob: blobBody,
+              mime: blobBody.type,
+              size: blobBody.size,
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        // Non-2xx — parse the standard {error: {code, message, ...}}
+        // envelope and forward so the artifact can branch on the code.
+        let code = "download_failed";
+        let message = "download failed with status " + res.status;
+        try {
+          const body = (await res.json()) as {
+            error?: { code?: unknown; message?: unknown };
+          };
+          if (body && body.error) {
+            if (typeof body.error.code === "string") code = body.error.code;
+            if (typeof body.error.message === "string")
+              message = body.error.message;
+          }
+        } catch {
+          /* response wasn't JSON — keep the synthetic message */
+        }
+        if (frame && frame.contentWindow) {
+          const reply: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "download-blob-result",
+            id: downloadId,
+            ok: false,
+            error: { code, message },
+          };
+          frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+        }
+      })();
+      return;
+    }
     if (m.kind === "emit") {
       // The shim always attaches correlation_id, so any failure path here
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s

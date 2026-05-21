@@ -101,6 +101,25 @@ as one uploaded by the agent. The participant route additionally pins
 `scope=session`, so any blob landed through it is bounded by the
 session's lifetime.
 
+### Coverage: both download routes
+
+The decrypt pipeline (envelope `parseEnvelope` + `decryptBlob` from
+`packages/relay/src/blobs/encrypt.ts`) runs on every authenticated
+read path:
+
+- **`GET /v1/blobs/:id`** — the agent-side download (agent API key).
+- **`GET /s/:participantToken/blobs/:blob_id`** — the iframe-side lazy
+  fetch used by `window.pane.downloadBlob()` (follow-up D of #156).
+
+When `BLOB_ENCRYPT_AT_REST=false` (the hosted default) the decrypt
+branch is a no-op and the stream passes through unmodified. When it's
+on, both routes decrypt with the same master key + envelope, so the
+two cannot drift on encryption-at-rest semantics.
+
+> The `/b/<token>` capability route is OUT of this guarantee — it has
+> a known defect serving raw ciphertext, tracked separately. Use it
+> only for external sharing of plaintext blobs.
+
 ## If you find a bypass
 
 If you can construct a file that:

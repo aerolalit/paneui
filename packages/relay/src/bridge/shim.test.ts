@@ -310,3 +310,148 @@ describe("pane.uploadBlob", () => {
     });
   });
 });
+
+// ===========================================================================
+// window.pane.downloadBlob — postMessage RPC to the shell. Tests the iframe
+// side in isolation: a blob_id goes out as a `download-blob-request` frame,
+// a synthetic `download-blob-result` carrying a real Blob resolves or
+// rejects the promise. Follow-up D of #156 (symmetric to uploadBlob).
+// ===========================================================================
+
+describe("pane.downloadBlob", () => {
+  let postSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    postSpy = vi.spyOn(window.parent, "postMessage");
+    freshShim();
+  });
+
+  afterEach(() => {
+    postSpy.mockRestore();
+  });
+
+  function dispatch(data: unknown): void {
+    window.dispatchEvent(new MessageEvent("message", { data, source: window }));
+  }
+
+  it("posts a download-blob-request frame carrying the blob_id and a correlation id", () => {
+    const p = window.pane.downloadBlob("blob_abc");
+    void p;
+    const last = postSpy.mock.calls.at(-1)?.[0] as {
+      kind: string;
+      id: string;
+      blob_id: string;
+    };
+    expect(last.kind).toBe("download-blob-request");
+    expect(typeof last.id).toBe("string");
+    expect(last.id.length).toBeGreaterThan(0);
+    expect(last.blob_id).toBe("blob_abc");
+  });
+
+  it("resolves with the Blob on an ok:true result", async () => {
+    const p = window.pane.downloadBlob("blob_abc");
+
+    const req = postSpy.mock.calls.at(-1)?.[0] as { id: string };
+    const fakeBlob = new Blob([new Uint8Array([1, 2, 3])], {
+      type: "image/jpeg",
+    });
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-result",
+      id: req.id,
+      ok: true,
+      blob: fakeBlob,
+      mime: "image/jpeg",
+      size: 3,
+    });
+
+    const got = await p;
+    expect(got).toBeInstanceOf(Blob);
+    expect(got.type).toBe("image/jpeg");
+    expect(got.size).toBe(3);
+  });
+
+  it("rejects with an Error carrying .code on an ok:false result", async () => {
+    const p = window.pane.downloadBlob("blob_abc");
+
+    const req = postSpy.mock.calls.at(-1)?.[0] as { id: string };
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-result",
+      id: req.id,
+      ok: false,
+      error: { code: "blob_ref_not_accessible", message: "not yours" },
+    });
+
+    await expect(p).rejects.toThrowError("not yours");
+    await p.catch((err: { code?: string }) => {
+      expect(err.code).toBe("blob_ref_not_accessible");
+    });
+  });
+
+  it("does not resolve request 1 when request 2's result arrives", async () => {
+    const p1 = window.pane.downloadBlob("blob_one");
+    const p2 = window.pane.downloadBlob("blob_two");
+
+    const calls = postSpy.mock.calls.filter(
+      (c) => (c[0] as { kind: string }).kind === "download-blob-request",
+    );
+    const req1 = calls.at(-2)?.[0] as { id: string };
+    const req2 = calls.at(-1)?.[0] as { id: string };
+    expect(req1.id).not.toBe(req2.id);
+
+    // Reply to request 2 only.
+    const blob2 = new Blob([new Uint8Array([2])], { type: "image/jpeg" });
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-result",
+      id: req2.id,
+      ok: true,
+      blob: blob2,
+      mime: "image/jpeg",
+      size: 1,
+    });
+
+    const sentinel = Symbol("pending");
+    const result = await Promise.race([
+      p1.then((v) => v as unknown),
+      new Promise((resolve) => setTimeout(() => resolve(sentinel), 0)),
+    ]);
+    expect(result).toBe(sentinel);
+    await expect(p2).resolves.toBeInstanceOf(Blob);
+
+    const blob1 = new Blob([new Uint8Array([1])], { type: "image/png" });
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-result",
+      id: req1.id,
+      ok: true,
+      blob: blob1,
+      mime: "image/png",
+      size: 1,
+    });
+    const got1 = await p1;
+    expect(got1.type).toBe("image/png");
+  });
+
+  it("rejects synchronously without posting on a non-string blob_id", async () => {
+    const callsBefore = postSpy.mock.calls.length;
+    const p = window.pane.downloadBlob(123 as unknown as string);
+    await expect(p).rejects.toThrowError(/non-empty string/);
+    await p.catch((err: { code?: string }) => {
+      expect(err.code).toBe("invalid_args");
+    });
+    expect(postSpy.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("rejects synchronously without posting on an empty blob_id", async () => {
+    const callsBefore = postSpy.mock.calls.length;
+    const p = window.pane.downloadBlob("");
+    await expect(p).rejects.toThrowError(/non-empty string/);
+    expect(postSpy.mock.calls.length).toBe(callsBefore);
+  });
+});

@@ -73,6 +73,24 @@ interface PaneApi {
    */
   uploadBlob(file: File, options?: UploadBlobOpts): Promise<BlobRefLike>;
   /**
+   * Lazily fetch a blob's bytes by id. The blob must be referenced from
+   * this session — either in the agent's initial `inputData` or in an
+   * event the agent has emitted. The shell brokers the fetch with the
+   * participant token; the iframe receives a live `Blob` it can render
+   * via `URL.createObjectURL(blob)` (the iframe CSP allows `blob:` URLs
+   * in `img-src`).
+   *
+   * Resolves with the `Blob` on success. Rejects with an `Error` whose
+   * `.code` carries the relay's error code (`blob_ref_not_accessible`,
+   * `participant_token_invalid`, `gone`, etc.) so the artifact can branch
+   * on it.
+   *
+   * Prefer this over embedding the bytes in the event data: a 1 MB image
+   * won't fit under `MAX_EVENT_DATA_BYTES`, and replayed inline bytes are
+   * sent over WS on every reconnect.
+   */
+  downloadBlob(blobId: string): Promise<Blob>;
+  /**
    * The session's per-instance seed data — the `input_data` the agent passed
    * to `POST /v1/sessions`, validated by the relay against the artifact
    * version's `input_schema`. `null` when the session was created without
@@ -94,6 +112,12 @@ interface PendingUpload {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface PendingDownload {
+  resolve: (blob: Blob) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface PaneError extends Error {
   code?: string;
   details?: unknown;
@@ -109,11 +133,13 @@ declare global {
   const handlers = new Map<string, Set<(ev: SerializedEvent) => void>>();
   const pendingEmits = new Map<string, PendingEmit>();
   const pendingUploads = new Map<string, PendingUpload>();
+  const pendingDownloads = new Map<string, PendingDownload>();
   const stateEvents: SerializedEvent[] = [];
   const stateSubscribers = new Set<() => void>();
   const lastByType = new Map<string, SerializedEvent>();
   let nextCorr = 1;
   let nextUploadId = 1;
+  let nextDownloadId = 1;
   // The session's per-instance input_data. Unknown until the 'init' frame
   // arrives (the relay validated it against the artifact version's
   // input_schema at session-create time). Exposed on the frozen `window.pane`
@@ -268,6 +294,49 @@ declare global {
     });
   }
 
+  // window.pane.downloadBlob(blob_id) — thin postMessage RPC to the shell,
+  // which holds the participant token and brokers a GET to
+  // /s/:token/blobs/:blob_id on the iframe's behalf. The browser's
+  // structured-clone of `Blob` means the shell can hand the iframe a live
+  // Blob reference (no base64 round trip). The iframe's CSP allows `blob:`
+  // URLs in `img-src`, so `URL.createObjectURL(blob)` renders cleanly.
+  //
+  // Follow-up D of #156. Symmetric to uploadBlob.
+  function downloadBlob(blobId: string): Promise<Blob> {
+    if (typeof blobId !== "string" || blobId.length === 0) {
+      // Local rejection — never post a malformed frame. Mirrors the
+      // non-File guard in uploadBlob and the relay's invalid_args surface.
+      const err: PaneError = new Error(
+        "downloadBlob: blob_id must be a non-empty string",
+      );
+      err.code = "invalid_args";
+      return Promise.reject(err);
+    }
+    const id = "d" + nextDownloadId++;
+    const frame: OutboundFrame = {
+      __pane: 1,
+      v: 1,
+      kind: "download-blob-request",
+      id,
+      blob_id: blobId,
+    };
+    parent.postMessage(frame, shellOrigin);
+    return new Promise<Blob>((resolve, reject) => {
+      const timer = setTimeout(
+        () => {
+          if (pendingDownloads.has(id)) {
+            pendingDownloads.delete(id);
+            reject(new Error("download timeout"));
+          }
+        },
+        // 2 minutes — matches uploadBlob. A multi-MB image over a flaky
+        // mobile link plus the decrypt pass should comfortably fit.
+        2 * 60 * 1000,
+      );
+      pendingDownloads.set(id, { resolve, reject, timer });
+    });
+  }
+
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== parent) return;
     const m = e.data;
@@ -341,6 +410,24 @@ declare global {
       }
       return;
     }
+    if (m.kind === "download-blob-result") {
+      const did: string | undefined = m.id;
+      if (!did || !pendingDownloads.has(did)) return;
+      const pd = pendingDownloads.get(did)!;
+      pendingDownloads.delete(did);
+      clearTimeout(pd.timer);
+      if (m.ok === true && m.blob instanceof Blob) {
+        pd.resolve(m.blob as Blob);
+      } else {
+        const errInfo = (m.error || {}) as { code?: string; message?: string };
+        const err: PaneError = new Error(
+          errInfo.message || errInfo.code || "download failed",
+        );
+        if (errInfo.code) err.code = errInfo.code;
+        pd.reject(err);
+      }
+      return;
+    }
   });
 
   // `window.pane` is frozen so the artifact can't tamper with the bridge. But
@@ -356,6 +443,7 @@ declare global {
     on,
     state,
     uploadBlob,
+    downloadBlob,
     get inputData(): unknown {
       return inputData;
     },

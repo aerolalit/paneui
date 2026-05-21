@@ -21,6 +21,7 @@ import feedback from "./routes/feedback.js";
 import blobs from "./routes/blobs.js";
 import blobBridge from "../bridge/blob-bridge.js";
 import blobUploadBridge from "../bridge/blob-upload-bridge.js";
+import blobDownloadBridge from "../bridge/blob-download-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -252,6 +253,11 @@ export function buildApp(
   // matched cleanly; the bridge module only registers GET endpoints, but
   // routing order keeps the surfaces visibly separate.
   app.route("/s", blobUploadBridge);
+  // GET /s/:participantToken/blobs/:blob_id — human-side blob download
+  // (follow-up D of #156). The symmetric counterpart to the upload bridge:
+  // the iframe lazy-fetches blob bytes referenced by events through the
+  // shell so events can carry just a BlobRef instead of inlined base64.
+  app.route("/s", blobDownloadBridge);
   app.route("/s", bridge);
   // /b/<token> — capability-URL fetch path for blob bytes. The URL token IS
   // the credential (no API key, no participant token), so the route module

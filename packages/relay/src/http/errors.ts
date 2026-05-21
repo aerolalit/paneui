@@ -304,6 +304,26 @@ export const errors = {
       DOCS.api,
     ),
 
+  // The READ-side counterpart of blobRefNotAccessible. Used by
+  // `GET /s/:participantToken/blobs/:blob_id` (follow-up D of #156): the
+  // requested blob isn't referenced from this session (or was deleted,
+  // or never existed). Same `code` so a single error branch covers both
+  // the write-time "ref dangling" surface and the read-time "ref not
+  // reachable from your token" surface; 404 here because the resource
+  // isn't found from the caller's vantage point — the request itself
+  // is structurally fine (vs the 422 write-side path, where the request
+  // body was malformed at the ref site).
+  blobRefNotAccessibleReadSide: (blobId: string) =>
+    new ApiError(
+      404,
+      "blob_ref_not_accessible",
+      `blob ref not accessible: ${blobId}`,
+      { blob_id: blobId },
+      "the participant token does not have read access to this blob_id from the current session; the blob must be referenced from this session's events or initial input_data and not be soft-deleted",
+      false,
+      DOCS.api,
+    ),
+
   // Per-scope aggregate quota exceeded (per-agent, per-session, or
   // per-artifact). `scope` carries which one.
   quotaExceeded: (scope: "agent" | "session" | "artifact", maxBytes: number) =>
