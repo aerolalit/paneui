@@ -335,3 +335,189 @@ describe("bridge content GET /s/:token/content", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// The bridge is the human-facing entry point. When a person opens a stale
+// link in a browser they should see a styled HTML page, not the JSON error
+// envelope the /v1/* API uses. Agents and curl (Accept: */*) keep getting
+// JSON so existing automation/tests don't change shape.
+describe("bridge human-facing error pages", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  const HTML_ACCEPT =
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+
+  describe("GET /s/:token", () => {
+    it("returns an HTML 404 page for an unknown token when Accept prefers HTML", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("<!doctype html>");
+      expect(body).toContain("This pane link");
+      // The failed token MUST NOT be baked into the rendered page — that
+      // would leak tokens into screenshots, logs, and bug-report copy/paste.
+      expect(body).not.toContain(bogus);
+    });
+
+    it("returns the JSON envelope for an unknown token when Accept is application/json", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}`, {
+          headers: { Accept: "application/json" },
+        }),
+      );
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("not_found");
+    });
+
+    it("returns the JSON envelope when no Accept header is sent (curl default)", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(new Request(`http://t/s/${bogus}`));
+      // fetch implementations typically default to */* — which falls through
+      // to JSON so existing CLI/agent code that never sets Accept keeps the
+      // structured envelope.
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toContain("application/json");
+    });
+
+    it("returns the JSON envelope for a malformed token regardless of Accept (when JSON), HTML otherwise", async () => {
+      const malformed = "not-a-real-token";
+      const html = await app.fetch(
+        new Request(`http://t/s/${malformed}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(html.status).toBe(404);
+      expect(html.headers.get("content-type")).toContain("text/html");
+
+      const json = await app.fetch(
+        new Request(`http://t/s/${malformed}`, {
+          headers: { Accept: "application/json" },
+        }),
+      );
+      expect(json.status).toBe(404);
+      expect(json.headers.get("content-type")).toContain("application/json");
+    });
+
+    it("inlines the brand favicon and uses a status-aware title", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      const body = await res.text();
+      // Favicon — inlined as an SVG data URI so the relay needs no static
+      // asset pipeline. The exact href is brittle; just assert the link tag
+      // and that it carries an svg+xml data URI.
+      expect(body).toMatch(
+        /<link\s+rel="icon"[^>]+href="data:image\/svg\+xml,/,
+      );
+      // Title carries the brand + the page-specific copy so the tab is
+      // identifiable when a user has many open.
+      expect(body).toMatch(/<title>Pane — Not found<\/title>/);
+    });
+
+    it("sets the same defence-in-depth security headers as the shell", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toContain("default-src 'none'");
+    });
+
+    it("renders the shell with its inline closed banner for an expired session (200, not 410)", async () => {
+      // For the /:token shell route an expired/closed session doesn't throw —
+      // loadByToken succeeds, isClosed is computed, and the shell renders a
+      // banner instead of the iframe. The /content route below is where the
+      // gone() path lives; the issue's acceptance criterion notes this
+      // asymmetry is fine as long as the two routes stay coherent.
+      const { token } = await seedSession({ expired: true });
+      const res = await app.fetch(
+        new Request(`http://t/s/${token}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain("This session is closed");
+    });
+  });
+
+  describe("GET /s/:token/content", () => {
+    it("returns an HTML 410 page for a closed session when Accept prefers HTML", async () => {
+      const { token } = await seedSession({ closed: true });
+      const res = await app.fetch(
+        new Request(`http://t/s/${token}/content`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.status).toBe(410);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("This pane has been closed");
+      expect(body).not.toContain(token);
+    });
+
+    it("returns an HTML 410 page for an expired session when Accept prefers HTML", async () => {
+      const { token } = await seedSession({ expired: true });
+      const res = await app.fetch(
+        new Request(`http://t/s/${token}/content`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.status).toBe(410);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(await res.text()).toContain("This pane has been closed");
+    });
+
+    it("returns an HTML 404 page for an unknown token's /content when Accept prefers HTML", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}/content`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(await res.text()).toContain("This pane link");
+    });
+
+    it("returns the JSON envelope for a closed session when Accept is application/json", async () => {
+      const { token } = await seedSession({ closed: true });
+      const res = await app.fetch(
+        new Request(`http://t/s/${token}/content`, {
+          headers: { Accept: "application/json" },
+        }),
+      );
+      expect(res.status).toBe(410);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("gone");
+    });
+
+    it("returns the JSON envelope for an unknown token's /content with no Accept header", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(new Request(`http://t/s/${bogus}/content`));
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toContain("application/json");
+    });
+  });
+});
