@@ -76,6 +76,45 @@ describe("sniffMime — audio formats", () => {
   });
 });
 
+describe("sniffMime — video formats", () => {
+  it("detects MP4 via ftyp box + isom brand", () => {
+    const buf = new Uint8Array(12);
+    buf.set([0x00, 0x00, 0x00, 0x20], 0); // size (ignored by sniff)
+    buf.set(bytes("ftyp"), 4);
+    buf.set(bytes("isom"), 8);
+    expect(sniffMime(buf)).toBe("video/mp4");
+  });
+
+  it("detects MP4 via ftyp + mp42 brand", () => {
+    const buf = new Uint8Array(12);
+    buf.set([0x00, 0x00, 0x00, 0x18], 0);
+    buf.set(bytes("ftyp"), 4);
+    buf.set(bytes("mp42"), 8);
+    expect(sniffMime(buf)).toBe("video/mp4");
+  });
+
+  it("detects QuickTime via ftyp + 'qt  ' brand", () => {
+    const buf = new Uint8Array(12);
+    buf.set([0x00, 0x00, 0x00, 0x14], 0);
+    buf.set(bytes("ftyp"), 4);
+    buf.set(bytes("qt  "), 8);
+    expect(sniffMime(buf)).toBe("video/quicktime");
+  });
+
+  it("detects WebM (Matroska EBML)", () => {
+    expect(sniffMime(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x00]))).toBe(
+      "video/webm",
+    );
+  });
+
+  it("returns octet-stream for ftyp with an unknown brand", () => {
+    const buf = new Uint8Array(12);
+    buf.set(bytes("ftyp"), 4);
+    buf.set(bytes("XXXX"), 8);
+    expect(sniffMime(buf)).toBe("application/octet-stream");
+  });
+});
+
 describe("sniffMime — SVG", () => {
   it("detects bare <svg>", () => {
     expect(sniffMime(bytes('<svg xmlns="http://x">'))).toBe("image/svg+xml");

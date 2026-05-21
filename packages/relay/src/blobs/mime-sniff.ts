@@ -118,6 +118,56 @@ export function sniffMime(buf: Uint8Array): string {
     return "audio/ogg";
   }
 
+  // ISO BMFF (MP4 / MOV / 3GP / heic): byte 0..3 is the box size, byte 4..7
+  // is "ftyp", then a 4-byte major brand. The major brand tells us what
+  // flavour: `isom`/`mp4 `/`mp42`/`avc1`/`iso2` → video/mp4 in practice for
+  // the demo path. `qt  ` → video/quicktime. We return the umbrella
+  // video/mp4 for the common video-bearing brands so allowlist `video/`
+  // passes; refine here if a deployment needs finer control.
+  if (
+    buf.length >= 12 &&
+    buf[4] === 0x66 &&
+    buf[5] === 0x74 &&
+    buf[6] === 0x79 &&
+    buf[7] === 0x70
+  ) {
+    // Read major brand bytes 8..11. We've already gated on length, so the
+    // `!` is safe; the TS compiler doesn't narrow Uint8Array indexing on a
+    // numeric `.length` check (noUncheckedIndexedAccess is on).
+    const brand = String.fromCharCode(buf[8]!, buf[9]!, buf[10]!, buf[11]!);
+    if (
+      brand === "isom" ||
+      brand === "iso2" ||
+      brand === "iso3" ||
+      brand === "iso4" ||
+      brand === "iso5" ||
+      brand === "iso6" ||
+      brand === "mp41" ||
+      brand === "mp42" ||
+      brand === "mp4 " ||
+      brand === "avc1" ||
+      brand === "dash" ||
+      brand === "M4V " ||
+      brand === "f4v "
+    ) {
+      return "video/mp4";
+    }
+    if (brand === "qt  ") return "video/quicktime";
+    // WebM / 3GP / HEIC and others would land here too; leave as
+    // octet-stream so the allowlist gate decides.
+  }
+
+  // WebM (Matroska EBML): leading bytes `1A 45 DF A3`.
+  if (
+    buf.length >= 4 &&
+    buf[0] === 0x1a &&
+    buf[1] === 0x45 &&
+    buf[2] === 0xdf &&
+    buf[3] === 0xa3
+  ) {
+    return "video/webm";
+  }
+
   // PDF: "%PDF-".
   if (
     buf.length >= 5 &&
