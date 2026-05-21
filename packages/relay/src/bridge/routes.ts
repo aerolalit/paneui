@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,8 @@ import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
 import { hashKey } from "../keys.js";
 import type { AppEnv } from "../http/env.js";
-import { errors } from "../http/errors.js";
+import { errors, ApiError } from "../http/errors.js";
+import { prefersHtml } from "../http/accept.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 
@@ -52,6 +53,16 @@ function publicWsBase(config: Config): string {
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
 }
+
+// The Pane brand mark, inlined as an SVG data URI for the browser tab.
+// Inlining (vs. /favicon.ico) avoids an extra HTTP round-trip on every page
+// load and keeps the relay deployment a single binary with no static-asset
+// directory. The same shape is rendered visually in the header SVG below.
+// Both the shell's CSP (img-src 'self' data:) and the error page's CSP
+// (img-src 'self' data:) explicitly allow the data: scheme, so the icon
+// loads under both surfaces.
+const BRAND_FAVICON_HREF =
+  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2262%22%20cy%3D%2258%22%20r%3D%2217%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2226%22%20width%3D%2240%22%20height%3D%2232%22%20rx%3D%2210%22%20fill%3D%22%230f172a%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2230%22%20width%3D%2232%22%20height%3D%2224%22%20rx%3D%227%22%20fill%3D%22%23a78bfa%22%2F%3E%3Ccircle%20cx%3D%2233.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2246.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3C%2Fsvg%3E";
 
 // Belt-and-braces alongside the iframe sandbox. Disables every powerful API the
 // browser exposes by default. Listed explicitly rather than `*=()` because the
@@ -154,8 +165,19 @@ bridge.get("/:token", async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
   const token = c.req.param("token");
-  if (!token) throw errors.notFound();
-  const { session } = await loadByToken(prisma, token);
+  if (!token) {
+    return humanOrJsonError(c, errors.notFound());
+  }
+  let loaded: Awaited<ReturnType<typeof loadByToken>>;
+  try {
+    loaded = await loadByToken(prisma, token);
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+      return humanOrJsonError(c, err);
+    }
+    throw err;
+  }
+  const { session } = loaded;
 
   // Live agent-presence facts that SEED the shell's pill — see
   // computeAgentPresence. The shell then keeps them fresh by polling
@@ -222,15 +244,26 @@ bridge.get("/:token", async (c) => {
 bridge.get("/:token/content", async (c) => {
   const prisma = c.get("prisma");
   const token = c.req.param("token");
-  if (!token) throw errors.notFound();
-  const { session } = await loadByToken(prisma, token);
+  if (!token) {
+    return humanOrJsonError(c, errors.notFound());
+  }
+  let loaded: Awaited<ReturnType<typeof loadByToken>>;
+  try {
+    loaded = await loadByToken(prisma, token);
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+      return humanOrJsonError(c, err);
+    }
+    throw err;
+  }
+  const { session } = loaded;
 
   // Gate the artifact body on the session being live. The shell page renders
   // a "closed" banner instead of the iframe, but a client that bookmarked
   // /content directly would otherwise still receive the artifact (and any
   // sensitive data baked into it) until the participant is revoked.
   if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
-    throw errors.gone();
+    return humanOrJsonError(c, errors.gone());
   }
 
   let artifactBody: string;
@@ -346,7 +379,8 @@ function renderShell(args: ShellArgs): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pane Session</title>
+<title>Pane — Session</title>
+<link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style nonce="${args.nonce}">
   html, body { height: 100%; margin: 0; }
   body {
@@ -449,6 +483,165 @@ ${
 }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>
+</body>
+</html>`;
+}
+
+// Bridge-route error renderer. The /v1/* API always speaks JSON envelopes
+// (agents depend on the structured shape), but /s/:token is a human-facing
+// URL: when a person opens a stale link in a browser they should see a
+// styled HTML page, not raw JSON.
+//
+// We content-negotiate per request — if the client's Accept header prefers
+// text/html over application/json we render the page; otherwise we re-throw
+// and let the global onError handler emit the JSON envelope unchanged. curl
+// with the default `Accept: */*` keeps getting JSON, which preserves the
+// existing agent/test ergonomics.
+function humanOrJsonError(c: Context<AppEnv>, err: ApiError): Response {
+  if (!prefersHtml(c.req.header("Accept"))) {
+    throw err;
+  }
+  const page = errorPageFor(err);
+  // Same defence-in-depth headers as the shell. We omit CSP nonces because
+  // the error page has no inline <script>; an inline <style> stays under a
+  // single 'self' style-src so we don't need per-request nonces.
+  c.header("Content-Security-Policy", ERROR_CSP);
+  c.header("X-Frame-Options", "DENY");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
+  c.header("Cache-Control", "private, no-store");
+  c.header("Content-Type", "text/html; charset=utf-8");
+  return c.body(page, err.status as 404 | 410);
+}
+
+// Stricter than the shell's CSP — the error page has no script, no iframe,
+// no remote connection. 'unsafe-inline' on style only, scoped to the page's
+// own <style> block.
+const ERROR_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data:",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+interface ErrorPageCopy {
+  // Short browser-tab title (≤ ~24 chars). Combined with the "Pane — " brand
+  // prefix so the tab stays readable when several are open.
+  tabTitle: string;
+  // The headline shown in the body of the page.
+  headline: string;
+  body: string;
+}
+
+// The status-code-keyed copy. 404 covers "unknown token | revoked
+// participant | session row deleted" — all three look identical in the
+// rendered page on purpose, so the bridge isn't a participant-token
+// enumeration oracle. 410 covers TTL-expired and explicitly-closed sessions
+// reached through the /content sub-route.
+function errorPageFor(err: ApiError): string {
+  const copy: ErrorPageCopy =
+    err.status === 410
+      ? {
+          tabTitle: "Closed",
+          headline: "This pane has been closed",
+          body: "The session has expired or been closed by the agent. Ask for a new link if you still need to act.",
+        }
+      : {
+          tabTitle: "Not found",
+          headline: "This pane link isn't valid",
+          body: "The link may be mistyped, or the session may have been cleaned up. Ask the agent for a fresh one.",
+        };
+  return renderHumanError(copy);
+}
+
+// HTML-escape user-supplied or status-driven text. The current copy is all
+// static literals, but the helper exists so future copy changes can't
+// accidentally inject markup.
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderHumanError(copy: ErrorPageCopy): string {
+  const tabTitle = htmlEscape(copy.tabTitle);
+  const headline = htmlEscape(copy.headline);
+  const body = htmlEscape(copy.body);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pane — ${tabTitle}</title>
+<link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #0b0e14; color: #d7dee9;
+    display: flex; flex-direction: column;
+  }
+  header {
+    padding: 9px 14px; font-size: 13px;
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(180deg, #10141d 0%, #0b0e14 100%);
+    border-bottom: 1px solid #1f2633;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: 7px;
+    user-select: none;
+  }
+  .brand-logo { display: block; flex: none; }
+  .brand-name {
+    font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
+    color: #e7ecf3;
+  }
+  main {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    max-width: 480px; text-align: center;
+  }
+  h1 {
+    margin: 0 0 12px; font-size: 20px; font-weight: 600;
+    color: #e7ecf3; letter-spacing: 0.2px;
+  }
+  p { margin: 0 0 18px; color: #8a93a6; }
+  a {
+    color: #7CE3B1; text-decoration: none;
+    border-bottom: 1px solid rgba(124, 227, 177, 0.3);
+  }
+  a:hover { border-bottom-color: #7CE3B1; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
+      <rect width="100" height="100" rx="22" fill="#0f172a"/>
+      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
+      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
+      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
+      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
+      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
+    </svg>
+    <span class="brand-name">Pane</span>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <h1>${headline}</h1>
+    <p>${body}</p>
+    <p><a href="https://paneui.com" rel="noopener noreferrer">What is Pane?</a></p>
+  </div>
+</main>
 </body>
 </html>`;
 }
