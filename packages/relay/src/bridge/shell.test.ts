@@ -378,8 +378,16 @@ describe("shell — download-blob-request handler", () => {
       id: "d1",
       ok: true,
     });
-    expect(payload.blob).toBeInstanceOf(Blob);
+    // The forwarded value is whatever `response.blob()` returned. Node 20
+    // has two `Blob` constructors (`node:buffer`'s global vs undici's) and
+    // happy-dom in tests returns yet another shape — `instanceof Blob` is
+    // unreliable across CI vs local. Verify by the observable surface: the
+    // type and size the iframe actually uses, which the shell pulled off
+    // the Response and put into the result frame.
+    expect(payload.blob).toBeTruthy();
+    expect(payload.blob.constructor.name).toBe("Blob");
     expect(payload.blob.type).toBe("image/jpeg");
+    expect(payload.mime).toBe("image/jpeg");
     expect(payload.size).toBe(4);
   });
 
