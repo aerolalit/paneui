@@ -252,6 +252,11 @@ bridge.get("/:token/content", async (c) => {
       "script-src 'unsafe-inline'",
       "style-src 'unsafe-inline'",
       "img-src data: blob:",
+      // Audio / video the agent uploads as blobs and the iframe renders via
+      // <audio src="blob:…"> or <video src="blob:…"> after lazy-fetching with
+      // window.pane.downloadBlob(). Without this directive, `media-src` falls
+      // back to `default-src 'none'` and blocks both elements.
+      "media-src blob:",
       "font-src data:",
       "connect-src 'none'",
       "base-uri 'none'",
