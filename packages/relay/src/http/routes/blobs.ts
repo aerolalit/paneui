@@ -32,7 +32,10 @@ import {
   BlobIntegrityError,
   BlobSizeExceededError,
   generateBlobToken,
+  ImageNormalisationError,
   isMimeAllowed,
+  isNormalisable,
+  normaliseImage,
   sniffMime,
 } from "../../blobs/index.js";
 
@@ -208,15 +211,61 @@ blobs.post("/", async (c) => {
     throw errors.mimeDisallowed(sniffedMime, config.BLOB_MIME_ALLOWLIST);
   }
 
-  // Build a Node Readable that yields the chunk we already consumed, then
-  // drains the rest of the SAME reader. Calling `file.stream()` again would
-  // produce a fresh stream from the start and double-count the bytes.
-  let fullStream: Readable;
-  if (streamDone) {
-    reader.releaseLock();
-    fullStream = Readable.from(Buffer.from(firstChunk));
-  } else {
-    fullStream = streamFromReader(firstChunk, reader);
+  // Drain the rest of the same reader so we have the full upload as a
+  // Buffer. We need the whole payload in memory for the image
+  // normalisation pass (sharp's pipeline buffers internally anyway), and
+  // MAX_BLOB_BYTES caps this at 5 MB by default — well within Node's
+  // comfort zone. The cap is enforced as we read, before any allocation
+  // becomes hostile.
+  const uploaded = await drainReaderToBuffer(
+    firstChunk,
+    reader,
+    streamDone,
+    config.MAX_BLOB_BYTES,
+  ).catch((e) => {
+    if (e instanceof BlobSizeExceededError) {
+      throw errors.blobSizeExceeded(config.MAX_BLOB_BYTES);
+    }
+    throw e;
+  });
+
+  // Normalise images: decode + re-encode via sharp, dropping appended
+  // polyglot payloads and stripping metadata (EXIF / IPTC / XMP / embedded
+  // thumbnail). Non-image MIMEs pass through unchanged. sharp throws on
+  // anything that doesn't decode — which is the right signal for a
+  // hostile polyglot (the format-sniff layer let it through, but it's
+  // not a valid image).
+  let finalBytes: Buffer;
+  let finalSha256: string;
+  let finalSize: number;
+  let width: number | null = null;
+  let height: number | null = null;
+  try {
+    if (isNormalisable(sniffedMime)) {
+      const normalised = await normaliseImage({
+        bytes: uploaded,
+        mime: sniffedMime,
+        stripMetadata: true,
+      });
+      finalBytes = normalised.bytes;
+      finalSha256 = normalised.sha256;
+      finalSize = normalised.bytes.length;
+      width = normalised.width ?? null;
+      height = normalised.height ?? null;
+    } else {
+      // Pass-through (SVG, PDF). Still hash + size from the bytes we
+      // already have so the rest of the pipeline doesn't care.
+      const { createHash } = await import("node:crypto");
+      finalBytes = uploaded;
+      finalSha256 = createHash("sha256").update(uploaded).digest("hex");
+      finalSize = uploaded.length;
+    }
+  } catch (e) {
+    if (e instanceof ImageNormalisationError) {
+      // Hostile / corrupt image. Refuse the upload.
+      throw errors.mimeDisallowed(sniffedMime, config.BLOB_MIME_ALLOWLIST);
+    }
+    throw e;
   }
 
   // Create the blob row first (status=pending) so we have an id to derive
@@ -229,30 +278,30 @@ blobs.post("/", async (c) => {
       sessionId,
       artifactId,
       mime: sniffedMime,
-      size: 0,
-      sha256: "",
+      size: finalSize,
+      sha256: finalSha256,
+      width,
+      height,
       filename: typeof form.filename === "string" ? form.filename : null,
       storageKey: "", // placeholder, set on the same row after we know the id
       status: "pending",
     },
   });
-  // Now that we have the row id, derive the storage key and update.
   const storageKey = storageKeyFor(row.id);
   await prisma.blob.update({
     where: { id: row.id },
     data: { storageKey },
   });
 
-  // Stream into the BlobStore. The store enforces the size cap mid-stream
-  // and computes sha256 + total size as it goes.
+  // Stream the normalised bytes into the BlobStore. The store recomputes
+  // sha256 + size as it writes; we cross-check below.
   let info;
   try {
-    info = await store.put(storageKey, fullStream, {
+    info = await store.put(storageKey, Readable.from(finalBytes), {
       mime: sniffedMime,
       maxBytes: config.MAX_BLOB_BYTES,
     });
   } catch (e) {
-    // On any failure, mark the row failed and propagate a clean error.
     await prisma.blob
       .update({ where: { id: row.id }, data: { status: "failed" } })
       .catch(() => {
@@ -263,6 +312,22 @@ blobs.post("/", async (c) => {
       throw errors.blobSizeExceeded(config.MAX_BLOB_BYTES);
     }
     throw e;
+  }
+
+  // Sanity check: the backend's computed sha256 must match what we
+  // computed from the in-memory bytes. A mismatch here means a backend
+  // bug or storage corruption — refuse the upload loudly.
+  if (info.sha256 !== finalSha256 || info.size !== finalSize) {
+    await store.delete(storageKey).catch(() => {
+      /* best-effort */
+    });
+    await prisma.blob.update({
+      where: { id: row.id },
+      data: { status: "failed" },
+    });
+    throw errors.invalidRequest(
+      "internal integrity check failed — storage backend hash/size disagrees",
+    );
   }
 
   // Aggregate quotas. The per-agent cap applies to EVERY scope (an agent's
@@ -306,36 +371,63 @@ blobs.post("/", async (c) => {
 });
 
 /**
- * Build a Node Readable from a single `ReadableStreamDefaultReader` whose
- * first chunk has already been consumed. Yields the saved chunk first, then
- * drains the rest of the same reader. Releases the reader on EOF or
- * abandonment.
+ * Drain a Web ReadableStreamDefaultReader (whose first chunk has already
+ * been pulled for MIME sniffing) into one contiguous Buffer. Enforces
+ * `maxBytes` mid-stream by tracking the running total; throws
+ * `BlobSizeExceededError` and releases the reader lock if the cap is
+ * exceeded.
  *
- * The reader is locked to its underlying ReadableStream — we never re-open
- * `file.stream()`, so the total bytes pulled equal the file's real length.
+ * The whole upload is buffered because the polyglot-normalisation pass
+ * (sharp) operates on a complete image — there's no useful "streaming
+ * normalisation" mode in libvips for our use case. MAX_BLOB_BYTES caps
+ * this at 5 MB so the memory cost is bounded.
  */
-function streamFromReader(
-  first: Uint8Array,
+async function drainReaderToBuffer(
+  firstChunk: Uint8Array,
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): Readable {
-  return Readable.from(
-    (async function* () {
-      try {
-        yield Buffer.from(first);
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) return;
-          if (value && value.length) yield Buffer.from(value);
+  alreadyDone: boolean,
+  maxBytes: number,
+): Promise<Buffer> {
+  let observed = firstChunk.length;
+  if (observed > maxBytes) {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+    throw new BlobSizeExceededError(maxBytes, observed);
+  }
+
+  const chunks: Buffer[] = [Buffer.from(firstChunk)];
+  if (alreadyDone) {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+    return Buffer.concat(chunks);
+  }
+
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && value.length) {
+        observed += value.length;
+        if (observed > maxBytes) {
+          throw new BlobSizeExceededError(maxBytes, observed);
         }
-      } finally {
-        try {
-          reader.releaseLock();
-        } catch {
-          /* already released */
-        }
+        chunks.push(Buffer.from(value));
       }
-    })(),
-  );
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released */
+    }
+  }
+  return Buffer.concat(chunks);
 }
 
 // ---------------------------------------------------------------------------

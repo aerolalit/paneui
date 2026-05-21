@@ -22,3 +22,9 @@ export {
 } from "./tokens.js";
 export { truncateIp } from "./ip-truncate.js";
 export { makeRevokeCache, type RevokeCache } from "./revoke-cache.js";
+export {
+  normaliseImage,
+  isNormalisable,
+  ImageNormalisationError,
+  type NormaliseResult,
+} from "./normalize.js";

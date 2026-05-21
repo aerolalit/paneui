@@ -26,32 +26,78 @@ let app: Hono;
 let prisma: PrismaClient;
 let blobDir: string;
 
-const MAX_BLOB = 64 * 1024; // 64 KB for the size-cap test
-const AGENT_CAP = 200 * 1024; // 200 KB per-agent aggregate (enough for several test blobs)
+// Picked so makeBigJpeg can reliably produce blobs UNDER MAX_BLOB (~50 KB
+// each on average) and a small number of them exceed AGENT_CAP. The route
+// caps real production at 5 MB / 500 MB; we use much smaller numbers here
+// so the test runs in milliseconds, not seconds.
+const MAX_BLOB = 200 * 1024; // 200 KB cap for the size-cap test
+const AGENT_CAP = 300 * 1024; // 300 KB per-agent aggregate (~6 test blobs)
 
-// Minimal valid JPEG: SOI (FFD8FF) header + payload bytes + EOI (FFD9).
-// 64 bytes is enough to satisfy the sniff window plus the route's empty-file
-// check; we never actually decode it.
-function makeJpeg(size = 64): Buffer {
-  const buf = Buffer.alloc(size);
-  buf[0] = 0xff;
-  buf[1] = 0xd8;
-  buf[2] = 0xff;
-  buf[3] = 0xe0;
-  // Fill the middle with stable bytes so sha256s are reproducible if needed.
-  for (let i = 4; i < size - 2; i++) buf[i] = i & 0xff;
-  buf[size - 2] = 0xff;
-  buf[size - 1] = 0xd9;
-  return buf;
+// Real images, built via sharp. Synthetic byte-sequences with only the
+// magic-bytes prefix would pass MIME sniffing but fail sharp's decode in
+// the normalisation pass — the route correctly rejects them as
+// `mime_disallowed`. The polyglot tests pass real images with hostile
+// tails appended; sharp's decode-encode round trip drops the tail.
+//
+// `targetBytes` is a SOFT target — sharp picks dimensions / quality that
+// roughly hit it. Used by the size-cap test where the actual byte count
+// matters; happy-path tests don't care about exact size.
+
+async function makeJpeg(
+  approxBytes = 256,
+  opts: { dimension?: number } = {},
+): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  const d = opts.dimension ?? Math.max(8, Math.round(Math.sqrt(approxBytes)));
+  return sharp({
+    create: {
+      width: d,
+      height: d,
+      channels: 3,
+      background: { r: 200, g: 100, b: 50 },
+    },
+  })
+    .jpeg({ quality: 80 })
+    .toBuffer();
 }
 
-function makePng(size = 64): Buffer {
-  // 8-byte PNG signature + filler.
-  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const buf = Buffer.alloc(size);
-  sig.copy(buf, 0);
-  for (let i = 8; i < size; i++) buf[i] = i & 0xff;
-  return buf;
+async function makePng(): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  return sharp({
+    create: {
+      width: 16,
+      height: 16,
+      channels: 4,
+      background: { r: 50, g: 200, b: 100, alpha: 1 },
+    },
+  })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Build a JPEG of incompressible noise that GUARANTEES `bytes > targetBytes`
+ * after sharp's encode + the route's normalisation pass. Random pixel data
+ * makes JPEG quality:100 unable to compress, so the encoded output scales
+ * with pixel count. Loops dimensions until past the target.
+ */
+async function makeBigJpeg(targetBytes: number): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  const { randomBytes: rnd } = await import("node:crypto");
+  let d = Math.max(64, Math.round(Math.sqrt(targetBytes / 2)));
+  for (let i = 0; i < 6; i++) {
+    const noise = rnd(d * d * 3);
+    const out = await sharp(noise, {
+      raw: { width: d, height: d, channels: 3 },
+    })
+      .jpeg({ quality: 100 })
+      .toBuffer();
+    if (out.length > targetBytes) return out;
+    d = Math.round(d * 1.6);
+  }
+  throw new Error(
+    `makeBigJpeg: couldn't grow past ${targetBytes} bytes within 6 iterations`,
+  );
 }
 
 beforeAll(async () => {
@@ -242,7 +288,7 @@ describe("/v1/blobs — auth + scope validation", () => {
 
   it("rejects scope=session without session_id", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), { scope: "session" });
+    const res = await upload(apiKey, await makeJpeg(), { scope: "session" });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_request");
@@ -250,13 +296,13 @@ describe("/v1/blobs — auth + scope validation", () => {
 
   it("rejects scope=artifact without artifact_id", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), { scope: "artifact" });
+    const res = await upload(apiKey, await makeJpeg(), { scope: "artifact" });
     expect(res.status).toBe(400);
   });
 
   it("rejects unknown scope value", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), { scope: "nonsense" });
+    const res = await upload(apiKey, await makeJpeg(), { scope: "nonsense" });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
       error: { code: string; details: { supported: string[] } };
@@ -273,7 +319,7 @@ describe("/v1/blobs — auth + scope validation", () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
     const aliceSes = await seedSessionFor(alice.id);
-    const res = await upload(bob.apiKey, makeJpeg(), {
+    const res = await upload(bob.apiKey, await makeJpeg(), {
       scope: "session",
       sessionId: aliceSes,
     });
@@ -286,7 +332,7 @@ describe("/v1/blobs — auth + scope validation", () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
     const aliceArt = await seedArtifactFor(alice.id);
-    const res = await upload(bob.apiKey, makeJpeg(), {
+    const res = await upload(bob.apiKey, await makeJpeg(), {
       scope: "artifact",
       artifactId: aliceArt,
     });
@@ -301,7 +347,7 @@ describe("/v1/blobs — POST happy path", () => {
 
   it("uploads a JPEG, returns 201 with sniffed MIME + sha256 + size", async () => {
     const { apiKey } = await seedAgent();
-    const body = makeJpeg(128);
+    const body = await makeJpeg(128);
 
     const res = await upload(apiKey, body);
     expect(res.status).toBe(201);
@@ -327,7 +373,7 @@ describe("/v1/blobs — POST happy path", () => {
 
   it("accepts a PNG with a matching declared Content-Type", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makePng(64), {
+    const res = await upload(apiKey, await makePng(), {
       declaredMime: "image/png",
     });
     expect(res.status).toBe(201);
@@ -337,7 +383,7 @@ describe("/v1/blobs — POST happy path", () => {
 
   it("accepts when declared Content-Type is application/octet-stream", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), {
+    const res = await upload(apiKey, await makeJpeg(), {
       declaredMime: "application/octet-stream",
     });
     expect(res.status).toBe(201);
@@ -347,7 +393,9 @@ describe("/v1/blobs — POST happy path", () => {
 
   it("stores the filename when provided", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), { filename: "vacation.jpg" });
+    const res = await upload(apiKey, await makeJpeg(), {
+      filename: "vacation.jpg",
+    });
     expect(res.status).toBe(201);
     const json = (await res.json()) as { filename: string };
     expect(json.filename).toBe("vacation.jpg");
@@ -361,7 +409,7 @@ describe("/v1/blobs — POST rejection paths", () => {
 
   it("415 mime_mismatch when declared Content-Type lies about format", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, makeJpeg(), {
+    const res = await upload(apiKey, await makeJpeg(), {
       declaredMime: "image/png", // bytes are JPEG, declared PNG
     });
     expect(res.status).toBe(415);
@@ -420,7 +468,10 @@ describe("/v1/blobs — POST rejection paths", () => {
 
   it("413 blob_size_exceeded when the upload exceeds MAX_BLOB_BYTES", async () => {
     const { apiKey } = await seedAgent();
-    const big = makeJpeg(MAX_BLOB + 16);
+    // makeBigJpeg uses incompressible noise so the encoded output reliably
+    // exceeds MAX_BLOB. A normal `makeJpeg` of a solid colour would compress
+    // to a tiny file regardless of the requested dimension.
+    const big = await makeBigJpeg(MAX_BLOB + 1024);
     const res = await upload(apiKey, big);
     expect(res.status).toBe(413);
     const body = (await res.json()) as { error: { code: string } };
@@ -429,22 +480,115 @@ describe("/v1/blobs — POST rejection paths", () => {
 
   it("413 quota_exceeded when the per-agent aggregate is reached", async () => {
     const { apiKey } = await seedAgent();
-    // Each upload is just under the per-blob cap; uploading enough of them
-    // will push past the per-agent cap (AGENT_CAP = 200 KB, MAX_BLOB = 64 KB).
-    const r1 = await upload(apiKey, makeJpeg(MAX_BLOB - 8));
+    // Each upload is ~80 KB (well under MAX_BLOB=200 KB); 4 of them = ~320 KB,
+    // which trips AGENT_CAP=300 KB on the 4th. makeBigJpeg uses incompressible
+    // noise so the encoded bytes scale predictably — a solid-colour JPEG
+    // would compress to a few KB regardless of dimension.
+    const perBlob = 80 * 1024;
+    const r1 = await upload(apiKey, await makeBigJpeg(perBlob));
     expect(r1.status).toBe(201);
-    const r2 = await upload(apiKey, makeJpeg(MAX_BLOB - 8));
+    const r2 = await upload(apiKey, await makeBigJpeg(perBlob));
     expect(r2.status).toBe(201);
-    const r3 = await upload(apiKey, makeJpeg(MAX_BLOB - 8));
+    const r3 = await upload(apiKey, await makeBigJpeg(perBlob));
     expect(r3.status).toBe(201);
-    // Fourth would push past 4 * ~64 KB = ~256 KB > AGENT_CAP (200 KB).
-    const r4 = await upload(apiKey, makeJpeg(MAX_BLOB - 8));
+    // Fourth pushes past 4 * ~80 KB = ~320 KB > AGENT_CAP (300 KB).
+    const r4 = await upload(apiKey, await makeBigJpeg(perBlob));
     expect(r4.status).toBe(413);
     const body = (await r4.json()) as {
       error: { code: string; details: { scope: string } };
     };
     expect(body.error.code).toBe("quota_exceeded");
     expect(body.error.details.scope).toBe("agent");
+  });
+});
+
+describe("/v1/blobs — polyglot defense (end-to-end via sharp)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("strips HTML appended after a JPEG (the bathroom-sink class of polyglot)", async () => {
+    const { apiKey } = await seedAgent();
+    const realJpeg = await makeJpeg(256);
+    const polyglot = Buffer.concat([
+      realJpeg,
+      Buffer.from(
+        "<html><body><script>alert('xss')</script></body></html>",
+        "utf8",
+      ),
+    ]);
+
+    const post = await upload(apiKey, polyglot);
+    expect(post.status).toBe(201);
+    const { blob_id, sha256 } = (await post.json()) as {
+      blob_id: string;
+      sha256: string;
+    };
+
+    // The stored sha256 should differ from the uploaded polyglot's sha256
+    // because normalisation re-encoded the image without the tail.
+    const { createHash } = await import("node:crypto");
+    const polyglotSha = createHash("sha256").update(polyglot).digest("hex");
+    expect(sha256).not.toBe(polyglotSha);
+
+    // Fetch and verify the stored bytes contain no HTML tail.
+    const get = await getBlob(apiKey, blob_id);
+    const buf = Buffer.from(await get.arrayBuffer());
+    const text = buf.toString("latin1");
+    expect(text).not.toContain("<script>");
+    expect(text).not.toContain("</html>");
+    expect(text).not.toContain("alert");
+  });
+
+  it("rejects bytes that are sniffed as image but don't actually decode", async () => {
+    const { apiKey } = await seedAgent();
+    // FF D8 FF prefix sniffs as image/jpeg, but the rest is HTML — sharp
+    // throws during normalisation, route returns mime_disallowed.
+    const fakeJpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.from(
+        "<!doctype html><html><body>just html that lied about its format</body></html>",
+        "utf8",
+      ),
+    ]);
+    const res = await upload(apiKey, fakeJpeg, { declaredMime: "image/jpeg" });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("mime_disallowed");
+  });
+
+  it("strips EXIF from JPEGs containing a GPS tag", async () => {
+    const { apiKey } = await seedAgent();
+    const sharp = (await import("sharp")).default;
+    const withGps = await sharp({
+      create: {
+        width: 32,
+        height: 32,
+        channels: 3,
+        background: { r: 50, g: 100, b: 200 },
+      },
+    })
+      .withExif({
+        GPS: {
+          GPSLatitudeRef: "N",
+          GPSLatitude: "37/1,46/1,30/1",
+        },
+        IFD0: { Artist: "should-be-stripped" },
+      })
+      .jpeg()
+      .toBuffer();
+
+    // Sanity: input has EXIF.
+    expect((await sharp(withGps).metadata()).exif).toBeDefined();
+
+    const post = await upload(apiKey, withGps);
+    expect(post.status).toBe(201);
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const get = await getBlob(apiKey, blob_id);
+    const buf = Buffer.from(await get.arrayBuffer());
+    // After the strip, the served bytes have no EXIF.
+    expect((await sharp(buf).metadata()).exif).toBeUndefined();
   });
 });
 
@@ -455,7 +599,7 @@ describe("/v1/blobs/:id — GET", () => {
 
   it("returns the uploaded bytes with hardened headers", async () => {
     const { apiKey } = await seedAgent();
-    const payload = makeJpeg(96);
+    const payload = await makeJpeg(96);
     const post = await upload(apiKey, payload);
     const { blob_id, sha256 } = (await post.json()) as {
       blob_id: string;
@@ -496,7 +640,7 @@ describe("/v1/blobs/:id — GET", () => {
   it("returns blob_not_found for a foreign agent's blob (cross-tenant isolation)", async () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
-    const post = await upload(alice.apiKey, makeJpeg());
+    const post = await upload(alice.apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const get = await getBlob(bob.apiKey, blob_id);
@@ -519,7 +663,7 @@ describe("/v1/blobs/:id — DELETE", () => {
 
   it("deletes a blob and returns { deleted: true }", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const del = await deleteBlob(apiKey, blob_id);
@@ -537,7 +681,7 @@ describe("/v1/blobs/:id — DELETE", () => {
 
   it("is idempotent — second delete returns the same shape", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const first = await deleteBlob(apiKey, blob_id);
@@ -551,7 +695,7 @@ describe("/v1/blobs/:id — DELETE", () => {
   it("returns blob_not_found for a foreign agent's blob", async () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
-    const post = await upload(alice.apiKey, makeJpeg());
+    const post = await upload(alice.apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const del = await deleteBlob(bob.apiKey, blob_id);
@@ -574,7 +718,7 @@ describe("/v1/blobs — session-scope upload", () => {
   it("uploads with scope=session and records sessionId", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const sessionId = await seedSessionFor(agentId);
-    const res = await upload(apiKey, makeJpeg(), {
+    const res = await upload(apiKey, await makeJpeg(), {
       scope: "session",
       sessionId,
     });
@@ -592,7 +736,7 @@ describe("/v1/blobs — session-scope upload", () => {
   it("cascades on session delete (DB row goes away)", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const sessionId = await seedSessionFor(agentId);
-    const post = await upload(apiKey, makeJpeg(), {
+    const post = await upload(apiKey, await makeJpeg(), {
       scope: "session",
       sessionId,
     });
@@ -612,7 +756,7 @@ describe("/v1/blobs — artifact-scope upload", () => {
   it("uploads with scope=artifact and records artifactId", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const artifactId = await seedArtifactFor(agentId);
-    const res = await upload(apiKey, makeJpeg(), {
+    const res = await upload(apiKey, await makeJpeg(), {
       scope: "artifact",
       artifactId,
     });
@@ -630,7 +774,7 @@ describe("/v1/blobs — artifact-scope upload", () => {
   it("cascades on artifact delete", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const artifactId = await seedArtifactFor(agentId);
-    const post = await upload(apiKey, makeJpeg(), {
+    const post = await upload(apiKey, await makeJpeg(), {
       scope: "artifact",
       artifactId,
     });
@@ -657,7 +801,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
 
   it("mints a token; returns full token once + the hashed prefix + url + expiry", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const mint = await mintToken(apiKey, blob_id);
@@ -684,7 +828,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
 
   it("mints a token with once=true and a shorter TTL when requested", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const mint = await mintToken(apiKey, blob_id, {
@@ -703,7 +847,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
 
   it("caps requested TTL at the scope default (caller can shorten, not lengthen)", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     // Request 365 days — should be clamped to the agent-scope default (24h).
@@ -718,7 +862,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
   it("rejects mint for a foreign agent's blob", async () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
-    const post = await upload(alice.apiKey, makeJpeg());
+    const post = await upload(alice.apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
 
     const mint = await mintToken(bob.apiKey, blob_id);
@@ -727,7 +871,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
 
   it("revokes a token (200 + idempotent on retry)", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, blob_id);
     const { token_id } = (await mint.json()) as { token_id: string };
@@ -743,7 +887,7 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
   it("rejects revoke from a foreign agent (blob_not_found, no row leak)", async () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
-    const post = await upload(alice.apiKey, makeJpeg());
+    const post = await upload(alice.apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(alice.apiKey, blob_id);
     const { token_id } = (await mint.json()) as { token_id: string };
@@ -754,8 +898,8 @@ describe("/v1/blobs/:id/tokens — mint + revoke", () => {
 
   it("returns blob_token_not_found for a tokenId that belongs to a different blob", async () => {
     const { apiKey } = await seedAgent();
-    const p1 = await upload(apiKey, makeJpeg());
-    const p2 = await upload(apiKey, makeJpeg());
+    const p1 = await upload(apiKey, await makeJpeg());
+    const p2 = await upload(apiKey, await makeJpeg());
     const { blob_id: b1 } = (await p1.json()) as { blob_id: string };
     const { blob_id: b2 } = (await p2.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, b1);
@@ -776,7 +920,7 @@ describe("/b/<token> — capability URL", () => {
 
   it("fetches the bytes with hardened headers (no API key)", async () => {
     const { apiKey } = await seedAgent();
-    const payload = makeJpeg(128);
+    const payload = await makeJpeg(128);
     const post = await upload(apiKey, payload);
     const { blob_id, sha256 } = (await post.json()) as {
       blob_id: string;
@@ -830,7 +974,7 @@ describe("/b/<token> — capability URL", () => {
 
   it("rejects a revoked token", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, blob_id);
     const { token, token_id } = (await mint.json()) as {
@@ -845,7 +989,7 @@ describe("/b/<token> — capability URL", () => {
 
   it("rejects an expired token", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, blob_id);
     const { token, token_id } = (await mint.json()) as {
@@ -865,7 +1009,7 @@ describe("/b/<token> — capability URL", () => {
 
   it("once-token: consumed on first GET, second GET fails", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, blob_id, { once: true });
     const { token, token_id } = (await mint.json()) as {
@@ -888,7 +1032,7 @@ describe("/b/<token> — capability URL", () => {
 
   it("multi-use token: increments use_count + writes truncated IPs", async () => {
     const { apiKey } = await seedAgent();
-    const post = await upload(apiKey, makeJpeg());
+    const post = await upload(apiKey, await makeJpeg());
     const { blob_id } = (await post.json()) as { blob_id: string };
     const mint = await mintToken(apiKey, blob_id);
     const { token, token_id } = (await mint.json()) as {
