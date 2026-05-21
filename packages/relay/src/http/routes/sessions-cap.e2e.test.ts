@@ -74,6 +74,7 @@ function createSession(apiKey: string): Promise<Response> {
           source: "<html></html>",
           event_schema: minimalSchema,
         },
+        title: "Test session",
       }),
     }),
   );

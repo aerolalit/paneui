@@ -64,6 +64,11 @@ export const createSessionSchema = z.object({
   ttl: z.number().int().positive().optional(),
   metadata: z.record(z.unknown()).optional(),
   callback: callbackSchema.optional(),
+  // Tab title for the human's browser. Optional on the wire because the relay
+  // also accepts the implicit fallback (an Artifact.name on the reference
+  // form). The relay enforces "required-or-fallback" + length/control-char
+  // rules — Zod only confirms it's a string here.
+  title: z.string().optional(),
 });
 
 // POST /v1/artifacts — create a named, reusable artifact plus its v1 content.

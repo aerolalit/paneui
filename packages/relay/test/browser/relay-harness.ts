@@ -112,6 +112,7 @@ export async function createSession(base: string): Promise<CreatedSession> {
             ping: { payload: { type: "object" }, emittedBy: ["page"] },
           },
         },
+        title: "Test session",
       }),
     })
   ).json()) as { session_id: string; urls: { humans: string[] } };
