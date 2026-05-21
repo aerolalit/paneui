@@ -1,15 +1,21 @@
 // /v1/blobs — binary attachments owned by an agent.
 //
-// PR scope (feat/blobs-foundation):
-//   POST   /v1/blobs           multipart upload, agent-scope only (v1)
-//   GET    /v1/blobs/:id       agent-auth download
-//   DELETE /v1/blobs/:id       soft-delete (idempotent)
+// Endpoints in this module:
+//   POST   /v1/blobs                          multipart upload, three scopes
+//   GET    /v1/blobs/:id                      agent-auth download
+//   DELETE /v1/blobs/:id                      soft-delete (idempotent)
+//   POST   /v1/blobs/:id/tokens               mint a /b/<token> capability URL
+//   DELETE /v1/blobs/:id/tokens/:token_id     revoke a token
 //
-// Out of scope for this PR — landing in later stack PRs against feat/blobs:
-//   * session + artifact scopes (PR #2)
-//   * presigned PUT direct-to-storage path (PR #3)
-//   * /b/<token> capability URL (PR #2)
-//   * polyglot defense + EXIF strip via sharp (PR #5)
+// The /b/<token> fetch path itself lives in src/bridge/blob-bridge.ts so the
+// no-auth surface is clearly separated from the agent-auth one here.
+//
+// Out of scope for the foundation stack — landing in later PRs against
+// feat/blobs:
+//   * AzureBlobStore + POST /v1/blobs/presign direct-to-storage path
+//   * pane.uploadBlob() in @paneui/core + pane blob * subcommands in CLI
+//   * polyglot defense + EXIF strip via sharp
+//   * envelope encryption-at-rest, scan hook, LRU eviction, audit-history
 //
 // Every upload runs through server-side magic-byte MIME sniffing
 // (mime-sniff.ts) — the client's Content-Type is never trusted. Sniff
@@ -18,10 +24,13 @@
 
 import { Hono } from "hono";
 import { Readable } from "node:stream";
+import type { PrismaClient } from "@prisma/client";
+import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import {
   BlobSizeExceededError,
+  generateBlobToken,
   isMimeAllowed,
   sniffMime,
 } from "../../blobs/index.js";
@@ -94,15 +103,19 @@ function storageKeyFor(blobId: string): string {
 // ---------------------------------------------------------------------------
 // POST /v1/blobs — multipart upload.
 //
-// PR #1 (foundation) accepts agent-scope only. Future PRs widen this to
-// session + artifact scope; clients passing `scope=session|artifact` today
-// get a clean error pointing at #152 rather than silent agent-scope coercion.
-//
 // Form fields:
-//   file       — required, the single binary file part
-//   scope      — optional, defaults to "agent" (only value accepted in v1
-//                foundation; "session"/"artifact" land in PR #2)
-//   filename   — optional UX-only display name
+//   file        — required, the single binary file part
+//   scope       — optional, defaults to "agent" (one of "agent" | "session" |
+//                  "artifact")
+//   session_id  — required when scope = "session" (the agent must own the
+//                  session, or the v0.1.x foundation surface rejects it)
+//   artifact_id — required when scope = "artifact" (the agent must own the
+//                  artifact)
+//   filename    — optional UX-only display name
+//
+// Cross-tenant attempts (uploading into a session / artifact owned by a
+// different agent) return blob_not_found — never reveal whether the FK target
+// actually exists.
 // ---------------------------------------------------------------------------
 blobs.post("/", async (c) => {
   const prisma = c.get("prisma");
@@ -128,15 +141,29 @@ blobs.post("/", async (c) => {
     );
   }
 
-  // Scope gating. PR #1 supports agent-scope only; future PRs accept
-  // "session" (with session_id) and "artifact" (with artifact_id).
-  const scopeRaw = typeof form.scope === "string" ? form.scope : "agent";
-  if (scopeRaw !== "agent") {
-    throw errors.invalidRequest(
-      `scope='${scopeRaw}' is not yet supported`,
-      { scope: scopeRaw, supported: ["agent"] },
-      "this relay's foundation release accepts scope='agent' only; session + artifact scope are tracked in pane #152 (PR feat/blobs-scopes-tokens)",
-    );
+  // Resolve scope + the matching FK. The FK rows are looked up under the
+  // calling agent's ownership; a foreign FK returns blob_not_found so we
+  // never leak whether a session/artifact id exists for another agent.
+  const scope = parseScope(form.scope);
+  const sessionId =
+    scope === "session" ? requireFormString(form, "session_id") : null;
+  const artifactId =
+    scope === "artifact" ? requireFormString(form, "artifact_id") : null;
+
+  if (sessionId) {
+    const ses = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { agentId: true, status: true },
+    });
+    if (!ses || ses.agentId !== me.id) throw errors.blobNotFound();
+    if (ses.status !== "open") throw errors.gone("session is closed");
+  }
+  if (artifactId) {
+    const art = await prisma.artifact.findUnique({
+      where: { id: artifactId },
+      select: { ownerId: true },
+    });
+    if (!art || art.ownerId !== me.id) throw errors.blobNotFound();
   }
 
   // Cheap declared-Content-Type check. The authoritative check happens
@@ -197,7 +224,9 @@ blobs.post("/", async (c) => {
   const row = await prisma.blob.create({
     data: {
       ownerId: me.id,
-      scope: "agent",
+      scope,
+      sessionId,
+      artifactId,
       mime: sniffedMime,
       size: 0,
       sha256: "",
@@ -235,18 +264,22 @@ blobs.post("/", async (c) => {
     throw e;
   }
 
-  // Per-agent aggregate quota — sum the agent's existing ready blobs and
-  // check against the cap. Done after the write so we don't double-count
-  // the just-written blob's bytes from a pre-write query. A racing parallel
-  // upload could push the total slightly over the cap; LRU eviction in the
-  // hardening PR cleans that up.
-  const aggregate = await prisma.blob.aggregate({
-    where: { ownerId: me.id, status: { in: ["pending", "ready"] } },
-    _sum: { size: true },
+  // Aggregate quotas. The per-agent cap applies to EVERY scope (an agent's
+  // total footprint across all blobs they own). The per-session or per-
+  // artifact cap applies on top of that when relevant. A racing parallel
+  // upload could push a total slightly over the cap; LRU eviction in the
+  // hardening PR cleans that up. The just-written row still has its
+  // placeholder `size: 0` at this point (the real size is written on the
+  // commit update below), so we add `info.size` into the aggregate manually.
+  const quotaFailure = await enforceQuotas(prisma, {
+    ownerId: me.id,
+    sessionId,
+    artifactId,
+    config,
+    extraBytes: info.size,
   });
-  const totalBytes = (aggregate._sum.size ?? 0) + info.size;
-  if (totalBytes > config.MAX_BLOBS_PER_AGENT_BYTES) {
-    // Roll back: delete the just-written bytes and mark the row failed.
+  if (quotaFailure) {
+    // Roll back: delete the bytes and mark the row failed.
     await store.delete(storageKey).catch(() => {
       /* best-effort */
     });
@@ -254,7 +287,7 @@ blobs.post("/", async (c) => {
       where: { id: row.id },
       data: { status: "failed" },
     });
-    throw errors.quotaExceeded("agent", config.MAX_BLOBS_PER_AGENT_BYTES);
+    throw errors.quotaExceeded(quotaFailure.scope, quotaFailure.cap);
   }
 
   // Commit: mark ready, fill in real size + sha256.
@@ -416,5 +449,286 @@ blobs.delete("/:id", async (c) => {
 
   return c.json({ blob_id: row.id, deleted: true });
 });
+
+// ---------------------------------------------------------------------------
+// POST /v1/blobs/:id/tokens — mint a /b/<token> capability URL.
+//
+// Body (JSON, optional):
+//   { ttl_seconds?: number, once?: boolean }
+//
+// TTL defaults per scope:
+//   - session-scope:  matches the session's expiresAt (cascades on session delete)
+//   - agent-scope:    BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
+//   - artifact-scope: BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
+//
+// `ttl_seconds` overrides the default within a per-scope upper bound (the
+// default; you can shorten, never lengthen — protects against operators
+// being talked into a "just-this-once" override that becomes the norm).
+// `once = true` makes the resulting token self-delete on first successful GET.
+//
+// Returns: { token, url, expires_at, once, token_id }. The full `token` is
+// only ever returned once, here — subsequent reads see only the prefix.
+// ---------------------------------------------------------------------------
+blobs.post("/:id/tokens", async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
+  const me = c.get("agent");
+
+  const id = c.req.param("id");
+  const blob = await prisma.blob.findUnique({ where: { id } });
+  if (!blob || blob.ownerId !== me.id || blob.status === "deleted") {
+    throw errors.blobNotFound();
+  }
+  if (blob.status !== "ready") throw errors.blobNotFound();
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    ttl_seconds?: unknown;
+    once?: unknown;
+  };
+  const once = body.once === true;
+
+  // Compute default TTL by scope, then accept a caller-supplied shorter TTL
+  // (never longer — the per-scope default is the ceiling).
+  const expiresAt = await computeTokenExpiry(
+    prisma,
+    blob,
+    config,
+    body.ttl_seconds,
+  );
+
+  const minted = generateBlobToken();
+  const tokenRow = await prisma.blobToken.create({
+    data: {
+      blobId: blob.id,
+      tokenHash: minted.hash,
+      tokenPrefix: minted.prefix,
+      expiresAt,
+      once,
+    },
+    select: { id: true, tokenPrefix: true, expiresAt: true, once: true },
+  });
+
+  // The full token only appears in this response. The DB stores its hash;
+  // the prefix is kept for log correlation.
+  const url = `${publicUrl(config)}/b/${minted.token}`;
+  return c.json(
+    {
+      token_id: tokenRow.id,
+      token: minted.token,
+      token_prefix: tokenRow.tokenPrefix,
+      url,
+      expires_at: tokenRow.expiresAt.toISOString(),
+      once: tokenRow.once,
+    },
+    201,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /v1/blobs/:id/tokens/:token_id — revoke a token.
+//
+// Idempotent: revoking an already-revoked or expired token returns the same
+// shape. Adds the token's hash to the in-memory revoke cache so subsequent
+// /b/<token> requests short-circuit without a DB read.
+// ---------------------------------------------------------------------------
+blobs.delete("/:id/tokens/:token_id", async (c) => {
+  const prisma = c.get("prisma");
+  const cache = c.get("blobRevokeCache");
+  const me = c.get("agent");
+
+  const blobId = c.req.param("id");
+  const tokenId = c.req.param("token_id");
+
+  // Verify the agent owns the parent blob — otherwise we'd leak that a
+  // token id exists for someone else's blob via the 404 vs. 200 channel.
+  const blob = await prisma.blob.findUnique({
+    where: { id: blobId },
+    select: { ownerId: true },
+  });
+  if (!blob || blob.ownerId !== me.id) throw errors.blobNotFound();
+
+  const tok = await prisma.blobToken.findUnique({
+    where: { id: tokenId },
+    select: { id: true, blobId: true, tokenHash: true, revokedAt: true },
+  });
+  if (!tok || tok.blobId !== blobId) throw errors.blobTokenNotFound();
+
+  if (tok.revokedAt) {
+    // Already revoked — return the idempotent shape.
+    cache?.add(tok.tokenHash);
+    return c.json({ token_id: tok.id, revoked: true });
+  }
+
+  await prisma.blobToken.update({
+    where: { id: tok.id },
+    data: { revokedAt: new Date() },
+  });
+  cache?.add(tok.tokenHash);
+  return c.json({ token_id: tok.id, revoked: true });
+});
+
+// ===========================================================================
+// Helpers — kept private to this module so the route file stays the entire
+// surface for /v1/blobs.
+// ===========================================================================
+
+/**
+ * Parse the `scope` form field. Empty / missing defaults to `agent`. Anything
+ * outside the enum is rejected as `invalid_request`.
+ */
+function parseScope(raw: unknown): "agent" | "session" | "artifact" {
+  if (raw === undefined || raw === null || raw === "") return "agent";
+  if (raw === "agent" || raw === "session" || raw === "artifact") return raw;
+  throw errors.invalidRequest(
+    `unknown scope='${String(raw)}'`,
+    { scope: String(raw), supported: ["agent", "session", "artifact"] },
+    "pass scope=agent|session|artifact; session-scope requires session_id, artifact-scope requires artifact_id",
+  );
+}
+
+/** Required-string accessor for parseBody output. Throws invalid_request when missing. */
+function requireFormString(
+  form: Record<string, unknown>,
+  field: string,
+): string {
+  const v = form[field];
+  if (typeof v !== "string" || v.length === 0) {
+    throw errors.invalidRequest(
+      `missing form field '${field}'`,
+      undefined,
+      `the '${field}' field is required for this scope`,
+    );
+  }
+  return v;
+}
+
+interface QuotaFailure {
+  scope: "agent" | "session" | "artifact";
+  cap: number;
+}
+
+/**
+ * Enforce post-write aggregate quotas. Returns null when every relevant
+ * cap is satisfied, or a {scope, cap} describing the first failure.
+ */
+async function enforceQuotas(
+  prisma: PrismaClient,
+  opts: {
+    ownerId: string;
+    sessionId: string | null;
+    artifactId: string | null;
+    config: Config;
+    /**
+     * Bytes that have been written to the BlobStore but whose Blob row
+     * still carries the placeholder `size: 0`. The route adds these into
+     * the aggregate so the just-written blob is counted before the commit
+     * UPDATE lands.
+     */
+    extraBytes: number;
+  },
+): Promise<QuotaFailure | null> {
+  const { ownerId, sessionId, artifactId, config, extraBytes } = opts;
+
+  // Per-agent — always applies.
+  const agentAgg = await prisma.blob.aggregate({
+    where: { ownerId, status: { in: ["pending", "ready"] } },
+    _sum: { size: true },
+  });
+  if (
+    (agentAgg._sum.size ?? 0) + extraBytes >
+    config.MAX_BLOBS_PER_AGENT_BYTES
+  ) {
+    return { scope: "agent", cap: config.MAX_BLOBS_PER_AGENT_BYTES };
+  }
+
+  if (sessionId) {
+    const ses = await prisma.blob.aggregate({
+      where: { sessionId, status: { in: ["pending", "ready"] } },
+      _sum: { size: true },
+    });
+    if (
+      (ses._sum.size ?? 0) + extraBytes >
+      config.MAX_BLOBS_PER_SESSION_BYTES
+    ) {
+      return { scope: "session", cap: config.MAX_BLOBS_PER_SESSION_BYTES };
+    }
+  }
+
+  if (artifactId) {
+    const art = await prisma.blob.aggregate({
+      where: { artifactId, status: { in: ["pending", "ready"] } },
+      _sum: { size: true },
+    });
+    if (
+      (art._sum.size ?? 0) + extraBytes >
+      config.MAX_BLOBS_PER_ARTIFACT_BYTES
+    ) {
+      return { scope: "artifact", cap: config.MAX_BLOBS_PER_ARTIFACT_BYTES };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Compute the expiresAt for a freshly-minted token, applying the scope's
+ * default and accepting a caller override only if it's shorter (the default
+ * is the ceiling — never extend past it).
+ */
+async function computeTokenExpiry(
+  prisma: PrismaClient,
+  blob: { scope: string; sessionId: string | null },
+  config: Config,
+  ttlSecondsRaw: unknown,
+): Promise<Date> {
+  const now = Date.now();
+  let defaultExpiry: Date;
+
+  if (blob.scope === "session") {
+    if (!blob.sessionId) {
+      // Shouldn't happen — session-scope blobs always have sessionId set —
+      // but be defensive.
+      throw errors.invalidRequest(
+        "session-scope blob is missing session_id (data integrity issue)",
+      );
+    }
+    const ses = await prisma.session.findUnique({
+      where: { id: blob.sessionId },
+      select: { expiresAt: true },
+    });
+    if (!ses) {
+      // The cascade would normally take the blob with the session; if we're
+      // still here the row is racing the deletion. Treat as a not-found.
+      throw errors.blobNotFound();
+    }
+    defaultExpiry = ses.expiresAt;
+  } else if (blob.scope === "artifact") {
+    defaultExpiry = new Date(
+      now + config.BLOB_TOKEN_TTL_ARTIFACT_SECONDS * 1000,
+    );
+  } else {
+    // agent scope
+    defaultExpiry = new Date(now + config.BLOB_TOKEN_TTL_AGENT_SECONDS * 1000);
+  }
+
+  if (
+    ttlSecondsRaw !== undefined &&
+    typeof ttlSecondsRaw === "number" &&
+    Number.isInteger(ttlSecondsRaw) &&
+    ttlSecondsRaw > 0
+  ) {
+    const requested = new Date(now + ttlSecondsRaw * 1000);
+    // Caller can only shorten — the scope default is the ceiling.
+    return requested < defaultExpiry ? requested : defaultExpiry;
+  }
+  return defaultExpiry;
+}
+
+/** Best-effort PUBLIC_URL for token URLs; falls back to config.publicUrl. */
+function publicUrl(config: Config): string {
+  // config.publicUrl is the resolved, host-correct base for everything the
+  // human sees. /s/<token> uses the same. Match.
+  return (config.publicUrl ?? "").replace(/\/$/, "");
+}
 
 export default blobs;

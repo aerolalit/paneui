@@ -142,6 +142,27 @@ const schema = z.object({
         .filter(Boolean),
     ),
 
+  // Default TTL for a /b/<token> capability URL minted against an
+  // artifact-scope blob. 30 days. Artifact-scope is the longest-lived; these
+  // tokens are typically reused across many session instances. Operators
+  // tighten this if exposure tolerance is lower.
+  BLOB_TOKEN_TTL_ARTIFACT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
+
+  // Default TTL for a /b/<token> capability URL minted against an agent-
+  // scope blob. 24 hours. Tightened from the original 7d design after the
+  // security review (proposal #152) — long-lived agent tokens invited
+  // "set and forget" leaks. Session-scope tokens don't get a knob here:
+  // they always inherit their session's TTL exactly.
+  BLOB_TOKEN_TTL_AGENT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24 * 60 * 60),
+
   // Lowest @paneui/cli version this relay accepts. When a /v1/* request
   // arrives with `x-pane-cli-version` set to a strictly-lower semver, the
   // relay responds with 426 cli_upgrade_required and the CLI prints an

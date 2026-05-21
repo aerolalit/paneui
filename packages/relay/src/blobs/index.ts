@@ -11,3 +11,10 @@ export {
 export { makeBlobStore } from "./factory.js";
 export { FilesystemBlobStore } from "./filesystem.js";
 export { sniffMime, isMimeAllowed } from "./mime-sniff.js";
+export {
+  generateBlobToken,
+  hashBlobToken,
+  looksLikeBlobToken,
+} from "./tokens.js";
+export { truncateIp } from "./ip-truncate.js";
+export { makeRevokeCache, type RevokeCache } from "./revoke-cache.js";

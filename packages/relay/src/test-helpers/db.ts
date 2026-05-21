@@ -222,6 +222,10 @@ export async function setupTestDb(): Promise<TestDb> {
         // while it still owns blobs) — must go before the agent purge. Blobs
         // also FK session + artifact (ON DELETE CASCADE), so per-table order
         // for those doesn't matter for the blob rows themselves.
+        // BlobTokens FK blob with CASCADE; deleting blob rows takes them
+        // along, but doing it explicitly first keeps the row counts honest
+        // when tests assert on token counts.
+        await p.blobToken.deleteMany();
         await p.blob.deleteMany();
         await p.session.deleteMany();
         await p.artifactVersion.deleteMany();
@@ -258,7 +262,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "blobs", "feedback", "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "blob_tokens", "blobs", "feedback", "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

@@ -16,7 +16,7 @@ import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { createRateLimiter } from "./http/rate-limit.js";
-import { makeBlobStore } from "./blobs/index.js";
+import { makeBlobStore, makeRevokeCache } from "./blobs/index.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
@@ -132,7 +132,18 @@ async function main(): Promise<void> {
   const blobStore = await makeBlobStore(config);
   log.info("blob store ready", { backend: config.BLOB_STORE });
 
-  const app = buildApp(config, prisma, generalLimiter, blobStore);
+  // Process-local revocation cache for /b/<token> short-circuiting. The DB
+  // row remains the source of truth; the cache is a performance hint and
+  // misses fall back to the row's revoked_at column.
+  const blobRevokeCache = makeRevokeCache();
+
+  const app = buildApp(
+    config,
+    prisma,
+    generalLimiter,
+    blobStore,
+    blobRevokeCache,
+  );
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     log.info("listening", { port: info.port, publicUrl: config.publicUrl });

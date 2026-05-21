@@ -171,6 +171,36 @@ export const errors = {
       DOCS.schema,
     ),
 
+  // Returned when /b/<token> is hit with a token that's expired, revoked,
+  // already-used (for once-tokens), or never existed. We collapse all four
+  // into one code so an attacker probing tokens can't distinguish "this
+  // hash exists but is expired" from "this hash never existed."
+  blobTokenInvalid: () =>
+    new ApiError(
+      401,
+      "blob_token_invalid",
+      undefined,
+      undefined,
+      "the blob token is unknown, expired, revoked, or has been spent (once-tokens); request a fresh token from the agent that owns the blob",
+      false,
+      DOCS.auth,
+    ),
+
+  // Distinct from `blob_not_found` so the route layer (and a future audit
+  // log analysis) can tell "this blob token is gone" from "this blob token
+  // never existed." Same status + hint as blobTokenInvalid by design — the
+  // caller has no business knowing which it was.
+  blobTokenNotFound: () =>
+    new ApiError(
+      404,
+      "blob_token_not_found",
+      undefined,
+      undefined,
+      "the token id is wrong, or the token does not belong to this blob; run 'pane blob show <id>' to list active tokens",
+      false,
+      DOCS.api,
+    ),
+
   // Distinct from `not_found` so an agent can branch on the kind of missing
   // resource (a blob lookup typically follows a known blob_id, so a 404 here
   // means the agent guessed wrong or the blob was deleted).

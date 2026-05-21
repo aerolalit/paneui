@@ -100,6 +100,8 @@ interface UploadOpts {
   declaredMime?: string;
   filename?: string;
   scope?: string;
+  sessionId?: string;
+  artifactId?: string;
 }
 
 async function upload(
@@ -114,6 +116,8 @@ async function upload(
   fd.set("file", blob, opts.filename ?? "test.jpg");
   if (opts.scope) fd.set("scope", opts.scope);
   if (opts.filename) fd.set("filename", opts.filename);
+  if (opts.sessionId) fd.set("session_id", opts.sessionId);
+  if (opts.artifactId) fd.set("artifact_id", opts.artifactId);
 
   return app.fetch(
     new Request("http://t/v1/blobs", {
@@ -122,6 +126,89 @@ async function upload(
       body: fd,
     }),
   );
+}
+
+/**
+ * Seed a minimal open session owned by `agentId`. Uses inline anonymous
+ * artifact + version because that's the cheapest way to satisfy the FK chain
+ * (Session → ArtifactVersion → Artifact) without standing up the real flow.
+ */
+async function seedSessionFor(agentId: string): Promise<string> {
+  const artifact = await prisma.artifact.create({
+    data: { ownerId: agentId, latestVersion: 1 },
+  });
+  const version = await prisma.artifactVersion.create({
+    data: {
+      artifactId: artifact.id,
+      version: 1,
+      artifactType: "html-inline",
+      artifactSource: "<html></html>",
+    },
+  });
+  const session = await prisma.session.create({
+    data: {
+      id: "ses_" + randomBytes(8).toString("hex"),
+      agentId,
+      artifactVersionId: version.id,
+      expiresAt: new Date(Date.now() + 3600_000),
+    },
+  });
+  return session.id;
+}
+
+/** Seed a minimal named artifact owned by `agentId`. */
+async function seedArtifactFor(agentId: string): Promise<string> {
+  const artifact = await prisma.artifact.create({
+    data: {
+      ownerId: agentId,
+      name: `art-${randomBytes(4).toString("hex")}`,
+      slug: `slug-${randomBytes(4).toString("hex")}`,
+      latestVersion: 1,
+    },
+  });
+  await prisma.artifactVersion.create({
+    data: {
+      artifactId: artifact.id,
+      version: 1,
+      artifactType: "html-inline",
+      artifactSource: "<html></html>",
+    },
+  });
+  return artifact.id;
+}
+
+async function mintToken(
+  apiKey: string,
+  blobId: string,
+  body: { ttl_seconds?: number; once?: boolean } = {},
+): Promise<Response> {
+  return app.fetch(
+    new Request(`http://t/v1/blobs/${blobId}/tokens`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+async function revokeToken(
+  apiKey: string,
+  blobId: string,
+  tokenId: string,
+): Promise<Response> {
+  return app.fetch(
+    new Request(`http://t/v1/blobs/${blobId}/tokens/${tokenId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${apiKey}` },
+    }),
+  );
+}
+
+async function fetchByToken(token: string): Promise<Response> {
+  return app.fetch(new Request(`http://t/b/${token}`));
 }
 
 async function getBlob(apiKey: string, blobId: string): Promise<Response> {
@@ -141,7 +228,7 @@ async function deleteBlob(apiKey: string, blobId: string): Promise<Response> {
   );
 }
 
-describe("/v1/blobs — auth + scope gate", () => {
+describe("/v1/blobs — auth + scope validation", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -153,7 +240,7 @@ describe("/v1/blobs — auth + scope gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects scope=session as 'not yet supported' (PR #2)", async () => {
+  it("rejects scope=session without session_id", async () => {
     const { apiKey } = await seedAgent();
     const res = await upload(apiKey, makeJpeg(), { scope: "session" });
     expect(res.status).toBe(400);
@@ -161,10 +248,49 @@ describe("/v1/blobs — auth + scope gate", () => {
     expect(body.error.code).toBe("invalid_request");
   });
 
-  it("rejects scope=artifact as 'not yet supported' (PR #2)", async () => {
+  it("rejects scope=artifact without artifact_id", async () => {
     const { apiKey } = await seedAgent();
     const res = await upload(apiKey, makeJpeg(), { scope: "artifact" });
     expect(res.status).toBe(400);
+  });
+
+  it("rejects unknown scope value", async () => {
+    const { apiKey } = await seedAgent();
+    const res = await upload(apiKey, makeJpeg(), { scope: "nonsense" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; details: { supported: string[] } };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.details.supported).toEqual([
+      "agent",
+      "session",
+      "artifact",
+    ]);
+  });
+
+  it("rejects scope=session with a foreign session_id (blob_not_found, not 403)", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const aliceSes = await seedSessionFor(alice.id);
+    const res = await upload(bob.apiKey, makeJpeg(), {
+      scope: "session",
+      sessionId: aliceSes,
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
+
+  it("rejects scope=artifact with a foreign artifact_id", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const aliceArt = await seedArtifactFor(alice.id);
+    const res = await upload(bob.apiKey, makeJpeg(), {
+      scope: "artifact",
+      artifactId: aliceArt,
+    });
+    expect(res.status).toBe(404);
   });
 });
 
@@ -435,3 +561,403 @@ describe("/v1/blobs/:id — DELETE", () => {
     expect(alicesGet.status).toBe(200);
   });
 });
+
+// ===========================================================================
+// Session + artifact scope uploads.
+// ===========================================================================
+
+describe("/v1/blobs — session-scope upload", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("uploads with scope=session and records sessionId", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const sessionId = await seedSessionFor(agentId);
+    const res = await upload(apiKey, makeJpeg(), {
+      scope: "session",
+      sessionId,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      scope: string;
+      session_id: string | null;
+      artifact_id: string | null;
+    };
+    expect(body.scope).toBe("session");
+    expect(body.session_id).toBe(sessionId);
+    expect(body.artifact_id).toBeNull();
+  });
+
+  it("cascades on session delete (DB row goes away)", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const sessionId = await seedSessionFor(agentId);
+    const post = await upload(apiKey, makeJpeg(), {
+      scope: "session",
+      sessionId,
+    });
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    await prisma.session.delete({ where: { id: sessionId } });
+    const found = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(found).toBeNull();
+  });
+});
+
+describe("/v1/blobs — artifact-scope upload", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("uploads with scope=artifact and records artifactId", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const artifactId = await seedArtifactFor(agentId);
+    const res = await upload(apiKey, makeJpeg(), {
+      scope: "artifact",
+      artifactId,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      scope: string;
+      artifact_id: string | null;
+      session_id: string | null;
+    };
+    expect(body.scope).toBe("artifact");
+    expect(body.artifact_id).toBe(artifactId);
+    expect(body.session_id).toBeNull();
+  });
+
+  it("cascades on artifact delete", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const artifactId = await seedArtifactFor(agentId);
+    const post = await upload(apiKey, makeJpeg(), {
+      scope: "artifact",
+      artifactId,
+    });
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    // ArtifactVersion has a cascade FK to Artifact; delete the version
+    // first to avoid the same-PR test colliding with the FK check, then
+    // the parent.
+    await prisma.artifactVersion.deleteMany({ where: { artifactId } });
+    await prisma.artifact.delete({ where: { id: artifactId } });
+    const found = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(found).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Token mint + revoke + /b/<token> capability URL.
+// ===========================================================================
+
+describe("/v1/blobs/:id/tokens — mint + revoke", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("mints a token; returns full token once + the hashed prefix + url + expiry", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const mint = await mintToken(apiKey, blob_id);
+    expect(mint.status).toBe(201);
+    const body = (await mint.json()) as {
+      token_id: string;
+      token: string;
+      token_prefix: string;
+      url: string;
+      expires_at: string;
+      once: boolean;
+    };
+    expect(body.token).toMatch(/^paneb_[A-Za-z0-9_-]{32}$/);
+    expect(body.token_prefix).toBe(body.token.slice(0, 10));
+    expect(body.url.endsWith(`/b/${body.token}`)).toBe(true);
+    expect(body.once).toBe(false);
+    // Default agent-scope TTL = 24h; new Date(expires_at) should be in the
+    // future and within a sensible window of that.
+    const expires = new Date(body.expires_at).getTime();
+    const now = Date.now();
+    expect(expires).toBeGreaterThan(now);
+    expect(expires).toBeLessThanOrEqual(now + 25 * 60 * 60 * 1000);
+  });
+
+  it("mints a token with once=true and a shorter TTL when requested", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const mint = await mintToken(apiKey, blob_id, {
+      ttl_seconds: 60,
+      once: true,
+    });
+    const body = (await mint.json()) as {
+      once: boolean;
+      expires_at: string;
+    };
+    expect(body.once).toBe(true);
+    const ttlMs = new Date(body.expires_at).getTime() - Date.now();
+    expect(ttlMs).toBeLessThanOrEqual(60 * 1000 + 1000); // small slack
+    expect(ttlMs).toBeGreaterThan(0);
+  });
+
+  it("caps requested TTL at the scope default (caller can shorten, not lengthen)", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    // Request 365 days — should be clamped to the agent-scope default (24h).
+    const mint = await mintToken(apiKey, blob_id, {
+      ttl_seconds: 365 * 24 * 60 * 60,
+    });
+    const body = (await mint.json()) as { expires_at: string };
+    const ttlMs = new Date(body.expires_at).getTime() - Date.now();
+    expect(ttlMs).toBeLessThanOrEqual(25 * 60 * 60 * 1000);
+  });
+
+  it("rejects mint for a foreign agent's blob", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const post = await upload(alice.apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const mint = await mintToken(bob.apiKey, blob_id);
+    expect(mint.status).toBe(404);
+  });
+
+  it("revokes a token (200 + idempotent on retry)", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token_id } = (await mint.json()) as { token_id: string };
+
+    const r1 = await revokeToken(apiKey, blob_id, token_id);
+    expect(r1.status).toBe(200);
+    const r2 = await revokeToken(apiKey, blob_id, token_id);
+    expect(r2.status).toBe(200);
+    const body = (await r2.json()) as { token_id: string; revoked: boolean };
+    expect(body).toEqual({ token_id, revoked: true });
+  });
+
+  it("rejects revoke from a foreign agent (blob_not_found, no row leak)", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const post = await upload(alice.apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(alice.apiKey, blob_id);
+    const { token_id } = (await mint.json()) as { token_id: string };
+
+    const res = await revokeToken(bob.apiKey, blob_id, token_id);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns blob_token_not_found for a tokenId that belongs to a different blob", async () => {
+    const { apiKey } = await seedAgent();
+    const p1 = await upload(apiKey, makeJpeg());
+    const p2 = await upload(apiKey, makeJpeg());
+    const { blob_id: b1 } = (await p1.json()) as { blob_id: string };
+    const { blob_id: b2 } = (await p2.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, b1);
+    const { token_id } = (await mint.json()) as { token_id: string };
+
+    // tokenId belongs to b1, not b2.
+    const res = await revokeToken(apiKey, b2, token_id);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_token_not_found");
+  });
+});
+
+describe("/b/<token> — capability URL", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("fetches the bytes with hardened headers (no API key)", async () => {
+    const { apiKey } = await seedAgent();
+    const payload = makeJpeg(128);
+    const post = await upload(apiKey, payload);
+    const { blob_id, sha256 } = (await post.json()) as {
+      blob_id: string;
+      sha256: string;
+    };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token } = (await mint.json()) as { token: string };
+
+    const res = await fetchByToken(token);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-disposition")).toBe("inline");
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    expect(buf.equals(payload)).toBe(true);
+
+    const { createHash } = await import("node:crypto");
+    expect(createHash("sha256").update(buf).digest("hex")).toBe(sha256);
+  });
+
+  it("attaches Content-Disposition: attachment for a PDF", async () => {
+    const { apiKey } = await seedAgent();
+    const pdf = Buffer.alloc(64, 0);
+    Buffer.from("%PDF-1.4\n").copy(pdf, 0);
+    const post = await upload(apiKey, pdf, {
+      declaredMime: "application/pdf",
+    });
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token } = (await mint.json()) as { token: string };
+
+    const res = await fetchByToken(token);
+    expect(res.headers.get("content-disposition")).toBe("attachment");
+  });
+
+  it("rejects an unknown token with blob_token_invalid (no DB-existence leak)", async () => {
+    const fake = "paneb_" + "A".repeat(32);
+    const res = await fetchByToken(fake);
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_token_invalid");
+  });
+
+  it("rejects a malformed token before the DB hit", async () => {
+    const res = await fetchByToken("not-a-blob-token");
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a revoked token", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token, token_id } = (await mint.json()) as {
+      token: string;
+      token_id: string;
+    };
+    await revokeToken(apiKey, blob_id, token_id);
+
+    const res = await fetchByToken(token);
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects an expired token", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token, token_id } = (await mint.json()) as {
+      token: string;
+      token_id: string;
+    };
+
+    // Backdate the expiry into the past directly in the DB.
+    await prisma.blobToken.update({
+      where: { id: token_id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const res = await fetchByToken(token);
+    expect(res.status).toBe(401);
+  });
+
+  it("once-token: consumed on first GET, second GET fails", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id, { once: true });
+    const { token, token_id } = (await mint.json()) as {
+      token: string;
+      token_id: string;
+    };
+
+    const first = await fetchByToken(token);
+    expect(first.status).toBe(200);
+    // Drain the body so the audit-write fires (it runs via setImmediate
+    // after the body is enqueued; we poll until the row is gone since the
+    // delete + cache add are async).
+    await first.arrayBuffer();
+    await waitForTokenGone(token_id);
+
+    // Second GET — invalid (cache + DB miss).
+    const second = await fetchByToken(token);
+    expect(second.status).toBe(401);
+  });
+
+  it("multi-use token: increments use_count + writes truncated IPs", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id);
+    const { token, token_id } = (await mint.json()) as {
+      token: string;
+      token_id: string;
+    };
+
+    // Fetch with a real X-Forwarded-For so the truncated IP gets written.
+    const fetchWithIp = (ip: string) =>
+      app.fetch(
+        new Request(`http://t/b/${token}`, {
+          headers: { "x-forwarded-for": ip },
+        }),
+      );
+
+    const r1 = await fetchWithIp("203.0.113.42");
+    expect(r1.status).toBe(200);
+    await r1.arrayBuffer();
+    await waitForUseCount(token_id, 1);
+
+    const r2 = await fetchWithIp("198.51.100.7");
+    expect(r2.status).toBe(200);
+    await r2.arrayBuffer();
+    await waitForUseCount(token_id, 2);
+
+    const row = await prisma.blobToken.findUnique({
+      where: { id: token_id },
+    });
+    expect(row).not.toBeNull();
+    expect(row!.useCount).toBe(2);
+    expect(row!.firstSeenIpNet).toBe("203.0.113.0/24");
+    expect(row!.lastSeenIpNet).toBe("198.51.100.0/24");
+    expect(row!.lastUsedAt).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Polling helpers — the audit write fires in a setImmediate after the body
+// is enqueued, so the test needs to wait for the DB to catch up. A fixed
+// `setTimeout(50)` would be a flake source; polling caps at 1s and bails
+// loudly if it never converges.
+// ---------------------------------------------------------------------------
+async function waitForUseCount(
+  tokenId: string,
+  expected: number,
+  deadlineMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const row = await prisma.blobToken.findUnique({ where: { id: tokenId } });
+    if (row && row.useCount >= expected) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(
+    `BlobToken ${tokenId} did not reach useCount=${expected} within ${deadlineMs}ms`,
+  );
+}
+
+async function waitForTokenGone(
+  tokenId: string,
+  deadlineMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    const row = await prisma.blobToken.findUnique({ where: { id: tokenId } });
+    if (!row) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(
+    `BlobToken ${tokenId} still exists after ${deadlineMs}ms (once-consumption stuck)`,
+  );
+}

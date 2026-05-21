@@ -3,7 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { ZodError } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import type { BlobStore } from "../blobs/index.js";
+import type { BlobStore, RevokeCache } from "../blobs/index.js";
+import { makeRevokeCache } from "../blobs/index.js";
 import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
@@ -18,6 +19,7 @@ import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
 import blobs from "./routes/blobs.js";
+import blobBridge from "../bridge/blob-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -37,6 +39,7 @@ export function buildApp(
   prisma: PrismaClient,
   generalLimiter?: SlidingWindowLimiter,
   blobStore?: BlobStore,
+  blobRevokeCache?: RevokeCache,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -56,12 +59,20 @@ export function buildApp(
       config.RATE_LIMIT_WINDOW_SECONDS * 1000,
     );
 
+  // BlobStore + RevokeCache come as a pair: if a blobStore is configured,
+  // the cache exists (caller-supplied for tests, or auto-instantiated here
+  // for the HTTP-only convenience path).
+  const effectiveBlobRevokeCache =
+    blobRevokeCache ?? (blobStore ? makeRevokeCache() : undefined);
+
   app.use("*", async (c, next) => {
     c.set("config", config);
     c.set("prisma", prisma);
     c.set("registerLimiter", registerLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
     if (blobStore) c.set("blobStore", blobStore);
+    if (effectiveBlobRevokeCache)
+      c.set("blobRevokeCache", effectiveBlobRevokeCache);
     await next();
   });
 
@@ -73,8 +84,13 @@ export function buildApp(
       await next();
     } finally {
       const ms = Date.now() - start;
-      // Redact the session token in /s/<tok>/... bridge paths.
-      const path = c.req.path.replace(/^\/s\/[^/]+/, "/s/***");
+      // Redact the session token in /s/<tok>/... bridge paths AND the blob
+      // capability token in /b/<tok> paths — both are bearer secrets in the
+      // URL itself and must never reach access logs / log aggregators in
+      // unredacted form.
+      const path = c.req.path
+        .replace(/^\/s\/[^/]+/, "/s/***")
+        .replace(/^\/b\/[^/]+/, "/b/***");
       if (path !== "/healthz") {
         log.info("req", {
           reqId,
@@ -205,6 +221,10 @@ export function buildApp(
   app.route("/v1/feedback", feedback);
   app.route("/v1/blobs", blobs);
   app.route("/s", bridge);
+  // /b/<token> — capability-URL fetch path for blob bytes. The URL token IS
+  // the credential (no API key, no participant token), so the route module
+  // does its own validation; no agent-auth middleware here.
+  app.route("/b", blobBridge);
 
   return app;
 }

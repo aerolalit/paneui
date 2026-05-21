@@ -244,4 +244,54 @@ model Blob {
   @@index([sessionId])
   @@index([artifactId])
   @@map("blobs")
+
+  tokens BlobToken[]
+}
+
+// Capability URL for a blob. Each row mints one /b/<token> link that any
+// holder can use to fetch the bytes without an agent API key — this is the
+// participant-facing download path.
+//
+// A token's lifetime is bound to its blob's scope (see proposal #152):
+//
+//   - artifact-scope blob: token TTL = BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
+//   - session-scope blob:  token TTL = the session's TTL (cascades on session delete)
+//   - agent-scope blob:    token TTL = BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
+//
+// `once = true` deletes the token on its first successful GET — for the
+// "share a private doc, expire after view" pattern.
+//
+// Audit columns persist enough provenance to spot an exfiltrated token
+// without storing exact requester IPs: `first_seen_ip_net` / `last_seen_ip_net`
+// are /24-truncated IPv4 (or /48-truncated IPv6) ranges. Truncation happens
+// at write time — full IPs are never persisted.
+model BlobToken {
+  id          String    @id @default(cuid())
+  blobId      String    @map("blob_id")
+  blob        Blob      @relation(fields: [blobId], references: [id], onDelete: Cascade)
+
+  // sha256 hex of the token string. The token itself is never stored — only
+  // its hash, mirroring how Agent keys and Participant tokens are stored.
+  tokenHash   String    @unique @map("token_hash")
+  // First 10 chars of the token, kept for log + UX so an operator can match
+  // a redacted access log entry to its row.
+  tokenPrefix String    @map("token_prefix")
+
+  // Lifetime + use semantics.
+  expiresAt   DateTime  @map("expires_at")
+  once        Boolean   @default(false)
+  revokedAt   DateTime? @map("revoked_at")
+
+  // Audit. useCount, lastUsedAt, and the truncated IP ranges are updated on
+  // every successful GET; the relay never persists a full requester IP.
+  useCount       Int       @default(0) @map("use_count")
+  lastUsedAt     DateTime? @map("last_used_at")
+  firstSeenIpNet String?   @map("first_seen_ip_net")
+  lastSeenIpNet  String?   @map("last_seen_ip_net")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([blobId])
+  @@index([expiresAt])
+  @@map("blob_tokens")
 }
