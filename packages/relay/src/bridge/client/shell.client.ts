@@ -538,6 +538,145 @@ interface SerializedEvent {
       sendIframeInit();
       return;
     }
+    // upload-blob-request: the iframe is asking the shell to POST a file to
+    // the participant-side blob upload route on its behalf. The shell owns
+    // the participant token (it lives only in the shell, never reaches the
+    // iframe) so the iframe cannot make this request directly. We fetch,
+    // then post the result back. ALWAYS post a reply, even on network
+    // failure — otherwise the iframe's promise sits hanging until its
+    // 2-minute timeout. Follow-up C of #156.
+    if (m.kind === "upload-blob-request") {
+      const uploadId =
+        typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
+          ? m.id
+          : null;
+      const file = m.file;
+      // postMessage's structured clone preserves File instances; if it's
+      // not actually a File the iframe sent us garbage and we should fail
+      // the RPC rather than try a coerced upload.
+      if (!uploadId || !(file instanceof File)) {
+        if (uploadId && frame && frame.contentWindow) {
+          const errFrame: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "upload-blob-result",
+            id: uploadId,
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "upload-blob-request requires { id, file }",
+            },
+          };
+          frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
+        }
+        return;
+      }
+
+      const opts = (m.options || {}) as {
+        filename?: unknown;
+        mime?: unknown;
+      };
+      // Re-wrap the File so the declared MIME override from `options.mime`
+      // travels with the multipart part. The `new File([file], ...)`
+      // form re-uses the underlying byte buffer — no copy on this path.
+      const filename =
+        typeof opts.filename === "string" ? opts.filename : file.name;
+      const mime = typeof opts.mime === "string" ? opts.mime : file.type;
+      const fd = new FormData();
+      // `new File([file], ...)` would copy in some older browsers; pass the
+      // existing File directly when no overrides were requested so common
+      // path stays zero-copy.
+      const part =
+        typeof opts.mime === "string"
+          ? new File([file], filename, { type: mime })
+          : file;
+      fd.set("file", part, filename);
+      if (typeof opts.filename === "string") fd.set("filename", opts.filename);
+
+      const uploadUrl =
+        window.location.origin +
+        "/s/" +
+        encodeURIComponent(CFG.token) +
+        "/blobs";
+
+      // Fire the fetch in a sibling task — never await it on the message
+      // listener thread, so a hung relay can't block other shim frames.
+      void (async () => {
+        let res: Response;
+        try {
+          res = await fetch(uploadUrl, { method: "POST", body: fd });
+        } catch (e) {
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "upload-blob-result",
+              id: uploadId,
+              ok: false,
+              error: {
+                code: "network_error",
+                message:
+                  e instanceof Error ? e.message : "network request failed",
+              },
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        if (res.ok) {
+          // 2xx — parse the BlobRef and resolve.
+          let blob: unknown;
+          try {
+            blob = await res.json();
+          } catch {
+            blob = null;
+          }
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "upload-blob-result",
+              id: uploadId,
+              ok: true,
+              blob,
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        // Non-2xx — parse the standard {error: {code, message, hint, ...}}
+        // envelope and forward it so the artifact's catch handler can
+        // branch on the relay's error code.
+        let code = "upload_failed";
+        let message = "upload failed with status " + res.status;
+        try {
+          const body = (await res.json()) as {
+            error?: { code?: unknown; message?: unknown };
+          };
+          if (body && body.error) {
+            if (typeof body.error.code === "string") code = body.error.code;
+            if (typeof body.error.message === "string")
+              message = body.error.message;
+          }
+        } catch {
+          /* response wasn't JSON — keep the synthetic message */
+        }
+        if (frame && frame.contentWindow) {
+          const reply: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "upload-blob-result",
+            id: uploadId,
+            ok: false,
+            error: { code, message },
+          };
+          frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+        }
+      })();
+      return;
+    }
     if (m.kind === "emit") {
       // The shim always attaches correlation_id, so any failure path here
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s

@@ -29,3 +29,11 @@ export {
   type NormaliseResult,
 } from "./normalize.js";
 export { collectBlobRefs, assertBlobsAccessibleByAgent } from "./ref-access.js";
+export {
+  processBlobUpload,
+  storageKeyFor,
+  type BlobUploadInput,
+  type BlobRowReady,
+  type ProcessBlobUploadDeps,
+  type QuotaEnforcer,
+} from "./upload-pipeline.js";

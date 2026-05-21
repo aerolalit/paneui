@@ -186,6 +186,21 @@ export const errors = {
       DOCS.api,
     ),
 
+  // Returned when a /s/:participantToken/* route is hit with a token that
+  // doesn't resolve to a live participant. Collapses all "this token won't
+  // work" cases (malformed, unknown, revoked, session-gone) into one code
+  // so a probing client can't distinguish them.
+  participantTokenInvalid: () =>
+    new ApiError(
+      401,
+      "participant_token_invalid",
+      undefined,
+      undefined,
+      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/sessions or by revoking + re-creating the session",
+      false,
+      DOCS.auth,
+    ),
+
   // Returned when /b/<token> is hit with a token that's expired, revoked,
   // already-used (for once-tokens), or never existed. We collapse all four
   // into one code so an attacker probing tokens can't distinguish "this

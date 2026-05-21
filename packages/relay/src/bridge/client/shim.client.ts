@@ -18,7 +18,11 @@ export {};
 // The shell <-> iframe frame envelope is defined ONCE in ./protocol.ts and
 // shared (as a type) with the shell bundle, so the two sides cannot drift.
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
-import type { PaneFrameEnvelope, ShimToShellKind } from "./protocol.js";
+import type {
+  BlobRefLike,
+  PaneFrameEnvelope,
+  ShimToShellKind,
+} from "./protocol.js";
 
 interface SerializedEvent {
   id: string;
@@ -38,6 +42,11 @@ interface EmitOpts {
   idempotencyKey?: string;
 }
 
+interface UploadBlobOpts {
+  filename?: string;
+  mime?: string;
+}
+
 interface PaneApi {
   emit(
     type: string,
@@ -51,6 +60,19 @@ interface PaneApi {
     subscribe(fn: () => void): () => void;
   };
   /**
+   * Upload a browser `File` to the relay over the participant token bridge.
+   * Returns a `BlobRef` the artifact can attach to a `pane.emit(...)` event
+   * (e.g. `pane.emit('photo', { blob })`). Scope is forced to `session` on
+   * the server — see `POST /s/:participantToken/blobs` in the relay.
+   *
+   * Resolves with the BlobRef on success. Rejects with an `Error` whose
+   * `.code` carries the relay's error code (`mime_disallowed`,
+   * `mime_mismatch`, `blob_size_exceeded`, `quota_exceeded`,
+   * `participant_token_invalid`, `gone`, `invalid_request`, etc.) so the
+   * artifact can branch on it.
+   */
+  uploadBlob(file: File, options?: UploadBlobOpts): Promise<BlobRefLike>;
+  /**
    * The session's per-instance seed data — the `input_data` the agent passed
    * to `POST /v1/sessions`, validated by the relay against the artifact
    * version's `input_schema`. `null` when the session was created without
@@ -62,6 +84,12 @@ interface PaneApi {
 
 interface PendingEmit {
   resolve: (v: { id: string; deduped: boolean }) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingUpload {
+  resolve: (blob: BlobRefLike) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -80,10 +108,12 @@ declare global {
 (function () {
   const handlers = new Map<string, Set<(ev: SerializedEvent) => void>>();
   const pendingEmits = new Map<string, PendingEmit>();
+  const pendingUploads = new Map<string, PendingUpload>();
   const stateEvents: SerializedEvent[] = [];
   const stateSubscribers = new Set<() => void>();
   const lastByType = new Map<string, SerializedEvent>();
   let nextCorr = 1;
+  let nextUploadId = 1;
   // The session's per-instance input_data. Unknown until the 'init' frame
   // arrives (the relay validated it against the artifact version's
   // input_schema at session-create time). Exposed on the frozen `window.pane`
@@ -188,6 +218,56 @@ declare global {
     });
   }
 
+  // window.pane.uploadBlob(file, options?) — thin postMessage RPC to the
+  // shell, which holds the participant token and brokers the
+  // POST /s/:token/blobs request. The browser's structured-clone of `File`
+  // means the shell receives a live File handle it can hand to FormData
+  // without any base64/ArrayBuffer round trip.
+  //
+  // Uploads can be slow (a multi-megabyte image over a flaky mobile link),
+  // so the timeout here is much wider than emit()'s — but still bounded so
+  // a wedged shell can't leak the Promise forever.
+  function uploadBlob(
+    file: File,
+    options?: UploadBlobOpts,
+  ): Promise<BlobRefLike> {
+    if (!(file instanceof File)) {
+      return Promise.reject(new Error("uploadBlob: argument must be a File"));
+    }
+    const id = "u" + nextUploadId++;
+    const frame: OutboundFrame = {
+      __pane: 1,
+      v: 1,
+      kind: "upload-blob-request",
+      id,
+      file,
+    };
+    if (options && typeof options === "object") {
+      const opts: Record<string, string> = {};
+      if (typeof options.filename === "string")
+        opts["filename"] = options.filename;
+      if (typeof options.mime === "string") opts["mime"] = options.mime;
+      if (Object.keys(opts).length) frame["options"] = opts;
+    }
+    // shellOrigin defaults to "*" until init lands; mirroring how emit()
+    // posts to shellOrigin keeps the cross-origin posture consistent.
+    parent.postMessage(frame, shellOrigin);
+    return new Promise<BlobRefLike>((resolve, reject) => {
+      const timer = setTimeout(
+        () => {
+          if (pendingUploads.has(id)) {
+            pendingUploads.delete(id);
+            reject(new Error("upload timeout"));
+          }
+        },
+        // 2 minutes — covers a 5 MB upload on a slow mobile link plus the
+        // server-side sharp normalisation pass.
+        2 * 60 * 1000,
+      );
+      pendingUploads.set(id, { resolve, reject, timer });
+    });
+  }
+
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== parent) return;
     const m = e.data;
@@ -243,6 +323,24 @@ declare global {
       }
       return;
     }
+    if (m.kind === "upload-blob-result") {
+      const uid: string | undefined = m.id;
+      if (!uid || !pendingUploads.has(uid)) return;
+      const pu = pendingUploads.get(uid)!;
+      pendingUploads.delete(uid);
+      clearTimeout(pu.timer);
+      if (m.ok === true && m.blob) {
+        pu.resolve(m.blob as BlobRefLike);
+      } else {
+        const errInfo = (m.error || {}) as { code?: string; message?: string };
+        const err: PaneError = new Error(
+          errInfo.message || errInfo.code || "upload failed",
+        );
+        if (errInfo.code) err.code = errInfo.code;
+        pu.reject(err);
+      }
+      return;
+    }
   });
 
   // `window.pane` is frozen so the artifact can't tamper with the bridge. But
@@ -257,6 +355,7 @@ declare global {
     emit,
     on,
     state,
+    uploadBlob,
     get inputData(): unknown {
       return inputData;
     },

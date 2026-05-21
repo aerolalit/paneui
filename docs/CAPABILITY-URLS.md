@@ -150,6 +150,72 @@ Things to watch for:
 
 See [`docs/RUNBOOK-LEAKED-TOKEN.md`](./RUNBOOK-LEAKED-TOKEN.md).
 
+## Participant uploads (`POST /s/:participantToken/blobs`)
+
+The agent-side upload path is `POST /v1/blobs` with an agent API key. To
+close the round-trip — so a human inside a rendered pane can upload a
+file BACK to the agent (a selfie, a PDF, a CSV) — the relay also accepts
+multipart uploads on `POST /s/:participantToken/blobs` authenticated by
+the participant token alone.
+
+The iframe shim exposes this as `window.pane.uploadBlob(file, options?)`.
+The shell (the participant-facing page that holds the token) brokers the
+fetch and returns a `BlobRef` to the iframe via postMessage. The agent
+then receives the BlobRef as part of a normal `pane.emit(...)` event
+payload and can download the bytes via the existing
+`/v1/blobs/:id` route or by minting a `/b/<token>` URL.
+
+### Threat model
+
+- **Auth.** The participant token in the path IS the credential. There is
+  no second factor. The token's surface is the same one already used by
+  the WebSocket-ticket mint, the presence-poll endpoint, and the event-
+  emit channel — so participant uploads inherit the same trust posture
+  as event emits. A leaked participant token already lets the holder
+  emit forged events; the upload path doesn't widen that.
+- **Scope pinning.** Scope is FORCED to `session`. Even if the multipart
+  body carries `scope=agent` or `scope=artifact`, the route ignores
+  those values. A human cannot mint long-lived agent-scope blobs through
+  a participant token, and cannot reach an artifact they don't own.
+  Session-scope blobs cascade-delete with the session, which bounds the
+  blast radius of a leaked participant token: when the agent ends the
+  session, the human's uploads go with it.
+- **Quota accounting.** Uploads count against the OWNING AGENT's quota
+  (`MAX_BLOBS_PER_AGENT_BYTES`), not the participant. The Blob row's
+  `ownerId` is `session.agentId`. This means a hostile / runaway
+  participant can DoS the agent's quota; agents should keep an eye on
+  `pane blob list` and/or set conservative per-session caps with
+  `MAX_BLOBS_PER_SESSION_BYTES`.
+- **Pipeline parity.** The participant route runs the EXACT same pipeline
+  as `POST /v1/blobs` — MIME sniff, polyglot defense via sharp, EXIF
+  strip, envelope encryption-at-rest, scan webhook. The shared
+  implementation lives in `packages/relay/src/blobs/upload-pipeline.ts`
+  so the two routes can't drift.
+
+### Wire shape
+
+```
+POST /s/<participantToken>/blobs
+Content-Type: multipart/form-data; boundary=...
+
+  file       — required, the binary file part
+  filename   — optional UX-only display name
+```
+
+Response: a `BlobRef` (same shape `POST /v1/blobs` returns).
+
+Errors are the standard envelope `{error: {code, message, hint, retryable, docs_url}}`:
+
+| HTTP | code | meaning |
+|------|------|---------|
+| 400  | `invalid_request` | missing `file` part / empty body |
+| 401  | `participant_token_invalid` | malformed / unknown / revoked token |
+| 410  | `gone` | the session is closed or expired |
+| 413  | `blob_size_exceeded` | upload > `MAX_BLOB_BYTES` |
+| 413  | `quota_exceeded` | the agent's aggregate quota is full |
+| 415  | `mime_mismatch` | declared Content-Type disagrees with sniffed |
+| 415  | `mime_disallowed` | sniffed MIME not in `BLOB_MIME_ALLOWLIST` |
+
 ## Related
 
 - [`docs/SECURITY-POLYGLOTS.md`](./SECURITY-POLYGLOTS.md) — polyglot defence

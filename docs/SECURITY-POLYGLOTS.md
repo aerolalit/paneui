@@ -84,6 +84,23 @@ The normalisation pass is the **primary** defence. Layered on top:
   where the declared `Content-Type` disagrees with the sniffed bytes
   (returns 415 `mime_mismatch`).
 
+### Coverage: both upload routes
+
+The same defence applies on every upload entry point. The pipeline is
+factored into a single helper (`processBlobUpload` in
+`packages/relay/src/blobs/upload-pipeline.ts`) and reused by:
+
+- **`POST /v1/blobs`** — the agent-side multipart upload (agent API key).
+- **`POST /s/:participantToken/blobs`** — the human-side multipart upload
+  used by `window.pane.uploadBlob()` from inside a rendered pane
+  (follow-up C of #156).
+
+Because both routes share one pipeline, a polyglot uploaded by a human
+through the participant route gets the same sharp re-encode + EXIF strip
+as one uploaded by the agent. The participant route additionally pins
+`scope=session`, so any blob landed through it is bounded by the
+session's lifetime.
+
 ## If you find a bypass
 
 If you can construct a file that:

@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.1.0 -->
+<!-- pane skill v1.2.0 -->
 
 # pane
 
@@ -773,6 +773,88 @@ for the backend matrix, `docs/CAPABILITY-URLS.md` for the `/b/<token>`
 threat model, and `docs/SECURITY-POLYGLOTS.md` for the upload-side
 defence (sharp normalisation + EXIF strip; SVG is passthrough — keep it
 out of `BLOB_MIME_ALLOWLIST` if your surface renders SVGs inline).
+
+### Human file uploads in a pane
+
+A human inside a rendered pane can upload a file BACK to the relay via
+`window.pane.uploadBlob(file, options?)`. The returned `BlobRef` is
+suitable for stuffing into an event payload — the agent receives it and
+can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
+
+**1. Declare the event in your schema with a blob field.**
+
+```json
+{
+  "events": {
+    "photo.attached": {
+      "emittedBy": ["page"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+**2. Inside the artifact HTML, wire a file input to `pane.uploadBlob` +
+`pane.emit`.**
+
+```html
+<input type="file" id="picker" accept="image/jpeg,image/png">
+<button id="send" disabled>Upload</button>
+<div id="status"></div>
+<script>
+  const picker = document.getElementById("picker");
+  const sendBtn = document.getElementById("send");
+  const status = document.getElementById("status");
+  picker.addEventListener("change", () => {
+    sendBtn.disabled = !picker.files?.length;
+  });
+  sendBtn.addEventListener("click", async () => {
+    sendBtn.disabled = true;
+    status.textContent = "uploading...";
+    try {
+      // Hands the File to the shell over postMessage; the shell POSTs
+      // to /s/<participantToken>/blobs and returns the BlobRef.
+      const blob = await window.pane.uploadBlob(picker.files[0]);
+      await window.pane.emit("photo.attached", { blob });
+      status.textContent = "uploaded.";
+    } catch (e) {
+      // e.code is the relay's error code (e.g. "blob_size_exceeded",
+      // "mime_disallowed"). Branch on it to render a useful message.
+      status.textContent = "failed: " + (e.code || e.message);
+      sendBtn.disabled = false;
+    }
+  });
+</script>
+```
+
+**3. Agent-side, watch for the event and read the bytes.**
+
+```sh
+# Wait for the human's upload event.
+EVENT=$(pane watch "$SID" --type photo.attached)
+BLOB_ID=$(echo "$EVENT" | jq -r .data.blob.blob_id)
+
+# Download the bytes.
+pane blob download "$BLOB_ID" --out ./uploaded.jpg
+```
+
+Uploads are pinned to scope=`session`: they cascade-delete with the
+session, count against the AGENT's quota (not the participant), and
+run through the same MIME-sniff + polyglot-defense + EXIF-strip
+pipeline as `pane blob upload`. See `docs/CAPABILITY-URLS.md` for the
+threat model.
 
 ## The watch → Monitor pattern
 
