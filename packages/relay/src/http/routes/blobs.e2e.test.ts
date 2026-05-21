@@ -640,6 +640,80 @@ describe("/v1/blobs/:id — GET", () => {
   });
 });
 
+describe("/v1/blobs/:id/metadata — GET", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("returns the full BlobRef JSON without streaming bytes", async () => {
+    const { apiKey } = await seedAgent();
+    const payload = await makeJpeg(96);
+    const post = await upload(apiKey, payload, { filename: "hello.jpg" });
+    const postBody = (await post.json()) as Record<string, unknown>;
+    const blobId = postBody.blob_id as string;
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blobId}/metadata`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+
+    const body = (await res.json()) as Record<string, unknown>;
+    // The metadata endpoint MUST return the exact same shape POST /v1/blobs
+    // returns — that's the contract the CLI / core client rely on.
+    expect(body).toEqual(postBody);
+    expect(body.blob_id).toBe(blobId);
+    expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.filename).toBe("hello.jpg");
+    expect(body.scope).toBe("agent");
+    expect(body.mime).toBe("image/jpeg");
+    expect(body.size).toBe(payload.length);
+    expect(body.status).toBe("ready");
+  });
+
+  it("returns blob_not_found for a foreign agent's blob (cross-tenant isolation)", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const post = await upload(alice.apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`, {
+        headers: { authorization: `Bearer ${bob.apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
+
+  it("returns blob_not_found for a deleted blob", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    await deleteBlob(apiKey, blob_id);
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("requires authentication (401 without bearer)", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`),
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("/v1/blobs/:id — DELETE", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);

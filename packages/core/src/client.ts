@@ -642,30 +642,23 @@ export class PaneClient {
     return res.arrayBuffer();
   }
 
-  /** GET a blob's metadata only — useful before downloading large blobs. */
+  /**
+   * GET a blob's metadata only — useful before downloading large blobs, or
+   * for `pane blob show <id>` which doesn't want the bytes. Returns the full
+   * BlobRef (the same shape POST /v1/blobs returns): id, scope, mime, size,
+   * sha256, filename, width, height, status, scope FKs, timestamps.
+   *
+   * Backed by GET /v1/blobs/:id/metadata which serves the JSON BlobRef
+   * without streaming the bytes — cheap on the relay and avoids the
+   * encrypt-at-rest decrypt cost when only the metadata is needed.
+   */
   async getBlob(blobId: string): Promise<BlobRef> {
-    // The relay's GET /v1/blobs/:id streams the body; metadata is read from
-    // the response headers. For pure-metadata calls we make a HEAD request
-    // and synthesise a BlobRef from the response headers + a follow-up
-    // listing call if needed. v0.1.0 ships the round-trip download path
-    // only; listing/show comes in the next CLI iteration.
-    const url = this.base + "/v1/blobs/" + encodeURIComponent(blobId);
-    const res = await this.fetchImpl(url, {
-      method: "HEAD",
-      headers: { authorization: "Bearer " + this.apiKey },
-    });
-    if (!res.ok) {
-      this.fail({ ok: false, status: res.status, data: null });
-    }
-    return {
-      blob_id: blobId,
-      url,
-      mime: res.headers.get("content-type") ?? "application/octet-stream",
-      size: Number(res.headers.get("content-length") ?? 0),
-      scope: "agent", // unknown without a GET — placeholder; pane blob show
-      // calls listBlobs() instead to get the full shape.
-      sha256: "",
-    } as BlobRef;
+    const r = await this.call(
+      "GET",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/metadata",
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<BlobRef>(r);
   }
 
   /** DELETE /v1/blobs/:id — soft-delete (idempotent). */
