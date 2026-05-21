@@ -818,6 +818,168 @@ interface SerializedEvent {
       })();
       return;
     }
+    // save-blob-request: iframe asks the shell to trigger a browser save of
+    // a blob. Distinct from download-blob-request — no bytes flow back to
+    // the iframe. The shell performs the `<a download>` click in its OWN
+    // (non-sandboxed) document, which is the only way iOS WebKit reliably
+    // saves files; sandboxed-iframe downloads are silently dropped on iOS
+    // even with `allow-downloads`. Always replies with ok | error so the
+    // iframe's promise resolves.
+    if (m.kind === "save-blob-request") {
+      const saveId =
+        typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
+          ? m.id
+          : null;
+      const blobId =
+        typeof m.blob_id === "string" &&
+        m.blob_id.length > 0 &&
+        m.blob_id.length <= 64
+          ? m.blob_id
+          : null;
+      // Sanitise filename — strip path separators and control chars, cap len.
+      let fname: string | null = null;
+      if (typeof m.filename === "string" && m.filename.length > 0) {
+        const cleaned = m.filename
+          // eslint-disable-next-line no-control-regex
+          .replace(/[/\\\x00-\x1f]/g, "_")
+          .slice(0, 200);
+        if (cleaned.length > 0) fname = cleaned;
+      }
+
+      if (!saveId || !blobId) {
+        if (saveId && frame && frame.contentWindow) {
+          const errFrame: OutboundFrame = {
+            __pane: 1,
+            v: 1,
+            kind: "save-blob-result",
+            id: saveId,
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "save-blob-request requires { id, blob_id }",
+            },
+          };
+          frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
+        }
+        return;
+      }
+
+      const downloadUrl =
+        window.location.origin +
+        "/s/" +
+        encodeURIComponent(CFG.token) +
+        "/blobs/" +
+        encodeURIComponent(blobId);
+
+      // Fire in a sibling task — never await on the message-listener thread.
+      void (async () => {
+        let res: Response;
+        try {
+          res = await fetch(downloadUrl, { cache: "no-store" });
+        } catch (e) {
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "save-blob-result",
+              id: saveId,
+              ok: false,
+              error: {
+                code: "fetch_error",
+                message:
+                  e instanceof Error ? e.message : "network request failed",
+              },
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        if (!res.ok) {
+          let code = "save_failed";
+          let message = "save failed with status " + res.status;
+          try {
+            const body = (await res.json()) as {
+              error?: { code?: unknown; message?: unknown };
+            };
+            if (body && body.error) {
+              if (typeof body.error.code === "string") code = body.error.code;
+              if (typeof body.error.message === "string")
+                message = body.error.message;
+            }
+          } catch {
+            /* not JSON */
+          }
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "save-blob-result",
+              id: saveId,
+              ok: false,
+              error: { code, message },
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+          return;
+        }
+
+        // Build a temporary <a download> in the OUTER document, click it,
+        // remove. This is the load-bearing part of the workaround — iOS
+        // WebKit honours the `download` attribute here but not from inside
+        // a sandboxed iframe even with `allow-downloads`.
+        try {
+          const blobBody = await res.blob();
+          const objectUrl = URL.createObjectURL(blobBody);
+          const a = document.createElement("a");
+          a.href = objectUrl;
+          a.download = fname || blobId;
+          // Some browsers need the anchor to be in the DOM before .click()
+          a.style.display = "none";
+          document.body.appendChild(a);
+          a.click();
+          // Schedule cleanup — keep the URL alive briefly so the browser
+          // has time to start the download even if the user is on a slow
+          // connection.
+          setTimeout(() => {
+            try {
+              a.remove();
+            } catch {
+              /* ignore */
+            }
+            URL.revokeObjectURL(objectUrl);
+          }, 1500);
+
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "save-blob-result",
+              id: saveId,
+              ok: true,
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+        } catch (e) {
+          if (frame && frame.contentWindow) {
+            const reply: OutboundFrame = {
+              __pane: 1,
+              v: 1,
+              kind: "save-blob-result",
+              id: saveId,
+              ok: false,
+              error: {
+                code: "save_failed",
+                message:
+                  e instanceof Error ? e.message : "failed to trigger save",
+              },
+            };
+            frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+          }
+        }
+      })();
+      return;
+    }
     if (m.kind === "emit") {
       // The shim always attaches correlation_id, so any failure path here
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s

@@ -27,7 +27,8 @@ export type ShimToShellKind =
   | "ready"
   | "emit"
   | "upload-blob-request"
-  | "download-blob-request";
+  | "download-blob-request"
+  | "save-blob-request";
 
 /** Frame kinds the shell sends to the shim (shell -> iframe). */
 export type ShellToShimKind =
@@ -36,7 +37,8 @@ export type ShellToShimKind =
   | "ack"
   | "error"
   | "upload-blob-result"
-  | "download-blob-result";
+  | "download-blob-result"
+  | "save-blob-result";
 
 /**
  * The envelope every Pane protocol frame carries. Concrete frame types in each
@@ -150,6 +152,38 @@ export type DownloadBlobResultFrame = {
   | { ok: true; blob: Blob; mime: string; size: number }
   | { ok: false; error: { code: string; message: string } }
 );
+
+/**
+ * `save-blob-request` — iframe asks the shell to trigger a browser download
+ * (save to disk / Files / Photos). The shell does it from the OUTER, non-
+ * sandboxed document — so `<a download href="blob:...">` works reliably,
+ * including on iOS Safari (WebKit, where iOS Chrome lives) which silently
+ * drops download attempts from inside a sandboxed iframe even with
+ * `allow-downloads`.
+ *
+ * Distinct from `download-blob-request` (which returns the bytes as a Blob
+ * for in-iframe rendering) — `save-blob-request` returns no payload, only
+ * an ok / error ack once the download has been kicked off.
+ */
+export interface SaveBlobRequestFrame {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "save-blob-request";
+  /** RPC correlation id. */
+  id: string;
+  /** The blob id to save. Must be referenced from this session. */
+  blob_id: string;
+  /** Suggested filename; the shell uses it on the `<a download>` attribute. */
+  filename?: string;
+}
+
+/** The shell's ack for a save-blob-request. Discriminated by `ok`. */
+export type SaveBlobResultFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "save-blob-result";
+  id: string;
+} & ({ ok: true } | { ok: false; error: { code: string; message: string } });
 
 /**
  * The `payload` carried by the shell -> iframe `init` frame. The shell sends

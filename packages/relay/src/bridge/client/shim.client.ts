@@ -91,6 +91,22 @@ interface PaneApi {
    */
   downloadBlob(blobId: string): Promise<Blob>;
   /**
+   * Trigger a browser save (download to disk / Files / Photos) of a blob
+   * the session references. Unlike `downloadBlob` which hands the iframe
+   * the bytes, `saveBlob` only kicks off the OS save flow — the iframe
+   * doesn't receive the bytes. Use this for non-image files (PDFs, CSVs,
+   * archives) the human is meant to save rather than view inline.
+   *
+   * The shell runs the actual `<a download>` click from the OUTER, non-
+   * sandboxed document, which is the only way iOS Safari / iOS Chrome
+   * (both WebKit) reliably save files — downloads from inside a sandboxed
+   * iframe are silently dropped on those browsers.
+   *
+   * Resolves when the shell has kicked off the download; rejects with
+   * an `Error` whose `.code` carries the relay's error code on failure.
+   */
+  saveBlob(blobId: string, filename?: string): Promise<void>;
+  /**
    * The session's per-instance seed data — the `input_data` the agent passed
    * to `POST /v1/sessions`, validated by the relay against the artifact
    * version's `input_schema`. `null` when the session was created without
@@ -118,6 +134,12 @@ interface PendingDownload {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface PendingSave {
+  resolve: () => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface PaneError extends Error {
   code?: string;
   details?: unknown;
@@ -134,12 +156,14 @@ declare global {
   const pendingEmits = new Map<string, PendingEmit>();
   const pendingUploads = new Map<string, PendingUpload>();
   const pendingDownloads = new Map<string, PendingDownload>();
+  const pendingSaves = new Map<string, PendingSave>();
   const stateEvents: SerializedEvent[] = [];
   const stateSubscribers = new Set<() => void>();
   const lastByType = new Map<string, SerializedEvent>();
   let nextCorr = 1;
   let nextUploadId = 1;
   let nextDownloadId = 1;
+  let nextSaveId = 1;
   // The session's per-instance input_data. Unknown until the 'init' frame
   // arrives (the relay validated it against the artifact version's
   // input_schema at session-create time). Exposed on the frozen `window.pane`
@@ -337,6 +361,53 @@ declare global {
     });
   }
 
+  // window.pane.saveBlob(blob_id, filename?) — asks the shell to trigger a
+  // browser save (download) for a blob referenced by this session. The shell
+  // does the `<a download>` click from its own (non-sandboxed) document; the
+  // sandbox `allow-downloads` flag is NOT sufficient on iOS WebKit, which
+  // silently drops sandboxed-iframe downloads even with it. Returning from
+  // the OUTER document is the only reliable cross-browser path.
+  //
+  // No bytes flow back to the iframe — the iframe only learns whether the
+  // download started (ok) or which error fired.
+  function saveBlob(blobId: string, filename?: string): Promise<void> {
+    if (typeof blobId !== "string" || blobId.length === 0) {
+      const err: PaneError = new Error(
+        "saveBlob: blob_id must be a non-empty string",
+      );
+      err.code = "invalid_args";
+      return Promise.reject(err);
+    }
+    const id = "s" + nextSaveId++;
+    const frame: OutboundFrame = {
+      __pane: 1,
+      v: 1,
+      kind: "save-blob-request",
+      id,
+      blob_id: blobId,
+    };
+    if (typeof filename === "string" && filename.length > 0) {
+      // Trim oversized / weird filenames defensively — the shell sanitises
+      // again but a short cap here avoids a malformed-frame round trip.
+      frame.filename = filename.slice(0, 255);
+    }
+    parent.postMessage(frame, shellOrigin);
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => {
+          if (pendingSaves.has(id)) {
+            pendingSaves.delete(id);
+            reject(new Error("save timeout"));
+          }
+        },
+        // 2 minutes — matches download/upload, accommodates a slow fetch
+        // through the shell on a poor mobile link.
+        2 * 60 * 1000,
+      );
+      pendingSaves.set(id, { resolve, reject, timer });
+    });
+  }
+
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== parent) return;
     const m = e.data;
@@ -428,6 +499,24 @@ declare global {
       }
       return;
     }
+    if (m.kind === "save-blob-result") {
+      const sid: string | undefined = m.id;
+      if (!sid || !pendingSaves.has(sid)) return;
+      const ps = pendingSaves.get(sid)!;
+      pendingSaves.delete(sid);
+      clearTimeout(ps.timer);
+      if (m.ok === true) {
+        ps.resolve();
+      } else {
+        const errInfo = (m.error || {}) as { code?: string; message?: string };
+        const err: PaneError = new Error(
+          errInfo.message || errInfo.code || "save failed",
+        );
+        if (errInfo.code) err.code = errInfo.code;
+        ps.reject(err);
+      }
+      return;
+    }
   });
 
   // `window.pane` is frozen so the artifact can't tamper with the bridge. But
@@ -444,6 +533,7 @@ declare global {
     state,
     uploadBlob,
     downloadBlob,
+    saveBlob,
     get inputData(): unknown {
       return inputData;
     },
