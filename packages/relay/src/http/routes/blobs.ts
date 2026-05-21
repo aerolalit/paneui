@@ -268,6 +268,29 @@ blobs.post("/", async (c) => {
     throw e;
   }
 
+  // Envelope encryption-at-rest (opt-in). When BLOB_ENCRYPT_AT_REST=true,
+  // we encrypt the normalised plaintext with a fresh per-blob DEK; the
+  // bytes stored in the BlobStore are ciphertext, and the DB row carries
+  // the wrapped DEK + data IV + tag in `encryptionEnvelope` for the GET
+  // path to decrypt. The Blob row's `size` + `sha256` ALWAYS reflect the
+  // PLAINTEXT — those are user-facing values; the ciphertext sha256 is an
+  // internal storage detail tracked via the integrity check below.
+  let bytesForStore: Buffer = finalBytes;
+  let encryptionEnvelope: string | null = null;
+  let ciphertextSha256 = finalSha256;
+  let ciphertextSize = finalSize;
+  if (config.BLOB_ENCRYPT_AT_REST) {
+    const { encryptBlob, serialiseEnvelope } =
+      await import("../../blobs/encrypt.js");
+    const { getMasterKey } = await import("../../crypto.js");
+    const enc = encryptBlob(finalBytes, getMasterKey());
+    bytesForStore = enc.ciphertext;
+    encryptionEnvelope = serialiseEnvelope(enc.envelope);
+    const { createHash } = await import("node:crypto");
+    ciphertextSha256 = createHash("sha256").update(bytesForStore).digest("hex");
+    ciphertextSize = bytesForStore.length;
+  }
+
   // Create the blob row first (status=pending) so we have an id to derive
   // the storage key from. If the upload fails after this point, we mark the
   // row failed (a janitor task in a later PR sweeps these).
@@ -285,6 +308,7 @@ blobs.post("/", async (c) => {
       filename: typeof form.filename === "string" ? form.filename : null,
       storageKey: "", // placeholder, set on the same row after we know the id
       status: "pending",
+      encryptionEnvelope,
     },
   });
   const storageKey = storageKeyFor(row.id);
@@ -293,11 +317,12 @@ blobs.post("/", async (c) => {
     data: { storageKey },
   });
 
-  // Stream the normalised bytes into the BlobStore. The store recomputes
-  // sha256 + size as it writes; we cross-check below.
+  // Stream into the BlobStore. The store recomputes sha256 + size as it
+  // writes; we cross-check the CIPHERTEXT values below (which are the same
+  // as the plaintext values when encryption is off).
   let info;
   try {
-    info = await store.put(storageKey, Readable.from(finalBytes), {
+    info = await store.put(storageKey, Readable.from(bytesForStore), {
       mime: sniffedMime,
       maxBytes: config.MAX_BLOB_BYTES,
     });
@@ -314,10 +339,10 @@ blobs.post("/", async (c) => {
     throw e;
   }
 
-  // Sanity check: the backend's computed sha256 must match what we
-  // computed from the in-memory bytes. A mismatch here means a backend
-  // bug or storage corruption — refuse the upload loudly.
-  if (info.sha256 !== finalSha256 || info.size !== finalSize) {
+  // Sanity check: the backend's computed sha256 must match the ciphertext
+  // sha256 we computed before the store.put. A mismatch here means a
+  // backend bug or storage corruption — refuse the upload loudly.
+  if (info.sha256 !== ciphertextSha256 || info.size !== ciphertextSize) {
     await store.delete(storageKey).catch(() => {
       /* best-effort */
     });
@@ -343,6 +368,7 @@ blobs.post("/", async (c) => {
     artifactId,
     config,
     extraBytes: info.size,
+    store,
   });
   if (quotaFailure) {
     // Roll back: delete the bytes and mark the row failed.
@@ -356,13 +382,74 @@ blobs.post("/", async (c) => {
     throw errors.quotaExceeded(quotaFailure.scope, quotaFailure.cap);
   }
 
-  // Commit: mark ready, fill in real size + sha256.
+  // Optional scan-hook step. When BLOB_SCAN_HOOK is set, POST the blob's
+  // metadata to the scanner and wait for a verdict before flipping the
+  // row to ready. Fail-closed: any throw (timeout, non-2xx, bad
+  // signature, "infected" verdict) results in the blob being deleted.
+  if (config.BLOB_SCAN_HOOK) {
+    try {
+      const { callScanHook } = await import("../../blobs/scan-hook.js");
+      const { generateBlobToken, hashBlobToken } =
+        await import("../../blobs/index.js");
+      // Mint a single-use scan token (5-minute TTL, `once=true`). The
+      // scanner GETs the blob bytes via this URL — no agent key needed.
+      const tok = generateBlobToken();
+      await prisma.blobToken.create({
+        data: {
+          blobId: row.id,
+          tokenHash: tok.hash,
+          tokenPrefix: tok.prefix,
+          expiresAt: new Date(Date.now() + 5 * 60_000),
+          once: true,
+        },
+      });
+      // Hash to suppress "unused import" warning when call is mocked out.
+      void hashBlobToken;
+      const downloadUrl = `${(config.publicUrl ?? "").replace(/\/$/, "")}/b/${tok.token}`;
+      const verdict = await callScanHook(
+        config,
+        {
+          blob_id: row.id,
+          scope: scope,
+          mime: sniffedMime,
+          size: finalSize,
+          sha256: finalSha256,
+          download_url: downloadUrl,
+        },
+        { timeoutMs: config.BLOB_SCAN_TIMEOUT_MS },
+      );
+      if (verdict.verdict !== "clean") {
+        throw new Error(
+          `scan returned verdict=${verdict.verdict}${
+            verdict.reason ? ` (${verdict.reason})` : ""
+          }`,
+        );
+      }
+    } catch (e) {
+      await store.delete(storageKey).catch(() => {
+        /* best-effort */
+      });
+      await prisma.blob.update({
+        where: { id: row.id },
+        data: { status: "failed" },
+      });
+      throw errors.invalidRequest(
+        "blob failed virus / content scan",
+        undefined,
+        e instanceof Error
+          ? `scanner reported: ${e.message}`
+          : "scanner rejected the upload",
+      );
+    }
+  }
+
+  // Commit: mark ready. size/sha256 stay as the PLAINTEXT values written
+  // at create time — when encryption-at-rest is on, the ciphertext
+  // size/sha256 from `info` are only used for the integrity check above.
   const final = await prisma.blob.update({
     where: { id: row.id },
     data: {
       status: "ready",
-      size: info.size,
-      sha256: info.sha256,
       confirmedAt: new Date(),
     },
   });
@@ -482,7 +569,26 @@ blobs.get("/:id", async (c) => {
     throw errors.blobNotFound();
   }
 
-  // Hardened headers — see route doc comment above.
+  // Decrypt (when encryption-at-rest is on for this blob). The encryption
+  // envelope is stored on the row; absent envelope = plaintext bytes in
+  // the store (the BLOB_ENCRYPT_AT_REST was off when this blob was
+  // written). Decryption buffers the full blob to verify the GCM tag —
+  // bounded by MAX_BLOB_BYTES so memory cost is known.
+  let outputStream: Readable = stream;
+  if (row.encryptionEnvelope) {
+    const { decryptBlob, parseEnvelope } =
+      await import("../../blobs/encrypt.js");
+    const { getMasterKey } = await import("../../crypto.js");
+    const envelope = parseEnvelope(row.encryptionEnvelope);
+    const chunks: Buffer[] = [];
+    for await (const c of stream) chunks.push(c as Buffer);
+    const ciphertext = Buffer.concat(chunks);
+    const plaintext = decryptBlob(ciphertext, envelope, getMasterKey());
+    outputStream = Readable.from(plaintext);
+  }
+
+  // Hardened headers — see route doc comment above. Content-Length is the
+  // PLAINTEXT size; the row already stores that regardless of encryption.
   c.header("Content-Type", row.mime);
   c.header("Content-Length", String(row.size));
   c.header("X-Content-Type-Options", "nosniff");
@@ -495,7 +601,7 @@ blobs.get("/:id", async (c) => {
   c.header("Referrer-Policy", "no-referrer");
 
   // Hono accepts a Web ReadableStream as the body; convert.
-  return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
+  return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
 });
 
 // ---------------------------------------------------------------------------
@@ -967,20 +1073,66 @@ async function enforceQuotas(
      * UPDATE lands.
      */
     extraBytes: number;
+    /**
+     * Optional BlobStore handle so eviction can clean up the storage
+     * backend's bytes too. Omitted when this helper is called from
+     * `POST /v1/blobs/presign` (no blob written yet — eviction is a row-
+     * level + cache-level concern there, the bytes don't exist yet).
+     */
+    store?: { delete: (key: string) => Promise<void> };
   },
 ): Promise<QuotaFailure | null> {
-  const { ownerId, sessionId, artifactId, config, extraBytes } = opts;
+  const { ownerId, sessionId, artifactId, config, extraBytes, store } = opts;
 
-  // Per-agent — always applies.
-  const agentAgg = await prisma.blob.aggregate({
-    where: { ownerId, status: { in: ["pending", "ready"] } },
-    _sum: { size: true },
-  });
-  if (
-    (agentAgg._sum.size ?? 0) + extraBytes >
-    config.MAX_BLOBS_PER_AGENT_BYTES
-  ) {
-    return { scope: "agent", cap: config.MAX_BLOBS_PER_AGENT_BYTES };
+  // Per-agent — always applies. When over the cap and LRU eviction is on,
+  // remove the oldest agent-scope blobs until the new one fits. Session +
+  // artifact-scope blobs are NEVER evicted: they're tied to a live parent.
+  let agentTotal =
+    (
+      await prisma.blob.aggregate({
+        where: { ownerId, status: { in: ["pending", "ready"] } },
+        _sum: { size: true },
+      })
+    )._sum.size ?? 0;
+
+  if (agentTotal + extraBytes > config.MAX_BLOBS_PER_AGENT_BYTES) {
+    if (!config.BLOB_LRU_EVICTION) {
+      return { scope: "agent", cap: config.MAX_BLOBS_PER_AGENT_BYTES };
+    }
+
+    // LRU eviction: oldest agent-scope blob first, until the new upload
+    // would fit. Loop bounded by the number of evictable rows so a bug
+    // can't spin forever.
+    const evictable = await prisma.blob.findMany({
+      where: {
+        ownerId,
+        scope: "agent",
+        status: { in: ["pending", "ready"] },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, size: true, storageKey: true },
+    });
+    for (const row of evictable) {
+      if (agentTotal + extraBytes <= config.MAX_BLOBS_PER_AGENT_BYTES) {
+        break;
+      }
+      if (store) {
+        await store.delete(row.storageKey).catch(() => {
+          /* best-effort; orphan-sweep handles stragglers */
+        });
+      }
+      await prisma.blob.update({
+        where: { id: row.id },
+        data: { status: "deleted", deletedAt: new Date() },
+      });
+      agentTotal -= row.size;
+    }
+
+    // Re-check after the eviction loop. If we're still over, the new blob
+    // is too big even after evicting every agent-scope blob — reject.
+    if (agentTotal + extraBytes > config.MAX_BLOBS_PER_AGENT_BYTES) {
+      return { scope: "agent", cap: config.MAX_BLOBS_PER_AGENT_BYTES };
+    }
   }
 
   if (sessionId) {

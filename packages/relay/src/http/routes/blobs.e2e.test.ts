@@ -478,28 +478,12 @@ describe("/v1/blobs — POST rejection paths", () => {
     expect(body.error.code).toBe("blob_size_exceeded");
   });
 
-  it("413 quota_exceeded when the per-agent aggregate is reached", async () => {
-    const { apiKey } = await seedAgent();
-    // Each upload is ~80 KB (well under MAX_BLOB=200 KB); 4 of them = ~320 KB,
-    // which trips AGENT_CAP=300 KB on the 4th. makeBigJpeg uses incompressible
-    // noise so the encoded bytes scale predictably — a solid-colour JPEG
-    // would compress to a few KB regardless of dimension.
-    const perBlob = 80 * 1024;
-    const r1 = await upload(apiKey, await makeBigJpeg(perBlob));
-    expect(r1.status).toBe(201);
-    const r2 = await upload(apiKey, await makeBigJpeg(perBlob));
-    expect(r2.status).toBe(201);
-    const r3 = await upload(apiKey, await makeBigJpeg(perBlob));
-    expect(r3.status).toBe(201);
-    // Fourth pushes past 4 * ~80 KB = ~320 KB > AGENT_CAP (300 KB).
-    const r4 = await upload(apiKey, await makeBigJpeg(perBlob));
-    expect(r4.status).toBe(413);
-    const body = (await r4.json()) as {
-      error: { code: string; details: { scope: string } };
-    };
-    expect(body.error.code).toBe("quota_exceeded");
-    expect(body.error.details.scope).toBe("agent");
-  });
+  // The quota_exceeded REJECTION path is exercised by the dedicated
+  // describe block below (a separate app instance configured with
+  // BLOB_LRU_EVICTION=false). The DEFAULT app has LRU eviction on, so
+  // a 4th upload over the cap succeeds by evicting the oldest agent-
+  // scope blob — that case is covered by the LRU describe block further
+  // down in this file.
 });
 
 describe("/v1/blobs — polyglot defense (end-to-end via sharp)", () => {
@@ -1066,6 +1050,206 @@ describe("/b/<token> — capability URL", () => {
     expect(row!.firstSeenIpNet).toBe("203.0.113.0/24");
     expect(row!.lastSeenIpNet).toBe("198.51.100.0/24");
     expect(row!.lastUsedAt).not.toBeNull();
+  });
+});
+
+// ===========================================================================
+// LRU eviction (BLOB_LRU_EVICTION=true) and the rejection path
+// (BLOB_LRU_EVICTION=false).
+// ===========================================================================
+
+// ===========================================================================
+// Quota rejection (BLOB_LRU_EVICTION=false). A separate app instance with
+// LRU off; the 4th over-cap upload is rejected with 413 quota_exceeded
+// instead of evicting.
+// ===========================================================================
+describe("/v1/blobs — quota rejection without LRU", () => {
+  let noLruApp: Hono;
+  let noLruBlobDir: string;
+
+  beforeAll(async () => {
+    noLruBlobDir = mkdtempSync(join(tmpdir(), "blob-e2e-no-lru-"));
+    const config = loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      BLOB_STORE: "filesystem",
+      BLOB_STORE_FS_DIR: noLruBlobDir,
+      MAX_BLOB_BYTES: String(MAX_BLOB),
+      MAX_BLOBS_PER_AGENT_BYTES: String(AGENT_CAP),
+      BLOB_MIME_ALLOWLIST: "image/jpeg,image/png,application/pdf",
+      BLOB_LRU_EVICTION: "false",
+    });
+    const store = await makeBlobStore(config);
+    noLruApp = buildApp(config, prisma, undefined, store);
+  });
+
+  afterAll(async () => {
+    rmSync(noLruBlobDir, { recursive: true, force: true });
+  });
+
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("413 quota_exceeded on the 4th over-cap upload (eviction disabled)", async () => {
+    const apiKey =
+      "pane_" + (await import("node:crypto")).randomBytes(16).toString("hex");
+    await prisma.agent.create({
+      data: {
+        name: "no-lru-agent",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+
+    const perBlob = 80 * 1024;
+    const uploadTo = (body: Buffer) => {
+      const fd = new FormData();
+      fd.set("file", new Blob([new Uint8Array(body)], { type: "image/jpeg" }));
+      return noLruApp.fetch(
+        new Request("http://t/v1/blobs", {
+          method: "POST",
+          headers: { authorization: `Bearer ${apiKey}` },
+          body: fd,
+        }),
+      );
+    };
+
+    expect((await uploadTo(await makeBigJpeg(perBlob))).status).toBe(201);
+    expect((await uploadTo(await makeBigJpeg(perBlob))).status).toBe(201);
+    expect((await uploadTo(await makeBigJpeg(perBlob))).status).toBe(201);
+    const r4 = await uploadTo(await makeBigJpeg(perBlob));
+    expect(r4.status).toBe(413);
+    const body = (await r4.json()) as {
+      error: { code: string; details: { scope: string } };
+    };
+    expect(body.error.code).toBe("quota_exceeded");
+    expect(body.error.details.scope).toBe("agent");
+  });
+});
+
+describe("/v1/blobs — LRU eviction on quota pressure", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("evicts the oldest agent-scope blob when the cap would be exceeded", async () => {
+    const { apiKey } = await seedAgent();
+    // Same constants as the existing quota test — agent cap = 300 KB,
+    // per-blob = ~80 KB; uploading a 4th blob would have rejected at 320KB
+    // without eviction. With eviction on (default), it succeeds by deleting
+    // the oldest.
+    const perBlob = 80 * 1024;
+    const r1 = await upload(apiKey, await makeBigJpeg(perBlob));
+    const r1Body = (await r1.json()) as { blob_id: string };
+    const r2 = await upload(apiKey, await makeBigJpeg(perBlob));
+    expect(r2.status).toBe(201);
+    const r3 = await upload(apiKey, await makeBigJpeg(perBlob));
+    expect(r3.status).toBe(201);
+    // 4th would push past the cap → eviction kicks in.
+    const r4 = await upload(apiKey, await makeBigJpeg(perBlob));
+    expect(r4.status).toBe(201);
+
+    // The oldest blob (r1) should now have status=deleted.
+    const r1Row = await prisma.blob.findUnique({
+      where: { id: r1Body.blob_id },
+    });
+    expect(r1Row?.status).toBe("deleted");
+    expect(r1Row?.deletedAt).not.toBeNull();
+  });
+});
+
+// ===========================================================================
+// Envelope encryption-at-rest. Spins up a SECOND app instance configured
+// with BLOB_ENCRYPT_AT_REST=true and verifies the round-trip path —
+// ciphertext on disk, plaintext via GET.
+// ===========================================================================
+
+describe("/v1/blobs — envelope encryption-at-rest", () => {
+  let encryptedApp: Hono;
+  let encryptedBlobDir: string;
+
+  beforeAll(async () => {
+    encryptedBlobDir = mkdtempSync(join(tmpdir(), "blob-e2e-enc-"));
+    const config = loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      BLOB_STORE: "filesystem",
+      BLOB_STORE_FS_DIR: encryptedBlobDir,
+      BLOB_ENCRYPT_AT_REST: "true",
+      // Smaller MIME allowlist so the test is unambiguous.
+      BLOB_MIME_ALLOWLIST: "image/jpeg",
+    });
+    const encStore = await makeBlobStore(config);
+    encryptedApp = buildApp(config, prisma, undefined, encStore);
+  });
+
+  afterAll(async () => {
+    rmSync(encryptedBlobDir, { recursive: true, force: true });
+  });
+
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("upload writes ciphertext to disk; GET decrypts back to original", async () => {
+    const apiKey =
+      "pane_" + (await import("node:crypto")).randomBytes(16).toString("hex");
+    const agent = await prisma.agent.create({
+      data: {
+        name: "enc-agent",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    void agent;
+
+    const plaintext = await makeJpeg(512);
+
+    const fd = new FormData();
+    fd.set(
+      "file",
+      new Blob([new Uint8Array(plaintext)], { type: "image/jpeg" }),
+    );
+    const post = await encryptedApp.fetch(
+      new Request("http://t/v1/blobs", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: fd,
+      }),
+    );
+    expect(post.status).toBe(201);
+    const { blob_id, sha256: plaintextSha } = (await post.json()) as {
+      blob_id: string;
+      sha256: string;
+    };
+
+    // The row carries an encryptionEnvelope.
+    const row = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(row?.encryptionEnvelope).toBeTruthy();
+    expect(row?.encryptionEnvelope?.length).toBeGreaterThan(40);
+
+    // The bytes on disk are CIPHERTEXT — sha256 of the on-disk file differs
+    // from the stored plaintext sha256.
+    const storagePath = join(encryptedBlobDir, `blob_${blob_id}`);
+    const onDisk = await import("node:fs/promises").then((m) =>
+      m.readFile(storagePath),
+    );
+    const onDiskSha = (await import("node:crypto"))
+      .createHash("sha256")
+      .update(onDisk)
+      .digest("hex");
+    expect(onDiskSha).not.toBe(plaintextSha);
+
+    // GET returns the PLAINTEXT bytes.
+    const get = await encryptedApp.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(get.status).toBe(200);
+    const got = Buffer.from(await get.arrayBuffer());
+    expect(got.equals(plaintext)).toBe(true);
   });
 });
 

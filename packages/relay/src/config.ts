@@ -153,6 +153,43 @@ const schema = z.object({
     .positive()
     .default(10 * 60),
 
+  // Encrypt blob bytes at rest before writing to the BlobStore. Off by
+  // default — the hosted relay relies on Azure Blob's native at-rest
+  // encryption. Self-host turning this on adds a per-blob random DEK
+  // wrapped under PANE_SECRET_KEY. See blobs/encrypt.ts for the threat
+  // model (defends against storage-backend compromise without relay
+  // compromise; does NOT defend against relay compromise).
+  //
+  // NOTE the bool parser: z.coerce.boolean() treats any non-empty string
+  // as true (including "false"), so we use a strict comparator instead.
+  BLOB_ENCRYPT_AT_REST: z
+    .union([z.boolean(), z.string()])
+    .default(false)
+    .transform((v) => v === true || v === "true"),
+
+  // Optional virus / content scan webhook. When set, every successful
+  // upload is POSTed (HMAC-signed) to this URL; a non-clean verdict
+  // refuses the blob and deletes its bytes. Empty string / unset = no
+  // scan. Validated at startup with the same SSRF guard as the artifact
+  // and callback URLs — HTTPS only, no RFC1918, no cloud-metadata IPs.
+  BLOB_SCAN_HOOK: z.string().optional(),
+
+  // Per-request timeout for the scan hook. A scanner that takes longer
+  // is treated as "infected" (fail-closed). Tight by design — a long
+  // scanner blocks uploads.
+  BLOB_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  // When the per-agent aggregate cap would be exceeded, evict oldest
+  // agent-scope blobs (LRU by createdAt) to make room for the new one.
+  // Session-scope and artifact-scope blobs are NEVER evicted — they're
+  // tied to a live session / artifact and the cascade handles their
+  // cleanup. When false, the relay rejects the upload with
+  // quota_exceeded instead of evicting.
+  BLOB_LRU_EVICTION: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((v) => v === true || v === "true"),
+
   // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
   // covers images and PDFs. Comma-separated for the env var; an empty string
   // disables the allowlist (every sniffed MIME is accepted — only sensible

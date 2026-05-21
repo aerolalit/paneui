@@ -241,6 +241,14 @@ model Blob {
   // for legit photo-management use cases where DateTimeOriginal matters.
   stripMetadata Boolean   @default(true) @map("strip_metadata")
 
+  // Envelope encryption-at-rest. NULL when the relay's BLOB_ENCRYPT_AT_REST
+  // is off (the default). When set, the bytes in the BlobStore are
+  // ciphertext; this column carries the wrapped DEK + data IV + data tag
+  // needed to decrypt them. Stored as a base64 JSON envelope so future
+  // versions (e.g. customer-managed keys, key rotation) can extend the
+  // shape without another migration.
+  encryptionEnvelope String? @map("encryption_envelope")
+
   createdAt     DateTime  @default(now()) @map("created_at")
   confirmedAt   DateTime? @map("confirmed_at")
   deletedAt     DateTime? @map("deleted_at")

@@ -127,10 +127,24 @@ async function main(): Promise<void> {
   );
 
   // Construct the configured BlobStore. Filesystem self-host validates +
-  // creates BLOB_STORE_FS_DIR and refuses to start if it's world-readable;
-  // azure is wired in PR feat/blobs-azure-sas and throws here for now.
+  // creates BLOB_STORE_FS_DIR and refuses to start if it's world-readable.
+  // Azure dynamic-imports its SDK + verifies / creates the container.
   const blobStore = await makeBlobStore(config);
-  log.info("blob store ready", { backend: config.BLOB_STORE });
+  log.info("blob store ready", {
+    backend: config.BLOB_STORE,
+    encryptAtRest: config.BLOB_ENCRYPT_AT_REST,
+  });
+
+  // Scan-hook SSRF validation. Fail-fast at startup so a misconfigured URL
+  // never reaches an outbound fetch — the relay refuses to start when the
+  // URL points at RFC1918, cloud-metadata, or a localhost address.
+  if (config.BLOB_SCAN_HOOK) {
+    const { assertSafeBlobScanHookUrl } = await import("./http/ssrf.js");
+    await assertSafeBlobScanHookUrl(config.BLOB_SCAN_HOOK);
+    log.info("blob scan hook ready", {
+      timeoutMs: config.BLOB_SCAN_TIMEOUT_MS,
+    });
+  }
 
   // Process-local revocation cache for /b/<token> short-circuiting. The DB
   // row remains the source of truth; the cache is a performance hint and
