@@ -70,6 +70,54 @@ export function sniffMime(buf: Uint8Array): string {
     return "image/webp";
   }
 
+  // WAV: RIFF container `52 49 46 46 ?? ?? ?? ??` followed by `57 41 56 45`.
+  // Same family as WebP — just the trailing 4 bytes differ.
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x41 &&
+    buf[10] === 0x56 &&
+    buf[11] === 0x45
+  ) {
+    return "audio/wav";
+  }
+
+  // MP3: either an ID3v2 tag (`49 44 33`) or a frame sync (`FF Fb` / `FF F3` /
+  // `FF F2` for MPEG audio layer III). The frame-sync variant covers files
+  // without an ID3 header — common for short streamed clips.
+  if (
+    buf.length >= 3 &&
+    buf[0] === 0x49 &&
+    buf[1] === 0x44 &&
+    buf[2] === 0x33
+  ) {
+    return "audio/mpeg";
+  }
+  if (
+    buf.length >= 2 &&
+    buf[0] === 0xff &&
+    (buf[1] === 0xfb || buf[1] === 0xf3 || buf[1] === 0xf2)
+  ) {
+    return "audio/mpeg";
+  }
+
+  // Ogg (Vorbis / Opus): signature `4F 67 67 53` ("OggS"). Disambiguating
+  // Vorbis vs Opus needs the page header further in — return the umbrella
+  // audio/ogg here and let the allowlist gate on `audio/` prefix.
+  if (
+    buf.length >= 4 &&
+    buf[0] === 0x4f &&
+    buf[1] === 0x67 &&
+    buf[2] === 0x67 &&
+    buf[3] === 0x53
+  ) {
+    return "audio/ogg";
+  }
+
   // PDF: "%PDF-".
   if (
     buf.length >= 5 &&

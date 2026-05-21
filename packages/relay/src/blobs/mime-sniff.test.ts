@@ -46,6 +46,36 @@ describe("sniffMime — image formats", () => {
   });
 });
 
+describe("sniffMime — audio formats", () => {
+  it("detects WAV via RIFF...WAVE container", () => {
+    const buf = new Uint8Array(12);
+    buf.set(bytes("RIFF"), 0);
+    buf[4] = buf[5] = buf[6] = buf[7] = 0x00;
+    buf.set(bytes("WAVE"), 8);
+    expect(sniffMime(buf)).toBe("audio/wav");
+  });
+
+  it("detects MP3 with ID3v2 tag", () => {
+    expect(sniffMime(bytes("ID3\x04\x00"))).toBe("audio/mpeg");
+  });
+
+  it("detects MP3 frame sync (no ID3 header)", () => {
+    expect(sniffMime(new Uint8Array([0xff, 0xfb, 0x90, 0x00]))).toBe(
+      "audio/mpeg",
+    );
+    expect(sniffMime(new Uint8Array([0xff, 0xf3, 0x90, 0x00]))).toBe(
+      "audio/mpeg",
+    );
+    expect(sniffMime(new Uint8Array([0xff, 0xf2, 0x90, 0x00]))).toBe(
+      "audio/mpeg",
+    );
+  });
+
+  it("detects Ogg container", () => {
+    expect(sniffMime(bytes("OggS\x00"))).toBe("audio/ogg");
+  });
+});
+
 describe("sniffMime — SVG", () => {
   it("detects bare <svg>", () => {
     expect(sniffMime(bytes('<svg xmlns="http://x">'))).toBe("image/svg+xml");
