@@ -1,4 +1,4 @@
-// Tests for `pane logout` — clears the saved config, idempotently.
+// Tests for `pane agent logout` — clears the saved config, idempotently.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";

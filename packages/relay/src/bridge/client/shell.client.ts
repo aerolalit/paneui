@@ -109,13 +109,13 @@ interface SerializedEvent {
   //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
   // Green-from-recent-activity window. An agent that MONITORS a session by
-  // polling `pane state` (HTTP GET .../events?since=... every few seconds)
+  // polling `pane session show` (HTTP GET .../events?since=... every few seconds)
   // never opens a WebSocket, yet is just as present as one holding a stream.
   // Every authenticated agent request stamps `Agent.lastUsedAt` server-side,
   // so an agent polling on a few-second cadence keeps `lastUsedAt` well within
   // this window. The shell learns the fresh value by polling /presence.
   const ACTIVE_WINDOW_MS = 30 * 1000;
-  // Grace window: an agent monitor often reconnects in short `pane watch`
+  // Grace window: an agent monitor often reconnects in short `pane session watch`
   // cycles (connect -> get event -> exit -> harness re-runs). The live socket
   // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
   // would flap green -> amber -> green. So once a live agent socket has been
@@ -158,7 +158,7 @@ interface SerializedEvent {
     //     closed (short reconnection gaps in a monitor loop don't flap), OR
     //  2) the owning agent made an authenticated request — or an
     //     agent-authored event arrived — within ACTIVE_WINDOW_MS (30s). This
-    //     covers a monitor that polls `pane state` and never opens a socket;
+    //     covers a monitor that polls `pane session show` and never opens a socket;
     //     the shell keeps lastAgentActiveMs fresh by polling /presence.
     if (
       agentLiveCount > 0 ||
@@ -224,7 +224,7 @@ interface SerializedEvent {
   }
 
   // Poll the relay's /presence endpoint to keep the pill fresh for a polling
-  // agent. Such an agent monitors via `pane state` HTTP polls and never opens
+  // agent. Such an agent monitors via `pane session show` HTTP polls and never opens
   // a WebSocket, so the live-socket count and post-replay events never see it
   // — but every authenticated request stamps `Agent.lastUsedAt` server-side.
   // The page-load config seed captures `lastUsedAt` once and then goes stale;

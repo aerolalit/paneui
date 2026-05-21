@@ -307,6 +307,6 @@ consistent).
 curl https://<fqdn>/healthz          # -> 200
 ```
 
-Then run a real round trip with the CLI (`pane create ...`) pointed at
+Then run a real round trip with the CLI (`pane session create ...`) pointed at
 `https://<fqdn>` and confirm the human URL it returns is reachable and not a
 `localhost` URL.

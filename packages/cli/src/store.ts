@@ -1,6 +1,6 @@
 // Persisted CLI config: ${XDG_CONFIG_HOME or ~/.config}/pane/config.json.
 //
-// Holds the relay URL and the agent API key obtained via `pane register`, so
+// Holds the relay URL and the agent API key obtained via `pane agent register`, so
 // later commands need no env vars. The file holds a secret — it is written
 // 0600. Tiny and synchronous; no deps.
 
@@ -70,7 +70,7 @@ export function writeStore(patch: Store): string {
 
 /**
  * Delete the persisted config file (URL + API key). Idempotent — no error if
- * the file never existed. Returns the path it targeted. Used by `pane logout`.
+ * the file never existed. Returns the path it targeted. Used by `pane agent logout`.
  */
 export function clearStore(): string {
   const path = storePath();

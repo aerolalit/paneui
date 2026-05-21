@@ -250,6 +250,7 @@ export class PaneClient {
   ): Promise<CreateSessionResponse> {
     const r = await this.call("POST", "/v1/sessions", {
       artifact: req.artifact,
+      title: req.title,
       input_data: req.input_data,
       participants: req.participants,
       ttl: req.ttl,

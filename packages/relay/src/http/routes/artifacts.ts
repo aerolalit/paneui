@@ -441,7 +441,7 @@ artifacts.delete("/:id", async (c) => {
     throw errors.conflict(
       `artifact has ${referencingSessions} referencing session(s) — delete or wait for them to expire first`,
       false,
-      `run 'pane state <session-id>' or 'pane delete <session-id>' on each referencing session before deleting the artifact; closed/expired sessions count too and must be removed by the TTL sweeper or an explicit DELETE`,
+      `run 'pane session show <session-id>' or 'pane session delete <session-id>' on each referencing session before deleting the artifact; closed/expired sessions count too and must be removed by the TTL sweeper or an explicit DELETE`,
     );
   }
 

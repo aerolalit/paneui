@@ -69,8 +69,8 @@ export function describeConfig(args: ParsedArgs): ConfigDescription {
 
 /**
  * The hosted Pane relay. Used as the relay-URL fallback so a fresh user only
- * needs an API key — `pane register` against the hosted relay, then go. A
- * self-hoster overrides it with `--url` / `PANE_URL` / `pane register --url`.
+ * needs an API key — `pane agent register` against the hosted relay, then go. A
+ * self-hoster overrides it with `--url` / `PANE_URL` / `pane agent register --url`.
  */
 export const DEFAULT_RELAY_URL = "https://relay.paneui.com";
 
@@ -78,7 +78,7 @@ export const DEFAULT_RELAY_URL = "https://relay.paneui.com";
  * Resolve relay URL + API key. Precedence (highest first):
  *   url:    --url flag  → PANE_URL env      → store.url  → DEFAULT_RELAY_URL
  *   apiKey: --api-key   → PANE_API_KEY env  → store.apiKey
- * The store is written by `pane register`, so later commands need no env vars.
+ * The store is written by `pane agent register`, so later commands need no env vars.
  */
 export function resolveConfig(args: ParsedArgs): ResolvedConfig {
   const store = readStore();
@@ -92,7 +92,7 @@ export function resolveConfig(args: ParsedArgs): ResolvedConfig {
 
   if (!apiKey) {
     fail(
-      "missing API key: set PANE_API_KEY, pass --api-key <key>, or run 'pane register'",
+      "missing API key: set PANE_API_KEY, pass --api-key <key>, or run 'pane agent register'",
       "config_error",
     );
   }
