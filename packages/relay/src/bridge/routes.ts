@@ -314,7 +314,7 @@ ${artifactBody}
 
 // Lightweight presence endpoint. The shell polls this every ~10s so the
 // agent-presence pill reflects a polling agent (one that monitors via
-// `pane state` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// `pane session show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
 // keeps advancing server-side but the page-load config seed cannot see it.
 //
 // Trust model: the URL token IS the auth, identical to the shell page
