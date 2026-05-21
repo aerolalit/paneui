@@ -80,6 +80,59 @@ export interface EventsPage {
   next_cursor: string | null;
 }
 
+/** A non-secret summary of one participant on a session — safe to list. */
+export interface ParticipantSummary {
+  /** The revoke handle (Participant.id). */
+  participant_id: string;
+  /** "agent" or "human". The agent's own participant is always present. */
+  kind: "agent" | "human";
+  /** Short, non-secret correlator for a saved URL ("tok_h_..." / "tok_a_..."). */
+  token_prefix: string;
+  /** ISO timestamp of first WebSocket connect, or null if never joined. */
+  joined_at: string | null;
+  /** ISO timestamp the participant was revoked; null while still active. */
+  revoked_at: string | null;
+}
+
+/** A row in the GET /v1/sessions list response (no secrets). */
+export interface SessionSummary {
+  session_id: string;
+  /** Tab title (required column; agent input or Artifact.name fallback). */
+  title: string;
+  /** Effective status — respects expiresAt projection (the column may say
+   *  "open" while `expires_at` is in the past; the projection reports "closed"). */
+  status: "open" | "closed";
+  /** Owning artifact's head id. Null for inline (anonymous) artifacts. */
+  artifact_id: string | null;
+  artifact_version_id: string;
+  artifact_version: number;
+  participants: ParticipantSummary[];
+  created_at: string;
+  expires_at: string;
+  /** Whether the session has a webhook callback configured (URL is NOT
+   *  returned — it may carry a secret in the path). */
+  has_callback: boolean;
+}
+
+/** Response from GET /v1/sessions. */
+export interface SessionsPage {
+  items: SessionSummary[];
+  /** Opaque cursor for the next page; null when no more rows. */
+  next_cursor: string | null;
+}
+
+/** Response from POST /v1/sessions/:id/participants — one-shot, includes the
+ *  plaintext token exactly once. The relay stores only the hash. */
+export interface MintParticipantResponse {
+  participant_id: string;
+  kind: "human";
+  /** The plaintext participant token. Returned ONCE — not recoverable. */
+  token: string;
+  /** The shareable human URL containing the token. */
+  url: string;
+  created_at: string;
+}
+
 /** One immutable version of an artifact's content. */
 export interface ArtifactVersion {
   id: string;

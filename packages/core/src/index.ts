@@ -30,8 +30,16 @@ export {
   patchArtifactMetadataSchema,
   feedbackTypeSchema,
   submitFeedbackSchema,
+  listSessionsStatusSchema,
+  listSessionsQuerySchema,
+  mintParticipantSchema,
 } from "./schemas.js";
-export type { CreateSessionInput } from "./schemas.js";
+export type {
+  CreateSessionInput,
+  ListSessionsStatus,
+  ListSessionsQuery,
+  MintParticipantInput,
+} from "./schemas.js";
 
 export {
   MAX_EVENT_TYPE_LENGTH,
@@ -60,5 +68,9 @@ export type {
   CreateSessionResponse,
   SessionState,
   EventsPage,
+  ParticipantSummary,
+  SessionSummary,
+  SessionsPage,
+  MintParticipantResponse,
   RelayError,
 } from "./types.js";

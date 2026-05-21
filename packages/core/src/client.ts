@@ -14,10 +14,13 @@ import type {
   FeedbackSubmission,
   FeedbackType,
   KeyInfo,
+  MintParticipantResponse,
   PaneEvent,
   SessionState,
+  SessionsPage,
   TasteInfo,
 } from "./types.js";
+import type { ListSessionsQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
 
 export interface ClientOptions {
@@ -514,6 +517,72 @@ export class PaneClient {
     const r = await this.call("GET", `/v1/feedback${qs ? "?" + qs : ""}`);
     if (!r.ok) this.fail(r);
     return this.asObject<FeedbackPage>(r);
+  }
+
+  /**
+   * GET /v1/sessions — list the calling agent's sessions. Default filter is
+   * `status=open` (effective status — respects expiresAt). Response items
+   * carry NO secrets: no participant token plaintext, no callback URL, no
+   * metadata or input_data. Use `participant_id` from the list as the handle
+   * for {@link revokeParticipant}; use {@link mintParticipant} to issue a
+   * fresh URL when the original was lost.
+   */
+  async listSessions(opts: ListSessionsQuery = {}): Promise<SessionsPage> {
+    const q = new URLSearchParams();
+    if (opts.status !== undefined) q.set("status", opts.status);
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    if (opts.cursor !== undefined && opts.cursor !== "")
+      q.set("cursor", opts.cursor);
+    if (opts.artifact_id !== undefined && opts.artifact_id !== "")
+      q.set("artifact_id", opts.artifact_id);
+    const qs = q.toString();
+    const r = await this.call("GET", `/v1/sessions${qs ? "?" + qs : ""}`);
+    if (!r.ok) this.fail(r);
+    return this.asObject<SessionsPage>(r);
+  }
+
+  /**
+   * POST /v1/sessions/:id/participants — mint a fresh participant URL for an
+   * existing session. The one-shot recovery primitive when the original URL
+   * was dropped: the session keeps its event log, artifact pin, and created_at.
+   * v1 supports `kind: "human"` only.
+   *
+   * The plaintext token is returned EXACTLY ONCE in the response — the relay
+   * stores only the hash. Save the response (e.g. pipe to a JSONL log) before
+   * delivering the URL to the human.
+   */
+  async mintParticipant(
+    sessionId: string,
+    opts: { kind?: "human" } = {},
+  ): Promise<MintParticipantResponse> {
+    const r = await this.call(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+      { kind: opts.kind ?? "human" },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<MintParticipantResponse>(r);
+  }
+
+  /**
+   * DELETE /v1/sessions/:id/participants/:participant_id — revoke a single
+   * participant URL. The session's other participants (and the agent's own
+   * WebSocket) are untouched. Idempotent: revoking an unknown or already-
+   * revoked participant returns 204. The agent participant cannot be revoked
+   * via this endpoint — use {@link deleteSession} instead.
+   *
+   * Existing WebSocket connections held under the revoked token are NOT
+   * actively kicked in v1; new HTTP and WS connections are refused.
+   */
+  async revokeParticipant(
+    sessionId: string,
+    participantId: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
+    );
+    if (!r.ok) this.fail(r);
   }
 
   /**

@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.1.0 -->
+<!-- pane skill v1.2.0 -->
 
 # pane
 
@@ -622,6 +622,64 @@ pane delete ses_xxxx
 Closes the session and tears it down (`DELETE /v1/sessions/:id`). Idempotent —
 re-deleting an already-closed session is a no-op. Use it to clean up a session
 you are done with rather than waiting for its TTL to expire.
+
+### `pane list` — enumerate your sessions
+
+```sh
+pane list                                  # default --status=open
+pane list --status all
+pane list --status closed --limit 100
+pane list --artifact-id pane-pitch-deck    # filter by named artifact
+pane list --cursor <opaque>                # next page
+```
+
+Lists your agent's sessions, newest first. The response carries NO secrets:
+no participant tokens, no callback URL, no metadata or input_data.
+
+**Load-bearing caveat — participant tokens are unrecoverable.** The relay
+stores only the hash of each participant token; the plaintext URL is returned
+exactly once in the `pane create` response and **cannot be retrieved later**.
+If you lost a URL, `pane list` will not return it; instead, use `pane
+participant new` to mint a fresh URL on the still-alive session.
+
+Each session row carries a `participants` array. Each entry has a
+`participant_id` (the revoke handle) and a non-secret `token_prefix` (short
+correlator like `tok_h_BUcx` — useful for matching against a URL you saved
+elsewhere).
+
+### `pane participant new|revoke` — manage URLs on a live session
+
+```sh
+# Lost the URL but the session is still alive — mint a new entry door.
+pane participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+
+# Invalidate a URL you no longer want usable.
+pane participant revoke ses_abc123 p_xyz
+```
+
+Two primitives that together replace `pane delete + create` for the lost-URL
+case (which would destroy the session's event log, artifact pin, and
+created_at — `participant new` preserves all of that).
+
+- `participant new <session-id>` — mints a fresh human URL on an existing
+  session. Returns `{ participant_id, kind, token, url, created_at }` exactly
+  ONCE. Save the response (pipe to a JSONL log) before delivering the URL.
+- `participant revoke <session-id> <participant-id>` — invalidates one URL.
+  The session's other URLs (and your own websocket) are untouched.
+  Idempotent: running revoke twice still returns success. **Caveat:** in
+  this version, existing WebSocket connections held under the revoked token
+  are NOT actively kicked; only new HTTP and WS connections under that token
+  fail.
+
+**Recovery recipe** when you dropped the create response:
+
+```sh
+pane list                                          # find session_id + p_id
+pane participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+# use the new url; the old one is still valid until you revoke
+pane participant revoke ses_abc123 p_xyz           # optional — invalidate
+                                                   #   the old URL
+```
 
 ### `pane config` — inspect the resolved config
 

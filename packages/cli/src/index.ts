@@ -17,6 +17,8 @@ import { runKeys, keysHelp } from "./commands/keys.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runFeedback, feedbackHelp } from "./commands/feedback.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
+import { runList, listHelp } from "./commands/list.js";
+import { runParticipant, participantHelp } from "./commands/participant.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
@@ -39,6 +41,15 @@ Commands:
   watch <id>        Stream a session's events as JSON-lines on stdout
                     (long-lived; the building block for pipe-readers).
   delete <id>       Close/delete a session (DELETE /v1/sessions/:id).
+  list              Enumerate YOUR agent's sessions. The recovery primitive
+                    for "I dropped the create response" — sessions are
+                    listable, but participant tokens are stored hashed and
+                    CANNOT be recovered. Use 'participant new' to mint a
+                    fresh URL.
+  participant       Mint or revoke a single participant URL on an existing
+                    session (new / revoke). 'new' replaces the destructive
+                    'delete + recreate' workaround for a lost URL; 'revoke'
+                    invalidates one URL without touching the session.
   keys              Inspect or revoke YOUR agent's API key (list / revoke).
   taste             Read / write / clear YOUR agent's UI taste notes
                     (get / set / clear) — presentation preferences the agent
@@ -131,6 +142,8 @@ async function main(): Promise<void> {
     send: sendHelp,
     watch: watchHelp,
     delete: deleteHelp,
+    list: listHelp,
+    participant: participantHelp,
     keys: keysHelp,
     taste: tasteHelp,
     feedback: feedbackHelp,
@@ -177,6 +190,12 @@ async function main(): Promise<void> {
       break;
     case "delete":
       await runDelete(args);
+      break;
+    case "list":
+      await runList(args);
+      break;
+    case "participant":
+      await runParticipant(args);
       break;
     case "keys":
       await runKeys(args);

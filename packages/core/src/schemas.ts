@@ -117,3 +117,25 @@ export const submitFeedbackSchema = z.object({
 
 /** @deprecated use `CreateSessionRequest` from ./types.js (same type). */
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
+
+// GET /v1/sessions — list the calling agent's sessions. The relay also
+// re-parses these on its side (defence in depth); this schema is for the CLI
+// to fail fast with a clear error before a round trip.
+export const listSessionsStatusSchema = z.enum(["open", "closed", "all"]);
+export type ListSessionsStatus = z.infer<typeof listSessionsStatusSchema>;
+
+export const listSessionsQuerySchema = z.object({
+  status: listSessionsStatusSchema.optional(),
+  limit: z.number().int().positive().max(200).optional(),
+  cursor: z.string().min(1).optional(),
+  artifact_id: z.string().min(1).optional(),
+});
+export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
+
+// POST /v1/sessions/:id/participants — mint a fresh participant URL for an
+// existing session. v1 supports human participants only (the agent token is
+// minted at session-create and cannot be re-minted via this endpoint).
+export const mintParticipantSchema = z.object({
+  kind: z.literal("human"),
+});
+export type MintParticipantInput = z.infer<typeof mintParticipantSchema>;
