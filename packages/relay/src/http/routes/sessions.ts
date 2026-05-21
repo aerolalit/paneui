@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { Prisma } from "@prisma/client";
-import { createSessionSchema } from "@paneui/core";
+import {
+  createSessionSchema,
+  listSessionsQuerySchema,
+  mintParticipantSchema,
+} from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
@@ -36,6 +40,200 @@ function publicWsUrl(config: Config): string {
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
 }
+
+// Default page size for GET /v1/sessions. The upper bound (200) lives on
+// `listSessionsQuerySchema` in @paneui/core so the validation site is the
+// single source of truth.
+const LIST_DEFAULT_LIMIT = 50;
+
+// Opaque cursor for GET /v1/sessions. We encode `{ created_at, id }` as
+// base64url JSON so the ordering tuple is captured verbatim and a row can be
+// found again across pages without depending on a wall-clock comparison.
+// Stability: ordering is `(createdAt DESC, id DESC)`, so the next page is
+// "rows strictly before (cursor.createdAt, cursor.id)" in that ordering.
+interface ListCursor {
+  created_at: string;
+  id: string;
+}
+
+function encodeCursor(c: ListCursor): string {
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+}
+
+function decodeCursor(s: string): ListCursor | null {
+  try {
+    const decoded = Buffer.from(s, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      typeof (parsed as ListCursor).created_at !== "string" ||
+      typeof (parsed as ListCursor).id !== "string"
+    ) {
+      return null;
+    }
+    const ts = new Date((parsed as ListCursor).created_at);
+    if (Number.isNaN(ts.getTime())) return null;
+    return parsed as ListCursor;
+  } catch {
+    return null;
+  }
+}
+
+// GET /v1/sessions — list the calling agent's sessions.
+//
+// Lean, agent-scoped. NO secrets in the response: no participant token
+// plaintext (impossible — only the hash is stored), no callback_url (may
+// contain a webhook secret in the path), no metadata / input_data (large
+// and potentially sensitive — fetch via GET /v1/sessions/:id when needed).
+//
+// Mounted before GET /:id; Hono matches by literal path, so the order here
+// is for readability, not correctness.
+sessions.get("/", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const parsed = listSessionsQuerySchema.safeParse({
+    status: c.req.query("status"),
+    limit:
+      c.req.query("limit") !== undefined
+        ? Number(c.req.query("limit"))
+        : undefined,
+    cursor: c.req.query("cursor"),
+    artifact_id: c.req.query("artifact_id"),
+  });
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid query",
+      parsed.error.flatten(),
+      "status must be one of open|closed|all; limit must be 1..200; cursor must be a non-empty opaque token returned by a previous page; artifact_id must be a non-empty string",
+    );
+  }
+  const status = parsed.data.status ?? "open";
+  const limit = parsed.data.limit ?? LIST_DEFAULT_LIMIT;
+
+  let cursor: ListCursor | null = null;
+  if (parsed.data.cursor !== undefined) {
+    cursor = decodeCursor(parsed.data.cursor);
+    if (cursor === null) {
+      throw errors.invalidRequest(
+        "invalid cursor",
+        undefined,
+        "the cursor must be the opaque `next_cursor` value returned by a previous page; do not construct it by hand",
+      );
+    }
+  }
+
+  // Status projection. The session column may say "open" while expiresAt is
+  // in the past — GET /v1/sessions/:id projects that as "closed" at read
+  // time, and the list must do the same to stay consistent. We translate the
+  // effective-status filter into a SQL predicate over (status, expiresAt).
+  const now = new Date();
+  const statusWhere = ((): Prisma.SessionWhereInput => {
+    if (status === "all") return {};
+    if (status === "open") {
+      // Effective open = column open AND not yet expired.
+      return { status: "open", expiresAt: { gt: now } };
+    }
+    // Effective closed = column closed OR expired.
+    return {
+      OR: [{ status: "closed" }, { expiresAt: { lte: now } }],
+    };
+  })();
+
+  // artifact_id filter: match the artifact_version.artifactId (the head's id).
+  // Only the caller's own artifacts can match — Session.agentId filter already
+  // restricts that, but the artifact filter is exposed as a convenience.
+  const artifactWhere: Prisma.SessionWhereInput =
+    parsed.data.artifact_id !== undefined
+      ? { artifactVersion: { artifactId: parsed.data.artifact_id } }
+      : {};
+
+  // Cursor predicate. Ordering is (createdAt DESC, id DESC); "next page" is
+  // rows strictly before the cursor row in that tuple ordering.
+  const cursorWhere: Prisma.SessionWhereInput =
+    cursor !== null
+      ? {
+          OR: [
+            { createdAt: { lt: new Date(cursor.created_at) } },
+            {
+              createdAt: new Date(cursor.created_at),
+              id: { lt: cursor.id },
+            },
+          ],
+        }
+      : {};
+
+  const rows = await prisma.session.findMany({
+    where: {
+      agentId: me.id,
+      ...statusWhere,
+      ...artifactWhere,
+      ...cursorWhere,
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    include: {
+      artifactVersion: {
+        select: {
+          artifactId: true,
+          version: true,
+          // The Artifact head carries `name`/`slug` — null for anonymous
+          // (inline) artifacts. `artifact_id` is returned as null for those
+          // so the agent can distinguish "no reusable artifact behind this"
+          // from "the artifact id I lost track of".
+          artifact: { select: { name: true, slug: true } },
+        },
+      },
+      // Don't pull full participant rows for the list — agents with many
+      // sessions × many humans would pay the bandwidth on every list call.
+      // Just count active humans so the row shows occupancy at a glance;
+      // for the full participant array (with participant_id + token_prefix
+      // + revoked_at), call `GET /v1/sessions/:id/participants`.
+      _count: {
+        select: {
+          participants: { where: { kind: "human", revokedAt: null } },
+        },
+      },
+    },
+  });
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+
+  const items = page.map((s) => {
+    const isExpired = s.expiresAt.getTime() < Date.now();
+    const isAnonymous =
+      s.artifactVersion.artifact.name === null &&
+      s.artifactVersion.artifact.slug === null;
+    return {
+      session_id: s.id,
+      title: s.title,
+      status: (isExpired ? "closed" : s.status) as "open" | "closed",
+      artifact_id: isAnonymous ? null : s.artifactVersion.artifactId,
+      artifact_version_id: s.artifactVersionId,
+      artifact_version: s.artifactVersion.version,
+      // Count of active (non-revoked) human participants. For the full
+      // participant array call GET /v1/sessions/:id/participants.
+      active_human_participants: s._count.participants,
+      created_at: s.createdAt.toISOString(),
+      expires_at: s.expiresAt.toISOString(),
+      has_callback: s.callbackUrl !== null,
+    };
+  });
+
+  return c.json({
+    items,
+    next_cursor:
+      hasMore && last
+        ? encodeCursor({
+            created_at: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+  });
+});
 
 sessions.post("/", requireAgent, async (c) => {
   const prisma = c.get("prisma");
@@ -363,5 +561,183 @@ sessions.delete("/:id", requireAgent, async (c) => {
   await appendSystemEvent(prisma, id, "system.session.expired", {});
   return c.body(null, 204);
 });
+
+// GET /v1/sessions/:id/participants — list the participants on one session.
+//
+// Bounded by MAX_PARTICIPANTS_PER_SESSION so the response is always small
+// enough to return whole (no pagination). Includes BOTH active and revoked
+// rows — revoked rows carry `revoked_at !== null` and are useful for
+// auditing past leaks. Owner-scoped: a cross-agent session id returns 404
+// for existence-oracle parity with the other session-scoped endpoints.
+sessions.get("/:id/participants", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  const session = await prisma.session.findUnique({
+    where: { id },
+    select: { agentId: true },
+  });
+  if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
+
+  const participants = await prisma.participant.findMany({
+    where: { sessionId: id },
+    select: {
+      id: true,
+      kind: true,
+      tokenPrefix: true,
+      joinedAt: true,
+      revokedAt: true,
+    },
+    // Agent first (kind="agent" < "human" alphabetically), then by id so
+    // ordering is stable across calls.
+    orderBy: [{ kind: "asc" }, { id: "asc" }],
+  });
+
+  return c.json({
+    session_id: id,
+    items: participants.map((p) => ({
+      participant_id: p.id,
+      kind: (p.kind === "agent" ? "agent" : "human") as "agent" | "human",
+      token_prefix: p.tokenPrefix,
+      joined_at: p.joinedAt ? p.joinedAt.toISOString() : null,
+      revoked_at: p.revokedAt ? p.revokedAt.toISOString() : null,
+    })),
+  });
+});
+
+// POST /v1/sessions/:id/participants — mint a fresh human participant URL.
+//
+// The recovery primitive for the "I dropped the create response and lost the
+// URL" case. The session keeps its id, event log, artifact pin, and
+// createdAt; the human just gets a new entry door.
+//
+// One-shot contract: the plaintext token is returned exactly once. The relay
+// stores only the hash. Do not log the token plaintext.
+sessions.post("/:id/participants", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = mintParticipantSchema.safeParse(body);
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      'the request body must be `{ "kind": "human" }`; only human participants can be minted via this endpoint',
+    );
+  }
+
+  const session = await prisma.session.findUnique({ where: { id } });
+  if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
+
+  // Effectively-closed sessions cannot be revived by minting a new URL —
+  // tell the agent to `pane create` instead. The check matches the
+  // projection used by GET /v1/sessions/:id and the list endpoint.
+  if (session.status === "closed" || session.expiresAt.getTime() < Date.now()) {
+    throw errors.gone(
+      "session is closed — minting a new participant on a closed session would not make it reachable",
+    );
+  }
+
+  // Cap participants per session. Count only NON-revoked human participants
+  // so a revoked row does not permanently consume a slot — the leak-
+  // containment primitive must not be a self-DoS.
+  const activeHumans = await prisma.participant.count({
+    where: { sessionId: id, kind: "human", revokedAt: null },
+  });
+  if (activeHumans >= config.MAX_PARTICIPANTS_PER_SESSION) {
+    throw errors.conflict(
+      `session already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_SESSION}); revoke one before minting another`,
+      false,
+      "revoke an existing participant first with DELETE /v1/sessions/:id/participants/:participant_id (CLI: `pane participant revoke`), then retry",
+    );
+  }
+
+  const token = generateHumanParticipantToken();
+  const participant = await prisma.participant.create({
+    data: {
+      sessionId: id,
+      kind: "human",
+      identityId: `h_${activeHumans}`,
+      tokenHash: hashKey(token),
+      tokenPrefix: keyPrefix(token),
+    },
+  });
+
+  return c.json(
+    {
+      participant_id: participant.id,
+      kind: "human" as const,
+      token,
+      url: `${config.publicUrl}/s/${token}`,
+      created_at: new Date().toISOString(),
+    },
+    201,
+  );
+});
+
+// DELETE /v1/sessions/:id/participants/:participant_id — revoke a single
+// participant URL.
+//
+// Idempotent: an unknown / already-revoked / cross-session participant id
+// resolves to a 204, matching the blob-token revoke contract (an agent
+// retrying after a network blip must not see a different result). The
+// bridge route already 404s on a revoked tokenHash (loadByToken in
+// bridge/routes.ts), so this is the only HTTP change needed.
+sessions.delete(
+  "/:id/participants/:participant_id",
+  requireAgent,
+  async (c) => {
+    const prisma = c.get("prisma");
+    const id = c.req.param("id");
+    const participantId = c.req.param("participant_id");
+    const me = c.get("agent");
+
+    // Owner check on the session first — cross-agent ids must 404 like every
+    // other session-scoped endpoint (existence-oracle parity with DELETE
+    // /v1/sessions/:id).
+    const session = await prisma.session.findUnique({ where: { id } });
+    if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
+
+    const participant = await prisma.participant.findUnique({
+      where: { id: participantId },
+    });
+
+    // Idempotent miss path: an unknown participant id, or one belonging to
+    // another session, is silently a 204. This matches the agent's recovery
+    // flow (revoke, possibly re-run after a partial failure) — surfacing a
+    // 404 here would force the agent to handle two outcomes for what is
+    // semantically the same "make sure this URL is dead" intent.
+    if (!participant || participant.sessionId !== id) {
+      return c.body(null, 204);
+    }
+
+    // The session's agent participant is load-bearing for the agent's own
+    // WebSocket; revoking it would silently break the agent without closing
+    // the session. Reject explicitly with a hint pointing at the right verb.
+    if (participant.kind === "agent") {
+      throw errors.invalidRequest(
+        "cannot revoke the agent participant",
+        undefined,
+        "the agent participant carries the session's own websocket auth; to tear the session down, call DELETE /v1/sessions/:id (CLI: `pane delete <session-id>`) instead",
+      );
+    }
+
+    if (participant.revokedAt !== null) {
+      // Already revoked — idempotent 204.
+      return c.body(null, 204);
+    }
+
+    await prisma.participant.update({
+      where: { id: participant.id },
+      data: { revokedAt: new Date() },
+    });
+
+    return c.body(null, 204);
+  },
+);
 
 export default sessions;

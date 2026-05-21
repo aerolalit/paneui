@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v2.0.0 -->
+<!-- pane skill v2.2.0 -->
 
 # pane
 
@@ -622,6 +622,80 @@ pane session delete ses_xxxx
 Closes the session and tears it down (`DELETE /v1/sessions/:id`). Idempotent —
 re-deleting an already-closed session is a no-op. Use it to clean up a session
 you are done with rather than waiting for its TTL to expire.
+
+### `pane session list` — enumerate your sessions
+
+```sh
+pane session list                                  # default --status=open
+pane session list --status all
+pane session list --status closed --limit 100
+pane session list --artifact-id pane-pitch-deck    # filter by named artifact
+pane session list --cursor <opaque>                # next page
+```
+
+Lists your agent's sessions, newest first. The response is intentionally
+LEAN: each row carries `active_human_participants` (a count of non-revoked
+human URLs on that session) but NOT the full participant array — agents
+with many sessions × many humans should not pay that bandwidth on every
+list call. To see the participants themselves (including revoked rows),
+call `pane session participant list <session-id>`.
+
+The response also carries NO secrets: no participant tokens, no callback
+URL, no metadata or input_data.
+
+**Load-bearing caveat — participant tokens are unrecoverable.** The relay
+stores only the hash of each participant token; the plaintext URL is returned
+exactly once in the `pane session create` response and **cannot be retrieved
+later**. If you lost a URL, neither `pane session list` nor `pane session
+participant list` will return it; instead, use `pane session participant new`
+to mint a fresh URL on the still-alive session.
+
+### `pane session participant list|new|revoke` — manage URLs on a live session
+
+```sh
+# Find the participant ids on one session.
+pane session participant list ses_abc123
+
+# Lost the URL but the session is still alive — mint a new entry door.
+pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+
+# Invalidate a URL you no longer want usable.
+pane session participant revoke ses_abc123 p_xyz
+```
+
+Three primitives that together replace `pane session delete + pane session
+create` for the lost-URL case (which would destroy the session's event log,
+artifact pin, and created_at — `participant new` preserves all of that).
+
+- `pane session participant list <session-id>` — returns the full
+  participant array for one session (active AND revoked rows). Each row has
+  `participant_id` (the revoke handle), `kind`, `token_prefix` (non-secret
+  correlator like `tok_h_BUcx`), `joined_at`, and `revoked_at`. This is the
+  step you use to find a participant_id to pass to `revoke`.
+- `pane session participant new <session-id>` — mints a fresh human URL on
+  an existing session. Returns `{ participant_id, kind, token, url,
+  created_at }` exactly ONCE. Save the response (pipe to a JSONL log) before
+  delivering the URL.
+- `pane session participant revoke <session-id> <participant-id>` —
+  invalidates one URL. The session's other URLs (and your own websocket)
+  are untouched. Idempotent: running revoke twice still returns success.
+  **Caveat:** in this version, existing WebSocket connections held under
+  the revoked token are NOT actively kicked; only new HTTP and WS
+  connections under that token fail.
+
+**Recovery recipe** when you dropped the create response:
+
+```sh
+pane session list                                          # find session_id
+pane session participant list ses_abc123                   # find participant
+                                                           #   ids on that
+                                                           #   session
+pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+# use the new url; the old one is still valid until you revoke
+pane session participant revoke ses_abc123 p_xyz           # optional —
+                                                           #   invalidate
+                                                           #   the old URL
+```
 
 ### `pane config` — inspect the resolved config
 

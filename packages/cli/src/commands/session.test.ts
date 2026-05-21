@@ -18,6 +18,31 @@ const fakeClient = {
     calls.push({ method: "deleteSession", args: [id] });
     return Promise.resolve();
   }),
+  listSessions: vi.fn((opts: unknown) => {
+    calls.push({ method: "listSessions", args: [opts] });
+    return Promise.resolve({ items: [], next_cursor: null });
+  }),
+  mintParticipant: vi.fn((sessionId: unknown, opts: unknown) => {
+    calls.push({ method: "mintParticipant", args: [sessionId, opts] });
+    return Promise.resolve({
+      participant_id: "p_new",
+      kind: "human",
+      token: "tok_h_x",
+      url: "http://r/s/tok_h_x",
+      created_at: "2026-05-21T00:00:00.000Z",
+    });
+  }),
+  revokeParticipant: vi.fn((sessionId: unknown, participantId: unknown) => {
+    calls.push({
+      method: "revokeParticipant",
+      args: [sessionId, participantId],
+    });
+    return Promise.resolve();
+  }),
+  listParticipants: vi.fn((sessionId: unknown) => {
+    calls.push({ method: "listParticipants", args: [sessionId] });
+    return Promise.resolve({ session_id: sessionId, items: [] });
+  }),
 };
 
 vi.mock("../config.js", () => ({
@@ -96,5 +121,110 @@ describe("runSession dispatch", () => {
     await run(["delete"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing <session-id>");
+  });
+});
+
+describe("runSession list", () => {
+  it("forwards `list` to runList with no opts by default", async () => {
+    await run(["list"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([{ method: "listSessions", args: [{}] }]);
+  });
+
+  it("forwards --status / --limit / --cursor / --artifact-id", async () => {
+    await run([
+      "list",
+      "--status",
+      "all",
+      "--limit",
+      "25",
+      "--cursor",
+      "opaque",
+      "--artifact-id",
+      "art_xyz",
+    ]);
+    expect(calls[0]!.args[0]).toEqual({
+      status: "all",
+      limit: 25,
+      cursor: "opaque",
+      artifact_id: "art_xyz",
+    });
+  });
+
+  it("rejects an unknown --status before the network call", async () => {
+    await run(["list", "--status", "purple"]);
+    expect(exitCode).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects --limit out of 1..200", async () => {
+    await run(["list", "--limit", "0"]);
+    expect(exitCode).toBe(1);
+    expect(calls).toHaveLength(0);
+
+    stderr = "";
+    exitCode = undefined;
+    await run(["list", "--limit", "201"]);
+    expect(exitCode).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("runSession participant", () => {
+  it("lists the participants on the given session", async () => {
+    await run(["participant", "list", "ses_abc"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([{ method: "listParticipants", args: ["ses_abc"] }]);
+  });
+
+  it("mints a fresh URL on the given session", async () => {
+    await run(["participant", "new", "ses_abc"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      { method: "mintParticipant", args: ["ses_abc", undefined] },
+    ]);
+  });
+
+  it("revokes the given (session-id, participant-id) pair", async () => {
+    await run(["participant", "revoke", "ses_abc", "p_xyz"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      { method: "revokeParticipant", args: ["ses_abc", "p_xyz"] },
+    ]);
+  });
+
+  it("rejects an unknown participant verb", async () => {
+    await run(["participant", "frobnicate"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("unknown participant verb");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects missing participant verb", async () => {
+    await run(["participant"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing verb");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails with a clear error when 'list' is missing <session-id>", async () => {
+    await run(["participant", "list"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing <session-id>");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails with a clear error when 'new' is missing <session-id>", async () => {
+    await run(["participant", "new"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing <session-id>");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails when 'revoke' is missing <participant-id>", async () => {
+    await run(["participant", "revoke", "ses_abc"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing arguments");
+    expect(calls).toHaveLength(0);
   });
 });
