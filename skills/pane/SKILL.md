@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.0.1 -->
+<!-- pane skill v1.1.0 -->
 
 # pane
 
@@ -697,6 +697,82 @@ Notes are fine to send directly.
 `--session-id` is optional. No reply channel — don't use this for anything
 you need an answer to, or for the human's answer to a session question
 (use events). UI preferences belong in `pane taste`, not here.
+
+### `pane blob` — binary attachments (images, PDFs, etc.)
+
+```sh
+# Upload a file. Default scope is "agent" (reusable across the agent's sessions).
+pane blob upload --file ./chart.png
+
+# Session-scope (dies with the session; cheaper to GC):
+pane blob upload --file ./hero.jpg --scope session --session-id ses_xxx
+
+# Artifact-scope (reusable across every session using the artifact):
+pane blob upload --file ./icon.svg --scope artifact --artifact-id <id>
+
+# Mint a /b/<token> URL the human can fetch directly (no agent API key):
+pane blob mint-token <blob_id>             # default TTL: 24h agent / session-TTL / 30d artifact
+pane blob mint-token <blob_id> --once      # self-deletes on first GET
+
+# Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
+pane blob revoke-token <blob_id> <token_id>
+
+# Inspect / download / delete:
+pane blob show <blob_id>
+pane blob download <blob_id> --out ./out.png
+pane blob delete <blob_id>
+```
+
+**One-shot upload + emit** — most agents emit events that REFERENCE blobs
+rather than embed them. Use `pane send --blob` to do both in one call:
+
+```sh
+# Uploads ./chart.png as a session-scope blob, then sends an event
+# whose data is { blob: <BlobRef> } into the session.
+pane send <session-id> --type chart.update --blob ./chart.png
+```
+
+The session's event schema should declare a blob field with
+`format: pane-blob-id`:
+
+```json
+{
+  "events": {
+    "chart.update": {
+      "emittedBy": ["agent"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+Pages handle the event by reading `ev.data.blob.url` and stuffing it in
+`<img>` / `<iframe>` / wherever the blob is meant to render:
+
+```js
+pane.on("chart.update", (ev) => {
+  document.getElementById("chart").src = ev.data.blob.url;
+});
+```
+
+**Default limits** (the hosted relay): 5 MB per blob, 500 MB total per
+agent. Adjust `BLOB_*` env vars on self-host. See `docs/BLOB_BACKENDS.md`
+for the backend matrix, `docs/CAPABILITY-URLS.md` for the `/b/<token>`
+threat model, and `docs/SECURITY-POLYGLOTS.md` for the upload-side
+defence (sharp normalisation + EXIF strip; SVG is passthrough — keep it
+out of `BLOB_MIME_ALLOWLIST` if your surface renders SVGs inline).
 
 ## The watch → Monitor pattern
 
