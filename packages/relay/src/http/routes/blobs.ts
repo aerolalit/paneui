@@ -3,6 +3,7 @@
 // Endpoints in this module:
 //   POST   /v1/blobs                          multipart upload, three scopes
 //   GET    /v1/blobs/:id                      agent-auth download
+//   GET    /v1/blobs/:id/metadata             agent-auth metadata-only (JSON BlobRef)
 //   DELETE /v1/blobs/:id                      soft-delete (idempotent)
 //   POST   /v1/blobs/:id/tokens               mint a /b/<token> capability URL
 //   DELETE /v1/blobs/:id/tokens/:token_id     revoke a token
@@ -296,6 +297,38 @@ blobs.get("/:id", async (c) => {
 
   // Hono accepts a Web ReadableStream as the body; convert.
   return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs/:id/metadata — agent-auth, metadata-only.
+//
+// Returns the same JSON shape that POST /v1/blobs returns (the full BlobRef:
+// id, scope, mime, size, sha256, filename, width, height, status, scope
+// FKs, timestamps). Use this when the agent needs the row's metadata
+// without paying the cost of streaming + decrypting the bytes — e.g.
+// `pane blob show <id>`.
+//
+// Cross-tenant attempts collapse to blob_not_found (same surface as the
+// download route) so a foreign agent can't probe id existence.
+// ---------------------------------------------------------------------------
+blobs.get("/:id/metadata", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const id = c.req.param("id");
+  const row = await prisma.blob.findUnique({ where: { id } });
+
+  // Same cross-tenant + status surface as GET /v1/blobs/:id — we treat
+  // "deleted" as not-found, "pending" / "failed" as not-found (the agent
+  // can't act on a not-ready blob via this endpoint).
+  if (!row || row.ownerId !== me.id || row.status === "deleted") {
+    throw errors.blobNotFound();
+  }
+  if (row.status !== "ready") {
+    throw errors.blobNotFound();
+  }
+
+  return c.json(serialize(row));
 });
 
 // ---------------------------------------------------------------------------

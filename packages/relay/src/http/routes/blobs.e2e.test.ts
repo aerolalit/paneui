@@ -640,6 +640,80 @@ describe("/v1/blobs/:id — GET", () => {
   });
 });
 
+describe("/v1/blobs/:id/metadata — GET", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("returns the full BlobRef JSON without streaming bytes", async () => {
+    const { apiKey } = await seedAgent();
+    const payload = await makeJpeg(96);
+    const post = await upload(apiKey, payload, { filename: "hello.jpg" });
+    const postBody = (await post.json()) as Record<string, unknown>;
+    const blobId = postBody.blob_id as string;
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blobId}/metadata`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+
+    const body = (await res.json()) as Record<string, unknown>;
+    // The metadata endpoint MUST return the exact same shape POST /v1/blobs
+    // returns — that's the contract the CLI / core client rely on.
+    expect(body).toEqual(postBody);
+    expect(body.blob_id).toBe(blobId);
+    expect(body.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.filename).toBe("hello.jpg");
+    expect(body.scope).toBe("agent");
+    expect(body.mime).toBe("image/jpeg");
+    expect(body.size).toBe(payload.length);
+    expect(body.status).toBe("ready");
+  });
+
+  it("returns blob_not_found for a foreign agent's blob (cross-tenant isolation)", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const post = await upload(alice.apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`, {
+        headers: { authorization: `Bearer ${bob.apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
+
+  it("returns blob_not_found for a deleted blob", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    await deleteBlob(apiKey, blob_id);
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("requires authentication (401 without bearer)", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const res = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/metadata`),
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("/v1/blobs/:id — DELETE", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
@@ -1250,6 +1324,108 @@ describe("/v1/blobs — envelope encryption-at-rest", () => {
     expect(get.status).toBe(200);
     const got = Buffer.from(await get.arrayBuffer());
     expect(got.equals(plaintext)).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug-fix regression: GET /b/<token> must decrypt the same way the
+  // agent-auth GET /v1/blobs/:id does. Pre-fix the capability URL piped raw
+  // ciphertext to the response body — a participant clicking the URL got
+  // unreadable random bytes instead of the image. Mirror the encrypted-
+  // upload test above but route through the token endpoint.
+  // ---------------------------------------------------------------------------
+  it("/b/<token> decrypts ciphertext-on-disk to the original plaintext", async () => {
+    const apiKey =
+      "pane_" + (await import("node:crypto")).randomBytes(16).toString("hex");
+    await prisma.agent.create({
+      data: {
+        name: "enc-agent-token",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+
+    const plaintext = await makeJpeg(512);
+
+    const fd = new FormData();
+    fd.set(
+      "file",
+      new Blob([new Uint8Array(plaintext)], { type: "image/jpeg" }),
+    );
+    const post = await encryptedApp.fetch(
+      new Request("http://t/v1/blobs", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: fd,
+      }),
+    );
+    expect(post.status).toBe(201);
+    const { blob_id, sha256: plaintextSha } = (await post.json()) as {
+      blob_id: string;
+      sha256: string;
+    };
+
+    // Mint a capability-URL token for the encrypted blob.
+    const mint = await encryptedApp.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}/tokens`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(mint.status).toBe(201);
+    const { token } = (await mint.json()) as { token: string };
+
+    // Fetch via the capability URL — must return PLAINTEXT, not the
+    // ciphertext that lives on disk.
+    const res = await encryptedApp.fetch(new Request(`http://t/b/${token}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-length")).toBe(String(plaintext.length));
+
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.equals(plaintext)).toBe(true);
+
+    // Body sha256 round-trips with the row's plaintext sha256 — this is the
+    // load-bearing assertion: the response is plaintext, not ciphertext.
+    const { createHash } = await import("node:crypto");
+    expect(createHash("sha256").update(got).digest("hex")).toBe(plaintextSha);
+
+    // The first two bytes are the JPEG magic (FF D8) — a quick sanity check
+    // distinct from the sha256 comparison.
+    expect(got[0]).toBe(0xff);
+    expect(got[1]).toBe(0xd8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug-fix regression (counter-test): with encryption OFF, the /b/<token>
+// path stays a straight passthrough. Stored bytes == returned bytes.
+// ---------------------------------------------------------------------------
+describe("/b/<token> — passthrough when encryption-at-rest is off", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("returns the stored bytes unchanged when no encryption envelope is set", async () => {
+    const { apiKey } = await seedAgent();
+    const payload = await makeJpeg(96);
+    const post = await upload(apiKey, payload);
+    const { blob_id } = (await post.json()) as { blob_id: string };
+
+    // Sanity: no envelope on the row.
+    const row = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(row?.encryptionEnvelope).toBeNull();
+
+    const mint = await mintToken(apiKey, blob_id);
+    const { token } = (await mint.json()) as { token: string };
+
+    const res = await fetchByToken(token);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.equals(payload)).toBe(true);
   });
 });
 

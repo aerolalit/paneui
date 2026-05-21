@@ -12,6 +12,18 @@
 // after write completes; if the sidecar and the real file disagree, that's a
 // corruption the TOCTOU check at confirm-time will surface.
 //
+// Sidecar field naming. The sidecar `sha256` represents the hash of the
+// bytes that LIVE ON DISK — when BLOB_ENCRYPT_AT_REST=true those bytes are
+// ciphertext, not plaintext. The PUBLIC BlobRef (returned by POST /v1/blobs
+// and friends) ALSO has a `sha256` field, but THAT one is the plaintext
+// sha256. To keep the two from being confused, the on-disk sidecar field
+// is named `ciphertext_sha256` from this revision on. Legacy sidecars that
+// still use the bare `sha256` key are read transparently for backward
+// compatibility (existing self-host deployments don't need a migration).
+// The `head()` method continues to expose the observed hash on the
+// `BlobObjectInfo.sha256` field — "what the backend observed" is the
+// right semantics for the storage-layer interface.
+//
 // Self-host caveats — documented at startup:
 //   * No multi-replica support (no cross-VM coordination). Use Azure Blob
 //     for multi-replica deployments.
@@ -36,9 +48,33 @@ import {
   type WriteOpts,
 } from "./store.js";
 
+/**
+ * On-disk sidecar metadata for a single blob.
+ *
+ * The `ciphertext_sha256` field holds the sha256 of the bytes that actually
+ * sit on disk. When BLOB_ENCRYPT_AT_REST is on those bytes are ciphertext
+ * and the hash is the CIPHERTEXT hash; when encryption is off they're
+ * plaintext and the two coincide. Either way, this is the storage-side
+ * integrity hash and is unrelated to the public BlobRef's plaintext-only
+ * `sha256`.
+ *
+ * `sha256` (without a prefix) is read transparently as a legacy alias —
+ * deployments that wrote sidecars before this rename still work without a
+ * migration. New writes use `ciphertext_sha256` only.
+ */
 interface SidecarMeta {
   size: number;
-  sha256: string;
+  /** sha256 of the on-disk bytes (ciphertext when encryption-at-rest is on). */
+  ciphertext_sha256: string;
+  mime?: string;
+}
+
+/** Wire shape of the JSON on disk — accepts both the new and legacy names. */
+interface SidecarOnDisk {
+  size: number;
+  ciphertext_sha256?: string;
+  /** Legacy alias, kept for backward-compat read only — never written. */
+  sha256?: string;
   mime?: string;
 }
 
@@ -133,15 +169,25 @@ export class FilesystemBlobStore implements BlobStore {
     }
 
     const sha256 = hasher.digest("hex");
-    const info: SidecarMeta = { size: observed, sha256, mime: opts.mime };
+    const info: SidecarMeta = {
+      size: observed,
+      ciphertext_sha256: sha256,
+      mime: opts.mime,
+    };
 
     // Commit: rename tmp → final, then write the sidecar. If the sidecar
     // write fails after the rename, the blob exists without metadata — a
     // later head() returns null (no sidecar = pretend it's not there), and
     // the route layer's confirm step rejects with BlobIntegrityError.
+    //
+    // The on-disk field is `ciphertext_sha256` (the hash of the bytes that
+    // live on disk — ciphertext when encryption-at-rest is on, plaintext
+    // when it's off). Legacy sidecars wrote bare `sha256` here; head()
+    // reads both. We expose the value on `BlobObjectInfo.sha256` so the
+    // BlobStore interface stays unchanged.
     await fs.rename(tmpPath, finalPath);
     await fs.writeFile(sidecarPath, JSON.stringify(info), { mode: 0o600 });
-    return info;
+    return { size: info.size, sha256, mime: info.mime };
   }
 
   async get(key: string): Promise<Readable | null> {
@@ -167,12 +213,21 @@ export class FilesystemBlobStore implements BlobStore {
       if (err.code === "ENOENT") return null;
       throw err;
     }
-    let parsed: SidecarMeta;
+    let parsed: SidecarOnDisk;
     try {
-      parsed = JSON.parse(raw) as SidecarMeta;
+      parsed = JSON.parse(raw) as SidecarOnDisk;
     } catch {
       // Corrupt sidecar — treat as missing so the caller's TOCTOU check
       // fails loudly rather than returning bogus metadata.
+      return null;
+    }
+
+    // Backward compat: legacy sidecars wrote bare `sha256`; new ones use
+    // `ciphertext_sha256`. Read either — they carry the same value (the
+    // hash of the bytes on disk).
+    const observedSha = parsed.ciphertext_sha256 ?? parsed.sha256;
+    if (typeof observedSha !== "string") {
+      // Neither field present — corrupt / unreadable sidecar.
       return null;
     }
 
@@ -182,7 +237,7 @@ export class FilesystemBlobStore implements BlobStore {
       const st = await fs.stat(this.pathFor(key));
       if (st.size !== parsed.size) {
         throw new BlobIntegrityError(
-          { size: parsed.size, sha256: parsed.sha256 },
+          { size: parsed.size, sha256: observedSha },
           { size: st.size, sha256: "<not recomputed>" },
         );
       }
@@ -192,7 +247,7 @@ export class FilesystemBlobStore implements BlobStore {
       throw e;
     }
 
-    return { size: parsed.size, sha256: parsed.sha256, mime: parsed.mime };
+    return { size: parsed.size, sha256: observedSha, mime: parsed.mime };
   }
 
   async delete(key: string): Promise<void> {
