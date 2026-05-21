@@ -23,10 +23,15 @@ export type PaneFrameMarker = 1;
 export type PaneProtocolVersion = 1;
 
 /** Frame kinds the shim sends to the shell (iframe -> shell). */
-export type ShimToShellKind = "ready" | "emit";
+export type ShimToShellKind = "ready" | "emit" | "upload-blob-request";
 
 /** Frame kinds the shell sends to the shim (shell -> iframe). */
-export type ShellToShimKind = "init" | "event" | "ack" | "error";
+export type ShellToShimKind =
+  | "init"
+  | "event"
+  | "ack"
+  | "error"
+  | "upload-blob-result";
 
 /**
  * The envelope every Pane protocol frame carries. Concrete frame types in each
@@ -41,6 +46,70 @@ export interface PaneFrameEnvelope {
   /** Discriminates the frame; the remaining fields depend on it. */
   kind: ShimToShellKind | ShellToShimKind;
 }
+
+/**
+ * A blob reference returned by the participant-side upload route
+ * (`POST /s/:participantToken/blobs`) and surfaced to the iframe by the
+ * shell. Mirrors the wire shape `POST /v1/blobs` already returns — kept
+ * here as a structural type so the iframe bundle doesn't need to pull in
+ * `@paneui/core`.
+ */
+export interface BlobRefLike {
+  blob_id: string;
+  scope: "agent" | "session" | "artifact";
+  mime: string;
+  size: number;
+  sha256: string;
+  filename: string | null;
+  width: number | null;
+  height: number | null;
+  status: string;
+  session_id: string | null;
+  artifact_id: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+  deleted_at: string | null;
+}
+
+/**
+ * The shape of an `upload-blob-request` frame the shim posts to the shell.
+ * `file` is a browser `File` — postMessage's structured-clone algorithm
+ * supports `File` (and the underlying `Blob` reference), so the shell
+ * receives a live `File` it can hand to FormData without a roundtrip
+ * through base64/ArrayBuffer.
+ */
+export interface UploadBlobRequestFrame {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "upload-blob-request";
+  /** RPC correlation id — the shim's resolver matches against this. */
+  id: string;
+  /** The file the human picked, transferred via structured clone. */
+  file: File;
+  options?: {
+    /** Override the multipart filename (UX-only). */
+    filename?: string;
+    /** Override the declared Content-Type the shell forwards on the file part. */
+    mime?: string;
+  };
+}
+
+/**
+ * The shape of the shell's reply. Discriminated by `ok` — matching the way
+ * existing frames discriminate inside an `error` field would have made the
+ * success path's BlobRef carry an awkward optional field. The new frame
+ * uses an explicit boolean for clarity at the call site.
+ */
+export type UploadBlobResultFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "upload-blob-result";
+  /** Matches the request's `id`. */
+  id: string;
+} & (
+  | { ok: true; blob: BlobRefLike }
+  | { ok: false; error: { code: string; message: string } }
+);
 
 /**
  * The `payload` carried by the shell -> iframe `init` frame. The shell sends

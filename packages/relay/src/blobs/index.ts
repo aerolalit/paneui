@@ -28,3 +28,11 @@ export {
   ImageNormalisationError,
   type NormaliseResult,
 } from "./normalize.js";
+export {
+  processBlobUpload,
+  storageKeyFor,
+  type BlobUploadInput,
+  type BlobRowReady,
+  type ProcessBlobUploadDeps,
+  type QuotaEnforcer,
+} from "./upload-pipeline.js";
