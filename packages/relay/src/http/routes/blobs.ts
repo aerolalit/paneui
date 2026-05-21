@@ -29,6 +29,7 @@ import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import {
+  BlobIntegrityError,
   BlobSizeExceededError,
   generateBlobToken,
   isMimeAllowed,
@@ -448,6 +449,255 @@ blobs.delete("/:id", async (c) => {
   });
 
   return c.json({ blob_id: row.id, deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/blobs/presign — issue a presigned PUT URL for direct-to-storage
+// upload.
+//
+// Body (JSON, required):
+//   {
+//     mime: string,                    // declared content-type
+//     size: integer,                   // committed byte length
+//     sha256: string (hex),            // committed content hash
+//     scope: "agent" | "session" | "artifact",
+//     session_id?: string,             // required for scope=session
+//     artifact_id?: string,            // required for scope=artifact
+//     filename?: string                // UX-only display name
+//   }
+//
+// Returns:
+//   { blob_id, upload_url, expires_at, headers? }
+//
+// The client uploads the bytes directly to `upload_url` (PUT), then calls
+// POST /v1/blobs/:id/confirm. The relay HEADs storage on confirm and verifies
+// size + sha256 against the values committed here (TOCTOU defence).
+//
+// Only Azure backend supports presign in v0.1.0. Filesystem backend returns
+// 501 not_implemented — the multipart fallback (POST /v1/blobs) covers FS.
+// ---------------------------------------------------------------------------
+blobs.post("/presign", async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
+  const store = c.get("blobStore");
+  const me = c.get("agent");
+
+  if (!store) {
+    throw errors.invalidRequest("blob storage is not configured on this relay");
+  }
+  // Capability check — presign is Azure-only for now.
+  if (!("presignPut" in store) || !("confirmPresigned" in store)) {
+    throw errors.notImplemented(
+      "presigned upload is not supported by this backend",
+      "the filesystem backend uses the multipart fallback (POST /v1/blobs) instead; set BLOB_STORE=azure to enable the presigned PUT flow",
+    );
+  }
+
+  const body = (await c.req.json().catch(() => null)) as {
+    mime?: unknown;
+    size?: unknown;
+    sha256?: unknown;
+    scope?: unknown;
+    session_id?: unknown;
+    artifact_id?: unknown;
+    filename?: unknown;
+  } | null;
+  if (!body) throw errors.invalidRequest("missing JSON body");
+
+  const mime = typeof body.mime === "string" ? body.mime : null;
+  const size = typeof body.size === "number" ? body.size : null;
+  const sha256 = typeof body.sha256 === "string" ? body.sha256 : null;
+  if (!mime || size === null || !sha256) {
+    throw errors.invalidRequest(
+      "presign body requires mime, size (int), sha256 (hex)",
+    );
+  }
+  if (!Number.isInteger(size) || size <= 0) {
+    throw errors.invalidRequest("size must be a positive integer");
+  }
+  if (size > config.MAX_BLOB_BYTES) {
+    throw errors.blobSizeExceeded(config.MAX_BLOB_BYTES);
+  }
+  if (!/^[0-9a-f]{64}$/i.test(sha256)) {
+    throw errors.invalidRequest("sha256 must be a 64-character hex string");
+  }
+  if (!isMimeAllowed(mime, config.BLOB_MIME_ALLOWLIST)) {
+    throw errors.mimeDisallowed(mime, config.BLOB_MIME_ALLOWLIST);
+  }
+
+  const scope = parseScope(body.scope);
+  const sessionId =
+    scope === "session"
+      ? typeof body.session_id === "string"
+        ? body.session_id
+        : (() => {
+            throw errors.invalidRequest("scope=session requires session_id");
+          })()
+      : null;
+  const artifactId =
+    scope === "artifact"
+      ? typeof body.artifact_id === "string"
+        ? body.artifact_id
+        : (() => {
+            throw errors.invalidRequest("scope=artifact requires artifact_id");
+          })()
+      : null;
+
+  if (sessionId) {
+    const ses = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { agentId: true, status: true },
+    });
+    if (!ses || ses.agentId !== me.id) throw errors.blobNotFound();
+    if (ses.status !== "open") throw errors.gone("session is closed");
+  }
+  if (artifactId) {
+    const art = await prisma.artifact.findUnique({
+      where: { id: artifactId },
+      select: { ownerId: true },
+    });
+    if (!art || art.ownerId !== me.id) throw errors.blobNotFound();
+  }
+
+  // Pre-check the agent + per-scope quotas using the committed size (rejects
+  // upfront; saves a wasted round trip to storage). The bytes don't exist
+  // yet so we pass `extraBytes: size` to project the eventual aggregate.
+  const quotaFailure = await enforceQuotas(prisma, {
+    ownerId: me.id,
+    sessionId,
+    artifactId,
+    config,
+    extraBytes: size,
+  });
+  if (quotaFailure) {
+    throw errors.quotaExceeded(quotaFailure.scope, quotaFailure.cap);
+  }
+
+  // Reserve a row with status=pending so we have an id to derive the
+  // storage key from. The actual size/sha256/confirmedAt land in the
+  // /confirm step.
+  const row = await prisma.blob.create({
+    data: {
+      ownerId: me.id,
+      scope,
+      sessionId,
+      artifactId,
+      mime,
+      size,
+      sha256,
+      filename: typeof body.filename === "string" ? body.filename : null,
+      storageKey: "",
+      status: "pending",
+    },
+  });
+  const storageKey = storageKeyFor(row.id);
+  await prisma.blob.update({
+    where: { id: row.id },
+    data: { storageKey },
+  });
+
+  // Mint the presigned PUT. The store capability check above guaranteed
+  // these methods exist.
+  const presign = await (
+    store as unknown as {
+      presignPut: (opts: {
+        key: string;
+        mime: string;
+        sha256: string;
+      }) => Promise<{ uploadUrl: string; expiresAt: Date }>;
+    }
+  ).presignPut({ key: storageKey, mime, sha256 });
+
+  return c.json(
+    {
+      blob_id: row.id,
+      upload_url: presign.uploadUrl,
+      expires_at: presign.expiresAt.toISOString(),
+    },
+    201,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// POST /v1/blobs/:id/confirm — finalise a presigned upload.
+//
+// Called by the client AFTER it has PUT the bytes to the upload_url from
+// /v1/blobs/presign. The relay HEADs the storage backend, verifies size +
+// sha256 match the committed values, and flips status: pending → ready.
+//
+// Mismatch → 422 blob_integrity_violation; the bytes are deleted from
+// storage and the row is marked failed.
+// ---------------------------------------------------------------------------
+blobs.post("/:id/confirm", async (c) => {
+  const prisma = c.get("prisma");
+  const store = c.get("blobStore");
+  const me = c.get("agent");
+
+  if (!store) {
+    throw errors.invalidRequest("blob storage is not configured on this relay");
+  }
+  if (!("confirmPresigned" in store)) {
+    throw errors.notImplemented(
+      "confirm is only valid against backends that support presigned PUT",
+    );
+  }
+
+  const id = c.req.param("id");
+  const row = await prisma.blob.findUnique({ where: { id } });
+  if (!row || row.ownerId !== me.id) throw errors.blobNotFound();
+  if (row.status !== "pending") {
+    // Already confirmed (or failed). Idempotent: return current shape if
+    // ready; otherwise 409 conflict.
+    if (row.status === "ready") return c.json(serialize(row), 200);
+    throw errors.conflict(
+      `blob is in status='${row.status}' and cannot be confirmed`,
+    );
+  }
+
+  try {
+    const info = await (
+      store as unknown as {
+        confirmPresigned: (
+          key: string,
+          expected: { size: number; sha256: string; mime: string },
+        ) => Promise<{ size: number; sha256: string; mime?: string }>;
+      }
+    ).confirmPresigned(row.storageKey, {
+      size: row.size,
+      sha256: row.sha256,
+      mime: row.mime,
+    });
+
+    const final = await prisma.blob.update({
+      where: { id: row.id },
+      data: {
+        status: "ready",
+        // Use the verified values from the backend, not the committed ones —
+        // a defence-in-depth measure if the integrity check ever loosens.
+        size: info.size,
+        sha256: info.sha256,
+        confirmedAt: new Date(),
+      },
+    });
+    return c.json(serialize(final), 200);
+  } catch (e) {
+    await prisma.blob
+      .update({ where: { id: row.id }, data: { status: "failed" } })
+      .catch(() => {
+        /* best-effort */
+      });
+    if (e instanceof BlobIntegrityError) {
+      throw errors.invalidRequest(
+        "uploaded bytes don't match the committed size + sha256",
+        {
+          expected: e.expected,
+          observed: e.observed,
+        },
+        "the bytes at the upload_url disagree with what was committed at presign time; re-request a presign with the correct values",
+      );
+    }
+    throw e;
+  }
 });
 
 // ---------------------------------------------------------------------------

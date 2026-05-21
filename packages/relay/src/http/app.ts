@@ -125,7 +125,20 @@ export function buildApp(
       // (snake_case on the wire) are appended and omitted when undefined.
       return c.json(
         { error: serializeApiError(err) },
-        err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 500,
+        err.status as
+          | 400
+          | 401
+          | 403
+          | 404
+          | 409
+          | 410
+          | 413
+          | 415
+          | 422
+          | 426
+          | 429
+          | 500
+          | 501,
       );
     }
     if (err instanceof ZodError) {

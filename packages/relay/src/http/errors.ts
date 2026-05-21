@@ -171,6 +171,21 @@ export const errors = {
       DOCS.schema,
     ),
 
+  // The route is wired but the underlying capability (e.g. presigned PUT
+  // against a backend that doesn't support it) isn't available on this
+  // relay. 501 is the correct status — the request was well-formed but
+  // can't be processed.
+  notImplemented: (message: string, hint?: string) =>
+    new ApiError(
+      501,
+      "not_implemented",
+      message,
+      undefined,
+      hint ?? "this relay does not implement the requested capability",
+      false,
+      DOCS.api,
+    ),
+
   // Returned when /b/<token> is hit with a token that's expired, revoked,
   // already-used (for once-tokens), or never existed. We collapse all four
   // into one code so an attacker probing tokens can't distinguish "this

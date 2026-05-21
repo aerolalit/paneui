@@ -128,6 +128,31 @@ const schema = z.object({
   // & 0o007 !== 0). Files inside are written 0600.
   BLOB_STORE_FS_DIR: z.string().default("./data/blobs"),
 
+  // ---- Azure Blob Storage backend (only consulted when BLOB_STORE=azure) ---
+  //
+  // The container the relay reads/writes. Created at startup if missing.
+  BLOB_STORE_AZURE_CONTAINER: z.string().default("pane-blobs"),
+  // Storage account URL — required for managed-identity auth (the production
+  // path on Azure Container Apps). Example:
+  //   https://stpaneeurprodblobs.blob.core.windows.net
+  // The hostname's first label is the account name; DefaultAzureCredential
+  // negotiates the token.
+  BLOB_STORE_AZURE_ACCOUNT_URL: z.string().optional(),
+  // Connection-string fallback — DEV / Azurite ONLY. If set, takes precedence
+  // over the managed-identity path. The relay logs a startup warning so
+  // operators don't ship this to prod by mistake.
+  BLOB_STORE_AZURE_CONNECTION_STRING: z.string().optional(),
+
+  // Lifetime of a presigned PUT (filesystem signed nonce / Azure SAS). 10
+  // minutes is enough for a human to upload from a phone over a slow
+  // connection; long enough to be useful, short enough that a leaked
+  // upload URL stops working before it can be replayed broadly.
+  BLOB_PRESIGN_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 60),
+
   // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
   // covers images and PDFs. Comma-separated for the env var; an empty string
   // disables the allowlist (every sniffed MIME is accepted — only sensible

@@ -8,6 +8,10 @@ export {
   type BlobStore,
   type WriteOpts,
 } from "./store.js";
+// AzureBlobStore is intentionally NOT exported here — the factory dynamic-
+// imports it so a `BLOB_STORE=filesystem` self-host never pulls @azure/*
+// into its bundle. Tests that need the Azure module import it directly from
+// `./azure.js` so the cost is opt-in.
 export { makeBlobStore } from "./factory.js";
 export { FilesystemBlobStore } from "./filesystem.js";
 export { sniffMime, isMimeAllowed } from "./mime-sniff.js";
