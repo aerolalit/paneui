@@ -58,9 +58,11 @@ function publicWsBase(config: Config): string {
 // `Permissions-Policy` header has no "deny-all" shorthand.
 const PERMISSIONS_POLICY = [
   "accelerometer=()",
-  "ambient-light-sensor=()",
+  // `ambient-light-sensor` was removed from the spec; modern Chromium logs
+  // "Unrecognized feature" if we list it. Dropped.
   "autoplay=()",
-  "battery=()",
+  // `battery` was likewise removed from the spec (the Battery Status API
+  // was deprecated; the directive name was retired). Dropped.
   "camera=()",
   "display-capture=()",
   "encrypted-media=()",
