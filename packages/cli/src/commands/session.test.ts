@@ -39,6 +39,10 @@ const fakeClient = {
     });
     return Promise.resolve();
   }),
+  listParticipants: vi.fn((sessionId: unknown) => {
+    calls.push({ method: "listParticipants", args: [sessionId] });
+    return Promise.resolve({ session_id: sessionId, items: [] });
+  }),
 };
 
 vi.mock("../config.js", () => ({
@@ -167,6 +171,12 @@ describe("runSession list", () => {
 });
 
 describe("runSession participant", () => {
+  it("lists the participants on the given session", async () => {
+    await run(["participant", "list", "ses_abc"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([{ method: "listParticipants", args: ["ses_abc"] }]);
+  });
+
   it("mints a fresh URL on the given session", async () => {
     await run(["participant", "new", "ses_abc"]);
     expect(exitCode).toBeUndefined();
@@ -194,6 +204,13 @@ describe("runSession participant", () => {
     await run(["participant"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing verb");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("fails with a clear error when 'list' is missing <session-id>", async () => {
+    await run(["participant", "list"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing <session-id>");
     expect(calls).toHaveLength(0);
   });
 

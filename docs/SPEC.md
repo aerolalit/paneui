@@ -236,8 +236,9 @@ All agent endpoints require `Authorization: Bearer <api_key>` from `agents`.
 | `GET`    | `/v1/artifacts/{id}` | Get an artifact + its version list. `{id}` accepts the artifact id or its slug. |
 | `GET`    | `/v1/artifacts/{id}/versions/{version}` | Get one version's full content. |
 | `POST`   | `/v1/sessions` | Create a session — one use of an artifact version (see below). |
-| `GET`    | `/v1/sessions` | List the caller's sessions. Filters: `status` (open\|closed\|all, default open), `limit` (≤200), `cursor`, `artifact_id`. NO secrets in the response — no token plaintext, no callback URL, no metadata / input_data. Use `participants[].participant_id` as the revoke handle. |
+| `GET`    | `/v1/sessions` | List the caller's sessions. Filters: `status` (open\|closed\|all, default open), `limit` (≤200), `cursor`, `artifact_id`. Lean — carries `active_human_participants` (count) but NOT the full participant array. NO secrets — no token plaintext, no callback URL, no metadata / input_data. |
 | `GET`    | `/v1/sessions/{id}` | Session metadata. |
+| `GET`    | `/v1/sessions/{id}/participants` | List every participant on one session (active and revoked). Bounded by `MAX_PARTICIPANTS_PER_SESSION`; no pagination. Used to find `participant_id` for revoke. |
 | `POST`   | `/v1/sessions/{id}/participants` | Mint a fresh human participant URL on an existing session. One-shot token in the 201 body. 410 on a closed/expired session; 409 at the active-human cap (revoked rows excluded). |
 | `DELETE` | `/v1/sessions/{id}/participants/{participant_id}` | Revoke one participant URL (idempotent). 400 if targeting the agent participant — use `DELETE /v1/sessions/{id}` instead. |
 | `PATCH`  | `/v1/sessions/{id}/schema`   | Additive schema update. |

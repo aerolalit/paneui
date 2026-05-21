@@ -29,7 +29,7 @@ Usage:
 Nouns:
   session           Open / observe / send to / close sessions
                     (create | list | show | send | watch | delete |
-                     participant <new|revoke>).
+                     participant <list|new|revoke>).
   artifact          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
   key               YOUR agent's API key (list | revoke).

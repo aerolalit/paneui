@@ -146,6 +146,96 @@ async function humanParticipantId(sessionId: string): Promise<string> {
   return p!.id;
 }
 
+interface ParticipantsListResponse {
+  session_id: string;
+  items: Array<{
+    participant_id: string;
+    kind: "agent" | "human";
+    token_prefix: string;
+    joined_at: string | null;
+    revoked_at: string | null;
+  }>;
+}
+
+async function listParticipants(
+  apiKey: string,
+  sessionId: string,
+): Promise<{ status: number; body: ParticipantsListResponse }> {
+  const res = await app.fetch(
+    new Request(`http://t/v1/sessions/${sessionId}/participants`, {
+      headers: bearer(apiKey),
+    }),
+  );
+  return {
+    status: res.status,
+    body: (await res.json()) as ParticipantsListResponse,
+  };
+}
+
+describe("GET /v1/sessions/:id/participants — list", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("returns every participant on the session (agent + humans, active + revoked)", async () => {
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+    // Mint one extra human + revoke it so we exercise the revoked-rows path.
+    const minted = (await mint(a.apiKey, sid)).body as MintResponse;
+    expect((await revoke(a.apiKey, sid, minted.participant_id)).status).toBe(
+      204,
+    );
+
+    const { status, body } = await listParticipants(a.apiKey, sid);
+    expect(status).toBe(200);
+    expect(body.session_id).toBe(sid);
+    // 1 agent + 1 default human + 1 minted-then-revoked human = 3 rows.
+    expect(body.items).toHaveLength(3);
+    const agentRows = body.items.filter((p) => p.kind === "agent");
+    const humanRows = body.items.filter((p) => p.kind === "human");
+    expect(agentRows).toHaveLength(1);
+    expect(humanRows).toHaveLength(2);
+    const revokedRow = humanRows.find((p) => p.revoked_at !== null);
+    expect(revokedRow).toBeDefined();
+    expect(revokedRow!.participant_id).toBe(minted.participant_id);
+  });
+
+  it("does NOT leak token plaintext — only token_prefix", async () => {
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+    const { body } = await listParticipants(a.apiKey, sid);
+    const raw = JSON.stringify(body);
+    // A token plaintext is 49 chars (6-char marker + 43-char base64url body).
+    const longTokenLike = /tok_[ah]_[A-Za-z0-9_-]{43,}/;
+    expect(longTokenLike.test(raw)).toBe(false);
+    for (const p of body.items) {
+      expect(p.token_prefix.length).toBe(12);
+      expect(p.token_prefix.startsWith("tok_")).toBe(true);
+    }
+  });
+
+  it("404s when the session belongs to a different agent", async () => {
+    const a = await seedAgent();
+    const b = await seedAgent();
+    const sid = await createSession(a.apiKey);
+    const res = await app.fetch(
+      new Request(`http://t/v1/sessions/${sid}/participants`, {
+        headers: bearer(b.apiKey),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("requires bearer auth", async () => {
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+    const res = await app.fetch(
+      new Request(`http://t/v1/sessions/${sid}/participants`),
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("POST /v1/sessions/:id/participants — mint", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);

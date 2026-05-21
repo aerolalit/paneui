@@ -185,15 +185,15 @@ sessions.get("/", requireAgent, async (c) => {
           artifact: { select: { name: true, slug: true } },
         },
       },
-      participants: {
+      // Don't pull full participant rows for the list — agents with many
+      // sessions × many humans would pay the bandwidth on every list call.
+      // Just count active humans so the row shows occupancy at a glance;
+      // for the full participant array (with participant_id + token_prefix
+      // + revoked_at), call `GET /v1/sessions/:id/participants`.
+      _count: {
         select: {
-          id: true,
-          kind: true,
-          tokenPrefix: true,
-          joinedAt: true,
-          revokedAt: true,
+          participants: { where: { kind: "human", revokedAt: null } },
         },
-        orderBy: [{ kind: "asc" }, { id: "asc" }],
       },
     },
   });
@@ -214,13 +214,9 @@ sessions.get("/", requireAgent, async (c) => {
       artifact_id: isAnonymous ? null : s.artifactVersion.artifactId,
       artifact_version_id: s.artifactVersionId,
       artifact_version: s.artifactVersion.version,
-      participants: s.participants.map((p) => ({
-        participant_id: p.id,
-        kind: (p.kind === "agent" ? "agent" : "human") as "agent" | "human",
-        token_prefix: p.tokenPrefix,
-        joined_at: p.joinedAt ? p.joinedAt.toISOString() : null,
-        revoked_at: p.revokedAt ? p.revokedAt.toISOString() : null,
-      })),
+      // Count of active (non-revoked) human participants. For the full
+      // participant array call GET /v1/sessions/:id/participants.
+      active_human_participants: s._count.participants,
       created_at: s.createdAt.toISOString(),
       expires_at: s.expiresAt.toISOString(),
       has_callback: s.callbackUrl !== null,
@@ -564,6 +560,50 @@ sessions.delete("/:id", requireAgent, async (c) => {
   });
   await appendSystemEvent(prisma, id, "system.session.expired", {});
   return c.body(null, 204);
+});
+
+// GET /v1/sessions/:id/participants — list the participants on one session.
+//
+// Bounded by MAX_PARTICIPANTS_PER_SESSION so the response is always small
+// enough to return whole (no pagination). Includes BOTH active and revoked
+// rows — revoked rows carry `revoked_at !== null` and are useful for
+// auditing past leaks. Owner-scoped: a cross-agent session id returns 404
+// for existence-oracle parity with the other session-scoped endpoints.
+sessions.get("/:id/participants", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  const session = await prisma.session.findUnique({
+    where: { id },
+    select: { agentId: true },
+  });
+  if (!session || session.agentId !== me.id) throw errors.sessionNotFound();
+
+  const participants = await prisma.participant.findMany({
+    where: { sessionId: id },
+    select: {
+      id: true,
+      kind: true,
+      tokenPrefix: true,
+      joinedAt: true,
+      revokedAt: true,
+    },
+    // Agent first (kind="agent" < "human" alphabetically), then by id so
+    // ordering is stable across calls.
+    orderBy: [{ kind: "asc" }, { id: "asc" }],
+  });
+
+  return c.json({
+    session_id: id,
+    items: participants.map((p) => ({
+      participant_id: p.id,
+      kind: (p.kind === "agent" ? "agent" : "human") as "agent" | "human",
+      token_prefix: p.tokenPrefix,
+      joined_at: p.joinedAt ? p.joinedAt.toISOString() : null,
+      revoked_at: p.revokedAt ? p.revokedAt.toISOString() : null,
+    })),
+  });
 });
 
 // POST /v1/sessions/:id/participants — mint a fresh human participant URL.

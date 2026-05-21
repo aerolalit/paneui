@@ -96,13 +96,7 @@ interface ListResponseItem {
   artifact_id: string | null;
   artifact_version_id: string;
   artifact_version: number;
-  participants: Array<{
-    participant_id: string;
-    kind: "agent" | "human";
-    token_prefix: string;
-    joined_at: string | null;
-    revoked_at: string | null;
-  }>;
+  active_human_participants: number;
   created_at: string;
   expires_at: string;
   has_callback: boolean;
@@ -181,39 +175,53 @@ describe("GET /v1/sessions — list", () => {
       (item as unknown as { input_data?: unknown }).input_data,
     ).toBeUndefined();
 
-    // The 6-char marker "tok_h_" / "tok_a_" is the START of both the secret
-    // token AND the public token_prefix (which IS returned by design). The
-    // contract is that plaintext tokens are not returned — verify by checking
-    // that no field carries a string long enough to be a full token
-    // (prefix + 43-char base64url body = 49 chars).
-    for (const p of item.participants) {
-      expect(p.token_prefix.startsWith("tok_")).toBe(true);
-      // token_prefix is 12 chars: 6-char marker + 6 extra chars.
-      expect(p.token_prefix.length).toBe(12);
-    }
-    // No string field on the row is ≥ 49 chars and starts with tok_ — that
-    // would be a full participant token. (artifact_version_id and
-    // participant_id are cuids — base36, no underscores; they never collide.)
+    // The list MUST NOT inline the participants array — agents with many
+    // sessions would pay the bandwidth on every call. The full array lives
+    // at GET /v1/sessions/:id/participants. Verify by checking that no
+    // string field is long enough to be a participant token plaintext
+    // (49 chars), and that no `participants` array leaked through.
+    expect(
+      (item as unknown as { participants?: unknown }).participants,
+    ).toBeUndefined();
     const longTokenLike = /tok_[ah]_[A-Za-z0-9_-]{43,}/;
     expect(longTokenLike.test(raw)).toBe(false);
   });
 
-  it("exposes participant_id + token_prefix for each row's participants", async () => {
+  it("exposes the active human count but not the full participant array", async () => {
     const a = await seedAgent();
     await createSession(a.apiKey);
 
     const { body } = await list(a.apiKey);
     const item = body.items[0]!;
-    // session-create mints 1 agent + 1 default human participant.
-    expect(item.participants).toHaveLength(2);
-    const human = item.participants.find((p) => p.kind === "human")!;
-    const agent = item.participants.find((p) => p.kind === "agent")!;
-    expect(human.participant_id).toMatch(/^[a-z0-9]+$/);
-    expect(human.token_prefix.startsWith("tok_h_")).toBe(true);
-    expect(human.token_prefix.length).toBe(12);
-    expect(agent.token_prefix.startsWith("tok_a_")).toBe(true);
-    expect(human.revoked_at).toBeNull();
-    expect(human.joined_at).toBeNull();
+    // session-create mints 1 default human participant; the agent
+    // participant doesn't count for the human cap.
+    expect(item.active_human_participants).toBe(1);
+    // No full participant array on the list response.
+    expect(
+      (item as unknown as { participants?: unknown }).participants,
+    ).toBeUndefined();
+  });
+
+  it("active_human_participants drops when a human is revoked", async () => {
+    const a = await seedAgent();
+    const { session_id } = await createSession(a.apiKey);
+
+    // The default human's id, fetched directly from the DB.
+    const p = await prisma.participant.findFirst({
+      where: { sessionId: session_id, kind: "human" },
+    });
+    expect(p).not.toBeNull();
+    const revokeRes = await app.fetch(
+      new Request(`http://t/v1/sessions/${session_id}/participants/${p!.id}`, {
+        method: "DELETE",
+        headers: bearer(a.apiKey),
+      }),
+    );
+    expect(revokeRes.status).toBe(204);
+
+    const { body } = await list(a.apiKey);
+    const item = body.items.find((s) => s.session_id === session_id)!;
+    expect(item.active_human_participants).toBe(0);
   });
 
   it("default status=open hides expired sessions; status=closed shows them", async () => {

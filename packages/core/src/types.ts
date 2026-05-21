@@ -94,7 +94,7 @@ export interface ParticipantSummary {
   revoked_at: string | null;
 }
 
-/** A row in the GET /v1/sessions list response (no secrets). */
+/** A row in the GET /v1/sessions list response (no secrets, lean). */
 export interface SessionSummary {
   session_id: string;
   /** Tab title (required column; agent input or Artifact.name fallback). */
@@ -106,12 +106,24 @@ export interface SessionSummary {
   artifact_id: string | null;
   artifact_version_id: string;
   artifact_version: number;
-  participants: ParticipantSummary[];
+  /** Count of active (non-revoked) human participants. The full participant
+   *  array is intentionally NOT inlined here — agents with many sessions
+   *  would pay the bandwidth on every list call. Fetch
+   *  `GET /v1/sessions/:id/participants` when you need the rows. */
+  active_human_participants: number;
   created_at: string;
   expires_at: string;
   /** Whether the session has a webhook callback configured (URL is NOT
    *  returned — it may carry a secret in the path). */
   has_callback: boolean;
+}
+
+/** Response from GET /v1/sessions/:id/participants — every participant on
+ *  one session (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+ *  on the relay so no pagination is needed. */
+export interface ParticipantsList {
+  session_id: string;
+  items: ParticipantSummary[];
 }
 
 /** Response from GET /v1/sessions. */

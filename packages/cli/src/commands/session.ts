@@ -42,10 +42,11 @@ Verbs:
   watch <id>        Stream a session's events as JSON-lines on stdout
                     (long-lived; the building block for pipe-readers).
   delete <id>       Close/delete a session (DELETE /v1/sessions/:id).
-  participant       Mint or revoke a single participant URL on an existing
-    <new|revoke>    session. 'new' replaces the destructive 'delete +
-                    recreate' workaround for a lost URL; 'revoke'
-                    invalidates one URL without touching the session.
+  participant         List / mint / revoke participant URLs on an existing
+    <list|new|revoke> session. 'list' returns the participant ids you need
+                      for 'revoke'; 'new' replaces the destructive 'delete
+                      + recreate' workaround for a lost URL; 'revoke'
+                      invalidates one URL without touching the session.
 
 Run \`pane session <verb> --help\` for verb-specific options.`;
 

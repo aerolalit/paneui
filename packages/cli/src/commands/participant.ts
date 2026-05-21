@@ -25,6 +25,13 @@ Usage:
   pane session participant <verb> <args>
 
 Verbs:
+  list <session-id>           List the participants on one session, including
+                              revoked rows (for audit). Returns
+                              { session_id, items: [...] } where each item
+                              carries { participant_id, kind, token_prefix,
+                              joined_at, revoked_at }. Use this to find the
+                              participant_id you need to pass to 'revoke'.
+
   new <session-id>            Mint a fresh human URL on an existing session.
                               Returns { participant_id, kind, token, url,
                               created_at } — ONCE. The plaintext token is
@@ -47,13 +54,33 @@ Options:
   -h, --help                  Show this help.
 
 Recovery recipe:
-  pane session list                                       # find session_id +
-                                                          #   p_id
+  pane session list                                       # find session_id
+  pane session participant list <session-id>              # find participant
+                                                          #   ids on that
+                                                          #   session
   pane session participant new <session-id>               # mint a new URL
   pane session participant revoke <session-id> <p-id>     # invalidate the
                                                           #   old URL
 
 Output: stdout is machine-readable JSON.`;
+
+async function runParticipantList(args: ParsedArgs): Promise<void> {
+  const sessionId = args.positionals[1];
+  if (!sessionId) {
+    fail(
+      "missing <session-id> — usage: pane session participant list <session-id>",
+      "invalid_args",
+    );
+  }
+
+  const client = makeClient(args);
+  try {
+    const res = await client.listParticipants(sessionId!);
+    printJson(res);
+  } catch (e) {
+    failFromError(e);
+  }
+}
 
 async function runParticipantNew(args: ParsedArgs): Promise<void> {
   const sessionId = args.positionals[1];
@@ -97,10 +124,14 @@ async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
 }
 
 export async function runParticipant(args: ParsedArgs): Promise<void> {
-  // positionals[0] is the literal "participant" marker; positionals[1] is
-  // the verb (new | revoke); positionals[2..] are the verb's args.
+  // positionals[0] is the verb (list | new | revoke), positionals[1..] are
+  // the verb's args. (The session.ts dispatcher already shifted off the
+  // "participant" marker before calling us.)
   const verb = args.positionals[0];
   switch (verb) {
+    case "list":
+      await runParticipantList(args);
+      break;
     case "new":
       await runParticipantNew(args);
       break;
@@ -109,13 +140,13 @@ export async function runParticipant(args: ParsedArgs): Promise<void> {
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane session participant <new|revoke> (run 'pane session participant --help')",
+        "missing verb — usage: pane session participant <list|new|revoke> (run 'pane session participant --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown participant verb '${verb}' — expected new|revoke (run 'pane session participant --help')`,
+        `unknown participant verb '${verb}' — expected list|new|revoke (run 'pane session participant --help')`,
         "invalid_args",
       );
   }

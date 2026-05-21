@@ -16,6 +16,7 @@ import type {
   KeyInfo,
   MintParticipantResponse,
   PaneEvent,
+  ParticipantsList,
   SessionState,
   SessionsPage,
   TasteInfo,
@@ -540,6 +541,22 @@ export class PaneClient {
     const r = await this.call("GET", `/v1/sessions${qs ? "?" + qs : ""}`);
     if (!r.ok) this.fail(r);
     return this.asObject<SessionsPage>(r);
+  }
+
+  /**
+   * GET /v1/sessions/:id/participants — list every participant on one
+   * session (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+   * on the relay, so the full list is returned with no pagination.
+   * Use this to find the `participant_id` you need to pass to
+   * {@link revokeParticipant}, or to audit revoked rows.
+   */
+  async listParticipants(sessionId: string): Promise<ParticipantsList> {
+    const r = await this.call(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<ParticipantsList>(r);
   }
 
   /**

@@ -69,6 +69,7 @@ export type {
   SessionState,
   EventsPage,
   ParticipantSummary,
+  ParticipantsList,
   SessionSummary,
   SessionsPage,
   MintParticipantResponse,
