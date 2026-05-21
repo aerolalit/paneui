@@ -53,6 +53,9 @@ export interface CreateSessionResponse {
   tokens: { humans: string[]; agent: string };
   urls: { humans: string[]; agent_stream: string };
   expires_at: string;
+  /** The resolved tab title persisted on the session (the agent's value, or
+   * the Artifact.name fallback). */
+  title: string;
 }
 
 /** Response from GET /v1/sessions/:id. */
@@ -63,6 +66,8 @@ export interface SessionState {
   artifact_id: string;
   artifact_version_id: string;
   artifact_version: number;
+  /** The tab title this session was created with (frozen for its lifetime). */
+  title: string;
   metadata: Record<string, unknown> | null;
   input_data: Record<string, unknown> | null;
   created_at: string;

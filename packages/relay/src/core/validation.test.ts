@@ -3,6 +3,7 @@ import {
   validateEvent,
   validateSchemaShape,
   validateInputData,
+  validateSessionTitle,
   assertSchemaWithinLimits,
   mergeSchemaAdditive,
   invalidateSchemaCache,
@@ -496,5 +497,63 @@ describe("validateInputData", () => {
       const e = err as { status?: number };
       expect(e.status).toBe(400);
     }
+  });
+});
+
+describe("validateSessionTitle", () => {
+  it("returns the trimmed string for a valid title", () => {
+    expect(validateSessionTitle("Quarterly Review")).toBe("Quarterly Review");
+    expect(validateSessionTitle("  padded  ")).toBe("padded");
+  });
+
+  it("rejects non-string input with a 400", () => {
+    for (const v of [undefined, null, 42, true, [], {}]) {
+      try {
+        validateSessionTitle(v);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect((err as { status?: number }).status).toBe(400);
+      }
+    }
+  });
+
+  it("rejects an empty / whitespace-only title", () => {
+    for (const v of ["", "   ", "\t\t"]) {
+      try {
+        validateSessionTitle(v);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect((err as { status?: number }).status).toBe(400);
+      }
+    }
+  });
+
+  it("rejects titles longer than 80 chars (post-trim)", () => {
+    try {
+      validateSessionTitle("a".repeat(81));
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect((err as { status?: number }).status).toBe(400);
+    }
+    // 80 is fine.
+    expect(validateSessionTitle("a".repeat(80))).toBe("a".repeat(80));
+  });
+
+  it("rejects ASCII control chars (incl. newline, tab, CR)", () => {
+    for (const v of ["line\nbreak", "tab\there", "ret\rurn", "nul\x00byte"]) {
+      try {
+        validateSessionTitle(v);
+        expect.unreachable("should have thrown for: " + JSON.stringify(v));
+      } catch (err) {
+        expect((err as { status?: number }).status).toBe(400);
+      }
+    }
+  });
+
+  it("accepts unicode (non-control) just fine", () => {
+    expect(validateSessionTitle("Quarterly Review · Pane")).toBe(
+      "Quarterly Review · Pane",
+    );
+    expect(validateSessionTitle("会議メモ")).toBe("会議メモ");
   });
 });

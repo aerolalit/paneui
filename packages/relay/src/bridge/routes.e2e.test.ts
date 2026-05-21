@@ -56,6 +56,7 @@ async function seedSession(opts?: {
   expired?: boolean;
   artifactSource?: string;
   inputData?: object | null;
+  title?: string;
 }): Promise<{
   token: string;
   agentId: string;
@@ -79,6 +80,7 @@ async function seedSession(opts?: {
     expiresAt: opts?.expired
       ? new Date(Date.now() - 60 * 60 * 1000)
       : new Date(Date.now() + 60 * 60 * 1000),
+    ...(opts?.title !== undefined ? { title: opts.title } : {}),
   });
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
@@ -262,6 +264,47 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain('class="closed"');
     expect(body).toContain("This session is closed");
     expect(body).not.toContain("<iframe");
+  });
+
+  it("renders the session title into the tab <title>", async () => {
+    const { token } = await seedSession({ title: "Quarterly Review · Pane" });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toContain("<title>Quarterly Review · Pane</title>");
+    // The old hardcoded text must not leak back in.
+    expect(body).not.toContain("<title>Pane Session</title>");
+    expect(body).not.toContain("<title>Pane — Session</title>");
+  });
+
+  it("HTML-escapes the title so an agent-supplied <script> cannot break out", async () => {
+    // The title field is filtered for control chars at session create, but
+    // `<script>alert(1)</script>` is otherwise valid text. It must never reach
+    // the HTML stream unescaped.
+    const { token } = await seedSession({ title: "<script>alert(1)</script>" });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).not.toContain("<script>alert(1)</script>");
+    expect(body).toContain(
+      "<title>&lt;script&gt;alert(1)&lt;/script&gt;</title>",
+    );
+  });
+
+  it("includes a relay-controlled favicon link in the live shell", async () => {
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toMatch(
+      /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="data:image\/svg\+xml,/,
+    );
+  });
+
+  it("includes the same favicon link in the closed-session shell", async () => {
+    const { token } = await seedSession({ closed: true });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toMatch(
+      /<link\s+rel="icon"\s+type="image\/svg\+xml"\s+href="data:image\/svg\+xml,/,
+    );
   });
 
   it("404s on a malformed token", async () => {

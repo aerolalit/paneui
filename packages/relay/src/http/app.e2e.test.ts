@@ -86,6 +86,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             participants: { humans: 2 },
           }),
         }),
@@ -116,6 +117,7 @@ describe("HTTP e2e", () => {
               source: "https://example.com/page",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -145,6 +147,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             ttl: 999_999_999,
           }),
         }),
@@ -173,6 +176,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -191,6 +195,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             callback: {
               url: "http://169.254.169.254/latest/meta-data/",
               events: ["review.*"],
@@ -216,6 +221,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             callback: {
               url: "https://example.com/hook",
               events: ["review.*"],
@@ -243,6 +249,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -288,6 +295,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             participants: { humans: 1 },
           }),
         }),
@@ -487,6 +495,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
             participants: { humans: 1 },
           }),
         }),
@@ -509,6 +518,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -637,6 +647,7 @@ describe("HTTP e2e", () => {
               source: huge,
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -657,6 +668,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );
@@ -694,6 +706,7 @@ describe("HTTP e2e", () => {
               source: "<html></html>",
               event_schema: minimalSchema,
             },
+            title: "Test session",
           }),
         }),
       );

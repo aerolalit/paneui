@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.0.1 -->
+<!-- pane skill v1.1.0 -->
 
 # pane
 
@@ -275,9 +275,17 @@ pane create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
 Or inline a one-off artifact:
 
 ```sh
-pane create --artifact ./form.html --event-schema ./schema.json --ttl 600
+pane create --artifact ./form.html --event-schema ./schema.json \
+  --title "Quick poll" --ttl 600
 ```
 
+- `--title <text>` — the human's browser tab title for this session (max 80
+  chars, single line). Set a descriptive, per-session value so a human with
+  several panes open can tell tabs apart. **Required, with one exception:**
+  reference-form sessions (`--artifact-id`) against a named artifact fall back
+  to the artifact's `name`. So `pane artifact create --name "PR Review"` +
+  `pane create --artifact-id pr-review` is fine; `pane create --artifact …`
+  (inline) always needs `--title`.
 - `--artifact-id <v>` — reference an existing artifact by id or slug. Pair with
   `--version <n>` to pin a specific version (defaults to the latest).
 - `--artifact <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL

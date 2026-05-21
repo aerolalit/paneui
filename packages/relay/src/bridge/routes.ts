@@ -235,6 +235,7 @@ bridge.get("/:token", async (c) => {
       agentLive,
       agentLastEventAt,
       agentLastUsedAt,
+      title: session.title,
     }),
   );
 });
@@ -348,6 +349,10 @@ interface ShellArgs {
   agentLive: boolean;
   agentLastEventAt: string | null;
   agentLastUsedAt: string | null;
+  // Agent-supplied (or Artifact.name-resolved) per-session title. Validated at
+  // session create — non-empty, ≤80 chars, no control chars — but still
+  // untrusted at this point; HTML-escaped into <title> at render time.
+  title: string;
 }
 
 function renderShell(args: ShellArgs): string {
@@ -372,7 +377,7 @@ function renderShell(args: ShellArgs): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pane — Session</title>
+<title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style nonce="${args.nonce}">
   html, body { height: 100%; margin: 0; }

@@ -23,6 +23,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   metadata: "--metadata",
   callback: "--callback",
   input_data: "--input-data",
+  title: "--title",
   "artifact.id": "--artifact-id",
   "artifact.version": "--version",
   "artifact.type": "--artifact-type",
@@ -90,6 +91,11 @@ Artifact (choose one):
                       emit against it. See docs/SPEC.md for the full grammar.
 
 Options:
+  --title <text>      Tab title shown to the human (max 80 chars, single
+                      line). Required, with one ergonomic exception: when
+                      --artifact-id references a named artifact, the relay
+                      falls back to Artifact.name. Inline (--artifact …) form
+                      always needs --title.
   --input-data <v>    This instance's seed data — a JSON object (file path or
                       inline JSON), validated by the relay against the artifact
                       version's input_schema. The page reads it as
@@ -195,6 +201,16 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       }
     }
     candidate["artifact"] = inlineArtifact;
+  }
+
+  // --title — passthrough, no client-side requiredness. The relay is the
+  // single source of truth: it enforces "required, with --artifact-id +
+  // Artifact.name as the only fallback" and the shape rules (length, control
+  // chars). Keeping all that server-side avoids drift between the CLI's
+  // pre-checks and the relay's actual rules.
+  const titleRaw = args.flags.get("title");
+  if (titleRaw !== undefined) {
+    candidate["title"] = titleRaw;
   }
 
   // --input-data — per-instance seed data, applies to either form (the relay

@@ -146,6 +146,57 @@ export function validateEvent(args: ValidateEventArgs): void {
   }
 }
 
+// Validate an agent-supplied session title. Trust boundary: this value is
+// untrusted agent input that the bridge shell renders into <title> (HTML-
+// escaped at render time). We enforce shape only — printable, single-line,
+// length-bounded — and return the trimmed value. Callers feed the returned
+// value through to persistence and then to renderShell, which escapes it.
+//
+// Rejection rules (each throws a 400 invalid_request with a specific hint):
+//   - not a string
+//   - empty after trim
+//   - longer than 80 chars (after trim)
+//   - contains an ASCII control char (\x00..\x1f, incl. \n, \r, \t)
+const TITLE_MAX_LEN = 80;
+// Reject ASCII control chars in agent-supplied titles before they reach
+// <title>. The lint rule that flags this regex is exactly the case we're
+// implementing on purpose.
+// eslint-disable-next-line no-control-regex
+const TITLE_CTRL_RX = /[\x00-\x1f]/;
+
+export function validateSessionTitle(raw: unknown): string {
+  if (typeof raw !== "string") {
+    throw errors.invalidRequest(
+      "title must be a string",
+      undefined,
+      'pass `title` as a JSON string (e.g. "PR #123 review")',
+    );
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw errors.invalidRequest(
+      "title must be non-empty",
+      undefined,
+      "pass a non-blank title (it is rendered as the browser tab title)",
+    );
+  }
+  if (trimmed.length > TITLE_MAX_LEN) {
+    throw errors.invalidRequest(
+      `title is too long: ${trimmed.length} chars exceeds the ${TITLE_MAX_LEN}-char limit`,
+      { length: trimmed.length, max: TITLE_MAX_LEN },
+      `shorten the title to ${TITLE_MAX_LEN} characters or fewer`,
+    );
+  }
+  if (TITLE_CTRL_RX.test(trimmed)) {
+    throw errors.invalidRequest(
+      "title must not contain control characters (newlines, tabs, etc.)",
+      undefined,
+      "remove any newline, tab, or other control characters — the title is a single-line label",
+    );
+  }
+  return trimmed;
+}
+
 // Compute the maximum nesting depth of a JSON value. Objects and arrays add one
 // level; primitives are depth 0. Used to reject pathologically-nested schemas
 // before Ajv compiles them. Bails out early once `limit` is exceeded so a

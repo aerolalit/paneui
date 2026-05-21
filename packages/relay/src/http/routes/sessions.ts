@@ -17,6 +17,7 @@ import {
   assertSchemaWithinLimits,
   validateSchemaShape,
   validateInputData,
+  validateSessionTitle,
 } from "../../core/validation.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
@@ -50,7 +51,7 @@ sessions.post("/", requireAgent, async (c) => {
     );
   }
 
-  const { artifact, participants, ttl, metadata, callback, input_data } =
+  const { artifact, participants, ttl, metadata, callback, input_data, title } =
     parsed.data;
 
   const requestedHumans = participants?.humans ?? 1;
@@ -71,6 +72,9 @@ sessions.post("/", requireAgent, async (c) => {
   // The pinned version's input_schema, if it declares one. Null = the version
   // has no input contract, so `input_data` (if any) is accepted unvalidated.
   let inputSchema: unknown = null;
+  // The artifact head's `name`, if any. Used as the title fallback for the
+  // reference form below. Null for inline (anonymous) artifacts.
+  let artifactName: string | null = null;
 
   if ("id" in artifact && artifact.id !== undefined) {
     // Reference form — instance an existing named artifact owned by this agent.
@@ -92,6 +96,7 @@ sessions.post("/", requireAgent, async (c) => {
     artifactVersionId = version.id;
     artifactId = head.id;
     inputSchema = version.inputSchema;
+    artifactName = head.name;
   } else {
     // Inline form — a one-off UI. Validate the inline content, then
     // transparently create an anonymous artifact (name/slug null) + v1.
@@ -146,6 +151,26 @@ sessions.post("/", requireAgent, async (c) => {
     });
     artifactVersionId = created.versionId;
     artifactId = created.headId;
+  }
+
+  // Resolve the per-session tab title. The relay treats title as required at
+  // the storage layer (Session.title is NOT NULL), but offers one ergonomic
+  // fallback: a reference-form session against a named artifact picks up the
+  // artifact's `name`. Inline form has no name to fall back to and must carry
+  // `title` explicitly. Both paths funnel through validateSessionTitle so an
+  // over-long Artifact.name still surfaces a clear error rather than truncating
+  // silently.
+  let resolvedTitle: string;
+  if (title !== undefined) {
+    resolvedTitle = validateSessionTitle(title);
+  } else if (artifactName !== null) {
+    resolvedTitle = validateSessionTitle(artifactName);
+  } else {
+    throw errors.invalidRequest(
+      "title is required",
+      undefined,
+      "pass `title` on the request body (or `--title` on `pane create`); reference-form sessions can omit it only when the artifact has a `name`",
+    );
   }
 
   // Phase C — input contract enforcement. If the pinned version declares an
@@ -211,6 +236,7 @@ sessions.post("/", requireAgent, async (c) => {
       id: sessionId,
       agentId: agent.id,
       artifactVersionId,
+      title: resolvedTitle,
       inputData: input_data
         ? (input_data as Prisma.InputJsonValue)
         : Prisma.JsonNull,
@@ -263,6 +289,7 @@ sessions.post("/", requireAgent, async (c) => {
         agent_stream: `${wsBase}/v1/sessions/${sessionId}/stream`,
       },
       expires_at: expiresAt.toISOString(),
+      title: resolvedTitle,
     },
     201,
   );
@@ -314,6 +341,7 @@ sessions.get("/:id", requireAgent, async (c) => {
     artifact_id: session.artifactVersion.artifactId,
     artifact_version_id: session.artifactVersionId,
     artifact_version: session.artifactVersion.version,
+    title: session.title,
     metadata: session.metadata,
     input_data: session.inputData,
     created_at: session.createdAt.toISOString(),
