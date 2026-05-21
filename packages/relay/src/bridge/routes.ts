@@ -54,6 +54,16 @@ function publicWsBase(config: Config): string {
   return u.toString().replace(/\/$/, "");
 }
 
+// The Pane brand mark, inlined as an SVG data URI for the browser tab.
+// Inlining (vs. /favicon.ico) avoids an extra HTTP round-trip on every page
+// load and keeps the relay deployment a single binary with no static-asset
+// directory. The same shape is rendered visually in the header SVG below.
+// Both the shell's CSP (img-src 'self' data:) and the error page's CSP
+// (img-src 'self' data:) explicitly allow the data: scheme, so the icon
+// loads under both surfaces.
+const BRAND_FAVICON_HREF =
+  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2262%22%20cy%3D%2258%22%20r%3D%2217%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2226%22%20width%3D%2240%22%20height%3D%2232%22%20rx%3D%2210%22%20fill%3D%22%230f172a%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2230%22%20width%3D%2232%22%20height%3D%2224%22%20rx%3D%227%22%20fill%3D%22%23a78bfa%22%2F%3E%3Ccircle%20cx%3D%2233.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2246.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3C%2Fsvg%3E";
+
 // Belt-and-braces alongside the iframe sandbox. Disables every powerful API the
 // browser exposes by default. Listed explicitly rather than `*=()` because the
 // `Permissions-Policy` header has no "deny-all" shorthand.
@@ -362,7 +372,8 @@ function renderShell(args: ShellArgs): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pane Session</title>
+<title>Pane — Session</title>
+<link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style nonce="${args.nonce}">
   html, body { height: 100%; margin: 0; }
   body {
@@ -503,7 +514,11 @@ const ERROR_CSP = [
 ].join("; ");
 
 interface ErrorPageCopy {
-  title: string;
+  // Short browser-tab title (≤ ~24 chars). Combined with the "Pane — " brand
+  // prefix so the tab stays readable when several are open.
+  tabTitle: string;
+  // The headline shown in the body of the page.
+  headline: string;
   body: string;
 }
 
@@ -516,11 +531,13 @@ function errorPageFor(err: ApiError): string {
   const copy: ErrorPageCopy =
     err.status === 410
       ? {
-          title: "This pane has been closed",
+          tabTitle: "Closed",
+          headline: "This pane has been closed",
           body: "The session has expired or been closed by the agent. Ask for a new link if you still need to act.",
         }
       : {
-          title: "This pane link isn't valid",
+          tabTitle: "Not found",
+          headline: "This pane link isn't valid",
           body: "The link may be mistyped, or the session may have been cleaned up. Ask the agent for a fresh one.",
         };
   return renderHumanError(copy);
@@ -539,14 +556,16 @@ function htmlEscape(s: string): string {
 }
 
 function renderHumanError(copy: ErrorPageCopy): string {
-  const title = htmlEscape(copy.title);
+  const tabTitle = htmlEscape(copy.tabTitle);
+  const headline = htmlEscape(copy.headline);
   const body = htmlEscape(copy.body);
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} — Pane</title>
+<title>Pane — ${tabTitle}</title>
+<link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style>
   html, body { height: 100%; margin: 0; }
   body {
@@ -604,9 +623,9 @@ function renderHumanError(copy: ErrorPageCopy): string {
 </header>
 <main>
   <div class="card">
-    <h1>${title}</h1>
+    <h1>${headline}</h1>
     <p>${body}</p>
-    <p><a href="https://github.com/aerolalit/paneui" rel="noopener noreferrer">What is Pane?</a></p>
+    <p><a href="https://paneui.com" rel="noopener noreferrer">What is Pane?</a></p>
   </div>
 </main>
 </body>

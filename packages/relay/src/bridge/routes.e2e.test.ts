@@ -408,6 +408,25 @@ describe("bridge human-facing error pages", () => {
       expect(json.headers.get("content-type")).toContain("application/json");
     });
 
+    it("inlines the brand favicon and uses a status-aware title", async () => {
+      const bogus = generateHumanParticipantToken();
+      const res = await app.fetch(
+        new Request(`http://t/s/${bogus}`, {
+          headers: { Accept: HTML_ACCEPT },
+        }),
+      );
+      const body = await res.text();
+      // Favicon — inlined as an SVG data URI so the relay needs no static
+      // asset pipeline. The exact href is brittle; just assert the link tag
+      // and that it carries an svg+xml data URI.
+      expect(body).toMatch(
+        /<link\s+rel="icon"[^>]+href="data:image\/svg\+xml,/,
+      );
+      // Title carries the brand + the page-specific copy so the tab is
+      // identifiable when a user has many open.
+      expect(body).toMatch(/<title>Pane — Not found<\/title>/);
+    });
+
     it("sets the same defence-in-depth security headers as the shell", async () => {
       const bogus = generateHumanParticipantToken();
       const res = await app.fetch(
