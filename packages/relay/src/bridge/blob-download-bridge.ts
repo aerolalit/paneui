@@ -147,17 +147,40 @@ blobDownloadBridge.get("/:participantToken/blobs/:blob_id", async (c) => {
     throw errors.gone("session is closed");
   }
 
-  // Authz: build the set of blob_ids REFERENCED FROM THIS SESSION and
-  // require the requested id to be in it. The walker is the same one used
-  // by the write-side check in core/events.ts (PR #164) — if a ref made
-  // it into inputData or an event, it must also be discoverable here.
-  const referenced = await collectSessionBlobRefs(prisma, session);
-  if (!referenced.has(blobId)) {
+  // Authz: a blob is accessible to a participant of THIS session if EITHER
+  //   (a) the blob is referenced from this session's inputData or events —
+  //       i.e. the agent put it on the wire here (PR #164's walker; same
+  //       check the write side uses), OR
+  //   (b) the blob is scope=session AND its sessionId matches this session.
+  //
+  // Branch (b) is needed because:
+  //   - participant uploads (POST /s/:tok/blobs, PR #165) pin scope=session
+  //     and sessionId=session.id at write time. Without (b), the participant
+  //     who JUST uploaded a blob can't read it back until they emit an
+  //     event referencing the blob_id — which makes the obvious "upload an
+  //     image and immediately preview it" UX broken for no good reason.
+  //   - agent-uploaded session-scoped blobs (scope=session, sessionId set
+  //     when the agent uploads) are by construction part of this session's
+  //     surface even if no event references them yet.
+  //
+  // Branch (b) does NOT loosen the model — session-scope means session-
+  // scope. agent-scope / artifact-scope blobs still need branch (a) to be
+  // reachable, which means the agent has to explicitly surface them via
+  // events / inputData.
+  const row = await prisma.blob.findUnique({ where: { id: blobId } });
+
+  let accessible = false;
+  if (row && row.scope === "session" && row.sessionId === session.id) {
+    accessible = true;
+  } else {
+    const referenced = await collectSessionBlobRefs(prisma, session);
+    if (referenced.has(blobId)) accessible = true;
+  }
+
+  if (!accessible) {
     // Opaque 404 — never reveal whether the id exists but lives in another
     // session vs. doesn't exist at all. Reusing PR #164's
-    // `blob_ref_not_accessible` code keeps the surface consistent: the
-    // semantics are exactly "this ref is not accessible to you", just from
-    // the read side instead of the write side.
+    // `blob_ref_not_accessible` code keeps the surface consistent.
     throw errors.blobRefNotAccessibleReadSide(blobId);
   }
 
@@ -165,7 +188,6 @@ blobDownloadBridge.get("/:participantToken/blobs/:blob_id", async (c) => {
   // the agent can reach, but a schema/walker bug must not become a
   // cross-tenant leak. Verify the row exists, is owned by THIS session's
   // agent, is `ready`, and not soft-deleted.
-  const row = await prisma.blob.findUnique({ where: { id: blobId } });
   if (
     !row ||
     row.ownerId !== session.agentId ||
