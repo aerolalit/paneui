@@ -40,16 +40,18 @@ Subcommands:
              { taste: string|null, updated_at: string|null, bytes: number }.
              taste is null and bytes is 0 when notes have never been written.
 
-  set        Whole-blob replace. Read markdown from stdin OR --file <path>
-             (exactly one). The relay rejects empty/whitespace-only payloads
-             and caps the blob at MAX_TASTE_BYTES (utf8). To clear the notes,
+  set        Whole-blob replace. Source the markdown via --file <path>,
+             --file - (read stdin), or by piping into 'pane taste set' with
+             no flag. The relay rejects empty/whitespace-only payloads and
+             caps the blob at MAX_TASTE_BYTES (utf8). To clear the notes,
              use 'pane taste clear', not 'set' with an empty body.
 
   clear      Delete the notes. Requires --yes (it is destructive). Prints
              { cleared: true }.
 
 Options:
-  --file <path>       Read 'set' input from <path> (otherwise reads stdin).
+  --file <path|->     Source for 'set' — a file path, or '-' to read stdin
+                      explicitly. Omit to fall back to piped stdin.
   --yes               Confirm 'clear'.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
@@ -57,17 +59,18 @@ Options:
 
 Examples:
   pane taste get
-  echo "- denser layout\\n- no rounded corners" | pane taste set
   pane taste set --file ./taste.md
+  pane taste set --file -            # explicit stdin
+  echo "- denser layout" | pane taste set
   pane taste clear --yes
 
 Output: stdout is machine-readable JSON.`;
 
-// Drain process.stdin to a utf8 string. Resolves to "" when stdin is a TTY
-// (i.e. nothing was piped in), so the caller can detect "no input" and emit a
-// proper error instead of hanging forever waiting for keystrokes.
+// Drain process.stdin to a utf8 string. The caller is responsible for
+// deciding that stdin should be read (e.g. an explicit `--file -`, or a
+// non-TTY stdin where data is actually piped). In a TTY this would block
+// waiting for ^D, so the caller MUST gate on `process.stdin.isTTY` first.
 async function readStdin(): Promise<string> {
-  if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
@@ -87,23 +90,19 @@ async function runTasteGet(args: ParsedArgs): Promise<void> {
 
 async function runTasteSet(args: ParsedArgs): Promise<void> {
   const filePath = args.flags.get("file");
-  const hasStdin = !process.stdin.isTTY;
 
-  if (filePath !== undefined && hasStdin) {
-    fail(
-      "'pane taste set' takes input from EITHER stdin OR --file <path>, not both",
-      "invalid_args",
-    );
-  }
-  if (filePath === undefined && !hasStdin) {
-    fail(
-      "'pane taste set' needs input — pipe markdown on stdin or pass --file <path>",
-      "invalid_args",
-    );
-  }
-
+  // Source the blob deterministically — no isTTY-flag fusing, because
+  // `!process.stdin.isTTY` is true under every non-interactive caller
+  // (pipes, redirects, closed fd, CI, agent harnesses) and would wrongly
+  // reject `--file` for the entire target audience. See issue #148.
+  //
+  //   --file -        → explicit stdin sentinel
+  //   --file <path>   → read that path (works in TTY and non-TTY alike)
+  //   (no --file)     → fall back to stdin IF non-TTY; error in a TTY
   let taste: string;
-  if (filePath !== undefined) {
+  if (filePath === "-") {
+    taste = await readStdin();
+  } else if (filePath !== undefined) {
     try {
       taste = readFileSync(filePath, "utf8");
     } catch (e) {
@@ -112,8 +111,13 @@ async function runTasteSet(args: ParsedArgs): Promise<void> {
         "invalid_args",
       );
     }
-  } else {
+  } else if (!process.stdin.isTTY) {
     taste = await readStdin();
+  } else {
+    fail(
+      "'pane taste set' needs input — pass --file <path>, pipe markdown on stdin, or use --file -",
+      "invalid_args",
+    );
   }
 
   if (taste.trim().length === 0) {
