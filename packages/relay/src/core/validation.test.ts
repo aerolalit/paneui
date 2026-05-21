@@ -498,3 +498,84 @@ describe("validateInputData", () => {
     }
   });
 });
+
+describe("format: pane-blob-id", () => {
+  const schemaWithBlobRef: EventSchema = {
+    events: {
+      "image.attach": {
+        emittedBy: ["page", "agent"],
+        payload: {
+          type: "object",
+          properties: {
+            blob: {
+              type: "object",
+              properties: {
+                blob_id: {
+                  type: "string",
+                  format: "pane-blob-id",
+                },
+              },
+              required: ["blob_id"],
+            },
+          },
+          required: ["blob"],
+        },
+      },
+    },
+  };
+
+  const baseArgs = {
+    sessionId: "ses_blob_format",
+    schemaVersion: 1,
+    schema: schemaWithBlobRef,
+    type: "image.attach",
+    authorKind: "agent" as const,
+  };
+
+  it("accepts a cuid-shaped blob_id", () => {
+    expect(() =>
+      validateEvent({
+        ...baseArgs,
+        data: { blob: { blob_id: "cmpel3zb30000k923tf77pjrw" } },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a non-cuid string", () => {
+    try {
+      validateEvent({
+        ...baseArgs,
+        data: { blob: { blob_id: "not-a-cuid" } },
+      });
+      throw new Error("should have thrown");
+    } catch (err) {
+      const e = err as { status?: number; code?: string };
+      expect(e.status).toBe(422);
+      expect(e.code).toBe("schema_violation");
+    }
+  });
+
+  it("rejects empty / missing blob_id", () => {
+    expect(() =>
+      validateEvent({
+        ...baseArgs,
+        data: { blob: { blob_id: "" } },
+      }),
+    ).toThrow();
+    expect(() =>
+      validateEvent({
+        ...baseArgs,
+        data: { blob: {} },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects wrong type for blob_id (e.g. number)", () => {
+    expect(() =>
+      validateEvent({
+        ...baseArgs,
+        data: { blob: { blob_id: 12345 } },
+      }),
+    ).toThrow();
+  });
+});
