@@ -431,7 +431,14 @@ function renderShell(args: ShellArgs): string {
 ${
   args.isClosed
     ? `<div class="closed">This session is closed. It cannot accept new events.</div>`
-    : `<iframe id="frame" sandbox="allow-scripts allow-forms" src="/s/${args.token}/content"></iframe>`
+    : // `allow-downloads` is required for `<a download href="blob:...">` to
+      // actually fire on Chromium-based browsers (especially mobile Chrome),
+      // which silently drops the navigation otherwise. Without it, an artifact
+      // that delivers a non-image file (PDF, CSV, archive) the human is meant
+      // to save has no working code path — the file can be fetched via
+      // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
+      // is intentionally NOT included; only the in-tab download is enabled.
+      `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="/s/${args.token}/content"></iframe>`
 }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>
