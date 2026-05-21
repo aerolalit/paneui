@@ -1,4 +1,4 @@
-// `pane create` — create a session via POST /v1/sessions.
+// `pane session create` — create a session via POST /v1/sessions.
 
 import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
@@ -44,16 +44,16 @@ function schemaPathToFlag(path: (string | number)[]): string {
   return dotted;
 }
 
-export const createHelp = `pane create — create a Pane session
+export const createHelp = `pane session create — create a Pane session
 
 A session is one use of an artifact. Supply the artifact in ONE of two ways:
 
   Reference form — instance an existing reusable artifact (the cheap path,
   no HTML re-sent):
-    pane create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
+    pane session create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
 
   Inline form — a one-off artifact, defined on this call:
-    pane create --artifact <path|inline> [--event-schema <path|json>] [options]
+    pane session create --artifact <path|inline> [--event-schema <path|json>] [options]
 
 Exactly one of --artifact-id / --artifact must be given.
 

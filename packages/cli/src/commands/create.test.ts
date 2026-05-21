@@ -1,4 +1,4 @@
-// Tests for `pane create` — the inline and reference artifact forms.
+// Tests for `pane session create` — the inline and reference artifact forms.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 

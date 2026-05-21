@@ -1,20 +1,20 @@
-// `pane keys` — inspect or revoke the calling agent's API key.
+// `pane key` — inspect or revoke the calling agent's API key.
 //
-// Flat command namespace: `keys` is one top-level command that branches on a
-// positional subcommand (list / revoke). The relay scopes /v1/keys to the
+// Flat command namespace: `key` is one top-level noun that branches on a
+// positional verb (list / revoke). The relay scopes /v1/keys to the
 // authenticated agent, so there is exactly one key — the caller's own. Both
-// subcommands therefore act ONLY on the caller's own key.
+// verbs therefore act ONLY on the caller's own key.
 
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-export const keysHelp = `pane keys — inspect or revoke YOUR agent's API key
+export const keyHelp = `pane key — inspect or revoke YOUR agent's API key
 
 Usage:
-  pane keys <subcommand> [options]
+  pane key <verb> [options]
 
-Subcommands:
+Verbs:
   list       Show YOUR agent's key info. The relay scopes keys to the
              authenticated agent — there is exactly one key per agent, your
              own. Prints { agent_id, name, key_prefix, created_at,
@@ -22,19 +22,19 @@ Subcommands:
 
   revoke     Revoke YOUR OWN API key — a self-destruct. The key stops working
              IMMEDIATELY; every subsequent command fails until you run
-             'pane register' again to provision a new key. The relay only
+             'pane agent register' again to provision a new key. The relay only
              allows revoking your own key. Requires --yes to confirm.
              Prints { revoked: true, agent_id }.
 
 Options:
-  --yes               Confirm 'keys revoke' (required — it is irreversible).
+  --yes               Confirm 'key revoke' (required — it is irreversible).
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
   -h, --help          Show this help.
 
 Output: stdout is machine-readable JSON.`;
 
-async function runKeysList(args: ParsedArgs): Promise<void> {
+async function runKeyList(args: ParsedArgs): Promise<void> {
   const client = makeClient(args);
   try {
     const info = await client.listKeys();
@@ -44,10 +44,10 @@ async function runKeysList(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runKeysRevoke(args: ParsedArgs): Promise<void> {
+async function runKeyRevoke(args: ParsedArgs): Promise<void> {
   if (!args.bools.has("yes")) {
     fail(
-      "'pane keys revoke' revokes YOUR OWN API key — it stops working " +
+      "'pane key revoke' revokes YOUR OWN API key — it stops working " +
         "immediately and is irreversible. Pass --yes to confirm.",
       "confirmation_required",
     );
@@ -66,24 +66,24 @@ async function runKeysRevoke(args: ParsedArgs): Promise<void> {
   }
 }
 
-export async function runKeys(args: ParsedArgs): Promise<void> {
+export async function runKey(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
     case "list":
-      await runKeysList(args);
+      await runKeyList(args);
       break;
     case "revoke":
-      await runKeysRevoke(args);
+      await runKeyRevoke(args);
       break;
     case undefined:
       fail(
-        "missing subcommand — usage: pane keys <list|revoke> (run 'pane keys --help')",
+        "missing verb — usage: pane key <list|revoke> (run 'pane key --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown keys subcommand '${sub}' — expected list|revoke (run 'pane keys --help')`,
+        `unknown key verb '${sub}' — expected list|revoke (run 'pane key --help')`,
         "invalid_args",
       );
   }

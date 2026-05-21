@@ -1,14 +1,14 @@
-// `pane send <id>` — append an agent event to a session.
+// `pane session send <id>` — append an agent event to a session.
 
 import type { ParsedArgs } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-export const sendHelp = `pane send — emit an agent event into a session
+export const sendHelp = `pane session send — emit an agent event into a session
 
 Usage:
-  pane send <session-id> --type <event-type> --data <path|json> [options]
+  pane session send <session-id> --type <event-type> --data <path|json> [options]
 
 POSTs an event to /v1/sessions/:id/events. The event is stamped as authored by
 the agent (the relay derives identity from the API key — it cannot be spoofed).

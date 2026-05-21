@@ -1,4 +1,4 @@
-// Tests for `pane delete` — session deletion and missing-id handling.
+// Tests for `pane session delete` — session deletion and missing-id handling.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
