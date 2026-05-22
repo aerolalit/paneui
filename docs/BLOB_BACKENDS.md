@@ -27,8 +27,10 @@ self-host bundle stays slim.
 ## Filesystem backend (self-host)
 
 Single-VM only. Files live under `BLOB_STORE_FS_DIR` (default
-`./data/blobs`) with mode `0600`. Atomic commit via `<key>.tmp` →
-`<key>` rename, so a crash mid-write can't leak a partial blob.
+`./data/blobs`; the published Docker image pins this to `/app/data/blobs`
+so blobs land in the persisted data volume alongside the SQLite DB) with
+mode `0600`. Atomic commit via `<key>.tmp` → `<key>` rename, so a crash
+mid-write can't leak a partial blob.
 
 The relay refuses to start when:
 - `BLOB_STORE_FS_DIR` exists with world-readable permissions
