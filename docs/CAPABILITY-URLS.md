@@ -28,6 +28,55 @@ That's it. The token does NOT grant:
 - Knowledge of who minted it or when it was first used (the metadata
   is agent-only via `pane blob show`)
 
+## Capability URLs are NOT for embedding inside a pane artifact
+
+`/b/<token>` is built for **external delivery** — paste it into Slack /
+email / SMS, link to it from your own site, hand it to a human who
+will open it directly in their browser. It is **not** the right channel
+for "show this image inside the pane the agent just rendered."
+
+From inside an artifact iframe, a direct `<img src="/b/<token>">` (or
+the equivalent `<iframe>`, `fetch`, etc.) will fail. Two of the
+defences in the table below collaborate to block it:
+
+- The shell serves the artifact under a strict CSP whose `img-src` is
+  `'self' data:` — third-party-looking image URLs are refused even if
+  they resolve to the same relay.
+- Blob responses set `Cross-Origin-Resource-Policy: same-origin`, so
+  even when the artifact iframe shares the relay's origin, a
+  speculative cross-origin embed from a sandboxed frame is denied.
+
+The supported path for in-artifact rendering is the page-side SDK:
+
+```js
+// inside the pane's HTML
+const blob = await window.pane.downloadBlob(blobId);
+const objectUrl = URL.createObjectURL(blob);
+document.getElementById("hero").src = objectUrl;
+```
+
+`window.pane.downloadBlob(id)` is a postMessage RPC into the shell;
+the bytes come back as a real browser `Blob`, which you can wrap in
+an object URL and feed to `<img>` / `<video>` / `<a download>`. The
+companion `window.pane.saveBlob(id, filename)` triggers a download
+without your code touching the bytes.
+
+For this RPC to succeed, the relay must consider the blob
+**referenced from this session** — either it is `scope=session` for
+this session, or its id appears at a `format: pane-blob-id` site in
+the session's `input_data` (walked against `input_schema`) or in an
+event payload (walked against the event-type schema). Agent-scope or
+artifact-scope blobs that the agent hasn't explicitly surfaced via
+those channels return `blob_ref_not_accessible` even when the agent
+that minted the session owns them.
+
+**Rule of thumb:**
+
+| Where the blob is consumed | Use |
+|---|---|
+| Inside the pane (artifact iframe) | `window.pane.downloadBlob(id)` |
+| Anywhere else (email, Slack, link the human opens in their own browser) | `/b/<token>` capability URL |
+
 ## Where these URLs leak in practice
 
 We assume the following, regardless of our defences. Treat any of these
