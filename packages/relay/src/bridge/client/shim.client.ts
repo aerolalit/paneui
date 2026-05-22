@@ -112,8 +112,29 @@ interface PaneApi {
    * version's `input_schema`. `null` when the session was created without
    * `input_data`. Read it to render this instance, e.g. a PR-review artifact
    * does `window.pane.inputData.prTitle`.
+   *
+   * Not populated until the shell delivers the `init` frame — read it AFTER
+   * `await pane.ready` to avoid a `null` race on first render.
    */
   readonly inputData: unknown;
+  /**
+   * Resolves exactly once, when the shell's `init` frame has been processed
+   * and `inputData` + the historical event replay are available. Pages that
+   * read `inputData` or react to past events on first paint should `await`
+   * it before reading — `window.pane` is published synchronously, but
+   * `inputData` is unknown until init lands.
+   *
+   * ```js
+   * await window.pane.ready;
+   * const id = window.pane.inputData?.imageBlobId;
+   * ```
+   *
+   * The Promise stays pending if the page never receives an `init` frame
+   * (e.g. it was loaded outside a Pane shell). Resolves with `void`;
+   * sessions with no `input_data` still resolve (the resolution signals
+   * "init received," not "input_data is non-null").
+   */
+  readonly ready: Promise<void>;
 }
 
 interface PendingEmit {
@@ -170,6 +191,15 @@ declare global {
   // via a getter (see below) so the value can be filled in after `window.pane`
   // is already published — the getter reads this mutable backing variable.
   let inputData: unknown = null;
+  // `window.pane.ready` — resolves on the first 'init' frame. Created
+  // eagerly so callers can `await pane.ready` without racing the message
+  // listener. The resolver is captured in the executor and called from the
+  // init branch below; subsequent inits are ignored (init is one-shot).
+  let resolveReady: () => void = () => {};
+  let readyResolved = false;
+  const ready: Promise<void> = new Promise((resolve) => {
+    resolveReady = resolve;
+  });
   // Shell origin is unknown until 'init' arrives — the very first 'ready'
   // post is sent with target "*" (no secrets) and outbound posts after init
   // are pinned to the shell origin learnt from the handshake.
@@ -428,6 +458,14 @@ declare global {
       // registered before init still fire for historical events.
       const replay: SerializedEvent[] = (m.payload && m.payload.replay) || [];
       for (const ev of replay) ingest(ev);
+      // Resolve `pane.ready` exactly once, AFTER input_data and the replay
+      // are visible — that's the contract callers depend on
+      // (`await pane.ready; pane.inputData.x`). Re-entrant init frames
+      // (shouldn't happen, but defend) are no-ops on the Promise.
+      if (!readyResolved) {
+        readyResolved = true;
+        resolveReady();
+      }
       return;
     }
     if (m.kind === "event") {
@@ -534,6 +572,7 @@ declare global {
     uploadBlob,
     downloadBlob,
     saveBlob,
+    ready,
     get inputData(): unknown {
       return inputData;
     },

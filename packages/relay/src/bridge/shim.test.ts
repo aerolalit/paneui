@@ -116,6 +116,78 @@ describe("pane shim", () => {
     expect(window.pane.inputData).toBeNull();
   });
 
+  it("exposes window.pane.ready as a Promise that resolves on the first init frame", async () => {
+    // Eagerly published before init; awaiting it before init lands must not
+    // throw and must not resolve.
+    expect(window.pane.ready).toBeInstanceOf(Promise);
+
+    let resolved = false;
+    void window.pane.ready.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: {
+        shell_origin: "http://shell",
+        replay: [],
+        input_data: { x: 1 },
+      },
+    });
+
+    // Awaiting the same Promise instance now resolves.
+    await window.pane.ready;
+    expect(resolved).toBe(true);
+    // inputData is visible by the time ready resolves — that's the contract.
+    expect(window.pane.inputData).toEqual({ x: 1 });
+  });
+
+  it("resolves window.pane.ready even when the init frame carries no input_data", async () => {
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: { shell_origin: "http://shell", replay: [] },
+    });
+    await window.pane.ready;
+    expect(window.pane.inputData).toBeNull();
+  });
+
+  it("window.pane.ready is the same Promise across reads (single instance)", () => {
+    const a = window.pane.ready;
+    const b = window.pane.ready;
+    expect(a).toBe(b);
+  });
+
+  it("subsequent init frames do not re-resolve ready (idempotent)", async () => {
+    let resolveCount = 0;
+    void window.pane.ready.then(() => {
+      resolveCount++;
+    });
+
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: { shell_origin: "http://shell", replay: [] },
+    });
+    dispatch({
+      __pane: 1,
+      v: 1,
+      kind: "init",
+      payload: { shell_origin: "http://shell", replay: [] },
+    });
+    await window.pane.ready;
+    // One microtask + a couple of frame turns to flush any extra .then().
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolveCount).toBe(1);
+  });
+
   it("posts outbound emits to the shell origin learnt from init", () => {
     dispatch({
       __pane: 1,
