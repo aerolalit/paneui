@@ -97,6 +97,16 @@ blobBridge.get("/:token", async (c) => {
   // before any bytes leave the relay. The hash is added to the in-process
   // revoke cache on BOTH the winner and loser paths so any subsequent
   // in-flight retry short-circuits at step 2 above.
+  //
+  // Once-tokens deliberately do NOT persist firstSeenIpNet / lastSeenIpNet —
+  // the row is gone before the bytes stream and there is nowhere to write
+  // them to. This matches the pre-#199 behaviour (the old
+  // `writeAuditAndConsume` computed `ipNet` but never used it inside the
+  // `if (tok.once)` branch — it deleted the row and returned). The
+  // /b/<token> access-log entry (app.ts middleware) carries reqId, method,
+  // path (redacted), status, and timing for the request; operators who
+  // need the requester IP for forensic purposes should correlate via the
+  // upstream proxy / load-balancer logs.
   if (tok.once) {
     const claimed = await prisma.blobToken.deleteMany({
       where: { id: tok.id, revokedAt: null },

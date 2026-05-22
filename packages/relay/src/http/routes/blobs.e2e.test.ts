@@ -1702,10 +1702,19 @@ describe("/v1/blobs/:id/tokens — GET list", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Polling helpers — the audit write fires in a setImmediate after the body
-// is enqueued, so the test needs to wait for the DB to catch up. A fixed
-// `setTimeout(50)` would be a flake source; polling caps at 1s and bails
-// loudly if it never converges.
+// Polling helpers.
+//
+// waitForUseCount: the per-hit audit metadata (useCount / lastUsedAt /
+// IP-net columns) for multi-use tokens fires in a setImmediate after the
+// response body is enqueued, so the test needs to wait for the DB to catch
+// up. A fixed setTimeout(50) would be a flake source; polling caps at 1s
+// and bails loudly if it never converges.
+//
+// waitForTokenGone: post-#199 fix, once-token deletion is SYNCHRONOUS on
+// the request path — the row is already gone by the time the response
+// headers arrive. This helper is effectively a no-op for once-tokens
+// (the first findUnique returns null) but is kept as a defence-in-depth
+// guard against a future refactor that moves the delete back off-path.
 // ---------------------------------------------------------------------------
 async function waitForUseCount(
   tokenId: string,
