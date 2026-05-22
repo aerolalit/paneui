@@ -382,6 +382,12 @@ describe("collectBlobRefs — patternProperties / additionalProperties (#200)", 
       audio_intro: "cmqfx4ac41111l834ug88qksx", // via patternProperties
       misc: "cmrev0xz52222m945hh99rmty", // via additionalProperties
     });
+    // toHaveLength is the explicit guard against the walker double-counting
+    // a key that matches both `properties` and a `patternProperties` regex:
+    // the second walk would re-add the same blob_id to `out` and the Set
+    // dedup would silently mask it. Asserting length=3 catches a future
+    // regression where dedup is removed or weakened.
+    expect(refs).toHaveLength(3);
     expect(refs.sort()).toEqual(
       [
         "cmpel3zb30000k923tf77pjrw",

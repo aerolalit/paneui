@@ -149,6 +149,20 @@ function walk(
   //   { patternProperties: { ".*": { format: "pane-blob-id" } } }
   // would Ajv-validate fine but the walker would collect zero refs,
   // skipping the cross-tenant access check entirely (#200).
+  //
+  // NOTE on the asymmetry with the additionalProperties branch below:
+  // this loop does NOT exclude keys that are already named in
+  // `properties`. Per the JSON Schema spec, when a key matches both
+  // `properties` and a `patternProperties` regex, BOTH sub-schemas
+  // apply independently. The `properties` branch above already
+  // recursed into the named-key value; we recurse again here under
+  // the pattern's sub-schema. The `out` Set dedupes any blob_ids
+  // collected twice, so the only visible effect is a duplicate walk
+  // — correct behaviour, not a leak. The `additionalProperties` block
+  // below DOES exclude declared + pattern-matched keys (that's spec
+  // too — `additionalProperties` applies ONLY to keys not matched by
+  // either of the other two). The asymmetry looks wrong at a glance
+  // and is right by the spec.
   if (
     schema.patternProperties &&
     value &&
@@ -180,6 +194,11 @@ function walk(
   // `properties` and NOT matched by any `patternProperties` regex (per
   // JSON Schema spec). The boolean shape (`additionalProperties: true/false`)
   // carries no sub-schema so we only act when it's an object.
+  //
+  // The exclusion (declared + pattern-matched) is intentional and
+  // spec-compliant — see the note on patternProperties above for the
+  // counterpart asymmetry. `additionalProperties` is a catch-all that
+  // applies ONLY where neither of the other two does.
   if (
     schema.additionalProperties &&
     typeof schema.additionalProperties === "object" &&
