@@ -5,6 +5,12 @@
 // Azure should not load that. The factory is the seam: BLOB_STORE=filesystem
 // never imports the Azure module (the dynamic `import("./azure.js")` only
 // runs in the azure branch), and vice versa.
+//
+// As of #154, the Azure SDK packages live in optionalDependencies — npm
+// won't install them on a self-host install that skips optionals. The
+// dynamic import below catches the ERR_MODULE_NOT_FOUND that produces and
+// rethrows with a single clear, actionable message (mirrors the `ioredis`
+// pattern in src/redis.ts).
 
 import type { Config } from "../config.js";
 import type { BlobStore } from "./store.js";
@@ -34,7 +40,25 @@ export async function makeBlobStore(config: Config): Promise<BlobStore> {
         );
       }
       // Dynamic import: filesystem self-host never pulls @azure/storage-blob.
-      const { AzureBlobStore } = await import("./azure.js");
+      // The SDK lives in optionalDependencies (#154) — a missing install
+      // surfaces as ERR_MODULE_NOT_FOUND from inside azure.ts's static
+      // imports. Catch it once here and rethrow with a single actionable
+      // message; mirrors how src/redis.ts handles the missing-ioredis case.
+      let azureModule: typeof import("./azure.js");
+      try {
+        azureModule = await import("./azure.js");
+      } catch (e) {
+        if (isModuleNotFound(e)) {
+          throw new Error(
+            "BLOB_STORE=azure is set but the optional Azure SDK packages are " +
+              "not installed — run `npm install @azure/storage-blob @azure/identity` " +
+              "(they ship in optionalDependencies; a self-host install with " +
+              "BLOB_STORE=filesystem does not need them).",
+          );
+        }
+        throw e;
+      }
+      const { AzureBlobStore } = azureModule;
 
       const auth = config.BLOB_STORE_AZURE_CONNECTION_STRING
         ? {
@@ -63,4 +87,23 @@ export async function makeBlobStore(config: Config): Promise<BlobStore> {
       return store;
     }
   }
+}
+
+/**
+ * Heuristic for "the dynamic import failed because @azure/* isn't installed,"
+ * vs any other failure mode (azure.ts itself throwing at module init, a
+ * config-validation error from inside the constructor, etc.). Node's loader
+ * raises ERR_MODULE_NOT_FOUND for a bare-specifier import that can't be
+ * resolved.
+ */
+function isModuleNotFound(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const code = (e as { code?: string }).code;
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") {
+    const msg = (e as { message?: string }).message ?? "";
+    // Make sure the missing module is actually an Azure one — we don't want
+    // to swallow a missing internal module under this branch.
+    return /@azure\/(storage-blob|identity)/.test(msg);
+  }
+  return false;
 }
