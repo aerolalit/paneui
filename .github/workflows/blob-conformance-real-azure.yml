@@ -1,0 +1,90 @@
+# Blob backend conformance against REAL Azure Blob Storage (issue #154).
+#
+# The per-PR ci.yml runs the same shared conformance suite
+# (packages/relay/src/blobs/azure.conformance.e2e.test.ts) against Azurite
+# — fast, free, but lags real Azure for newer SDK features. This workflow
+# runs the EXACT same suite against a real Azure Storage account once a
+# week (and on-demand via workflow_dispatch), so we catch
+# emulator-vs-real divergence before the hosted relay's blob feature
+# users hit it.
+#
+# Required repository secrets (configure under Settings → Secrets and
+# variables → Actions):
+#
+#   AZURE_BLOB_CONFORMANCE_CONNECTION_STRING
+#       A storage account connection string scoped to a DEDICATED test
+#       container. Don't reuse the hosted relay's storage account — the
+#       conformance suite creates + writes random-named blobs and the
+#       cross-key forgery test deliberately attempts unauthorised writes.
+#       Generate the connection string from a separate account whose
+#       blast radius is "test data only."
+#
+# Cadence: weekly on Sundays at 04:00 UTC (low-load window). The
+# workflow_dispatch trigger lets a maintainer re-run on demand after
+# changing the Azure SDK version or the storage account configuration.
+#
+# Failure mode: a red run flags emulator/real divergence; investigate
+# before merging anything that touches packages/relay/src/blobs/azure.ts
+# or the @azure/storage-blob dependency version.
+
+name: blob conformance — real Azure
+
+on:
+  # Manual run from the Actions tab. Use when bumping @azure/storage-blob,
+  # changing AzureBlobStore, or after a storage-account configuration change.
+  workflow_dispatch:
+  # Weekly cron. Sunday 04:00 UTC — chosen for low GitHub Actions queue
+  # contention and to keep the failure signal recent (a Friday breakage
+  # has at most a weekend to fester).
+  schedule:
+    - cron: "0 4 * * 0"
+
+jobs:
+  conformance:
+    name: real-azure conformance
+    runs-on: ubuntu-latest
+    # Skip on forks — the secret is repo-scoped, a forked PR running this
+    # workflow would have empty secrets and the suite would skip anyway,
+    # but the conditional makes the no-op explicit.
+    if: github.repository == 'aerolalit/paneui'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+
+      # The Azure SDK packages live in optionalDependencies (#154); they
+      # are needed for this job, so install everything including optionals.
+      # `npm ci` honours optionalDependencies by default — no extra flag
+      # required.
+      - run: npm ci
+
+      - run: npm run generate --workspace @paneui/relay -- sqlite
+
+      - run: npm run build
+
+      # The conformance test (azure.conformance.e2e.test.ts) reads two
+      # env vars:
+      #   - AZURITE_URL: gates the suite on (any truthy value); kept set
+      #     here so the test reaches its setup. The connection-string env
+      #     below is what actually points it at real Azure — AZURITE_URL is
+      #     only used as a feature gate.
+      #   - BLOB_CONFORMANCE_CONNECTION_STRING: when set, the suite uses
+      #     this connection string INSTEAD of the well-known Azurite one.
+      #     The two env vars together swap the backend without changing
+      #     any test code.
+      - name: run azure conformance suite
+        env:
+          AZURITE_URL: "real-azure-not-azurite" # gate; any truthy value
+          BLOB_CONFORMANCE_CONNECTION_STRING: ${{ secrets.AZURE_BLOB_CONFORMANCE_CONNECTION_STRING }}
+        run: |
+          if [ -z "$BLOB_CONFORMANCE_CONNECTION_STRING" ]; then
+            echo "::warning::AZURE_BLOB_CONFORMANCE_CONNECTION_STRING secret is unset — skipping the real-Azure run."
+            echo "(Set it under repo Settings → Secrets and variables → Actions to enable this job.)"
+            exit 0
+          fi
+          npx vitest run packages/relay/src/blobs/azure.conformance.e2e.test.ts --reporter=verbose
