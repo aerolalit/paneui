@@ -196,6 +196,7 @@ async function seedSessionFor(agentId: string): Promise<string> {
       id: "ses_" + randomBytes(8).toString("hex"),
       agentId,
       artifactVersionId: version.id,
+      title: "blobs e2e test session",
       expiresAt: new Date(Date.now() + 3600_000),
     },
   });

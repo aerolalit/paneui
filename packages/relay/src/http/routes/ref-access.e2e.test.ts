@@ -145,6 +145,7 @@ async function createSessionWithBlobSchema(
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify({
+        title: "blob-ref-access test session",
         artifact: {
           type: "html-inline",
           source: "<html></html>",
