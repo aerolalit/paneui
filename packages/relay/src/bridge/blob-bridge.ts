@@ -31,6 +31,17 @@ import {
 
 const blobBridge = new Hono<AppEnv>();
 
+// CSP for the /b/<token> response. Today it carries a single directive —
+// frame-ancestors 'none' — to close the same-site framing gap CORP
+// alone leaves open (#202). Built as an array so a future patch adding
+// e.g. default-src 'none' or sandbox can append a directive in one
+// place. A naive `c.header("Content-Security-Policy", "...")` call
+// later in the route would silently OVERWRITE Hono's existing header
+// (it does not append for CSP); centralising the value here prevents
+// that footgun. The shell + error pages use the same pattern via
+// ERROR_CSP in routes.ts.
+const BLOB_CSP = ["frame-ancestors 'none'"].join("; ");
+
 // GET /b/:token — fetch a blob via its capability URL.
 //
 // Validation flow:
@@ -166,6 +177,17 @@ blobBridge.get("/:token", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Cross-Origin-Resource-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
+  // #202: a CSP with `frame-ancestors 'none'` blocks all framing,
+  // including same-site framing that CORP=same-origin permits (CORP
+  // only stops cross-origin embedders from READING the bytes — a
+  // same-site page can still frame an image-MIME blob served with
+  // Content-Disposition: inline, since the response is reachable to
+  // them). Two headers because some older browsers still rely on
+  // X-Frame-Options; both have the same intent here. Aligns with the
+  // rest of the relay's surface (shell, error pages) which already
+  // CSP-gate their HTML — see ERROR_CSP in routes.ts.
+  c.header("Content-Security-Policy", BLOB_CSP);
+  c.header("X-Frame-Options", "DENY");
 
   // 7. Audit metadata write. Runs AFTER the body is enqueued so a client
   // cancelling the download still gets credited a use (best-effort

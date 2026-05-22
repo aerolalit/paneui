@@ -108,6 +108,7 @@ as plausible:
 | `X-Content-Type-Options: nosniff` | force declared MIME | browser won't reclassify image bytes as HTML |
 | `Content-Disposition: attachment` for non-image MIMEs | block inline render | PDF / etc. download instead of display |
 | `Cross-Origin-Resource-Policy: same-origin` | block speculative cross-origin reads | only pane's own origin can fetch |
+| `Content-Security-Policy: frame-ancestors 'none'` + `X-Frame-Options: DENY` | block any page from framing the blob | closes the same-site framing gap CORP alone leaves (an inline image blob can otherwise be embedded by a same-site page even though CORP blocks cross-origin reads) |
 | `Cache-Control: private, no-store` | block shared-cache caching | CDN / corporate proxy won't cache |
 | Access-log token redaction (`/b/***`) | logs don't leak the URL | tokens never reach an aggregator unredacted |
 | Per-token audit metadata (/24-truncated IPs, use_count) | spot anomalous use | the owner can see "this token started getting used from a different network" |
