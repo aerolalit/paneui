@@ -134,6 +134,17 @@ blobBridge.get("/:token", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Cross-Origin-Resource-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
+  // #202: a CSP with `frame-ancestors 'none'` blocks all framing,
+  // including same-site framing that CORP=same-origin permits (CORP
+  // only stops cross-origin embedders from READING the bytes — a
+  // same-site page can still frame an image-MIME blob served with
+  // Content-Disposition: inline, since the response is reachable to
+  // them). Two headers because some older browsers still rely on
+  // X-Frame-Options; both have the same intent here. Aligns with the
+  // rest of the relay's surface (shell, error pages) which already
+  // CSP-gate their HTML.
+  c.header("Content-Security-Policy", "frame-ancestors 'none'");
+  c.header("X-Frame-Options", "DENY");
 
   // 7 + 8. Audit + once-cleanup. These run AFTER the body is enqueued so a
   // client cancelling the download still gets credited a use (best-effort

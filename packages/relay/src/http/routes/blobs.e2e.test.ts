@@ -995,6 +995,14 @@ describe("/b/<token> — capability URL", () => {
     expect(res.headers.get("content-disposition")).toBe("inline");
     expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    // #202: anti-framing. CORP=same-origin only blocks cross-origin
+    // embedders from READING the bytes; a same-site page can still
+    // frame an inline image. CSP frame-ancestors + X-Frame-Options
+    // close that gap.
+    expect(res.headers.get("content-security-policy")).toBe(
+      "frame-ancestors 'none'",
+    );
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
 
     const buf = Buffer.from(await res.arrayBuffer());
     expect(buf.equals(payload)).toBe(true);
