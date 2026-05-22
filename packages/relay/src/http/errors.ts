@@ -171,6 +171,172 @@ export const errors = {
       DOCS.schema,
     ),
 
+  // The route is wired but the underlying capability (e.g. presigned PUT
+  // against a backend that doesn't support it) isn't available on this
+  // relay. 501 is the correct status — the request was well-formed but
+  // can't be processed.
+  notImplemented: (message: string, hint?: string) =>
+    new ApiError(
+      501,
+      "not_implemented",
+      message,
+      undefined,
+      hint ?? "this relay does not implement the requested capability",
+      false,
+      DOCS.api,
+    ),
+
+  // Returned when a /s/:participantToken/* route is hit with a token that
+  // doesn't resolve to a live participant. Collapses all "this token won't
+  // work" cases (malformed, unknown, revoked, session-gone) into one code
+  // so a probing client can't distinguish them.
+  participantTokenInvalid: () =>
+    new ApiError(
+      401,
+      "participant_token_invalid",
+      undefined,
+      undefined,
+      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/sessions or by revoking + re-creating the session",
+      false,
+      DOCS.auth,
+    ),
+
+  // Returned when /b/<token> is hit with a token that's expired, revoked,
+  // already-used (for once-tokens), or never existed. We collapse all four
+  // into one code so an attacker probing tokens can't distinguish "this
+  // hash exists but is expired" from "this hash never existed."
+  blobTokenInvalid: () =>
+    new ApiError(
+      401,
+      "blob_token_invalid",
+      undefined,
+      undefined,
+      "the blob token is unknown, expired, revoked, or has been spent (once-tokens); request a fresh token from the agent that owns the blob",
+      false,
+      DOCS.auth,
+    ),
+
+  // Distinct from `blob_not_found` so the route layer (and a future audit
+  // log analysis) can tell "this blob token is gone" from "this blob token
+  // never existed." Same status + hint as blobTokenInvalid by design — the
+  // caller has no business knowing which it was.
+  blobTokenNotFound: () =>
+    new ApiError(
+      404,
+      "blob_token_not_found",
+      undefined,
+      undefined,
+      "the token id is wrong, or the token does not belong to this blob; run 'pane blob show <id>' to list active tokens",
+      false,
+      DOCS.api,
+    ),
+
+  // Distinct from `not_found` so an agent can branch on the kind of missing
+  // resource (a blob lookup typically follows a known blob_id, so a 404 here
+  // means the agent guessed wrong or the blob was deleted).
+  blobNotFound: () =>
+    new ApiError(
+      404,
+      "blob_not_found",
+      undefined,
+      undefined,
+      "the blob id is wrong, the blob was deleted, or it does not belong to the calling agent; run 'pane blob list' to find the right id",
+      false,
+      DOCS.api,
+    ),
+
+  // Server-side MIME sniff disagreed with the client's declared Content-Type.
+  // Closes the "HTML labelled as image/jpeg" attack class — the sniff result
+  // is the source of truth and the route refuses the upload here.
+  mimeMismatch: (declared: string, sniffed: string) =>
+    new ApiError(
+      415,
+      "mime_mismatch",
+      `declared Content-Type '${declared}' does not match the sniffed '${sniffed}'`,
+      { declared, sniffed },
+      "send a Content-Type that matches the file's actual format; the server validates leading bytes and refuses the upload on mismatch",
+      false,
+      DOCS.api,
+    ),
+
+  // Sniffed MIME isn't in BLOB_MIME_ALLOWLIST. Distinct from mimeMismatch so
+  // operators can tell "client lied about Content-Type" from "this format is
+  // not accepted by this relay" in the logs.
+  mimeDisallowed: (mime: string, allowlist: string[]) =>
+    new ApiError(
+      415,
+      "mime_disallowed",
+      `MIME '${mime}' is not in this relay's BLOB_MIME_ALLOWLIST`,
+      { mime, allowlist },
+      "upload a file matching one of the allowed MIME prefixes; ask the operator to widen BLOB_MIME_ALLOWLIST if a missing prefix is legitimate",
+      false,
+      DOCS.api,
+    ),
+
+  // Per-blob size cap exceeded. Distinct hint from generic payloadTooLarge so
+  // a blob caller doesn't go hunting for MAX_ARTIFACT_BYTES / MAX_TASTE_BYTES.
+  blobSizeExceeded: (maxBytes: number) =>
+    new ApiError(
+      413,
+      "blob_size_exceeded",
+      `blob exceeds the per-blob cap of ${maxBytes} bytes`,
+      { max_bytes: maxBytes },
+      "downscale or compress the blob to fit; for images, the client SDK does this automatically (max dimension + JPEG quality)",
+      false,
+      DOCS.api,
+    ),
+
+  // A blob_id baked into an event payload or session input_data points to
+  // a blob the calling agent can't access (wrong id, wrong owner, or
+  // soft-deleted). Surfaces *after* Ajv shape validation has passed but
+  // *before* the row hits Prisma — see packages/relay/src/blobs/ref-access.ts
+  // for the walker + batch check. 422 because the payload is structurally
+  // valid but semantically broken: it references a blob that does not
+  // exist (from this agent's vantage point).
+  blobRefNotAccessible: (inaccessibleIds: string[]) =>
+    new ApiError(
+      422,
+      "blob_ref_not_accessible",
+      `blob ref(s) not accessible: ${inaccessibleIds.join(", ")}`,
+      { inaccessible_ids: inaccessibleIds },
+      "the payload references one or more blob ids the calling agent does not own (or that have been deleted); upload the blob with POST /v1/blobs and use the returned blob_id, or check 'pane blob list' for ids you actually own",
+      false,
+      DOCS.api,
+    ),
+
+  // The READ-side counterpart of blobRefNotAccessible. Used by
+  // `GET /s/:participantToken/blobs/:blob_id` (follow-up D of #156): the
+  // requested blob isn't referenced from this session (or was deleted,
+  // or never existed). Same `code` so a single error branch covers both
+  // the write-time "ref dangling" surface and the read-time "ref not
+  // reachable from your token" surface; 404 here because the resource
+  // isn't found from the caller's vantage point — the request itself
+  // is structurally fine (vs the 422 write-side path, where the request
+  // body was malformed at the ref site).
+  blobRefNotAccessibleReadSide: (blobId: string) =>
+    new ApiError(
+      404,
+      "blob_ref_not_accessible",
+      `blob ref not accessible: ${blobId}`,
+      { blob_id: blobId },
+      "the participant token does not have read access to this blob_id from the current session; the blob must be referenced from this session's events or initial input_data and not be soft-deleted",
+      false,
+      DOCS.api,
+    ),
+
+  // Per-scope aggregate quota exceeded (per-agent, per-session, or
+  // per-artifact). `scope` carries which one.
+  quotaExceeded: (scope: "agent" | "session" | "artifact", maxBytes: number) =>
+    new ApiError(
+      413,
+      "quota_exceeded",
+      `${scope} blob quota of ${maxBytes} bytes reached`,
+      { scope, max_bytes: maxBytes },
+      "delete unused blobs in this scope and retry, or ask the operator to widen the configured quota",
+      false,
+      DOCS.api,
+    ),
+
   // Returned when an /v1/* request arrives with `x-pane-cli-version` lower
   // than the relay's MIN_CLI_VERSION. The 426 status is the HTTP-spec
   // "Upgrade Required". `details` carries both versions so the CLI can

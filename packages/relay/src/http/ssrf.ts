@@ -161,3 +161,5 @@ export const assertSafeWebhookUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "callback.url" });
 export const assertSafeArtifactUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "artifact.source" });
+export const assertSafeBlobScanHookUrl = (url: string): Promise<void> =>
+  assertSafeOutboundUrl(url, { field: "BLOB_SCAN_HOOK" });

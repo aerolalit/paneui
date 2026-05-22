@@ -466,6 +466,69 @@ describe("PaneClient key + session-delete operations", () => {
   });
 });
 
+describe("PaneClient blob operations", () => {
+  /** Capture the request method/path/body of a single call. */
+  function capturingClient(body: string, status = 200) {
+    let seen: { method: string; url: string; body: unknown } | undefined;
+    const c = clientWith(async (url, init) => {
+      seen = {
+        method: (init?.method as string) ?? "GET",
+        url: String(url),
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+      };
+      return res({ status, body });
+    });
+    return { c, seen: () => seen! };
+  }
+
+  it("getBlob GETs /v1/blobs/:id/metadata and returns the full BlobRef", async () => {
+    // Regression: pre-fix `getBlob` issued a HEAD request and synthesised
+    // a BlobRef from response headers — `sha256` came back blank, `scope`
+    // was a placeholder, timestamps were missing. The metadata endpoint
+    // returns the same shape POST /v1/blobs returns; getBlob must
+    // forward it verbatim.
+    const fullRef = {
+      blob_id: "ckxxx123",
+      scope: "agent",
+      mime: "image/jpeg",
+      size: 4321,
+      sha256: "a".repeat(64),
+      filename: "hero.jpg",
+      width: 640,
+      height: 480,
+      status: "ready",
+      session_id: null,
+      artifact_id: null,
+      created_at: "2026-05-21T10:00:00.000Z",
+      confirmed_at: "2026-05-21T10:00:01.000Z",
+      deleted_at: null,
+    };
+    const { c, seen } = capturingClient(JSON.stringify(fullRef));
+    const out = await c.getBlob("ckxxx123");
+    expect(out).toEqual(fullRef);
+    expect(out.sha256).toBe("a".repeat(64));
+    expect(out.scope).toBe("agent");
+    expect(out.filename).toBe("hero.jpg");
+    expect(seen().method).toBe("GET");
+    expect(seen().url).toBe("https://relay.test/v1/blobs/ckxxx123/metadata");
+  });
+
+  it("getBlob throws PaneApiError on a 404 (blob_not_found)", async () => {
+    const c = clientWith(async () =>
+      res({
+        status: 404,
+        ok: false,
+        body: JSON.stringify({ error: { code: "blob_not_found" } }),
+      }),
+    );
+    await expect(c.getBlob("ckmissing")).rejects.toMatchObject({
+      name: "PaneApiError",
+      status: 404,
+      code: "blob_not_found",
+    });
+  });
+});
+
 describe("PaneClient.wsBaseUrl", () => {
   it("maps https to wss", () => {
     expect(

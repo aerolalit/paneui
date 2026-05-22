@@ -135,6 +135,17 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # Azurite — Microsoft-published Azure Blob Storage emulator. The
+      # AzureBlobStore conformance tests run against this on every PR; the
+      # corresponding real-Azure run is gated behind workflow_dispatch and
+      # cron (separate workflow). See proposal #152 / #154 — the matrix in
+      # docs/BLOB_BACKENDS.md is the source of truth for "supported".
+      azurite:
+        image: mcr.microsoft.com/azure-storage/azurite:3.31.0
+        ports:
+          - 10000:10000 # blob service
+          - 10001:10001 # queue service (unused)
+          - 10002:10002 # table service (unused)
 
     steps:
       - uses: actions/checkout@v5
@@ -155,3 +166,7 @@ jobs:
       - run: npm run test:e2e
         env:
           DATABASE_URL: postgresql://pane:pane@localhost:5432/pane_test
+          # AzureBlobStore conformance tests gate on this — when set, they
+          # round-trip against the Azurite service container above. Locally
+          # the env var is unset by default and the suite skips cleanly.
+          AZURITE_URL: http://127.0.0.1:10000

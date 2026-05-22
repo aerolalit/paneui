@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
+import type { BlobStore, RevokeCache } from "../blobs/index.js";
 import type { SlidingWindowLimiter } from "./rate-limit.js";
 
 // Shared Hono environment. `prisma`, `config`, `registerLimiter` and
@@ -16,5 +17,15 @@ export type AppEnv = {
     // same instance is also handed to the WebSocket-upgrade path via
     // attachWs(), so HTTP and WS-upgrade attempts share one IP bucket.
     generalLimiter: SlidingWindowLimiter;
+    // Configured BlobStore backend (filesystem or azure, per config.BLOB_STORE).
+    // Optional in tests that don't exercise blob routes — the /v1/blobs route
+    // throws if it's missing so callers can't accidentally rely on an
+    // unconfigured store.
+    blobStore?: BlobStore;
+    // In-memory cache of recently-revoked blob token hashes — short-circuits
+    // the DB row read on the /b/<token> hot path. The DB row remains the
+    // source of truth; a miss falls back to checking revokedAt there. Always
+    // set when blobStore is set.
+    blobRevokeCache?: RevokeCache;
   };
 };

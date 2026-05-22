@@ -10,6 +10,10 @@ import { log } from "../log.js";
 import { recordEventWritten } from "../telemetry/metrics.js";
 import type { Author, EventSchema, SerializedEvent } from "../types.js";
 import { validateEvent } from "./validation.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../blobs/ref-access.js";
 
 // A session row with its pinned artifact version eagerly loaded. The event
 // vocabulary (`eventSchema`) and the per-version event-schema number live on
@@ -136,15 +140,34 @@ export async function writeEvent(
   // null means "no event vocabulary", and validateEvent's guard rejects every
   // page/agent emit against such a session. System events never reach here
   // (appendSystemEvent writes directly), so they are unaffected.
+  const eventSchema = session.artifactVersion
+    .eventSchema as unknown as EventSchema | null;
   validateEvent({
     sessionId: session.id,
     schemaVersion: session.artifactVersion.version,
-    schema: session.artifactVersion
-      .eventSchema as unknown as EventSchema | null,
+    schema: eventSchema,
     type: input.type,
     data: input.data,
     authorKind: author.kind,
   });
+
+  // Follow-up B of #156 — blob-ref DB access check. AFTER Ajv shape
+  // validation, walk the per-type payload schema for sites marked
+  // `format: pane-blob-id` and batch-verify the session's owning agent
+  // can actually access each referenced blob. The session's `agentId`
+  // is the authz anchor here, not `author.id`: a participant emitting
+  // via the WS path can legitimately reference a blob the *agent*
+  // owns, but neither identity should be able to bake another agent's
+  // blob_id into the payload. See blobs/ref-access.ts.
+  if (eventSchema) {
+    const entry = eventSchema.events[input.type];
+    if (entry) {
+      const refs = collectBlobRefs(entry.payload, input.data);
+      if (refs.length > 0) {
+        await assertBlobsAccessibleByAgent(prisma, session.agentId, refs);
+      }
+    }
+  }
 
   // Insert-or-return-existing under the (sessionId, authorId, idempotencyKey) unique
   // index. Doing a separate findUnique + create races: two concurrent retries can

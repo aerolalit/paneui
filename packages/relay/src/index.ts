@@ -16,6 +16,7 @@ import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { createRateLimiter } from "./http/rate-limit.js";
+import { makeBlobStore, makeRevokeCache } from "./blobs/index.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
@@ -125,7 +126,38 @@ async function main(): Promise<void> {
     config.RATE_LIMIT_WINDOW_SECONDS * 1000,
   );
 
-  const app = buildApp(config, prisma, generalLimiter);
+  // Construct the configured BlobStore. Filesystem self-host validates +
+  // creates BLOB_STORE_FS_DIR and refuses to start if it's world-readable.
+  // Azure dynamic-imports its SDK + verifies / creates the container.
+  const blobStore = await makeBlobStore(config);
+  log.info("blob store ready", {
+    backend: config.BLOB_STORE,
+    encryptAtRest: config.BLOB_ENCRYPT_AT_REST,
+  });
+
+  // Scan-hook SSRF validation. Fail-fast at startup so a misconfigured URL
+  // never reaches an outbound fetch — the relay refuses to start when the
+  // URL points at RFC1918, cloud-metadata, or a localhost address.
+  if (config.BLOB_SCAN_HOOK) {
+    const { assertSafeBlobScanHookUrl } = await import("./http/ssrf.js");
+    await assertSafeBlobScanHookUrl(config.BLOB_SCAN_HOOK);
+    log.info("blob scan hook ready", {
+      timeoutMs: config.BLOB_SCAN_TIMEOUT_MS,
+    });
+  }
+
+  // Process-local revocation cache for /b/<token> short-circuiting. The DB
+  // row remains the source of truth; the cache is a performance hint and
+  // misses fall back to the row's revoked_at column.
+  const blobRevokeCache = makeRevokeCache();
+
+  const app = buildApp(
+    config,
+    prisma,
+    generalLimiter,
+    blobStore,
+    blobRevokeCache,
+  );
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     log.info("listening", { port: info.port, publicUrl: config.publicUrl });

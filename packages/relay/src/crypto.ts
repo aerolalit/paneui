@@ -93,6 +93,16 @@ export function ensureKeyLoaded(): void {
   getKey();
 }
 
+/**
+ * Return the 32-byte master key as a Buffer. Used by callers that need to
+ * derive their own DEKs or HMACs from it — e.g. blob-at-rest encryption and
+ * the blob scan-hook signature. Caller must NOT cache or pass this Buffer
+ * across module boundaries beyond what's strictly necessary.
+ */
+export function getMasterKey(): Buffer {
+  return getKey();
+}
+
 export function encryptSecret(plain: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", getKey(), iv);

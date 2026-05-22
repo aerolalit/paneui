@@ -16,6 +16,7 @@ import { runKey, keyHelp } from "./commands/key.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runFeedback, feedbackHelp } from "./commands/feedback.js";
 import { runConfig, configHelp } from "./commands/config.js";
+import { runBlob, blobHelp } from "./commands/blob.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
@@ -39,6 +40,11 @@ Nouns:
                     generating a pane artifact.
   feedback          One-shot feedback to the relay operator
                     (create | list) — bug reports, feature requests, notes.
+  blob              Binary attachments (upload | download | show | list |
+                    delete | token <mint|revoke|list>). Blobs are scoped to
+                    an agent, a session, or an artifact, and can be referenced
+                    from event payloads + input_data via
+                    \`format: pane-blob-id\`.
   agent             Agent identity on this machine (register | logout).
   config            CLI config inspection (show).
   skill             The relay's SKILL.md (show | version) — auto-updating;
@@ -121,6 +127,7 @@ async function main(): Promise<void> {
     key: keyHelp,
     taste: tasteHelp,
     feedback: feedbackHelp,
+    blob: blobHelp,
     agent: agentHelp,
     config: configHelp,
     skill: skillHelp,
@@ -162,6 +169,9 @@ async function main(): Promise<void> {
       break;
     case "feedback":
       await runFeedback(args);
+      break;
+    case "blob":
+      await runBlob(args);
       break;
     case "agent":
       await runAgent(args);

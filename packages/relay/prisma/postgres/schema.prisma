@@ -28,6 +28,7 @@ model Agent {
   sessions   Session[]
   artifacts  Artifact[]
   feedback   Feedback[]
+  blobs      Blob[]
 
   @@map("agents")
 }
@@ -66,6 +67,8 @@ model Artifact {
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
   versions      ArtifactVersion[]
+
+  blobs         Blob[]
 
   @@unique([ownerId, slug])
   @@index([ownerId])
@@ -128,6 +131,7 @@ model Session {
   participants    Participant[]
   events          Event[]
   feedback        Feedback[]
+  blobs           Blob[]
 
   @@index([agentId])
   @@index([expiresAt])
@@ -174,4 +178,140 @@ model Event {
   @@index([sessionId, id])
   @@unique([sessionId, authorId, idempotencyKey])
   @@map("events")
+}
+
+// A binary blob attached to an artifact, a session, or an agent's reusable
+// asset library. The bytes themselves live in the configured BlobStore
+// (filesystem self-host or Azure Blob hosted); this row is the metadata,
+// authz anchor, and lifecycle hook.
+//
+// Scopes:
+//   - "agent"    — reusable across the agent's sessions. artifactId + sessionId
+//                  both null. Lives until explicit delete or LRU eviction.
+//   - "session"  — bound to one session. sessionId set, artifactId null. Dies
+//                  with the session (cascade).
+//   - "artifact" — bound to one reusable artifact (the head, not a specific
+//                  version). artifactId set, sessionId null. Dies with the
+//                  artifact.
+//
+// Exactly one of (artifactId set, sessionId set, neither set) is true; the
+// scope column is the source of truth and the application layer enforces this.
+// Cross-tenant access is denied at the route layer — ownerId is the authz
+// anchor, never the storageKey or the FK columns.
+model Blob {
+  id            String    @id @default(cuid())
+
+  // Ownership. Pane has no human-identity concept yet, so the agent IS the
+  // owner. Participant uploads are credited to the session's owning agent
+  // (the participant token authorises the action, not ownership).
+  ownerId       String    @map("owner_id")
+  owner         Agent     @relation(fields: [ownerId], references: [id])
+
+  // Scope: "agent" | "session" | "artifact". See model-level comment.
+  scope         String
+
+  // Set when scope = "session". Cascades on session delete/expire.
+  sessionId     String?   @map("session_id")
+  session       Session?  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Set when scope = "artifact". Cascades on artifact delete.
+  artifactId    String?   @map("artifact_id")
+  artifact      Artifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  // Content metadata. mime comes from server-side magic-byte sniff, NOT the
+  // client's Content-Type. sha256 is hex-encoded; size is bytes (capped at
+  // MAX_BLOB_BYTES at upload time, well within Int range for v0.1.0's 5 MB).
+  mime          String
+  size          Int
+  sha256        String
+  width         Int?
+  height        Int?
+
+  // Opaque key inside the BlobStore. Never user-supplied; never used as a
+  // filesystem path component directly. Storage backends derive their own
+  // path from this id (e.g. filesystem uses `<root>/blob_<id>`, Azure uses
+  // `blob_<id>` as the blob name).
+  storageKey    String    @unique @map("storage_key")
+
+  // Lifecycle status:
+  //   "pending"   — upload presigned but not confirmed
+  //   "ready"     — confirmed + HEAD-verified + scanned (if scan hook on)
+  //   "failed"    — upload or scan failed; metadata kept for audit
+  //   "deleted"   — soft-deleted; bytes already removed from BlobStore
+  status        String    @default("pending")
+
+  // Optional human-supplied display name (for UX). Never a path component.
+  filename      String?
+
+  // EXIF + thumbnail strip toggle. Default true; agents can opt out per-blob
+  // for legit photo-management use cases where DateTimeOriginal matters.
+  stripMetadata Boolean   @default(true) @map("strip_metadata")
+
+  // Envelope encryption-at-rest. NULL when the relay's BLOB_ENCRYPT_AT_REST
+  // is off (the default). When set, the bytes in the BlobStore are
+  // ciphertext; this column carries the wrapped DEK + data IV + data tag
+  // needed to decrypt them. Stored as a base64 JSON envelope so future
+  // versions (e.g. customer-managed keys, key rotation) can extend the
+  // shape without another migration.
+  encryptionEnvelope String? @map("encryption_envelope")
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  confirmedAt   DateTime? @map("confirmed_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  @@index([ownerId])
+  @@index([scope, ownerId])
+  @@index([sessionId])
+  @@index([artifactId])
+  @@map("blobs")
+
+  tokens BlobToken[]
+}
+
+// Capability URL for a blob. Each row mints one /b/<token> link that any
+// holder can use to fetch the bytes without an agent API key — this is the
+// participant-facing download path.
+//
+// A token's lifetime is bound to its blob's scope (see proposal #152):
+//
+//   - artifact-scope blob: token TTL = BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
+//   - session-scope blob:  token TTL = the session's TTL (cascades on session delete)
+//   - agent-scope blob:    token TTL = BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
+//
+// `once = true` deletes the token on its first successful GET — for the
+// "share a private doc, expire after view" pattern.
+//
+// Audit columns persist enough provenance to spot an exfiltrated token
+// without storing exact requester IPs: `first_seen_ip_net` / `last_seen_ip_net`
+// are /24-truncated IPv4 (or /48-truncated IPv6) ranges. Truncation happens
+// at write time — full IPs are never persisted.
+model BlobToken {
+  id          String    @id @default(cuid())
+  blobId      String    @map("blob_id")
+  blob        Blob      @relation(fields: [blobId], references: [id], onDelete: Cascade)
+
+  // sha256 hex of the token string. The token itself is never stored — only
+  // its hash, mirroring how Agent keys and Participant tokens are stored.
+  tokenHash   String    @unique @map("token_hash")
+  // First 10 chars of the token, kept for log + UX so an operator can match
+  // a redacted access log entry to its row.
+  tokenPrefix String    @map("token_prefix")
+
+  // Lifetime + use semantics.
+  expiresAt   DateTime  @map("expires_at")
+  once        Boolean   @default(false)
+  revokedAt   DateTime? @map("revoked_at")
+
+  // Audit. useCount, lastUsedAt, and the truncated IP ranges are updated on
+  // every successful GET; the relay never persists a full requester IP.
+  useCount       Int       @default(0) @map("use_count")
+  lastUsedAt     DateTime? @map("last_used_at")
+  firstSeenIpNet String?   @map("first_seen_ip_net")
+  lastSeenIpNet  String?   @map("last_seen_ip_net")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([blobId])
+  @@index([expiresAt])
+  @@map("blob_tokens")
 }

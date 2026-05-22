@@ -8,6 +8,13 @@ export type {
   CreateArtifactRequest,
   CreateArtifactVersionRequest,
   PatchArtifactMetadataRequest,
+  BlobRef,
+  UploadBlobOptions,
+  PresignBlobOptions,
+  BlobTokenMintResponse,
+  ListBlobsOptions,
+  BlobTokenAuditEntry,
+  BlobTokenListResponse,
 } from "./client.js";
 
 export { openStream } from "./stream.js";

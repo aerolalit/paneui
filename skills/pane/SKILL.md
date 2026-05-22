@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v2.2.0 -->
+<!-- pane skill v2.3.0 -->
 
 # pane
 
@@ -779,6 +779,256 @@ Notes are fine to send directly.
 `--session-id` is optional. No reply channel — don't use this for anything
 you need an answer to, or for the human's answer to a session question
 (use events). UI preferences belong in `pane taste`, not here.
+
+### `pane blob` — binary attachments (images, PDFs, audio, video)
+
+```sh
+# Upload a file. Default scope is "agent" (reusable across the agent's sessions).
+pane blob upload --file ./chart.png
+
+# Session-scope (dies with the session; cheaper to GC):
+pane blob upload --file ./hero.jpg --scope session --session-id ses_xxx
+
+# Artifact-scope (reusable across every session using the artifact):
+pane blob upload --file ./icon.svg --scope artifact --artifact-id <id>
+
+# List your blobs (newest first; paginated via --cursor):
+pane blob list                              # first 50
+pane blob list --limit 25 --cursor <opaque> # next page
+
+# Inspect / download / delete:
+pane blob show <blob_id>
+pane blob download <blob_id> --out ./out.png
+pane blob delete <blob_id>
+
+# Mint a /b/<token> URL the human can fetch directly (no agent API key):
+pane blob token mint <blob_id>              # default TTL: 24h agent / session-TTL / 30d artifact
+pane blob token mint <blob_id> --once       # self-deletes on first GET
+
+# Enumerate the tokens minted against one blob (audit — includes revoked rows):
+pane blob token list <blob_id>
+
+# Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
+pane blob token revoke <blob_id> <token_id>
+```
+
+**One-shot upload + emit** — most agents emit events that REFERENCE blobs
+rather than embed them. Use `pane session send --blob` to do both in one
+call:
+
+```sh
+# Uploads ./chart.png as a session-scope blob, then sends an event
+# whose data is { blob: <BlobRef> } into the session.
+pane session send <session-id> --type chart.update --blob ./chart.png
+```
+
+The session's event schema should declare a blob field with
+`format: pane-blob-id`:
+
+```json
+{
+  "events": {
+    "chart.update": {
+      "emittedBy": ["agent"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+Pages handle the event by reading `ev.data.blob.url` and stuffing it in
+`<img>` / `<iframe>` / wherever the blob is meant to render:
+
+```js
+pane.on("chart.update", (ev) => {
+  document.getElementById("chart").src = ev.data.blob.url;
+});
+```
+
+**Default limits** (the hosted relay): 5 MB per blob, 500 MB total per
+agent. Adjust `BLOB_*` env vars on self-host. See `docs/BLOB_BACKENDS.md`
+for the backend matrix, `docs/CAPABILITY-URLS.md` for the `/b/<token>`
+threat model, and `docs/SECURITY-POLYGLOTS.md` for the upload-side
+defence (sharp normalisation + EXIF strip; SVG is passthrough — keep it
+out of `BLOB_MIME_ALLOWLIST` if your surface renders SVGs inline).
+
+### Human file uploads in a pane
+
+A human inside a rendered pane can upload a file BACK to the relay via
+`window.pane.uploadBlob(file, options?)`. The returned `BlobRef` is
+suitable for stuffing into an event payload — the agent receives it and
+can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
+
+**1. Declare the event in your schema with a blob field.**
+
+```json
+{
+  "events": {
+    "photo.attached": {
+      "emittedBy": ["page"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+**2. Inside the artifact HTML, wire a file input to `pane.uploadBlob` +
+`pane.emit`.**
+
+```html
+<input type="file" id="picker" accept="image/jpeg,image/png">
+<button id="send" disabled>Upload</button>
+<div id="status"></div>
+<script>
+  const picker = document.getElementById("picker");
+  const sendBtn = document.getElementById("send");
+  const status = document.getElementById("status");
+  picker.addEventListener("change", () => {
+    sendBtn.disabled = !picker.files?.length;
+  });
+  sendBtn.addEventListener("click", async () => {
+    sendBtn.disabled = true;
+    status.textContent = "uploading...";
+    try {
+      // Hands the File to the shell over postMessage; the shell POSTs
+      // to /s/<participantToken>/blobs and returns the BlobRef.
+      const blob = await window.pane.uploadBlob(picker.files[0]);
+      await window.pane.emit("photo.attached", { blob });
+      status.textContent = "uploaded.";
+    } catch (e) {
+      // e.code is the relay's error code (e.g. "blob_size_exceeded",
+      // "mime_disallowed"). Branch on it to render a useful message.
+      status.textContent = "failed: " + (e.code || e.message);
+      sendBtn.disabled = false;
+    }
+  });
+</script>
+```
+
+**3. Agent-side, watch for the event and read the bytes.**
+
+```sh
+# Wait for the human's upload event.
+EVENT=$(pane session watch "$SID" --type photo.attached)
+BLOB_ID=$(echo "$EVENT" | jq -r .data.blob.blob_id)
+
+# Download the bytes.
+pane blob download "$BLOB_ID" --out ./uploaded.jpg
+```
+
+Uploads are pinned to scope=`session`: they cascade-delete with the
+session, count against the AGENT's quota (not the participant), and
+run through the same MIME-sniff + polyglot-defense + EXIF-strip
+pipeline as `pane blob upload`. See `docs/CAPABILITY-URLS.md` for the
+threat model.
+
+### Lazy image fetch in a pane
+
+The reverse direction — the **agent** has an image (e.g. a chart it
+generated, an attachment downloaded from somewhere, output of an image
+pipeline) and wants the pane to render it. There are two ways:
+
+1. **Inline the bytes in the event payload as `data:image/...;base64`.**
+   Don't. The iframe CSP allows it, but: it costs 33% on base64, the
+   bytes get duplicated on disk (encrypted blob store + event row), the
+   bytes replay over WebSocket on every reconnect, and a 1 MB image
+   won't fit under `MAX_EVENT_DATA_BYTES` (default 64 KB). The whole
+   point of blob storage is to avoid this.
+
+2. **Upload as a blob, send just the `BlobRef` on the event, fetch
+   lazily in the pane.** This is the preferred shape. The pane runs
+   `await window.pane.downloadBlob(blob_id)` and gets a real browser
+   `Blob` it can render via `URL.createObjectURL(blob)`.
+
+**1. Declare the event with a blob field (same shape as uploads).**
+
+```json
+{
+  "events": {
+    "image.delivered": {
+      "emittedBy": ["agent"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "object",
+            "properties": {
+              "blob_id": { "type": "string", "format": "pane-blob-id" }
+            },
+            "required": ["blob_id"]
+          }
+        },
+        "required": ["blob"]
+      }
+    }
+  }
+}
+```
+
+**2. Agent uploads the bytes and emits a thin event with just the BlobRef.**
+
+```sh
+# Upload — get back a BlobRef bound to the session.
+REF=$(pane blob upload --file ./weather-chart.png --scope session --session-id "$SID")
+BLOB_ID=$(echo "$REF" | jq -r .blob_id)
+
+# Emit an event that only carries the id — no inline bytes.
+pane session send "$SID" --type image.delivered \
+  --data "{\"blob\":{\"blob_id\":\"$BLOB_ID\"}}"
+```
+
+**3. Inside the artifact, lazy-fetch the bytes and render.**
+
+```html
+<img id="chart" alt="weather chart">
+<script>
+  window.pane.on("image.delivered", async (ev) => {
+    try {
+      // window.pane.downloadBlob() returns a real browser Blob. The iframe
+      // CSP allows blob: URLs in img-src, so createObjectURL is safe.
+      const blob = await window.pane.downloadBlob(ev.data.blob.blob_id);
+      document.getElementById("chart").src = URL.createObjectURL(blob);
+    } catch (e) {
+      // e.code is the relay's error code (e.g. "blob_ref_not_accessible",
+      // "participant_token_invalid"). Branch on it to render a useful
+      // fallback.
+      console.warn("could not fetch image:", e.code || e.message);
+    }
+  });
+</script>
+```
+
+The shell brokers the fetch with the participant token; the bytes are
+decrypted by the relay (when `BLOB_ENCRYPT_AT_REST` is on) and arrive
+as a fresh Blob the iframe can render. **The blob must be referenced
+from this session** — either via an event the agent emitted or via the
+session's initial `inputData`. A participant token cannot enumerate
+arbitrary blobs the agent owns. See `docs/CAPABILITY-URLS.md` for the
+full trust model.
 
 ## The watch → Monitor pattern
 
