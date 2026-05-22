@@ -31,7 +31,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   "artifact.event_schema": "--event-schema",
 };
 
-function schemaPathToFlag(path: (string | number)[]): string {
+function schemaPathToFlag(path: PropertyKey[]): string {
   const dotted = path.map(String).join(".");
   // Longest prefix that has a mapping. Try the full path first, then strip
   // one trailing segment at a time. Falls back to dotted notation as the

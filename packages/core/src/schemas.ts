@@ -59,10 +59,10 @@ const sessionArtifactSchema = z
 
 export const createSessionSchema = z.object({
   artifact: sessionArtifactSchema,
-  input_data: z.record(z.unknown()).optional(),
+  input_data: z.record(z.string(), z.unknown()).optional(),
   participants: z.object({ humans: z.number().int().positive() }).optional(),
   ttl: z.number().int().positive().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   callback: callbackSchema.optional(),
   // Tab title for the human's browser. Optional on the wire because the relay
   // also accepts the implicit fallback (an Artifact.name on the reference
@@ -81,7 +81,7 @@ export const createArtifactSchema = z.object({
   type: artifactTypeSchema,
   // Optional: omit for a view-only artifact (no event vocabulary).
   event_schema: z.unknown().optional(),
-  input_schema: z.record(z.unknown()).optional(),
+  input_schema: z.record(z.string(), z.unknown()).optional(),
 });
 
 // POST /v1/artifacts/:id/versions — append a new version (content only).
@@ -90,7 +90,7 @@ export const createArtifactVersionSchema = z.object({
   type: artifactTypeSchema,
   // Optional: omit for a view-only artifact (no event vocabulary).
   event_schema: z.unknown().optional(),
-  input_schema: z.record(z.unknown()).optional(),
+  input_schema: z.record(z.string(), z.unknown()).optional(),
 });
 
 // PATCH /v1/artifacts/:id — update head metadata only (never content).
