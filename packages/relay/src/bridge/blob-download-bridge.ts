@@ -205,11 +205,10 @@ blobDownloadBridge.get("/:participantToken/blobs/:blob_id", async (c) => {
   }
 
   // Stream from the backend. Identical decrypt path to GET /v1/blobs/:id
-  // in src/http/routes/blobs.ts — match it exactly so the two routes can't
-  // drift on encryption-at-rest semantics. (Per security review: the
-  // existing /b/<token> route has a known bug where the capability URL
-  // serves raw ciphertext instead of decrypting; that is tracked
-  // separately and NOT fixed here. This route must always decrypt.)
+  // in src/http/routes/blobs.ts AND the capability-URL route in
+  // src/bridge/blob-bridge.ts — all three share the same
+  // encrypt.parseEnvelope + decryptBlob calls so they cannot drift on
+  // encryption-at-rest semantics.
   const stream = await store.get(row.storageKey);
   if (!stream) {
     // Metadata says ready, storage says missing — same recovery as the

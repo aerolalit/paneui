@@ -107,21 +107,19 @@ session's lifetime.
 ### Coverage: both download routes
 
 The decrypt pipeline (envelope `parseEnvelope` + `decryptBlob` from
-`packages/relay/src/blobs/encrypt.ts`) runs on every authenticated
-read path:
+`packages/relay/src/blobs/encrypt.ts`) runs on every read path that
+returns blob bytes:
 
 - **`GET /v1/blobs/:id`** — the agent-side download (agent API key).
 - **`GET /s/:participantToken/blobs/:blob_id`** — the iframe-side lazy
   fetch used by `window.pane.downloadBlob()` (follow-up D of #156).
+- **`GET /b/<token>`** — the participant-facing capability URL.
 
 When `BLOB_ENCRYPT_AT_REST=false` (the hosted default) the decrypt
 branch is a no-op and the stream passes through unmodified. When it's
-on, both routes decrypt with the same master key + envelope, so the
-two cannot drift on encryption-at-rest semantics.
-
-> The `/b/<token>` capability route is OUT of this guarantee — it has
-> a known defect serving raw ciphertext, tracked separately. Use it
-> only for external sharing of plaintext blobs.
+on, all three routes decrypt with the same master key + envelope via
+the shared `encrypt.parseEnvelope` + `decryptBlob` calls, so they
+cannot drift on encryption-at-rest semantics.
 
 ## The polyglot corpus
 
