@@ -1379,6 +1379,20 @@ describe("/v1/blobs — envelope encryption-at-rest", () => {
     expect(mint.status).toBe(201);
     const { token } = (await mint.json()) as { token: string };
 
+    // The bytes on disk are CIPHERTEXT — sha256 of the on-disk file
+    // must differ from the plaintext sha256. This pins the precondition
+    // for the regression guard: the route is decrypting *something*, not
+    // just streaming what's on disk (#203 — the doc previously warned
+    // this path didn't decrypt; this assertion makes the doc claim
+    // literally verified by the test).
+    const storagePath = join(encryptedBlobDir, `blob_${blob_id}`);
+    const onDisk = await import("node:fs/promises").then((m) =>
+      m.readFile(storagePath),
+    );
+    const { createHash } = await import("node:crypto");
+    const onDiskSha = createHash("sha256").update(onDisk).digest("hex");
+    expect(onDiskSha).not.toBe(plaintextSha);
+
     // Fetch via the capability URL — must return PLAINTEXT, not the
     // ciphertext that lives on disk.
     const res = await encryptedApp.fetch(new Request(`http://t/b/${token}`));
@@ -1389,10 +1403,11 @@ describe("/v1/blobs — envelope encryption-at-rest", () => {
     const got = Buffer.from(await res.arrayBuffer());
     expect(got.equals(plaintext)).toBe(true);
 
-    // Body sha256 round-trips with the row's plaintext sha256 — this is the
-    // load-bearing assertion: the response is plaintext, not ciphertext.
-    const { createHash } = await import("node:crypto");
+    // Body sha256 round-trips with the row's plaintext sha256 and is NOT
+    // the on-disk ciphertext sha — together these are the load-bearing
+    // assertion that the response is plaintext.
     expect(createHash("sha256").update(got).digest("hex")).toBe(plaintextSha);
+    expect(createHash("sha256").update(got).digest("hex")).not.toBe(onDiskSha);
 
     // The first two bytes are the JPEG magic (FF D8) — a quick sanity check
     // distinct from the sha256 comparison.

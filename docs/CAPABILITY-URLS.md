@@ -253,16 +253,12 @@ The artifact API is `await window.pane.downloadBlob(blob_id)` — see
 - **Decryption.** The route runs the EXACT same decrypt pipeline as the
   agent-side `GET /v1/blobs/:id` when `BLOB_ENCRYPT_AT_REST` is on. Both
   routes share the same `encrypt.parseEnvelope` + `decryptBlob` calls,
-  so the two cannot drift on envelope semantics.
-
-  > **NOTE — unrelated bug.** `GET /b/<token>` currently has a known
-  > defect where the capability URL serves the raw ciphertext bytes
-  > instead of decrypting. That is tracked separately and NOT fixed by
-  > this route. Capability URLs (`/b/<token>`) are for *external sharing*
-  > of a blob (a one-off "look at this image" link a human pastes into
-  > chat); the new participant-token route is for *internal iframe
-  > rendering* (the artifact's `img.src` pulls bytes through the shell).
-  > Two different surfaces, two different threat models.
+  so the two cannot drift on envelope semantics. The two `/b/<token>`
+  capability-URL surface and the participant-token `/s/.../blobs/:id`
+  surface BOTH return plaintext; both have e2e coverage that diffs the
+  on-disk ciphertext against the response bytes
+  (`bridge/blob-download-bridge.e2e.test.ts` for the participant route,
+  `routes/blobs.e2e.test.ts` "envelope-encrypted blob" cases for `/b/<token>`).
 
 ### Wire shape
 
