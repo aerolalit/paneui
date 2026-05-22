@@ -54,6 +54,7 @@ export async function makeBlobStore(config: Config): Promise<BlobStore> {
               "not installed — run `npm install @azure/storage-blob @azure/identity` " +
               "(they ship in optionalDependencies; a self-host install with " +
               "BLOB_STORE=filesystem does not need them).",
+            { cause: e },
           );
         }
         throw e;

@@ -25,6 +25,7 @@ function isFilePath(value: string): boolean {
       `cannot stat '${value}'${code ? ` (${code})` : ""}: ${
         e instanceof Error ? e.message : String(e)
       }`,
+      { cause: e },
     );
   }
 }
@@ -40,6 +41,7 @@ export function resolveJson(value: string, label: string): unknown {
   } catch (e) {
     throw new Error(
       `${label}: not valid JSON (${e instanceof Error ? e.message : String(e)})`,
+      { cause: e },
     );
   }
 }

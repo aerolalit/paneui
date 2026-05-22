@@ -38,6 +38,7 @@ export async function loadAzureExporter(): Promise<AzureMonitorExporterModule> {
         "@azure/monitor-opentelemetry-exporter package — run " +
         "`npm install @azure/monitor-opentelemetry-exporter` on the Azure host. " +
         `(underlying error: ${cause})`,
+      { cause: err },
     );
   }
 }

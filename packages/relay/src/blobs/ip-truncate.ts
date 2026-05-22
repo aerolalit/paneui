@@ -72,7 +72,7 @@ function expandIpv6(addr: string): string[] | null {
   // `::` can only appear once.
   if ((addr.match(/::/g) ?? []).length > 1) return null;
 
-  let head: string[] = [];
+  let head: string[];
   let tail: string[] = [];
 
   if (hasDoubleColon) {

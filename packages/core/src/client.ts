@@ -700,7 +700,7 @@ export class PaneClient {
       throw new PaneApiError(0, "fetch_error", msg);
     }
     const text = await res.text().catch(() => "");
-    let data: unknown = null;
+    let data: unknown;
     try {
       data = text ? JSON.parse(text) : null;
     } catch {
@@ -728,7 +728,7 @@ export class PaneClient {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      let data: unknown = null;
+      let data: unknown;
       try {
         data = text ? JSON.parse(text) : null;
       } catch {

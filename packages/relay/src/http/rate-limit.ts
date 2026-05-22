@@ -96,7 +96,7 @@ export function clientIp(
   c: Context,
   trustedProxies: readonly string[],
 ): string {
-  let socketAddr: string | null = null;
+  let socketAddr: string | null;
   try {
     socketAddr = getConnInfo(c).remote.address ?? null;
   } catch {
