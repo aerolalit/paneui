@@ -323,6 +323,45 @@ describe("POST /v1/sessions/:id/participants — mint", () => {
     expect((await revoke(a.apiKey, sid, pid)).status).toBe(204);
     expect((await mint(a.apiKey, sid)).status).toBe(201);
   });
+
+  it("identityId stays unique across a revoke-then-mint cycle (#201)", async () => {
+    // Regression test for #201: pre-fix the new participant's identityId
+    // was derived from `count({ revokedAt: null })`, which is not
+    // monotonic — revoking participant h_0 made the next mint reuse
+    // `h_1` (already held by the still-active second participant), and
+    // the WS handler's `findFirst({ where: { sessionId, identityId } })`
+    // would non-deterministically resolve events to whichever row sorted
+    // first. The fix counts ALL human participants (including revoked)
+    // for the index so labels never alias within a session.
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+
+    // Mint a second human so the session has h_0 (default) + h_1.
+    expect((await mint(a.apiKey, sid)).status).toBe(201);
+
+    const initial = await prisma.participant.findMany({
+      where: { sessionId: sid, kind: "human" },
+      orderBy: { id: "asc" }, // cuid is time-monotonic → insertion order
+      select: { id: true, identityId: true, revokedAt: true },
+    });
+    expect(initial).toHaveLength(2);
+    expect(initial.map((p) => p.identityId)).toEqual(["h_0", "h_1"]);
+
+    // Revoke h_0 — leaves h_1 active. Then mint a third.
+    expect((await revoke(a.apiKey, sid, initial[0]!.id)).status).toBe(204);
+    expect((await mint(a.apiKey, sid)).status).toBe(201);
+
+    const all = await prisma.participant.findMany({
+      where: { sessionId: sid, kind: "human" },
+      orderBy: { id: "asc" }, // cuid is time-monotonic → insertion order
+      select: { identityId: true, revokedAt: true },
+    });
+    // Three rows total: h_0 (revoked), h_1 (active), h_2 (newly minted).
+    // Pre-fix the third would have been `h_1`, colliding with the live row.
+    const active = all.filter((p) => !p.revokedAt).map((p) => p.identityId);
+    expect(new Set(active).size).toBe(active.length); // no aliasing
+    expect(all.map((p) => p.identityId)).toEqual(["h_0", "h_1", "h_2"]);
+  });
 });
 
 describe("DELETE /v1/sessions/:id/participants/:participant_id — revoke", () => {

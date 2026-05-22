@@ -656,12 +656,25 @@ sessions.post("/:id/participants", requireAgent, async (c) => {
     );
   }
 
-  // Cap participants per session. Count only NON-revoked human participants
-  // so a revoked row does not permanently consume a slot — the leak-
-  // containment primitive must not be a self-DoS.
-  const activeHumans = await prisma.participant.count({
-    where: { sessionId: id, kind: "human", revokedAt: null },
-  });
+  // Two counts:
+  //   - `activeHumans` (revokedAt IS NULL) gates the cap. A revoked row
+  //     must NOT consume a slot, otherwise the leak-containment primitive
+  //     becomes a self-DoS.
+  //   - `everMintedHumans` (revokedAt IS NULL OR NOT NULL) supplies a
+  //     monotonic identityId index that doesn't reuse labels of revoked
+  //     participants. Counting only active humans (the pre-#201 behaviour)
+  //     produced `identityId` collisions after a revoke + mint cycle:
+  //     two non-revoked rows could share `h_1`, and the WS handler's
+  //     `findFirst({ where: { sessionId, identityId } })` would non-
+  //     deterministically resolve events to whichever row sorted first.
+  const [activeHumans, everMintedHumans] = await Promise.all([
+    prisma.participant.count({
+      where: { sessionId: id, kind: "human", revokedAt: null },
+    }),
+    prisma.participant.count({
+      where: { sessionId: id, kind: "human" },
+    }),
+  ]);
   if (activeHumans >= config.MAX_PARTICIPANTS_PER_SESSION) {
     throw errors.conflict(
       `session already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_SESSION}); revoke one before minting another`,
@@ -675,7 +688,7 @@ sessions.post("/:id/participants", requireAgent, async (c) => {
     data: {
       sessionId: id,
       kind: "human",
-      identityId: `h_${activeHumans}`,
+      identityId: `h_${everMintedHumans}`,
       tokenHash: hashKey(token),
       tokenPrefix: keyPrefix(token),
     },
