@@ -1,0 +1,12 @@
+{
+  "name": "pdf-with-js-action",
+  "mime": "application/pdf",
+  "threatClass": "passthrough-untouched",
+  "source": "hand-authored",
+  "description": "Minimal PDF with an /OpenAction /JS entry. The relay does not normalise PDFs (lossy + opens its own attack surface); the mitigation is Content-Disposition: attachment so the browser does not render inline. Fixture asserts pass-through.",
+  "expectedNormalisation": "pass-through",
+  "assertions": {
+    "normalised": false,
+    "bytesUnchanged": true
+  }
+}

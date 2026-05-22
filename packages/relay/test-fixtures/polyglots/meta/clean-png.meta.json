@@ -1,0 +1,13 @@
+{
+  "name": "clean-png",
+  "mime": "image/png",
+  "threatClass": "baseline",
+  "source": "sharp-generated reference image",
+  "description": "Known-good PNG with no extra chunks or trailing bytes. Baseline for verifying the normaliser preserves legitimate content.",
+  "expectedNormalisation": "clean",
+  "assertions": {
+    "normalised": true,
+    "idempotent": true,
+    "dimensionsPreserved": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "png-script-in-ztxt",
+  "mime": "image/png",
+  "threatClass": "in-format-chunk",
+  "source": "hand-authored",
+  "description": "PNG with a zTXt chunk — deflate-compressed text. The compressed stream hides the polyglot from naive grep-the-bytes scanners; re-encode drops the whole chunk.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "ztxt-polyglot"]
+  }
+}

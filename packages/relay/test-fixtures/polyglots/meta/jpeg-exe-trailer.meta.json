@@ -1,0 +1,12 @@
+{
+  "name": "jpeg-exe-trailer",
+  "mime": "image/jpeg",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "JPEG carrying a PE/DOS stub (MZ header) appended after EOI. Lets a malicious file masquerade as an image to MIME-sniffing browsers while remaining executable when renamed.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["MZ", "FAKE-PE-POLYGLOT"]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "clean-webp",
+  "mime": "image/webp",
+  "threatClass": "baseline",
+  "source": "sharp-generated reference image",
+  "description": "Known-good WebP baseline.",
+  "expectedNormalisation": "clean",
+  "assertions": {
+    "normalised": true,
+    "idempotent": true,
+    "dimensionsPreserved": true
+  }
+}

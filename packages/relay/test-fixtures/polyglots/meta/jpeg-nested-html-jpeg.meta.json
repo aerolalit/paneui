@@ -1,0 +1,12 @@
+{
+  "name": "jpeg-nested-html-jpeg",
+  "mime": "image/jpeg",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "Outer JPEG followed by a fake inner SOI/EOI segment wrapping HTML. A naive SOI-walking parser could keep scanning past the outer EOI; the sharp re-encode stops at the outer EOI and drops the inner section.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "xss-polyglot"]
+  }
+}

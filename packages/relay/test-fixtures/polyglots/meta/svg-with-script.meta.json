@@ -1,0 +1,12 @@
+{
+  "name": "svg-with-script",
+  "mime": "image/svg+xml",
+  "threatClass": "passthrough-untouched",
+  "source": "hand-authored",
+  "description": "SVG carrying an inline <script>. SVG's XML attack surface (event handlers, foreignObject, javascript: URIs) is intentional XML feature territory, not a polyglot. The normaliser passes SVG through untouched; the fixture asserts that the operator-documented mitigation (drop image/svg+xml from BLOB_MIME_ALLOWLIST when rendering untrusted SVGs inline) is the right one to advertise.",
+  "expectedNormalisation": "pass-through",
+  "assertions": {
+    "normalised": false,
+    "bytesUnchanged": true
+  }
+}

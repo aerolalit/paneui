@@ -1,0 +1,13 @@
+{
+  "name": "jpeg-script-in-exif-comment",
+  "mime": "image/jpeg",
+  "threatClass": "metadata",
+  "source": "hand-authored",
+  "description": "JPEG carrying script-shaped strings inside EXIF IFD0 ImageDescription / Artist fields. EXIF data can leak attacker-controlled text into UIs that render metadata; the default normaliser strip removes the entire APP1 segment.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["exif-polyglot", "exif-leak-test"],
+    "exifAfterStripUndefined": true
+  }
+}

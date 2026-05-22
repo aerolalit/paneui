@@ -1,0 +1,12 @@
+{
+  "name": "clean-gif",
+  "mime": "image/gif",
+  "threatClass": "baseline",
+  "source": "sharp-generated reference image",
+  "description": "Known-good GIF baseline. Note: sharp's GIF encoder (cgif under libvips) is not byte-stable across re-encodes, so the idempotency assertion is omitted; the normaliser still produces a structurally valid GIF with preserved pixel content, just not the same bytes twice in a row.",
+  "expectedNormalisation": "clean",
+  "assertions": {
+    "normalised": true,
+    "dimensionsPreserved": true
+  }
+}

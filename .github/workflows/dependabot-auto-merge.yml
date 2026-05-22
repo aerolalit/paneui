@@ -1,0 +1,40 @@
+# Auto-merge Dependabot PRs that bump `sharp` by a patch version.
+#
+# Sharp underpins the blob-attachment polyglot defense (see
+# docs/SECURITY-POLYGLOTS.md). Patch releases roll up libvips fixes and
+# need to land fast — the CVE window between an upstream patch and our
+# adoption is exactly the window where the corpus's defense rests on
+# unfixed code. We let Dependabot open the PR, the polyglot suite + the
+# rest of CI gate the merge, and this workflow flips on auto-merge if all
+# the safety conditions hold.
+#
+# Anything other than a sharp patch bump goes through the regular review
+# path — no auto-merge, even for other patch-level deps.
+
+name: dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge-sharp-patch:
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for sharp patch bumps only
+        if: >-
+          steps.meta.outputs.dependency-names == 'sharp' &&
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

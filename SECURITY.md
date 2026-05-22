@@ -102,6 +102,26 @@ collapses to a single shared bucket. If you do not need open self-registration,
 disable or block the endpoint at the proxy and provision API keys out of band.
 Trusted-proxy / forwarded-IP configuration is tracked as future work on the roadmap.
 
+### Blob attachment hardening
+
+Pane's blob-attachment surface (uploads served via `/v1/blobs` and
+`/b/<token>`) gets specific hardening on top of the general posture:
+
+- **Polyglot defense** — every normalisable image (JPEG / PNG / GIF /
+  WebP) is decoded and re-encoded through libvips (sharp). Appended
+  payloads, in-format text chunks, and EXIF metadata are dropped on
+  re-encode. See [`docs/SECURITY-POLYGLOTS.md`](./docs/SECURITY-POLYGLOTS.md)
+  for the threat model, the tracked corpus, and the disclosure process
+  for bypasses.
+- **Capability-URL hardening** — `/b/<token>` URLs are revocable,
+  scope-bound, and stripped from access logs. See
+  [`docs/CAPABILITY-URLS.md`](./docs/CAPABILITY-URLS.md).
+- **Backend conformance** — every blob store implementation (filesystem,
+  Azure Blob) is run against a shared conformance suite covering
+  presigned-PUT TOCTOU defense + size / checksum / single-use semantics.
+  See [`docs/BLOB_BACKENDS.md`](./docs/BLOB_BACKENDS.md).
+- **Leaked-token runbook** — [`docs/RUNBOOK-LEAKED-TOKEN.md`](./docs/RUNBOOK-LEAKED-TOKEN.md).
+
 ## Supported versions
 
 Pane has **no formal releases yet**. Security fixes land on the latest `main` only.

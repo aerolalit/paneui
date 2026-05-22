@@ -1,0 +1,12 @@
+{
+  "name": "webp-zip-trailer",
+  "mime": "image/webp",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "WebP with a ZIP trailer. WebP's RIFF container has a declared chunk size, but trailing bytes can survive on disk; re-encode produces a fresh RIFF without the trailer.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["polyglot test trailer", "hidden.txt"]
+  }
+}

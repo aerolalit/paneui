@@ -1,0 +1,75 @@
+# Dependabot configuration for pane.
+#
+# Primary intent: keep `sharp` (the libvips binding underpinning the
+# blob polyglot defense) patched within 24h of upstream patch releases.
+# See docs/SECURITY-POLYGLOTS.md and packages/relay/test-fixtures/polyglots/.
+#
+# Sharp is pinned with a tilde range in packages/relay/package.json
+# (~0.34.x). Patch bumps are auto-PR'd here daily; the polyglot suite +
+# the rest of CI gate auto-merge (.github/workflows/dependabot-auto-merge.yml).
+# Minor / major bumps land as regular PRs requiring manual review.
+
+version: 2
+updates:
+  # Relay package — the security-sensitive surface. Sharp lives here.
+  - package-ecosystem: "npm"
+    directory: "/packages/relay"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    # Group every other npm dep into one weekly PR to keep noise low;
+    # sharp gets its own PR so the polyglot suite gates the merge.
+    groups:
+      sharp:
+        patterns:
+          - "sharp"
+      relay-other-deps:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "sharp"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Major version bumps for sharp need a manual review + corpus rerun
+      # against a fresh libvips. Block Dependabot from opening them.
+      - dependency-name: "sharp"
+        update-types: ["version-update:semver-major"]
+
+  # Other workspace packages — generic patch/minor coverage.
+  - package-ecosystem: "npm"
+    directory: "/packages/core"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/cli"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # Repo root (workspace tooling).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # Keep GitHub Actions pinned but patched.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "ci"

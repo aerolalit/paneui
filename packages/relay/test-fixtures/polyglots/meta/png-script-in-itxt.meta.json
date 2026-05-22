@@ -1,0 +1,12 @@
+{
+  "name": "png-script-in-itxt",
+  "mime": "image/png",
+  "threatClass": "in-format-chunk",
+  "source": "hand-authored",
+  "description": "PNG with an iTXt (international text) ancillary chunk carrying a script payload. iTXt is a documented PNG text chunk; sharp's re-encode does not propagate it.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "itxt-polyglot"]
+  }
+}

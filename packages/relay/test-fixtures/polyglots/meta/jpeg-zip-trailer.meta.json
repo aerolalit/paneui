@@ -1,0 +1,12 @@
+{
+  "name": "jpeg-zip-trailer",
+  "mime": "image/jpeg",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "Valid JPEG with a tiny ZIP local-file-header trailer. JPEG/ZIP polyglots have shipped in the wild as CTF puzzles and as the carrier for hidden archive content; re-encode drops the trailer.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["polyglot test trailer", "hidden.txt"]
+  }
+}
