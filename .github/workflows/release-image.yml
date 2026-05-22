@@ -61,6 +61,14 @@ jobs:
       # commit-SHA tag is added so every image is traceable. The matrix
       # `tag-suffix` appends `-postgres` for the Postgres variant, so the
       # SQLite build owns the unsuffixed tags and the two never collide.
+      #
+      # `onlatest=true` is LOAD-BEARING. Without it, `docker/metadata-action`
+      # applies `suffix` only to the version-derived tags (`{{version}}`,
+      # `{{major}}.{{minor}}`, …) but NOT to `:latest`. Both matrix variants
+      # then race for bare `:latest` and whichever pushes second wins —
+      # historically the postgres one — leaving self-hosters who follow the
+      # documented SQLite quickstart with an image they can't boot ("URL must
+      # start with postgres://"). See #170 for the failure mode + repro.
       - name: Derive image tags
         id: meta
         uses: docker/metadata-action@v6
@@ -68,7 +76,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/paneui
           flavor: |
             latest=true
-            suffix=${{ matrix.tag-suffix }}
+            suffix=${{ matrix.tag-suffix }},onlatest=true
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -94,3 +102,59 @@ jobs:
           # Per-provider cache scope so the two variants don't evict each other.
           cache-from: type=gha,scope=${{ matrix.provider }}
           cache-to: type=gha,mode=max,scope=${{ matrix.provider }}
+
+  # After both matrix variants have pushed, pull `:latest` and run it with the
+  # documented SQLite-style DATABASE_URL. A passing /healthz proves the bare
+  # `:latest` tag is the SQLite variant — catches a future regression of #170
+  # where a flavor-tag misconfiguration lets the postgres variant overwrite
+  # `:latest`. The smoke test is intentionally minimal: it does not exercise
+  # any features (CI already covers those), only that the image self-hosters
+  # download from the documented quickstart can boot.
+  smoke-test-latest-sqlite:
+    name: smoke-test :latest (SQLite, self-host default)
+    runs-on: ubuntu-latest
+    needs: image
+    permissions:
+      # Needed to docker pull from ghcr.io with the in-workflow token.
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull :latest
+        run: docker pull ghcr.io/${{ github.repository_owner }}/paneui:latest
+
+      - name: Run :latest with SQLite-style env (must boot)
+        run: |
+          docker run -d --name pane-smoke \
+            -e NODE_ENV=development \
+            -e PORT=3000 \
+            -e DATABASE_URL='file:/app/data/pane.db' \
+            -e API_KEY='pane_smoke_test_key_0000000000000000' \
+            -e PANE_SECRET_KEY="$(openssl rand -base64 32)" \
+            -e REGISTRATION_MODE=closed \
+            -p 3001:3000 \
+            ghcr.io/${{ github.repository_owner }}/paneui:latest
+          # Capture logs in case the smoke fails — without this the container
+          # is unlabelled noise; with it the next step's failure surfaces the
+          # Prisma "URL must start with postgres://" error that defines #170.
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3001/healthz > /dev/null 2>&1; then
+              echo "OK :latest booted with SQLite env on attempt $i"
+              docker logs pane-smoke 2>&1 | grep -i 'starting pane relay' | head -1
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::ghcr.io/${{ github.repository_owner }}/paneui:latest did NOT boot with SQLite-style DATABASE_URL after 60s — regression of #170 (postgres variant overwrote :latest)."
+          docker logs pane-smoke 2>&1 | tail -40
+          exit 1
+
+      - name: Teardown
+        if: always()
+        run: docker rm -f pane-smoke || true
