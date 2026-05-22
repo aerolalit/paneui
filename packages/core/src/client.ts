@@ -542,4 +542,261 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
   }
+
+  // ------------------------------------------------------------------------
+  // Blobs (v0.1.0). Three-scope binary attachments with multipart upload.
+  // See proposal pane#152 for the full design.
+  // ------------------------------------------------------------------------
+
+  /**
+   * Upload a blob to the relay. Returns a `BlobRef` that can be referenced
+   * in event payloads (the relay's `format: pane-blob-id` schema vocab
+   * validates the id) or in `pane create --input-data`.
+   *
+   * Scope defaults to "agent" (reusable across the agent's sessions). For
+   * `scope: "session"` pass `sessionId`; for `scope: "artifact"` pass
+   * `artifactId`. The agent must own the referenced session / artifact;
+   * cross-tenant attempts return blob_not_found.
+   *
+   * MIME is inferred from `mime` if supplied; otherwise the relay sniffs
+   * leading bytes and may reject with mime_mismatch / mime_disallowed.
+   *
+   * Backed by the relay's multipart `POST /v1/blobs` (the fallback path).
+   * For large uploads (>1 MB on hosted Azure) call `presignBlob()` +
+   * `confirmBlob()` instead — those use SAS direct-to-storage and don't
+   * stream bytes through the relay.
+   */
+  async uploadBlob(
+    file: Blob | Buffer | Uint8Array,
+    opts: UploadBlobOptions = {},
+  ): Promise<BlobRef> {
+    const fd = new FormData();
+    let blob: Blob;
+    if (file instanceof Blob) {
+      blob = file;
+    } else {
+      // Buffer / Uint8Array path — wrap in a Blob with the declared MIME.
+      const u8 = file instanceof Uint8Array ? file : new Uint8Array(file);
+      blob = new Blob([u8], {
+        type: opts.mime ?? "application/octet-stream",
+      });
+    }
+    fd.set("file", blob, opts.filename ?? "blob");
+    if (opts.scope) fd.set("scope", opts.scope);
+    if (opts.sessionId) fd.set("session_id", opts.sessionId);
+    if (opts.artifactId) fd.set("artifact_id", opts.artifactId);
+    if (opts.filename) fd.set("filename", opts.filename);
+
+    const url = this.base + "/v1/blobs";
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer " + this.apiKey,
+          ...(this.cliVersion ? { "x-pane-cli-version": this.cliVersion } : {}),
+        },
+        body: fd,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new PaneApiError(0, "fetch_error", msg);
+    }
+    const text = await res.text().catch(() => "");
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new PaneApiError(
+        res.status,
+        "non_json_response",
+        `relay returned a non-JSON body (status ${res.status})`,
+      );
+    }
+    if (!res.ok) {
+      this.fail({ ok: false, status: res.status, data });
+    }
+    return data as BlobRef;
+  }
+
+  /** GET /v1/blobs/:id — download bytes as an ArrayBuffer. */
+  async downloadBlob(blobId: string): Promise<ArrayBuffer> {
+    const url = this.base + "/v1/blobs/" + encodeURIComponent(blobId);
+    const res = await this.fetchImpl(url, {
+      method: "GET",
+      headers: {
+        authorization: "Bearer " + this.apiKey,
+        ...(this.cliVersion ? { "x-pane-cli-version": this.cliVersion } : {}),
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      let data: unknown = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      this.fail({ ok: false, status: res.status, data });
+    }
+    return res.arrayBuffer();
+  }
+
+  /** GET a blob's metadata only — useful before downloading large blobs. */
+  async getBlob(blobId: string): Promise<BlobRef> {
+    // The relay's GET /v1/blobs/:id streams the body; metadata is read from
+    // the response headers. For pure-metadata calls we make a HEAD request
+    // and synthesise a BlobRef from the response headers + a follow-up
+    // listing call if needed. v0.1.0 ships the round-trip download path
+    // only; listing/show comes in the next CLI iteration.
+    const url = this.base + "/v1/blobs/" + encodeURIComponent(blobId);
+    const res = await this.fetchImpl(url, {
+      method: "HEAD",
+      headers: { authorization: "Bearer " + this.apiKey },
+    });
+    if (!res.ok) {
+      this.fail({ ok: false, status: res.status, data: null });
+    }
+    return {
+      blob_id: blobId,
+      url,
+      mime: res.headers.get("content-type") ?? "application/octet-stream",
+      size: Number(res.headers.get("content-length") ?? 0),
+      scope: "agent", // unknown without a GET — placeholder; pane blob show
+      // calls listBlobs() instead to get the full shape.
+      sha256: "",
+    } as BlobRef;
+  }
+
+  /** DELETE /v1/blobs/:id — soft-delete (idempotent). */
+  async deleteBlob(blobId: string): Promise<{ deleted: true }> {
+    const r = await this.call(
+      "DELETE",
+      "/v1/blobs/" + encodeURIComponent(blobId),
+    );
+    if (!r.ok) this.fail(r);
+    return { deleted: true };
+  }
+
+  /**
+   * Mint a `/b/<token>` capability URL for `blobId`. Default TTL is set by
+   * the relay (24h agent, session-TTL session, 30d artifact). `once: true`
+   * tokens self-delete on first GET.
+   */
+  async mintBlobToken(
+    blobId: string,
+    opts: { ttlSeconds?: number; once?: boolean } = {},
+  ): Promise<BlobTokenMintResponse> {
+    const r = await this.call(
+      "POST",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/tokens",
+      { ttl_seconds: opts.ttlSeconds, once: opts.once },
+    );
+    if (!r.ok) this.fail(r);
+    return r.data as BlobTokenMintResponse;
+  }
+
+  /** Revoke a previously-minted token. Idempotent. */
+  async revokeBlobToken(
+    blobId: string,
+    tokenId: string,
+  ): Promise<{ token_id: string; revoked: true }> {
+    const r = await this.call(
+      "DELETE",
+      "/v1/blobs/" +
+        encodeURIComponent(blobId) +
+        "/tokens/" +
+        encodeURIComponent(tokenId),
+    );
+    if (!r.ok) this.fail(r);
+    return r.data as { token_id: string; revoked: true };
+  }
+
+  /**
+   * Issue a presigned PUT URL for direct-to-storage upload. Returns the
+   * upload URL + the blob_id (already reserved in the relay's DB with
+   * status=pending) + expiry. After PUTting the bytes to the URL, call
+   * `confirmBlob(blob_id)` to finalise.
+   *
+   * Filesystem backend returns 501 not_implemented — use uploadBlob()
+   * (multipart fallback) instead. Azure backend returns a SAS URL.
+   */
+  async presignBlob(
+    opts: PresignBlobOptions,
+  ): Promise<{ blob_id: string; upload_url: string; expires_at: string }> {
+    const r = await this.call("POST", "/v1/blobs/presign", {
+      mime: opts.mime,
+      size: opts.size,
+      sha256: opts.sha256,
+      scope: opts.scope,
+      session_id: opts.sessionId,
+      artifact_id: opts.artifactId,
+      filename: opts.filename,
+    });
+    if (!r.ok) this.fail(r);
+    return r.data as {
+      blob_id: string;
+      upload_url: string;
+      expires_at: string;
+    };
+  }
+
+  /** Finalise a presigned upload — relay HEADs the bytes, verifies, flips ready. */
+  async confirmBlob(blobId: string): Promise<BlobRef> {
+    const r = await this.call(
+      "POST",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/confirm",
+    );
+    if (!r.ok) this.fail(r);
+    return r.data as BlobRef;
+  }
+}
+
+/** Per-blob metadata as returned by `POST /v1/blobs` and friends. */
+export interface BlobRef {
+  blob_id: string;
+  scope: "agent" | "session" | "artifact";
+  mime: string;
+  size: number;
+  sha256: string;
+  url?: string;
+  width?: number | null;
+  height?: number | null;
+  filename?: string | null;
+  status?: string;
+  session_id?: string | null;
+  artifact_id?: string | null;
+  created_at?: string;
+  confirmed_at?: string | null;
+  deleted_at?: string | null;
+}
+
+export interface UploadBlobOptions {
+  scope?: "agent" | "session" | "artifact";
+  sessionId?: string;
+  artifactId?: string;
+  /** Declared Content-Type. Defaults to `application/octet-stream`. The
+   *  relay sniffs leading bytes and may reject with `mime_mismatch`. */
+  mime?: string;
+  /** Optional display name (the relay records it for UX; never a path component). */
+  filename?: string;
+}
+
+export interface PresignBlobOptions {
+  mime: string;
+  size: number;
+  sha256: string;
+  scope?: "agent" | "session" | "artifact";
+  sessionId?: string;
+  artifactId?: string;
+  filename?: string;
+}
+
+export interface BlobTokenMintResponse {
+  token_id: string;
+  token: string;
+  token_prefix: string;
+  url: string;
+  expires_at: string;
+  once: boolean;
 }

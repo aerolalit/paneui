@@ -3,6 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { ZodError } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
+import type { BlobStore, RevokeCache } from "../blobs/index.js";
+import { makeRevokeCache } from "../blobs/index.js";
 import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
@@ -16,6 +18,8 @@ import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
+import blobs from "./routes/blobs.js";
+import blobBridge from "../bridge/blob-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -34,6 +38,8 @@ export function buildApp(
   config: Config,
   prisma: PrismaClient,
   generalLimiter?: SlidingWindowLimiter,
+  blobStore?: BlobStore,
+  blobRevokeCache?: RevokeCache,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -53,11 +59,20 @@ export function buildApp(
       config.RATE_LIMIT_WINDOW_SECONDS * 1000,
     );
 
+  // BlobStore + RevokeCache come as a pair: if a blobStore is configured,
+  // the cache exists (caller-supplied for tests, or auto-instantiated here
+  // for the HTTP-only convenience path).
+  const effectiveBlobRevokeCache =
+    blobRevokeCache ?? (blobStore ? makeRevokeCache() : undefined);
+
   app.use("*", async (c, next) => {
     c.set("config", config);
     c.set("prisma", prisma);
     c.set("registerLimiter", registerLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
+    if (blobStore) c.set("blobStore", blobStore);
+    if (effectiveBlobRevokeCache)
+      c.set("blobRevokeCache", effectiveBlobRevokeCache);
     await next();
   });
 
@@ -69,8 +84,13 @@ export function buildApp(
       await next();
     } finally {
       const ms = Date.now() - start;
-      // Redact the session token in /s/<tok>/... bridge paths.
-      const path = c.req.path.replace(/^\/s\/[^/]+/, "/s/***");
+      // Redact the session token in /s/<tok>/... bridge paths AND the blob
+      // capability token in /b/<tok> paths — both are bearer secrets in the
+      // URL itself and must never reach access logs / log aggregators in
+      // unredacted form.
+      const path = c.req.path
+        .replace(/^\/s\/[^/]+/, "/s/***")
+        .replace(/^\/b\/[^/]+/, "/b/***");
       if (path !== "/healthz") {
         log.info("req", {
           reqId,
@@ -105,7 +125,20 @@ export function buildApp(
       // (snake_case on the wire) are appended and omitted when undefined.
       return c.json(
         { error: serializeApiError(err) },
-        err.status as 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 500,
+        err.status as
+          | 400
+          | 401
+          | 403
+          | 404
+          | 409
+          | 410
+          | 413
+          | 415
+          | 422
+          | 426
+          | 429
+          | 500
+          | 501,
       );
     }
     if (err instanceof ZodError) {
@@ -141,13 +174,15 @@ export function buildApp(
   app.route("/skills", skill);
 
   // Global request-body size cap. Routes parse JSON bodies with c.req.json();
-  // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES) are only
-  // checked AFTER a full parse, so without this an oversized body is buffered
-  // and JSON.parse'd in memory before being rejected — a trivial OOM DoS. This
-  // ceiling sits a little above MAX_ARTIFACT_BYTES (the largest legitimate
-  // body) to leave room for JSON envelope/escaping overhead. The tighter
-  // /events limit is applied on that route below.
-  const globalBodyLimit = config.MAX_ARTIFACT_BYTES + 256 * 1024;
+  // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES,
+  // MAX_BLOB_BYTES) are only checked AFTER a full parse, so without this an
+  // oversized body is buffered and JSON.parse'd in memory before being
+  // rejected — a trivial OOM DoS. This ceiling sits a little above the
+  // largest legitimate body (max of artifacts and blob uploads) to leave room
+  // for JSON envelope / multipart boundary overhead. The tighter /events
+  // limit is applied on that route below.
+  const globalBodyLimit =
+    Math.max(config.MAX_ARTIFACT_BYTES, config.MAX_BLOB_BYTES) + 256 * 1024;
   app.use(
     "/v1/*",
     bodyLimit({
@@ -197,7 +232,12 @@ export function buildApp(
   app.route("/v1/keys", keys);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
+  app.route("/v1/blobs", blobs);
   app.route("/s", bridge);
+  // /b/<token> — capability-URL fetch path for blob bytes. The URL token IS
+  // the credential (no API key, no participant token), so the route module
+  // does its own validation; no agent-auth middleware here.
+  app.route("/b", blobBridge);
 
   return app;
 }

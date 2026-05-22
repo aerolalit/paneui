@@ -82,6 +82,149 @@ const schema = z.object({
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  // ------------------------------------------------------------------
+  // Blob attachments (v0.1.0)
+  // ------------------------------------------------------------------
+  // Selects the BlobStore implementation. "filesystem" is the zero-config
+  // self-host default (single-VM only — does not work behind a multi-replica
+  // autoscaler). "azure" requires the @azure/storage-blob runtime and is
+  // gated behind this setting so a filesystem self-host never loads the SDK.
+  // Other backends (s3, r2, gcs) are not implemented in v0.1.0 — see #152.
+  BLOB_STORE: z.enum(["filesystem", "azure"]).default("filesystem"),
+
+  // Per-blob upload size cap. 5 MB covers any reasonable image or short PDF
+  // and bounds the cost of being wrong about a single blob. Raise per-relay
+  // if needed; lower is the right v0.1.0 default.
+  MAX_BLOB_BYTES: z.coerce.number().int().positive().default(5_000_000),
+
+  // Per-session aggregate cap on attached blobs. 100 MB ≈ 20 max-size blobs.
+  MAX_BLOBS_PER_SESSION_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(100_000_000),
+
+  // Per-agent aggregate cap (across all of the agent's blobs in every scope).
+  // 500 MB ≈ 100 max-size blobs. LRU eviction kicks in at this ceiling in a
+  // later PR (#152 hardening section); v0.0-foundation just rejects at the cap.
+  MAX_BLOBS_PER_AGENT_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(500_000_000),
+
+  // Per-artifact aggregate cap (icons / fonts / static assets a UI needs to
+  // render). Smaller than session by design — artifact assets should be
+  // lightweight.
+  MAX_BLOBS_PER_ARTIFACT_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50_000_000),
+
+  // Filesystem backend root directory. Created on boot if missing; the relay
+  // refuses to start if it exists with world-readable permissions (mode bits
+  // & 0o007 !== 0). Files inside are written 0600.
+  BLOB_STORE_FS_DIR: z.string().default("./data/blobs"),
+
+  // ---- Azure Blob Storage backend (only consulted when BLOB_STORE=azure) ---
+  //
+  // The container the relay reads/writes. Created at startup if missing.
+  BLOB_STORE_AZURE_CONTAINER: z.string().default("pane-blobs"),
+  // Storage account URL — required for managed-identity auth (the production
+  // path on Azure Container Apps). Example:
+  //   https://stpaneeurprodblobs.blob.core.windows.net
+  // The hostname's first label is the account name; DefaultAzureCredential
+  // negotiates the token.
+  BLOB_STORE_AZURE_ACCOUNT_URL: z.string().optional(),
+  // Connection-string fallback — DEV / Azurite ONLY. If set, takes precedence
+  // over the managed-identity path. The relay logs a startup warning so
+  // operators don't ship this to prod by mistake.
+  BLOB_STORE_AZURE_CONNECTION_STRING: z.string().optional(),
+
+  // Lifetime of a presigned PUT (filesystem signed nonce / Azure SAS). 10
+  // minutes is enough for a human to upload from a phone over a slow
+  // connection; long enough to be useful, short enough that a leaked
+  // upload URL stops working before it can be replayed broadly.
+  BLOB_PRESIGN_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 60),
+
+  // Encrypt blob bytes at rest before writing to the BlobStore. Off by
+  // default — the hosted relay relies on Azure Blob's native at-rest
+  // encryption. Self-host turning this on adds a per-blob random DEK
+  // wrapped under PANE_SECRET_KEY. See blobs/encrypt.ts for the threat
+  // model (defends against storage-backend compromise without relay
+  // compromise; does NOT defend against relay compromise).
+  //
+  // NOTE the bool parser: z.coerce.boolean() treats any non-empty string
+  // as true (including "false"), so we use a strict comparator instead.
+  BLOB_ENCRYPT_AT_REST: z
+    .union([z.boolean(), z.string()])
+    .default(false)
+    .transform((v) => v === true || v === "true"),
+
+  // Optional virus / content scan webhook. When set, every successful
+  // upload is POSTed (HMAC-signed) to this URL; a non-clean verdict
+  // refuses the blob and deletes its bytes. Empty string / unset = no
+  // scan. Validated at startup with the same SSRF guard as the artifact
+  // and callback URLs — HTTPS only, no RFC1918, no cloud-metadata IPs.
+  BLOB_SCAN_HOOK: z.string().optional(),
+
+  // Per-request timeout for the scan hook. A scanner that takes longer
+  // is treated as "infected" (fail-closed). Tight by design — a long
+  // scanner blocks uploads.
+  BLOB_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  // When the per-agent aggregate cap would be exceeded, evict oldest
+  // agent-scope blobs (LRU by createdAt) to make room for the new one.
+  // Session-scope and artifact-scope blobs are NEVER evicted — they're
+  // tied to a live session / artifact and the cascade handles their
+  // cleanup. When false, the relay rejects the upload with
+  // quota_exceeded instead of evicting.
+  BLOB_LRU_EVICTION: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((v) => v === true || v === "true"),
+
+  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
+  // covers images and PDFs. Comma-separated for the env var; an empty string
+  // disables the allowlist (every sniffed MIME is accepted — only sensible
+  // for closed self-host).
+  BLOB_MIME_ALLOWLIST: z
+    .string()
+    .default("image/,application/pdf")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+    ),
+
+  // Default TTL for a /b/<token> capability URL minted against an
+  // artifact-scope blob. 30 days. Artifact-scope is the longest-lived; these
+  // tokens are typically reused across many session instances. Operators
+  // tighten this if exposure tolerance is lower.
+  BLOB_TOKEN_TTL_ARTIFACT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
+
+  // Default TTL for a /b/<token> capability URL minted against an agent-
+  // scope blob. 24 hours. Tightened from the original 7d design after the
+  // security review (proposal #152) — long-lived agent tokens invited
+  // "set and forget" leaks. Session-scope tokens don't get a knob here:
+  // they always inherit their session's TTL exactly.
+  BLOB_TOKEN_TTL_AGENT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(24 * 60 * 60),
+
   // Lowest @paneui/cli version this relay accepts. When a /v1/* request
   // arrives with `x-pane-cli-version` set to a strictly-lower semver, the
   // relay responds with 426 cli_upgrade_required and the CLI prints an

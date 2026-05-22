@@ -9,6 +9,12 @@ const require = createRequire(import.meta.url);
 
 const AjvCtor: new (opts?: object) => {
   compile: (schema: object) => ValidateFunction;
+  addFormat: (
+    name: string,
+    fmt:
+      | { type: "string"; validate: (s: string) => boolean }
+      | ((s: string) => boolean),
+  ) => unknown;
 } = require("ajv");
 
 // allErrors: true reports every failing JSON Schema path, not just the first.
@@ -23,6 +29,37 @@ const ajv = new AjvCtor({
   strict: false,
   allErrors: true,
   removeAdditional: false,
+});
+
+// `format: pane-blob-id` — schema vocabulary for blob references inside
+// event payloads + input_data. The format is purely SYNTACTIC: a cuid-
+// shaped string. The relay's authoritative access check (does this blob
+// exist? does the calling agent own it? is the scope compatible with this
+// session?) lives in the route layer because Ajv format validators are
+// expected to be sync + DB-free.
+//
+// Schemas that want to declare a blob ref:
+//
+//   { "type": "string", "format": "pane-blob-id" }
+//
+// …or, more commonly, wrapped in a tagged object so the schema can also
+// carry expected mime / size constraints:
+//
+//   {
+//     "type": "object",
+//     "properties": {
+//       "blob_id": { "type": "string", "format": "pane-blob-id" },
+//       "mime": { "type": "string", "pattern": "^image/" }
+//     },
+//     "required": ["blob_id"]
+//   }
+//
+// The format check rejects empty / wrong-shape strings up front so the
+// downstream batch-lookup can assume well-formed input.
+ajv.addFormat("pane-blob-id", {
+  type: "string",
+  validate: (s: string): boolean =>
+    typeof s === "string" && /^c[a-z0-9]{20,40}$/.test(s),
 });
 
 // Compiled-validator cache, keyed by `${sessionId}:${schemaVersion}`. Entries
