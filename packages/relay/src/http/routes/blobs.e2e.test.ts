@@ -1078,15 +1078,59 @@ describe("/b/<token> — capability URL", () => {
 
     const first = await fetchByToken(token);
     expect(first.status).toBe(200);
-    // Drain the body so the audit-write fires (it runs via setImmediate
-    // after the body is enqueued; we poll until the row is gone since the
-    // delete + cache add are async).
+    // Drain the body. Once-tokens are claimed atomically on the request
+    // path now (#199 fix) so the row is already gone when the response
+    // headers arrive — but draining first keeps the assertion ordering
+    // consistent with the multi-use test.
     await first.arrayBuffer();
     await waitForTokenGone(token_id);
 
     // Second GET — invalid (cache + DB miss).
     const second = await fetchByToken(token);
     expect(second.status).toBe(401);
+  });
+
+  it("once-token: concurrent GETs race safely — exactly one succeeds", async () => {
+    // Regression test for #199. Before the fix, the once-token claim
+    // (delete + revoke-cache add) ran inside setImmediate AFTER the
+    // response body was enqueued — two concurrent GETs could both pass
+    // the revokedAt check, both stream bytes, and both schedule the
+    // delete. The fix moves the claim to an atomic deleteMany on the
+    // request path before any bytes leave the relay.
+    const { apiKey } = await seedAgent();
+    const post = await upload(apiKey, await makeJpeg());
+    const { blob_id } = (await post.json()) as { blob_id: string };
+    const mint = await mintToken(apiKey, blob_id, { once: true });
+    const { token, token_id } = (await mint.json()) as {
+      token: string;
+      token_id: string;
+    };
+
+    // Fire N concurrent fetches. Single deleteMany serialises in the DB;
+    // exactly one wins, the rest see count=0 and return 401. We use
+    // N=8 — well above 2 so the race window is exercised but small
+    // enough to keep the test fast.
+    const N = 8;
+    const responses = await Promise.all(
+      Array.from({ length: N }, () => fetchByToken(token)),
+    );
+    // Drain all bodies regardless of status — otherwise the rejected
+    // responses' bodies linger and slow the test.
+    await Promise.all(responses.map((r) => r.arrayBuffer()));
+
+    const successes = responses.filter((r) => r.status === 200).length;
+    const failures = responses.filter((r) => r.status === 401).length;
+    expect(successes).toBe(1);
+    expect(failures).toBe(N - 1);
+
+    // The winning request already deleted the row before returning.
+    expect(
+      await prisma.blobToken.findUnique({ where: { id: token_id } }),
+    ).toBeNull();
+
+    // Any subsequent fetch also fails — cache + DB miss.
+    const later = await fetchByToken(token);
+    expect(later.status).toBe(401);
   });
 
   it("multi-use token: increments use_count + writes truncated IPs", async () => {
@@ -1658,10 +1702,19 @@ describe("/v1/blobs/:id/tokens — GET list", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Polling helpers — the audit write fires in a setImmediate after the body
-// is enqueued, so the test needs to wait for the DB to catch up. A fixed
-// `setTimeout(50)` would be a flake source; polling caps at 1s and bails
-// loudly if it never converges.
+// Polling helpers.
+//
+// waitForUseCount: the per-hit audit metadata (useCount / lastUsedAt /
+// IP-net columns) for multi-use tokens fires in a setImmediate after the
+// response body is enqueued, so the test needs to wait for the DB to catch
+// up. A fixed setTimeout(50) would be a flake source; polling caps at 1s
+// and bails loudly if it never converges.
+//
+// waitForTokenGone: post-#199 fix, once-token deletion is SYNCHRONOUS on
+// the request path — the row is already gone by the time the response
+// headers arrive. This helper is effectively a no-op for once-tokens
+// (the first findUnique returns null) but is kept as a defence-in-depth
+// guard against a future refactor that moves the delete back off-path.
 // ---------------------------------------------------------------------------
 async function waitForUseCount(
   tokenId: string,

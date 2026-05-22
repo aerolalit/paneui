@@ -23,7 +23,6 @@ import { Readable } from "node:stream";
 import type { PrismaClient } from "@prisma/client";
 import { errors } from "../http/errors.js";
 import type { AppEnv } from "../http/env.js";
-import type { RevokeCache } from "../blobs/index.js";
 import {
   hashBlobToken,
   looksLikeBlobToken,
@@ -88,6 +87,39 @@ blobBridge.get("/:token", async (c) => {
     throw errors.blobTokenInvalid();
   }
 
+  // 4b. Once-token claim. Atomic + on the request path — not deferred to
+  // setImmediate like the rest of the audit work. Two concurrent GETs for
+  // the same `once` token both passed the revokedAt check above (a normal
+  // browser retry after a dropped TCP connection lands here); only one
+  // must be allowed to proceed. `deleteMany(... revokedAt: null)` is a
+  // single SQL DELETE with a WHERE clause that the DB serialises — the
+  // request that loses the race sees `count === 0` and is turned away
+  // before any bytes leave the relay. The hash is added to the in-process
+  // revoke cache on BOTH the winner and loser paths so any subsequent
+  // in-flight retry short-circuits at step 2 above.
+  //
+  // Once-tokens deliberately do NOT persist firstSeenIpNet / lastSeenIpNet —
+  // the row is gone before the bytes stream and there is nowhere to write
+  // them to. This matches the pre-#199 behaviour (the old
+  // `writeAuditAndConsume` computed `ipNet` but never used it inside the
+  // `if (tok.once)` branch — it deleted the row and returned). The
+  // /b/<token> access-log entry (app.ts middleware) carries reqId, method,
+  // path (redacted), status, and timing for the request; operators who
+  // need the requester IP for forensic purposes should correlate via the
+  // upstream proxy / load-balancer logs.
+  if (tok.once) {
+    const claimed = await prisma.blobToken.deleteMany({
+      where: { id: tok.id, revokedAt: null },
+    });
+    cache?.add(hash);
+    if (claimed.count === 0) {
+      // Lost the race to a concurrent GET; collapse to the same generic
+      // error every other "this token won't work" branch returns so an
+      // attacker can't distinguish "raced" from "expired" / "revoked".
+      throw errors.blobTokenInvalid();
+    }
+  }
+
   const stream = await store.get(tok.blob.storageKey);
   if (!stream) {
     // Bytes are gone — backend rot. Mark the blob failed for next time so
@@ -135,42 +167,39 @@ blobBridge.get("/:token", async (c) => {
   c.header("Cross-Origin-Resource-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
 
-  // 7 + 8. Audit + once-cleanup. These run AFTER the body is enqueued so a
-  // client cancelling the download still gets credited a use (best-effort
-  // semantics). Errors are swallowed — the human got their bytes.
-  setImmediate(() => {
-    void writeAuditAndConsume(prisma, tok, hash, c, cache);
-  });
+  // 7. Audit metadata write. Runs AFTER the body is enqueued so a client
+  // cancelling the download still gets credited a use (best-effort
+  // semantics). Once-tokens are NOT touched here — they were already
+  // claimed atomically at step 4b above, before any bytes left the
+  // relay. Errors are swallowed — the human got their bytes.
+  if (!tok.once) {
+    setImmediate(() => {
+      void writeAuditUpdate(prisma, tok, c);
+    });
+  }
 
   return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
 });
 
-/** Fire-and-forget audit metadata update + once-token consumption. */
-async function writeAuditAndConsume(
+/**
+ * Fire-and-forget audit metadata update for multi-use tokens.
+ *
+ * `once`-tokens are handled inline at request time (step 4b in the route)
+ * and never reach this function — the deferred path is for the per-hit
+ * counters (`useCount`, `lastUsedAt`, IP-net columns) that don't carry
+ * security semantics.
+ */
+async function writeAuditUpdate(
   prisma: PrismaClient,
   tok: {
     id: string;
-    once: boolean;
     firstSeenIpNet: string | null;
   },
-  hash: string,
   c: { req: { header: (k: string) => string | undefined } },
-  cache?: RevokeCache,
 ): Promise<void> {
   const ipNet = truncateIp(
     c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? null,
   );
-
-  if (tok.once) {
-    // Once-tokens are deleted (not just revoked) so the row never sits as
-    // dead audit data. The hash goes in the revoke cache to short-circuit
-    // any in-flight retry from the same client.
-    await prisma.blobToken.delete({ where: { id: tok.id } }).catch(() => {
-      /* best-effort */
-    });
-    cache?.add(hash);
-    return;
-  }
 
   await prisma.blobToken
     .update({
