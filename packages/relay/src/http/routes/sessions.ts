@@ -563,6 +563,7 @@ sessions.get("/:id", requireAgent, async (c) => {
 
 sessions.delete("/:id", requireAgent, async (c) => {
   const prisma = c.get("prisma");
+  const store = c.get("blobStore");
   const id = c.req.param("id");
   const me = c.get("agent");
   const session = await prisma.session.findUnique({ where: { id } });
@@ -572,6 +573,44 @@ sessions.delete("/:id", requireAgent, async (c) => {
     where: { id },
     data: { status: "closed", expiresAt: new Date() },
   });
+
+  // Cascade-delete session-scope blobs (issue #209). The Blob.session relation
+  // declares `onDelete: Cascade`, but session delete is a SOFT close (status
+  // flip + expiresAt=now), not a row delete, so the cascade never fires. Mirror
+  // it explicitly: every session-scope blob still attached to this session
+  // becomes status="deleted" / deletedAt=now, which is the same shape `DELETE
+  // /v1/blobs/:id` produces. Capability tokens minted against these blobs stop
+  // working automatically — blob-bridge.ts gates GET on
+  // `status === "ready" && deletedAt === null`, so the soft-delete closes the
+  // /b/<token> surface without us touching BlobToken rows.
+  const liveBlobs = await prisma.blob.findMany({
+    where: {
+      scope: "session",
+      sessionId: id,
+      status: { not: "deleted" },
+    },
+    select: { id: true, storageKey: true },
+  });
+  if (liveBlobs.length > 0) {
+    // Best-effort backend delete first, then mark rows. Mirrors the per-blob
+    // DELETE handler: a backend failure orphans the bytes for the janitor to
+    // sweep but does not block the soft-delete (the caller's intent — the
+    // session is gone, the blobs are gone — is satisfied at the row level).
+    if (store) {
+      await Promise.all(
+        liveBlobs.map((b) =>
+          store.delete(b.storageKey).catch(() => {
+            /* best-effort; orphan-sweep job picks up the leftover */
+          }),
+        ),
+      );
+    }
+    await prisma.blob.updateMany({
+      where: { id: { in: liveBlobs.map((b) => b.id) } },
+      data: { status: "deleted", deletedAt: new Date() },
+    });
+  }
+
   await appendSystemEvent(prisma, id, "system.session.expired", {});
   return c.body(null, 204);
 });

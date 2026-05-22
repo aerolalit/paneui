@@ -805,6 +805,116 @@ describe("/v1/blobs — session-scope upload", () => {
     const found = await prisma.blob.findUnique({ where: { id: blob_id } });
     expect(found).toBeNull();
   });
+
+  // Regression for issue #209. The DB-level cascade above only fires on a real
+  // row delete; the HTTP DELETE /v1/sessions/:id route does a soft close
+  // (status="closed", expiresAt=now()) and the cascade never runs in practice.
+  // Without the explicit cascade in the route, the blob row stayed
+  // status="ready" / deletedAt=null indefinitely — quota leak, /b/<token>
+  // links kept working, scope contract broken.
+  it("soft-deletes session-scope blobs via the HTTP session delete route", async () => {
+    const { apiKey } = await seedAgent();
+
+    // Use the real create flow so the session is created end-to-end.
+    const create = await app.fetch(
+      new Request("http://t/v1/sessions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          artifact: {
+            type: "html-inline",
+            source: "<html></html>",
+            event_schema: {
+              events: {
+                ping: {
+                  emittedBy: ["agent"],
+                  payload: { type: "object", additionalProperties: true },
+                },
+              },
+            },
+          },
+          title: "issue-209 regression",
+        }),
+      }),
+    );
+    expect(create.status).toBe(201);
+    const { session_id } = (await create.json()) as { session_id: string };
+
+    const upRes = await upload(apiKey, await makeJpeg(), {
+      scope: "session",
+      sessionId: session_id,
+    });
+    expect(upRes.status).toBe(201);
+    const { blob_id } = (await upRes.json()) as { blob_id: string };
+
+    const del = await app.fetch(
+      new Request(`http://t/v1/sessions/${session_id}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(del.status).toBe(204);
+
+    // Row is still there (soft-delete), but marked deleted.
+    const row = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(row).not.toBeNull();
+    expect(row?.status).toBe("deleted");
+    expect(row?.deletedAt).not.toBeNull();
+
+    // Agent-side GET now returns blob_not_found, same as for any soft-deleted
+    // blob (the existing /v1/blobs/:id GET handler folds status="deleted" into
+    // the not-found surface — defense in depth + existence-oracle parity).
+    const getAfter = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(getAfter.status).toBe(404);
+
+    // List no longer surfaces it — quota accounting drops accordingly.
+    const list = await app.fetch(
+      new Request("http://t/v1/blobs", {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    const listBody = (await list.json()) as {
+      items: Array<{ blob_id: string }>;
+    };
+    expect(listBody.items.find((i) => i.blob_id === blob_id)).toBeUndefined();
+  });
+
+  it("session delete is a no-op for already-soft-deleted blobs (idempotent)", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const sessionId = await seedSessionFor(agentId);
+
+    const upRes = await upload(apiKey, await makeJpeg(), {
+      scope: "session",
+      sessionId,
+    });
+    const { blob_id } = (await upRes.json()) as { blob_id: string };
+
+    // Pre-delete the blob via the per-blob API, then close the session. The
+    // session-delete path must not try to re-delete the storage object or
+    // double-flip the row.
+    const delBlob = await app.fetch(
+      new Request(`http://t/v1/blobs/${blob_id}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(delBlob.status).toBe(200);
+
+    const delSession = await app.fetch(
+      new Request(`http://t/v1/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(delSession.status).toBe(204);
+
+    const row = await prisma.blob.findUnique({ where: { id: blob_id } });
+    expect(row?.status).toBe("deleted");
+  });
 });
 
 describe("/v1/blobs — artifact-scope upload", () => {
