@@ -67,6 +67,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 # Default to an in-container SQLite path; users can override with -e DATABASE_URL.
 ENV DATABASE_URL=file:/app/data/pane.db
+# Default filesystem-backend blob dir to a path inside the persisted /app/data
+# volume. The relay's code default is `./data/blobs` (relative to cwd) which
+# resolves to /app/packages/relay/data inside the image — a read-only path for
+# the non-root `node` user, so the boot would fail with EACCES on first
+# mkdir. Pinning the env to /app/data/blobs lands blobs in the data volume
+# alongside the SQLite DB, so they persist across restarts. Operators can
+# still override with -e BLOB_STORE_FS_DIR=... See #172.
+ENV BLOB_STORE_FS_DIR=/app/data/blobs
 
 # Prod deps only. --ignore-scripts: skip the root `prepare`/husky hook (husky is
 # a devDependency and is absent under --omit=dev — without this, `npm ci` fails).
