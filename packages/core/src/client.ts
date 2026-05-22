@@ -663,7 +663,17 @@ export class PaneClient {
       blob = file;
     } else {
       // Buffer / Uint8Array path — wrap in a Blob with the declared MIME.
-      const u8 = file instanceof Uint8Array ? file : new Uint8Array(file);
+      // Copy into a freshly allocated Uint8Array so the buffer type
+      // narrows from `ArrayBufferLike` (which includes SharedArrayBuffer)
+      // to `ArrayBuffer` specifically — the Blob constructor accepts only
+      // the latter under @types/node ≥25 + TS ≥5.7's generic narrowing of
+      // Uint8Array<TArrayBuffer>. `new Uint8Array(length)` returns
+      // `Uint8Array<ArrayBuffer>` by construction, satisfying BlobPart
+      // without a type cast. The extra copy is one walk over the bytes —
+      // negligible vs the network upload that follows.
+      const src = file instanceof Uint8Array ? file : new Uint8Array(file);
+      const u8 = new Uint8Array(src.byteLength);
+      u8.set(src);
       blob = new Blob([u8], {
         type: opts.mime ?? "application/octet-stream",
       });
