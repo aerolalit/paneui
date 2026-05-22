@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v2.2.0 -->
+<!-- pane skill v2.3.0 -->
 
 # pane
 
@@ -780,7 +780,7 @@ Notes are fine to send directly.
 you need an answer to, or for the human's answer to a session question
 (use events). UI preferences belong in `pane taste`, not here.
 
-### `pane blob` — binary attachments (images, PDFs, etc.)
+### `pane blob` — binary attachments (images, PDFs, audio, video)
 
 ```sh
 # Upload a file. Default scope is "agent" (reusable across the agent's sessions).
@@ -792,26 +792,34 @@ pane blob upload --file ./hero.jpg --scope session --session-id ses_xxx
 # Artifact-scope (reusable across every session using the artifact):
 pane blob upload --file ./icon.svg --scope artifact --artifact-id <id>
 
-# Mint a /b/<token> URL the human can fetch directly (no agent API key):
-pane blob mint-token <blob_id>             # default TTL: 24h agent / session-TTL / 30d artifact
-pane blob mint-token <blob_id> --once      # self-deletes on first GET
-
-# Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
-pane blob revoke-token <blob_id> <token_id>
+# List your blobs (newest first; paginated via --cursor):
+pane blob list                              # first 50
+pane blob list --limit 25 --cursor <opaque> # next page
 
 # Inspect / download / delete:
 pane blob show <blob_id>
 pane blob download <blob_id> --out ./out.png
 pane blob delete <blob_id>
+
+# Mint a /b/<token> URL the human can fetch directly (no agent API key):
+pane blob token mint <blob_id>              # default TTL: 24h agent / session-TTL / 30d artifact
+pane blob token mint <blob_id> --once       # self-deletes on first GET
+
+# Enumerate the tokens minted against one blob (audit — includes revoked rows):
+pane blob token list <blob_id>
+
+# Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
+pane blob token revoke <blob_id> <token_id>
 ```
 
 **One-shot upload + emit** — most agents emit events that REFERENCE blobs
-rather than embed them. Use `pane send --blob` to do both in one call:
+rather than embed them. Use `pane session send --blob` to do both in one
+call:
 
 ```sh
 # Uploads ./chart.png as a session-scope blob, then sends an event
 # whose data is { blob: <BlobRef> } into the session.
-pane send <session-id> --type chart.update --blob ./chart.png
+pane session send <session-id> --type chart.update --blob ./chart.png
 ```
 
 The session's event schema should declare a blob field with
@@ -925,7 +933,7 @@ can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
 
 ```sh
 # Wait for the human's upload event.
-EVENT=$(pane watch "$SID" --type photo.attached)
+EVENT=$(pane session watch "$SID" --type photo.attached)
 BLOB_ID=$(echo "$EVENT" | jq -r .data.blob.blob_id)
 
 # Download the bytes.
@@ -985,11 +993,12 @@ pipeline) and wants the pane to render it. There are two ways:
 
 ```sh
 # Upload — get back a BlobRef bound to the session.
-REF=$(pane blob upload ./weather-chart.png --session "$SID" --json)
+REF=$(pane blob upload --file ./weather-chart.png --scope session --session-id "$SID")
 BLOB_ID=$(echo "$REF" | jq -r .blob_id)
 
 # Emit an event that only carries the id — no inline bytes.
-pane send "$SID" image.delivered --data "{\"blob\":{\"blob_id\":\"$BLOB_ID\"}}"
+pane session send "$SID" --type image.delivered \
+  --data "{\"blob\":{\"blob_id\":\"$BLOB_ID\"}}"
 ```
 
 **3. Inside the artifact, lazy-fetch the bytes and render.**
