@@ -1430,6 +1430,233 @@ describe("/b/<token> — passthrough when encryption-at-rest is off", () => {
   });
 });
 
+describe("/v1/blobs — GET list", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  async function listBlobs(
+    apiKey: string,
+    qs: { cursor?: string; limit?: number } = {},
+  ): Promise<Response> {
+    const params = new URLSearchParams();
+    if (qs.cursor !== undefined) params.set("cursor", qs.cursor);
+    if (qs.limit !== undefined) params.set("limit", String(qs.limit));
+    const q = params.toString();
+    return app.fetch(
+      new Request(`http://t/v1/blobs${q ? "?" + q : ""}`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+  }
+
+  it("rejects an unauthenticated call with 401", async () => {
+    const res = await app.fetch(new Request("http://t/v1/blobs"));
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the agent's own blobs newest-first", async () => {
+    const { apiKey } = await seedAgent();
+    const created: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await upload(apiKey, await makeJpeg(128));
+      expect(r.status).toBe(201);
+      const j = (await r.json()) as { blob_id: string };
+      created.push(j.blob_id);
+    }
+
+    const res = await listBlobs(apiKey);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: { blob_id: string }[];
+      next_cursor: string | null;
+    };
+    expect(body.next_cursor).toBeNull();
+    expect(body.items.map((b) => b.blob_id)).toEqual(created.slice().reverse());
+  });
+
+  it("excludes soft-deleted blobs", async () => {
+    const { apiKey } = await seedAgent();
+    const r1 = await upload(apiKey, await makeJpeg(128));
+    const r2 = await upload(apiKey, await makeJpeg(128));
+    const a = (await r1.json()) as { blob_id: string };
+    const b = (await r2.json()) as { blob_id: string };
+
+    const del = await deleteBlob(apiKey, a.blob_id);
+    expect(del.status).toBe(200);
+
+    const res = await listBlobs(apiKey);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: { blob_id: string }[] };
+    expect(body.items.map((x) => x.blob_id)).toEqual([b.blob_id]);
+  });
+
+  it("isolates by agent — never lists another agent's blobs", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    await upload(alice.apiKey, await makeJpeg(128));
+    const bobUpload = await upload(bob.apiKey, await makeJpeg(128));
+    const bobJson = (await bobUpload.json()) as { blob_id: string };
+
+    const res = await listBlobs(bob.apiKey);
+    const body = (await res.json()) as { items: { blob_id: string }[] };
+    expect(body.items.map((x) => x.blob_id)).toEqual([bobJson.blob_id]);
+  });
+
+  it("paginates via opaque cursor and returns next_cursor when more rows exist", async () => {
+    const { apiKey } = await seedAgent();
+    const created: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const r = await upload(apiKey, await makeJpeg(128));
+      const j = (await r.json()) as { blob_id: string };
+      created.push(j.blob_id);
+    }
+
+    const r1 = await listBlobs(apiKey, { limit: 2 });
+    expect(r1.status).toBe(200);
+    const page1 = (await r1.json()) as {
+      items: { blob_id: string }[];
+      next_cursor: string | null;
+    };
+    expect(page1.items.length).toBe(2);
+    expect(page1.next_cursor).not.toBeNull();
+
+    const r2 = await listBlobs(apiKey, {
+      limit: 2,
+      cursor: page1.next_cursor!,
+    });
+    const page2 = (await r2.json()) as {
+      items: { blob_id: string }[];
+      next_cursor: string | null;
+    };
+    expect(page2.items.length).toBe(2);
+    expect(page2.next_cursor).toBeNull();
+
+    // Combined pages cover every created blob, newest first.
+    const all = [
+      ...page1.items.map((x) => x.blob_id),
+      ...page2.items.map((x) => x.blob_id),
+    ];
+    expect(all).toEqual(created.slice().reverse());
+  });
+
+  it("rejects an out-of-range limit with 400", async () => {
+    const { apiKey } = await seedAgent();
+    const r = await listBlobs(apiKey, { limit: 101 });
+    expect(r.status).toBe(400);
+  });
+
+  it("rejects an obviously malformed cursor with 400", async () => {
+    const { apiKey } = await seedAgent();
+    const r = await listBlobs(apiKey, { cursor: "not-a-valid-cursor" });
+    expect(r.status).toBe(400);
+  });
+});
+
+describe("/v1/blobs/:id/tokens — GET list", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  async function listTokens(apiKey: string, blobId: string): Promise<Response> {
+    return app.fetch(
+      new Request(`http://t/v1/blobs/${blobId}/tokens`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+  }
+
+  it("rejects an unauthenticated call with 401", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/blobs/cmprefix0000000000000000/tokens"),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 blob_not_found when the agent doesn't own the blob", async () => {
+    const alice = await seedAgent();
+    const bob = await seedAgent();
+    const upl = await upload(alice.apiKey, await makeJpeg(128));
+    const ablob = (await upl.json()) as { blob_id: string };
+
+    const res = await listTokens(bob.apiKey, ablob.blob_id);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("blob_not_found");
+  });
+
+  it("lists active + revoked tokens with the expected audit shape (and never returns the plaintext)", async () => {
+    const { apiKey } = await seedAgent();
+    const upl = await upload(apiKey, await makeJpeg(128));
+    const { blob_id } = (await upl.json()) as { blob_id: string };
+
+    const m1 = await mintToken(apiKey, blob_id, { once: true });
+    const m2 = await mintToken(apiKey, blob_id);
+    const t1 = (await m1.json()) as {
+      token: string;
+      token_id: string;
+      token_prefix: string;
+    };
+    const t2 = (await m2.json()) as { token: string; token_id: string };
+
+    // Revoke t2 so the listing must surface revoked_at as non-null.
+    const rev = await revokeToken(apiKey, blob_id, t2.token_id);
+    expect(rev.status).toBe(200);
+
+    const res = await listTokens(apiKey, blob_id);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      blob_id: string;
+      items: Array<{
+        token_id: string;
+        token_prefix: string;
+        expires_at: string;
+        once: boolean;
+        created_at: string;
+        last_used_at: string | null;
+        use_count: number;
+        revoked_at: string | null;
+        // The plaintext MUST NOT appear.
+        token?: never;
+      }>;
+    };
+    expect(body.blob_id).toBe(blob_id);
+    expect(body.items.length).toBe(2);
+
+    // Newest-first ordering — t2 was minted last.
+    const ids = body.items.map((x) => x.token_id);
+    expect(ids).toEqual([t2.token_id, t1.token_id]);
+
+    // Audit shape sanity.
+    const a = body.items.find((x) => x.token_id === t1.token_id)!;
+    expect(a.token_prefix).toBe(t1.token_prefix);
+    expect(a.once).toBe(true);
+    expect(a.use_count).toBe(0);
+    expect(a.last_used_at).toBeNull();
+    expect(a.revoked_at).toBeNull();
+
+    const b = body.items.find((x) => x.token_id === t2.token_id)!;
+    expect(b.revoked_at).not.toBeNull();
+
+    // No row carries a `token` field — that's invariant.
+    for (const item of body.items) {
+      expect((item as Record<string, unknown>).token).toBeUndefined();
+    }
+  });
+
+  it("returns an empty list (not 404) for a blob with no tokens yet", async () => {
+    const { apiKey } = await seedAgent();
+    const upl = await upload(apiKey, await makeJpeg(128));
+    const { blob_id } = (await upl.json()) as { blob_id: string };
+
+    const res = await listTokens(apiKey, blob_id);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { blob_id: string; items: unknown[] };
+    expect(body.blob_id).toBe(blob_id);
+    expect(body.items).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Polling helpers — the audit write fires in a setImmediate after the body
 // is enqueued, so the test needs to wait for the DB to catch up. A fixed

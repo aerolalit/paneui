@@ -793,6 +793,37 @@ export class PaneClient {
   }
 
   /**
+   * GET /v1/blobs — list YOUR agent's non-deleted blobs (newest first).
+   * Paginated via opaque cursor: when `next_cursor` is non-null, pass it
+   * back as `cursor` on the next call.
+   */
+  async listBlobs(
+    opts: ListBlobsOptions = {},
+  ): Promise<{ items: BlobRef[]; next_cursor: string | null }> {
+    const params = new URLSearchParams();
+    if (opts.cursor !== undefined) params.set("cursor", opts.cursor);
+    if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    const r = await this.call("GET", "/v1/blobs" + (qs ? "?" + qs : ""));
+    if (!r.ok) this.fail(r);
+    return r.data as { items: BlobRef[]; next_cursor: string | null };
+  }
+
+  /**
+   * GET /v1/blobs/:id/tokens — enumerate the capability tokens minted
+   * against one blob, including revoked rows (for audit). The plaintext
+   * token is NEVER returned — it isn't stored, only its sha256 is.
+   */
+  async listBlobTokens(blobId: string): Promise<BlobTokenListResponse> {
+    const r = await this.call(
+      "GET",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/tokens",
+    );
+    if (!r.ok) this.fail(r);
+    return r.data as BlobTokenListResponse;
+  }
+
+  /**
    * Issue a presigned PUT URL for direct-to-storage upload. Returns the
    * upload URL + the blob_id (already reserved in the relay's DB with
    * status=pending) + expiry. After PUTting the bytes to the URL, call
@@ -879,4 +910,33 @@ export interface BlobTokenMintResponse {
   url: string;
   expires_at: string;
   once: boolean;
+}
+
+/** Options for `listBlobs()` — opaque cursor + page-size knob. */
+export interface ListBlobsOptions {
+  /** Opaque pagination cursor from a prior `next_cursor`. */
+  cursor?: string;
+  /** Page size; relay clamps to 1..100. Defaults to the relay default (50). */
+  limit?: number;
+}
+
+/** One row in the response from `listBlobTokens()`. */
+export interface BlobTokenAuditEntry {
+  token_id: string;
+  token_prefix: string;
+  expires_at: string;
+  once: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  use_count: number;
+  /** Non-null when the token has been revoked. Expired-but-unrevoked rows
+   *  carry `revoked_at: null` and an `expires_at` in the past — both are
+   *  useful for audit. */
+  revoked_at: string | null;
+}
+
+/** Shape returned by `listBlobTokens()`. */
+export interface BlobTokenListResponse {
+  blob_id: string;
+  items: BlobTokenAuditEntry[];
 }

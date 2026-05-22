@@ -12,6 +12,9 @@ export type {
   UploadBlobOptions,
   PresignBlobOptions,
   BlobTokenMintResponse,
+  ListBlobsOptions,
+  BlobTokenAuditEntry,
+  BlobTokenListResponse,
 } from "./client.js";
 
 export { openStream } from "./stream.js";

@@ -1,10 +1,12 @@
 // /v1/blobs — binary attachments owned by an agent.
 //
 // Endpoints in this module:
+//   GET    /v1/blobs                          agent-auth list (paginated)
 //   POST   /v1/blobs                          multipart upload, three scopes
 //   GET    /v1/blobs/:id                      agent-auth download
 //   GET    /v1/blobs/:id/metadata             agent-auth metadata-only (JSON BlobRef)
 //   DELETE /v1/blobs/:id                      soft-delete (idempotent)
+//   GET    /v1/blobs/:id/tokens               agent-auth list capability tokens (audit)
 //   POST   /v1/blobs/:id/tokens               mint a /b/<token> capability URL
 //   DELETE /v1/blobs/:id/tokens/:token_id     revoke a token
 //
@@ -102,6 +104,124 @@ function serialize(row: BlobRow): SerializedBlob {
 // storageKeyFor is imported from ../../blobs/index.js (defined alongside the
 // shared upload pipeline so both the /v1 route and the bridge route compute
 // the same opaque storage key from a blob id).
+
+// Pagination defaults for GET /v1/blobs. The list endpoint uses an opaque
+// (createdAt DESC, id DESC) cursor — mirrors how GET /v1/sessions paginates
+// so the agent only needs to learn one shape.
+const LIST_DEFAULT_LIMIT = 50;
+const LIST_MAX_LIMIT = 100;
+
+interface BlobListCursor {
+  created_at: string;
+  id: string;
+}
+
+function encodeBlobCursor(cur: BlobListCursor): string {
+  return Buffer.from(JSON.stringify(cur), "utf8").toString("base64url");
+}
+
+function decodeBlobCursor(s: string): BlobListCursor | null {
+  try {
+    const decoded = Buffer.from(s, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      typeof (parsed as BlobListCursor).created_at !== "string" ||
+      typeof (parsed as BlobListCursor).id !== "string"
+    ) {
+      return null;
+    }
+    const ts = new Date((parsed as BlobListCursor).created_at);
+    if (Number.isNaN(ts.getTime())) return null;
+    return parsed as BlobListCursor;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs — list the calling agent's non-deleted blobs.
+//
+// Ordered (createdAt DESC, id DESC), paginated via an opaque cursor that
+// encodes the tuple of the last row on the previous page. Caller knobs:
+//
+//   ?cursor=<opaque>  resume after a given page boundary
+//   ?limit=<n>        page size (1..100), defaults to 50
+//
+// Cross-tenant isolation: WHERE ownerId = me — every other blob route in
+// this file uses the same pattern.
+// ---------------------------------------------------------------------------
+blobs.get("/", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const limitRaw = c.req.query("limit");
+  let limit = LIST_DEFAULT_LIMIT;
+  if (limitRaw !== undefined) {
+    const n = Number(limitRaw);
+    if (!Number.isInteger(n) || n < 1 || n > LIST_MAX_LIMIT) {
+      throw errors.invalidRequest(
+        `invalid limit '${limitRaw}'`,
+        undefined,
+        `limit must be an integer in 1..${LIST_MAX_LIMIT}`,
+      );
+    }
+    limit = n;
+  }
+
+  const cursorRaw = c.req.query("cursor");
+  let cursor: BlobListCursor | null = null;
+  if (cursorRaw !== undefined) {
+    cursor = decodeBlobCursor(cursorRaw);
+    if (cursor === null) {
+      throw errors.invalidRequest(
+        "invalid cursor",
+        undefined,
+        "the cursor must be the opaque `next_cursor` value returned by a previous page; do not construct it by hand",
+      );
+    }
+  }
+
+  const cursorWhere =
+    cursor !== null
+      ? {
+          OR: [
+            { createdAt: { lt: new Date(cursor.created_at) } },
+            {
+              createdAt: new Date(cursor.created_at),
+              id: { lt: cursor.id },
+            },
+          ],
+        }
+      : {};
+
+  const rows = await prisma.blob.findMany({
+    where: {
+      ownerId: me.id,
+      // Exclude soft-deleted blobs from the listing — they're audit-only.
+      deletedAt: null,
+      ...cursorWhere,
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+  });
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+
+  return c.json({
+    items: page.map(serialize),
+    next_cursor:
+      hasMore && last
+        ? encodeBlobCursor({
+            created_at: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // POST /v1/blobs — multipart upload.
@@ -623,6 +743,59 @@ blobs.post("/:id/confirm", async (c) => {
     }
     throw e;
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs/:id/tokens — enumerate the capability tokens on one blob.
+//
+// Audit endpoint. Returns ALL tokens (active, expired, and revoked) so the
+// agent can correlate a revoked_at on a row with whatever they minted. The
+// plaintext token is NEVER returned (it isn't even stored — only the sha256
+// of the plaintext is); only the prefix is included so an operator can match
+// a redacted access-log line against the row.
+//
+// Cross-tenant isolation: the agent must own the parent blob. Otherwise we'd
+// leak "this blob exists" via the 200-vs-404 channel.
+// ---------------------------------------------------------------------------
+blobs.get("/:id/tokens", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const blobId = c.req.param("id");
+  const blob = await prisma.blob.findUnique({
+    where: { id: blobId },
+    select: { id: true, ownerId: true },
+  });
+  if (!blob || blob.ownerId !== me.id) throw errors.blobNotFound();
+
+  const rows = await prisma.blobToken.findMany({
+    where: { blobId: blob.id },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: {
+      id: true,
+      tokenPrefix: true,
+      expiresAt: true,
+      once: true,
+      createdAt: true,
+      lastUsedAt: true,
+      useCount: true,
+      revokedAt: true,
+    },
+  });
+
+  return c.json({
+    blob_id: blob.id,
+    items: rows.map((r) => ({
+      token_id: r.id,
+      token_prefix: r.tokenPrefix,
+      expires_at: r.expiresAt.toISOString(),
+      once: r.once,
+      created_at: r.createdAt.toISOString(),
+      last_used_at: r.lastUsedAt?.toISOString() ?? null,
+      use_count: r.useCount,
+      revoked_at: r.revokedAt?.toISOString() ?? null,
+    })),
+  });
 });
 
 // ---------------------------------------------------------------------------
