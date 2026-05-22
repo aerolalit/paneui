@@ -74,6 +74,9 @@ export interface SeedSessionOptions {
   artifactSource?: string;
   eventSchema?: object;
   inputSchema?: object | null;
+  /** Per-session tab title. Defaults to a benign placeholder; tests exercising
+   * the bridge shell's <title> rendering pass their own value. */
+  title?: string;
   /** Reuse an existing artifact version instead of creating a fresh one. */
   artifactVersionId?: string;
 }
@@ -104,6 +107,7 @@ export async function seedSessionRow(
       id: sessionId,
       agentId: opts.agentId,
       artifactVersionId,
+      title: opts.title ?? "Pane Session",
       status: opts.status ?? "open",
       expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
       metadata: opts.metadata ?? undefined,

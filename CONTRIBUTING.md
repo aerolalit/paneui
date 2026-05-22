@@ -76,7 +76,7 @@ matching the existing history:
 ```
 
 Examples: `fix(relay): auto-select Prisma schema by DATABASE_URL`,
-`feat(cli): add pane watch`, `docs: add SECURITY.md`. Common types are `feat`,
+`feat(cli): add pane session watch`, `docs: add SECURITY.md`. Common types are `feat`,
 `fix`, `docs`, `chore`, `refactor`, `test`. The scope (`relay`, `cli`, `core`) is
 optional but encouraged.
 

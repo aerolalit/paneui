@@ -1,4 +1,4 @@
-// `pane create` — create a session via POST /v1/sessions.
+// `pane session create` — create a session via POST /v1/sessions.
 
 import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
@@ -23,6 +23,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   metadata: "--metadata",
   callback: "--callback",
   input_data: "--input-data",
+  title: "--title",
   "artifact.id": "--artifact-id",
   "artifact.version": "--version",
   "artifact.type": "--artifact-type",
@@ -43,16 +44,16 @@ function schemaPathToFlag(path: (string | number)[]): string {
   return dotted;
 }
 
-export const createHelp = `pane create — create a Pane session
+export const createHelp = `pane session create — create a Pane session
 
 A session is one use of an artifact. Supply the artifact in ONE of two ways:
 
   Reference form — instance an existing reusable artifact (the cheap path,
   no HTML re-sent):
-    pane create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
+    pane session create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
 
   Inline form — a one-off artifact, defined on this call:
-    pane create --artifact <path|inline> [--event-schema <path|json>] [options]
+    pane session create --artifact <path|inline> [--event-schema <path|json>] [options]
 
 Exactly one of --artifact-id / --artifact must be given.
 
@@ -90,6 +91,11 @@ Artifact (choose one):
                       emit against it. See docs/SPEC.md for the full grammar.
 
 Options:
+  --title <text>      Tab title shown to the human (max 80 chars, single
+                      line). Required, with one ergonomic exception: when
+                      --artifact-id references a named artifact, the relay
+                      falls back to Artifact.name. Inline (--artifact …) form
+                      always needs --title.
   --input-data <v>    This instance's seed data — a JSON object (file path or
                       inline JSON), validated by the relay against the artifact
                       version's input_schema. The page reads it as
@@ -195,6 +201,16 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       }
     }
     candidate["artifact"] = inlineArtifact;
+  }
+
+  // --title — passthrough, no client-side requiredness. The relay is the
+  // single source of truth: it enforces "required, with --artifact-id +
+  // Artifact.name as the only fallback" and the shape rules (length, control
+  // chars). Keeping all that server-side avoids drift between the CLI's
+  // pre-checks and the relay's actual rules.
+  const titleRaw = args.flags.get("title");
+  if (titleRaw !== undefined) {
+    candidate["title"] = titleRaw;
   }
 
   // --input-data — per-instance seed data, applies to either form (the relay

@@ -163,3 +163,84 @@ describe("FilesystemBlobStore integrity", () => {
     expect(await store.head("blob_corrupt")).toBeNull();
   });
 });
+
+describe("FilesystemBlobStore sidecar field naming (ciphertext_sha256)", () => {
+  it("new writes use 'ciphertext_sha256' on disk (and only that key)", async () => {
+    const store = new FilesystemBlobStore({ dir });
+    await store.init();
+
+    const info = await store.put("blob_new", streamOf(Buffer.from("payload")), {
+      mime: "application/octet-stream",
+      maxBytes: 100,
+    });
+
+    const raw = await readFile(join(dir, "blob_new.meta.json"), "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    expect(parsed.ciphertext_sha256).toBe(info.sha256);
+    // No legacy alias — new writes are clean.
+    expect("sha256" in parsed).toBe(false);
+    expect(parsed.size).toBe(info.size);
+    expect(parsed.mime).toBe("application/octet-stream");
+  });
+
+  it("head() round-trips a freshly written blob via ciphertext_sha256", async () => {
+    const store = new FilesystemBlobStore({ dir });
+    await store.init();
+
+    const payload = Buffer.from("round-trip-payload");
+    const info = await store.put("blob_rt", streamOf(payload), {
+      mime: "image/png",
+      maxBytes: 100,
+    });
+    const head = await store.head("blob_rt");
+    expect(head).not.toBeNull();
+    expect(head!.size).toBe(info.size);
+    expect(head!.sha256).toBe(info.sha256);
+    expect(head!.mime).toBe("image/png");
+  });
+
+  it("head() still reads legacy sidecars that use the bare 'sha256' key", async () => {
+    const store = new FilesystemBlobStore({ dir });
+    await store.init();
+    // Write the payload via the store so the data file lands at the right
+    // path with the right mode; then OVERWRITE the sidecar with the legacy
+    // shape (bare `sha256`, no `ciphertext_sha256` key) to simulate a
+    // deployment that still has the old field name on disk.
+    const payload = Buffer.from("legacy-payload");
+    const info = await store.put("blob_legacy", streamOf(payload), {
+      mime: "image/jpeg",
+      maxBytes: 100,
+    });
+    const legacy = {
+      size: info.size,
+      sha256: info.sha256,
+      mime: info.mime,
+    };
+    await writeFile(join(dir, "blob_legacy.meta.json"), JSON.stringify(legacy));
+
+    const head = await store.head("blob_legacy");
+    expect(head).not.toBeNull();
+    expect(head!.size).toBe(info.size);
+    expect(head!.sha256).toBe(info.sha256);
+    expect(head!.mime).toBe("image/jpeg");
+  });
+
+  it("head() returns null when neither sidecar hash key is present", async () => {
+    const store = new FilesystemBlobStore({ dir });
+    await store.init();
+    const payload = Buffer.from("no-hash");
+    await store.put("blob_nohash", streamOf(payload), {
+      mime: "application/octet-stream",
+      maxBytes: 100,
+    });
+    // Overwrite the sidecar with a JSON object that has size but no hash.
+    await writeFile(
+      join(dir, "blob_nohash.meta.json"),
+      JSON.stringify({
+        size: payload.length,
+        mime: "application/octet-stream",
+      }),
+    );
+    expect(await store.head("blob_nohash")).toBeNull();
+  });
+});

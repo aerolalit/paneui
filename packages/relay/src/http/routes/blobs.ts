@@ -1,9 +1,12 @@
 // /v1/blobs — binary attachments owned by an agent.
 //
 // Endpoints in this module:
+//   GET    /v1/blobs                          agent-auth list (paginated)
 //   POST   /v1/blobs                          multipart upload, three scopes
 //   GET    /v1/blobs/:id                      agent-auth download
+//   GET    /v1/blobs/:id/metadata             agent-auth metadata-only (JSON BlobRef)
 //   DELETE /v1/blobs/:id                      soft-delete (idempotent)
+//   GET    /v1/blobs/:id/tokens               agent-auth list capability tokens (audit)
 //   POST   /v1/blobs/:id/tokens               mint a /b/<token> capability URL
 //   DELETE /v1/blobs/:id/tokens/:token_id     revoke a token
 //
@@ -30,13 +33,12 @@ import { requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
 import {
   BlobIntegrityError,
-  BlobSizeExceededError,
   generateBlobToken,
-  ImageNormalisationError,
   isMimeAllowed,
-  isNormalisable,
-  normaliseImage,
-  sniffMime,
+  processBlobUpload,
+  storageKeyFor,
+  type BlobStore,
+  type QuotaEnforcer,
 } from "../../blobs/index.js";
 
 const blobs = new Hono<AuthEnv>();
@@ -99,10 +101,127 @@ function serialize(row: BlobRow): SerializedBlob {
   };
 }
 
-/** Storage key derived from the blob id. Opaque, never user-supplied. */
-function storageKeyFor(blobId: string): string {
-  return `blob_${blobId}`;
+// storageKeyFor is imported from ../../blobs/index.js (defined alongside the
+// shared upload pipeline so both the /v1 route and the bridge route compute
+// the same opaque storage key from a blob id).
+
+// Pagination defaults for GET /v1/blobs. The list endpoint uses an opaque
+// (createdAt DESC, id DESC) cursor — mirrors how GET /v1/sessions paginates
+// so the agent only needs to learn one shape.
+const LIST_DEFAULT_LIMIT = 50;
+const LIST_MAX_LIMIT = 100;
+
+interface BlobListCursor {
+  created_at: string;
+  id: string;
 }
+
+function encodeBlobCursor(cur: BlobListCursor): string {
+  return Buffer.from(JSON.stringify(cur), "utf8").toString("base64url");
+}
+
+function decodeBlobCursor(s: string): BlobListCursor | null {
+  try {
+    const decoded = Buffer.from(s, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      typeof (parsed as BlobListCursor).created_at !== "string" ||
+      typeof (parsed as BlobListCursor).id !== "string"
+    ) {
+      return null;
+    }
+    const ts = new Date((parsed as BlobListCursor).created_at);
+    if (Number.isNaN(ts.getTime())) return null;
+    return parsed as BlobListCursor;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs — list the calling agent's non-deleted blobs.
+//
+// Ordered (createdAt DESC, id DESC), paginated via an opaque cursor that
+// encodes the tuple of the last row on the previous page. Caller knobs:
+//
+//   ?cursor=<opaque>  resume after a given page boundary
+//   ?limit=<n>        page size (1..100), defaults to 50
+//
+// Cross-tenant isolation: WHERE ownerId = me — every other blob route in
+// this file uses the same pattern.
+// ---------------------------------------------------------------------------
+blobs.get("/", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const limitRaw = c.req.query("limit");
+  let limit = LIST_DEFAULT_LIMIT;
+  if (limitRaw !== undefined) {
+    const n = Number(limitRaw);
+    if (!Number.isInteger(n) || n < 1 || n > LIST_MAX_LIMIT) {
+      throw errors.invalidRequest(
+        `invalid limit '${limitRaw}'`,
+        undefined,
+        `limit must be an integer in 1..${LIST_MAX_LIMIT}`,
+      );
+    }
+    limit = n;
+  }
+
+  const cursorRaw = c.req.query("cursor");
+  let cursor: BlobListCursor | null = null;
+  if (cursorRaw !== undefined) {
+    cursor = decodeBlobCursor(cursorRaw);
+    if (cursor === null) {
+      throw errors.invalidRequest(
+        "invalid cursor",
+        undefined,
+        "the cursor must be the opaque `next_cursor` value returned by a previous page; do not construct it by hand",
+      );
+    }
+  }
+
+  const cursorWhere =
+    cursor !== null
+      ? {
+          OR: [
+            { createdAt: { lt: new Date(cursor.created_at) } },
+            {
+              createdAt: new Date(cursor.created_at),
+              id: { lt: cursor.id },
+            },
+          ],
+        }
+      : {};
+
+  const rows = await prisma.blob.findMany({
+    where: {
+      ownerId: me.id,
+      // Exclude soft-deleted blobs from the listing — they're audit-only.
+      deletedAt: null,
+      ...cursorWhere,
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+  });
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+
+  return c.json({
+    items: page.map(serialize),
+    next_cursor:
+      hasMore && last
+        ? encodeBlobCursor({
+            created_at: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // POST /v1/blobs — multipart upload.
@@ -170,351 +289,47 @@ blobs.post("/", async (c) => {
     if (!art || art.ownerId !== me.id) throw errors.blobNotFound();
   }
 
-  // Cheap declared-Content-Type check. The authoritative check happens
-  // after we have leading bytes (sniff vs. allowlist).
-  const declaredMime = file.type || "application/octet-stream";
-
-  // Read the first chunk from a single reader so we can sniff the MIME, then
-  // resume from the same reader for the rest of the bytes. Calling
-  // `file.stream()` a second time would return a fresh ReadableStream from
-  // the start — duplicating the file content — so we keep one reader and
-  // hand it back to the BlobStore via a generator that yields firstChunk
-  // first, then the remaining reads.
-  const reader = file.stream().getReader();
-  const { value: firstChunk, done: streamDone } = await reader.read();
-
-  if (!firstChunk || firstChunk.length === 0) {
-    reader.releaseLock();
-    throw errors.invalidRequest(
-      "uploaded file is empty",
-      undefined,
-      "the multipart 'file' part contains no bytes; upload a non-empty file",
-    );
-  }
-
-  const sniffWindow =
-    firstChunk.length >= 64 ? firstChunk.subarray(0, 64) : firstChunk;
-  const sniffedMime = sniffMime(sniffWindow);
-
-  // 1. Mismatch check — declared vs. sniffed. We accept image/jpeg both ways
-  //    and `application/octet-stream` as "I don't know, you decide" but
-  //    refuse declared text/html when bytes are image/jpeg etc.
-  const declaredIsGeneric = declaredMime === "application/octet-stream";
-  if (!declaredIsGeneric && declaredMime !== sniffedMime) {
-    reader.releaseLock();
-    throw errors.mimeMismatch(declaredMime, sniffedMime);
-  }
-
-  // 2. Allowlist check — must match BLOB_MIME_ALLOWLIST.
-  if (!isMimeAllowed(sniffedMime, config.BLOB_MIME_ALLOWLIST)) {
-    reader.releaseLock();
-    throw errors.mimeDisallowed(sniffedMime, config.BLOB_MIME_ALLOWLIST);
-  }
-
-  // Drain the rest of the same reader so we have the full upload as a
-  // Buffer. We need the whole payload in memory for the image
-  // normalisation pass (sharp's pipeline buffers internally anyway), and
-  // MAX_BLOB_BYTES caps this at 5 MB by default — well within Node's
-  // comfort zone. The cap is enforced as we read, before any allocation
-  // becomes hostile.
-  const uploaded = await drainReaderToBuffer(
-    firstChunk,
-    reader,
-    streamDone,
-    config.MAX_BLOB_BYTES,
-  ).catch((e) => {
-    if (e instanceof BlobSizeExceededError) {
-      throw errors.blobSizeExceeded(config.MAX_BLOB_BYTES);
-    }
-    throw e;
-  });
-
-  // Normalise images: decode + re-encode via sharp, dropping appended
-  // polyglot payloads and stripping metadata (EXIF / IPTC / XMP / embedded
-  // thumbnail). Non-image MIMEs pass through unchanged. sharp throws on
-  // anything that doesn't decode — which is the right signal for a
-  // hostile polyglot (the format-sniff layer let it through, but it's
-  // not a valid image).
-  let finalBytes: Buffer;
-  let finalSha256: string;
-  let finalSize: number;
-  let width: number | null = null;
-  let height: number | null = null;
-  try {
-    if (isNormalisable(sniffedMime)) {
-      const normalised = await normaliseImage({
-        bytes: uploaded,
-        mime: sniffedMime,
-        stripMetadata: true,
-      });
-      finalBytes = normalised.bytes;
-      finalSha256 = normalised.sha256;
-      finalSize = normalised.bytes.length;
-      width = normalised.width ?? null;
-      height = normalised.height ?? null;
-    } else {
-      // Pass-through (SVG, PDF). Still hash + size from the bytes we
-      // already have so the rest of the pipeline doesn't care.
-      const { createHash } = await import("node:crypto");
-      finalBytes = uploaded;
-      finalSha256 = createHash("sha256").update(uploaded).digest("hex");
-      finalSize = uploaded.length;
-    }
-  } catch (e) {
-    if (e instanceof ImageNormalisationError) {
-      // Hostile / corrupt image. Refuse the upload.
-      throw errors.mimeDisallowed(sniffedMime, config.BLOB_MIME_ALLOWLIST);
-    }
-    throw e;
-  }
-
-  // Envelope encryption-at-rest (opt-in). When BLOB_ENCRYPT_AT_REST=true,
-  // we encrypt the normalised plaintext with a fresh per-blob DEK; the
-  // bytes stored in the BlobStore are ciphertext, and the DB row carries
-  // the wrapped DEK + data IV + tag in `encryptionEnvelope` for the GET
-  // path to decrypt. The Blob row's `size` + `sha256` ALWAYS reflect the
-  // PLAINTEXT — those are user-facing values; the ciphertext sha256 is an
-  // internal storage detail tracked via the integrity check below.
-  let bytesForStore: Buffer = finalBytes;
-  let encryptionEnvelope: string | null = null;
-  let ciphertextSha256 = finalSha256;
-  let ciphertextSize = finalSize;
-  if (config.BLOB_ENCRYPT_AT_REST) {
-    const { encryptBlob, serialiseEnvelope } =
-      await import("../../blobs/encrypt.js");
-    const { getMasterKey } = await import("../../crypto.js");
-    const enc = encryptBlob(finalBytes, getMasterKey());
-    bytesForStore = enc.ciphertext;
-    encryptionEnvelope = serialiseEnvelope(enc.envelope);
-    const { createHash } = await import("node:crypto");
-    ciphertextSha256 = createHash("sha256").update(bytesForStore).digest("hex");
-    ciphertextSize = bytesForStore.length;
-  }
-
-  // Create the blob row first (status=pending) so we have an id to derive
-  // the storage key from. If the upload fails after this point, we mark the
-  // row failed (a janitor task in a later PR sweeps these).
-  const row = await prisma.blob.create({
-    data: {
+  const final = await processBlobUpload(
+    {
+      prisma,
+      config,
+      store,
+      quota: makeQuotaEnforcer(prisma, config, store),
+    },
+    {
       ownerId: me.id,
       scope,
       sessionId,
       artifactId,
-      mime: sniffedMime,
-      size: finalSize,
-      sha256: finalSha256,
-      width,
-      height,
       filename: typeof form.filename === "string" ? form.filename : null,
-      storageKey: "", // placeholder, set on the same row after we know the id
-      status: "pending",
-      encryptionEnvelope,
+      file,
     },
-  });
-  const storageKey = storageKeyFor(row.id);
-  await prisma.blob.update({
-    where: { id: row.id },
-    data: { storageKey },
-  });
-
-  // Stream into the BlobStore. The store recomputes sha256 + size as it
-  // writes; we cross-check the CIPHERTEXT values below (which are the same
-  // as the plaintext values when encryption is off).
-  let info;
-  try {
-    info = await store.put(storageKey, Readable.from(bytesForStore), {
-      mime: sniffedMime,
-      maxBytes: config.MAX_BLOB_BYTES,
-    });
-  } catch (e) {
-    await prisma.blob
-      .update({ where: { id: row.id }, data: { status: "failed" } })
-      .catch(() => {
-        /* best-effort */
-      });
-
-    if (e instanceof BlobSizeExceededError) {
-      throw errors.blobSizeExceeded(config.MAX_BLOB_BYTES);
-    }
-    throw e;
-  }
-
-  // Sanity check: the backend's computed sha256 must match the ciphertext
-  // sha256 we computed before the store.put. A mismatch here means a
-  // backend bug or storage corruption — refuse the upload loudly.
-  if (info.sha256 !== ciphertextSha256 || info.size !== ciphertextSize) {
-    await store.delete(storageKey).catch(() => {
-      /* best-effort */
-    });
-    await prisma.blob.update({
-      where: { id: row.id },
-      data: { status: "failed" },
-    });
-    throw errors.invalidRequest(
-      "internal integrity check failed — storage backend hash/size disagrees",
-    );
-  }
-
-  // Aggregate quotas. The per-agent cap applies to EVERY scope (an agent's
-  // total footprint across all blobs they own). The per-session or per-
-  // artifact cap applies on top of that when relevant. A racing parallel
-  // upload could push a total slightly over the cap; LRU eviction in the
-  // hardening PR cleans that up. The just-written row still has its
-  // placeholder `size: 0` at this point (the real size is written on the
-  // commit update below), so we add `info.size` into the aggregate manually.
-  const quotaFailure = await enforceQuotas(prisma, {
-    ownerId: me.id,
-    sessionId,
-    artifactId,
-    config,
-    extraBytes: info.size,
-    store,
-  });
-  if (quotaFailure) {
-    // Roll back: delete the bytes and mark the row failed.
-    await store.delete(storageKey).catch(() => {
-      /* best-effort */
-    });
-    await prisma.blob.update({
-      where: { id: row.id },
-      data: { status: "failed" },
-    });
-    throw errors.quotaExceeded(quotaFailure.scope, quotaFailure.cap);
-  }
-
-  // Optional scan-hook step. When BLOB_SCAN_HOOK is set, POST the blob's
-  // metadata to the scanner and wait for a verdict before flipping the
-  // row to ready. Fail-closed: any throw (timeout, non-2xx, bad
-  // signature, "infected" verdict) results in the blob being deleted.
-  if (config.BLOB_SCAN_HOOK) {
-    try {
-      const { callScanHook } = await import("../../blobs/scan-hook.js");
-      const { generateBlobToken, hashBlobToken } =
-        await import("../../blobs/index.js");
-      // Mint a single-use scan token (5-minute TTL, `once=true`). The
-      // scanner GETs the blob bytes via this URL — no agent key needed.
-      const tok = generateBlobToken();
-      await prisma.blobToken.create({
-        data: {
-          blobId: row.id,
-          tokenHash: tok.hash,
-          tokenPrefix: tok.prefix,
-          expiresAt: new Date(Date.now() + 5 * 60_000),
-          once: true,
-        },
-      });
-      // Hash to suppress "unused import" warning when call is mocked out.
-      void hashBlobToken;
-      const downloadUrl = `${(config.publicUrl ?? "").replace(/\/$/, "")}/b/${tok.token}`;
-      const verdict = await callScanHook(
-        config,
-        {
-          blob_id: row.id,
-          scope: scope,
-          mime: sniffedMime,
-          size: finalSize,
-          sha256: finalSha256,
-          download_url: downloadUrl,
-        },
-        { timeoutMs: config.BLOB_SCAN_TIMEOUT_MS },
-      );
-      if (verdict.verdict !== "clean") {
-        throw new Error(
-          `scan returned verdict=${verdict.verdict}${
-            verdict.reason ? ` (${verdict.reason})` : ""
-          }`,
-        );
-      }
-    } catch (e) {
-      await store.delete(storageKey).catch(() => {
-        /* best-effort */
-      });
-      await prisma.blob.update({
-        where: { id: row.id },
-        data: { status: "failed" },
-      });
-      throw errors.invalidRequest(
-        "blob failed virus / content scan",
-        undefined,
-        e instanceof Error
-          ? `scanner reported: ${e.message}`
-          : "scanner rejected the upload",
-      );
-    }
-  }
-
-  // Commit: mark ready. size/sha256 stay as the PLAINTEXT values written
-  // at create time — when encryption-at-rest is on, the ciphertext
-  // size/sha256 from `info` are only used for the integrity check above.
-  const final = await prisma.blob.update({
-    where: { id: row.id },
-    data: {
-      status: "ready",
-      confirmedAt: new Date(),
-    },
-  });
+  );
 
   return c.json(serialize(final), 201);
 });
 
-/**
- * Drain a Web ReadableStreamDefaultReader (whose first chunk has already
- * been pulled for MIME sniffing) into one contiguous Buffer. Enforces
- * `maxBytes` mid-stream by tracking the running total; throws
- * `BlobSizeExceededError` and releases the reader lock if the cap is
- * exceeded.
- *
- * The whole upload is buffered because the polyglot-normalisation pass
- * (sharp) operates on a complete image — there's no useful "streaming
- * normalisation" mode in libvips for our use case. MAX_BLOB_BYTES caps
- * this at 5 MB so the memory cost is bounded.
- */
-async function drainReaderToBuffer(
-  firstChunk: Uint8Array,
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  alreadyDone: boolean,
-  maxBytes: number,
-): Promise<Buffer> {
-  let observed = firstChunk.length;
-  if (observed > maxBytes) {
-    try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
-    }
-    throw new BlobSizeExceededError(maxBytes, observed);
-  }
-
-  const chunks: Buffer[] = [Buffer.from(firstChunk)];
-  if (alreadyDone) {
-    try {
-      reader.releaseLock();
-    } catch {
-      /* ignore */
-    }
-    return Buffer.concat(chunks);
-  }
-
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value && value.length) {
-        observed += value.length;
-        if (observed > maxBytes) {
-          throw new BlobSizeExceededError(maxBytes, observed);
-        }
-        chunks.push(Buffer.from(value));
-      }
-    }
-  } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      /* already released */
-    }
-  }
-  return Buffer.concat(chunks);
+// ---------------------------------------------------------------------------
+// Build a QuotaEnforcer that closes over this route's prisma/config/store
+// trio. Used by both POST /v1/blobs (above) and the participant-side
+// POST /s/:participantToken/blobs (in src/bridge/blob-upload-bridge.ts).
+// ---------------------------------------------------------------------------
+export function makeQuotaEnforcer(
+  prisma: PrismaClient,
+  config: Config,
+  store: BlobStore,
+): QuotaEnforcer {
+  return {
+    enforce: ({ ownerId, sessionId, artifactId, extraBytes }) =>
+      enforceQuotas(prisma, {
+        ownerId,
+        sessionId,
+        artifactId,
+        config,
+        extraBytes,
+        store,
+      }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +417,38 @@ blobs.get("/:id", async (c) => {
 
   // Hono accepts a Web ReadableStream as the body; convert.
   return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs/:id/metadata — agent-auth, metadata-only.
+//
+// Returns the same JSON shape that POST /v1/blobs returns (the full BlobRef:
+// id, scope, mime, size, sha256, filename, width, height, status, scope
+// FKs, timestamps). Use this when the agent needs the row's metadata
+// without paying the cost of streaming + decrypting the bytes — e.g.
+// `pane blob show <id>`.
+//
+// Cross-tenant attempts collapse to blob_not_found (same surface as the
+// download route) so a foreign agent can't probe id existence.
+// ---------------------------------------------------------------------------
+blobs.get("/:id/metadata", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const id = c.req.param("id");
+  const row = await prisma.blob.findUnique({ where: { id } });
+
+  // Same cross-tenant + status surface as GET /v1/blobs/:id — we treat
+  // "deleted" as not-found, "pending" / "failed" as not-found (the agent
+  // can't act on a not-ready blob via this endpoint).
+  if (!row || row.ownerId !== me.id || row.status === "deleted") {
+    throw errors.blobNotFound();
+  }
+  if (row.status !== "ready") {
+    throw errors.blobNotFound();
+  }
+
+  return c.json(serialize(row));
 });
 
 // ---------------------------------------------------------------------------
@@ -896,6 +743,59 @@ blobs.post("/:id/confirm", async (c) => {
     }
     throw e;
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/blobs/:id/tokens — enumerate the capability tokens on one blob.
+//
+// Audit endpoint. Returns ALL tokens (active, expired, and revoked) so the
+// agent can correlate a revoked_at on a row with whatever they minted. The
+// plaintext token is NEVER returned (it isn't even stored — only the sha256
+// of the plaintext is); only the prefix is included so an operator can match
+// a redacted access-log line against the row.
+//
+// Cross-tenant isolation: the agent must own the parent blob. Otherwise we'd
+// leak "this blob exists" via the 200-vs-404 channel.
+// ---------------------------------------------------------------------------
+blobs.get("/:id/tokens", async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+
+  const blobId = c.req.param("id");
+  const blob = await prisma.blob.findUnique({
+    where: { id: blobId },
+    select: { id: true, ownerId: true },
+  });
+  if (!blob || blob.ownerId !== me.id) throw errors.blobNotFound();
+
+  const rows = await prisma.blobToken.findMany({
+    where: { blobId: blob.id },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: {
+      id: true,
+      tokenPrefix: true,
+      expiresAt: true,
+      once: true,
+      createdAt: true,
+      lastUsedAt: true,
+      useCount: true,
+      revokedAt: true,
+    },
+  });
+
+  return c.json({
+    blob_id: blob.id,
+    items: rows.map((r) => ({
+      token_id: r.id,
+      token_prefix: r.tokenPrefix,
+      expires_at: r.expiresAt.toISOString(),
+      once: r.once,
+      created_at: r.createdAt.toISOString(),
+      last_used_at: r.lastUsedAt?.toISOString() ?? null,
+      use_count: r.useCount,
+      revoked_at: r.revokedAt?.toISOString() ?? null,
+    })),
+  });
 });
 
 // ---------------------------------------------------------------------------

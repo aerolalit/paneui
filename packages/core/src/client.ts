@@ -14,10 +14,14 @@ import type {
   FeedbackSubmission,
   FeedbackType,
   KeyInfo,
+  MintParticipantResponse,
   PaneEvent,
+  ParticipantsList,
   SessionState,
+  SessionsPage,
   TasteInfo,
 } from "./types.js";
+import type { ListSessionsQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
 
 export interface ClientOptions {
@@ -250,6 +254,7 @@ export class PaneClient {
   ): Promise<CreateSessionResponse> {
     const r = await this.call("POST", "/v1/sessions", {
       artifact: req.artifact,
+      title: req.title,
       input_data: req.input_data,
       participants: req.participants,
       ttl: req.ttl,
@@ -517,6 +522,88 @@ export class PaneClient {
   }
 
   /**
+   * GET /v1/sessions — list the calling agent's sessions. Default filter is
+   * `status=open` (effective status — respects expiresAt). Response items
+   * carry NO secrets: no participant token plaintext, no callback URL, no
+   * metadata or input_data. Use `participant_id` from the list as the handle
+   * for {@link revokeParticipant}; use {@link mintParticipant} to issue a
+   * fresh URL when the original was lost.
+   */
+  async listSessions(opts: ListSessionsQuery = {}): Promise<SessionsPage> {
+    const q = new URLSearchParams();
+    if (opts.status !== undefined) q.set("status", opts.status);
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    if (opts.cursor !== undefined && opts.cursor !== "")
+      q.set("cursor", opts.cursor);
+    if (opts.artifact_id !== undefined && opts.artifact_id !== "")
+      q.set("artifact_id", opts.artifact_id);
+    const qs = q.toString();
+    const r = await this.call("GET", `/v1/sessions${qs ? "?" + qs : ""}`);
+    if (!r.ok) this.fail(r);
+    return this.asObject<SessionsPage>(r);
+  }
+
+  /**
+   * GET /v1/sessions/:id/participants — list every participant on one
+   * session (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+   * on the relay, so the full list is returned with no pagination.
+   * Use this to find the `participant_id` you need to pass to
+   * {@link revokeParticipant}, or to audit revoked rows.
+   */
+  async listParticipants(sessionId: string): Promise<ParticipantsList> {
+    const r = await this.call(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<ParticipantsList>(r);
+  }
+
+  /**
+   * POST /v1/sessions/:id/participants — mint a fresh participant URL for an
+   * existing session. The one-shot recovery primitive when the original URL
+   * was dropped: the session keeps its event log, artifact pin, and created_at.
+   * v1 supports `kind: "human"` only.
+   *
+   * The plaintext token is returned EXACTLY ONCE in the response — the relay
+   * stores only the hash. Save the response (e.g. pipe to a JSONL log) before
+   * delivering the URL to the human.
+   */
+  async mintParticipant(
+    sessionId: string,
+    opts: { kind?: "human" } = {},
+  ): Promise<MintParticipantResponse> {
+    const r = await this.call(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+      { kind: opts.kind ?? "human" },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<MintParticipantResponse>(r);
+  }
+
+  /**
+   * DELETE /v1/sessions/:id/participants/:participant_id — revoke a single
+   * participant URL. The session's other participants (and the agent's own
+   * WebSocket) are untouched. Idempotent: revoking an unknown or already-
+   * revoked participant returns 204. The agent participant cannot be revoked
+   * via this endpoint — use {@link deleteSession} instead.
+   *
+   * Existing WebSocket connections held under the revoked token are NOT
+   * actively kicked in v1; new HTTP and WS connections are refused.
+   */
+  async revokeParticipant(
+    sessionId: string,
+    participantId: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
    * DELETE /v1/sessions/:id — close/delete a session. Idempotent on the relay
    * side (an already-closed session still returns 204 with no body).
    */
@@ -642,30 +729,23 @@ export class PaneClient {
     return res.arrayBuffer();
   }
 
-  /** GET a blob's metadata only — useful before downloading large blobs. */
+  /**
+   * GET a blob's metadata only — useful before downloading large blobs, or
+   * for `pane blob show <id>` which doesn't want the bytes. Returns the full
+   * BlobRef (the same shape POST /v1/blobs returns): id, scope, mime, size,
+   * sha256, filename, width, height, status, scope FKs, timestamps.
+   *
+   * Backed by GET /v1/blobs/:id/metadata which serves the JSON BlobRef
+   * without streaming the bytes — cheap on the relay and avoids the
+   * encrypt-at-rest decrypt cost when only the metadata is needed.
+   */
   async getBlob(blobId: string): Promise<BlobRef> {
-    // The relay's GET /v1/blobs/:id streams the body; metadata is read from
-    // the response headers. For pure-metadata calls we make a HEAD request
-    // and synthesise a BlobRef from the response headers + a follow-up
-    // listing call if needed. v0.1.0 ships the round-trip download path
-    // only; listing/show comes in the next CLI iteration.
-    const url = this.base + "/v1/blobs/" + encodeURIComponent(blobId);
-    const res = await this.fetchImpl(url, {
-      method: "HEAD",
-      headers: { authorization: "Bearer " + this.apiKey },
-    });
-    if (!res.ok) {
-      this.fail({ ok: false, status: res.status, data: null });
-    }
-    return {
-      blob_id: blobId,
-      url,
-      mime: res.headers.get("content-type") ?? "application/octet-stream",
-      size: Number(res.headers.get("content-length") ?? 0),
-      scope: "agent", // unknown without a GET — placeholder; pane blob show
-      // calls listBlobs() instead to get the full shape.
-      sha256: "",
-    } as BlobRef;
+    const r = await this.call(
+      "GET",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/metadata",
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<BlobRef>(r);
   }
 
   /** DELETE /v1/blobs/:id — soft-delete (idempotent). */
@@ -710,6 +790,37 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return r.data as { token_id: string; revoked: true };
+  }
+
+  /**
+   * GET /v1/blobs — list YOUR agent's non-deleted blobs (newest first).
+   * Paginated via opaque cursor: when `next_cursor` is non-null, pass it
+   * back as `cursor` on the next call.
+   */
+  async listBlobs(
+    opts: ListBlobsOptions = {},
+  ): Promise<{ items: BlobRef[]; next_cursor: string | null }> {
+    const params = new URLSearchParams();
+    if (opts.cursor !== undefined) params.set("cursor", opts.cursor);
+    if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    const r = await this.call("GET", "/v1/blobs" + (qs ? "?" + qs : ""));
+    if (!r.ok) this.fail(r);
+    return r.data as { items: BlobRef[]; next_cursor: string | null };
+  }
+
+  /**
+   * GET /v1/blobs/:id/tokens — enumerate the capability tokens minted
+   * against one blob, including revoked rows (for audit). The plaintext
+   * token is NEVER returned — it isn't stored, only its sha256 is.
+   */
+  async listBlobTokens(blobId: string): Promise<BlobTokenListResponse> {
+    const r = await this.call(
+      "GET",
+      "/v1/blobs/" + encodeURIComponent(blobId) + "/tokens",
+    );
+    if (!r.ok) this.fail(r);
+    return r.data as BlobTokenListResponse;
   }
 
   /**
@@ -799,4 +910,33 @@ export interface BlobTokenMintResponse {
   url: string;
   expires_at: string;
   once: boolean;
+}
+
+/** Options for `listBlobs()` — opaque cursor + page-size knob. */
+export interface ListBlobsOptions {
+  /** Opaque pagination cursor from a prior `next_cursor`. */
+  cursor?: string;
+  /** Page size; relay clamps to 1..100. Defaults to the relay default (50). */
+  limit?: number;
+}
+
+/** One row in the response from `listBlobTokens()`. */
+export interface BlobTokenAuditEntry {
+  token_id: string;
+  token_prefix: string;
+  expires_at: string;
+  once: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  use_count: number;
+  /** Non-null when the token has been revoked. Expired-but-unrevoked rows
+   *  carry `revoked_at: null` and an `expires_at` in the past — both are
+   *  useful for audit. */
+  revoked_at: string | null;
+}
+
+/** Shape returned by `listBlobTokens()`. */
+export interface BlobTokenListResponse {
+  blob_id: string;
+  items: BlobTokenAuditEntry[];
 }

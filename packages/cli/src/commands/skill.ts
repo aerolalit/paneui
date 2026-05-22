@@ -7,14 +7,14 @@
 // agent always reads what the relay it's actually talking to wants it
 // to read.
 //
-// Two subcommands:
-//   `pane skill`           — print the full markdown to stdout (the
+// Two verbs:
+//   `pane skill show`      — print the full markdown to stdout (the
 //                            install / refresh path; pipe to a file).
 //   `pane skill version`   — print just the relay's skill version (the
 //                            "is my local copy stale?" probe). The agent
 //                            compares this to the `<!-- pane skill v… -->`
 //                            comment in its local skill file and re-runs
-//                            `pane skill > <path>` when they differ.
+//                            `pane skill show > <path>` when they differ.
 //
 // Both are unauthenticated — the skill route is public on the relay and
 // an agent on a too-old CLI must be able to read the upgrade instructions
@@ -28,19 +28,19 @@ import { VERSION } from "../version.js";
 export const skillHelp = `pane skill — fetch the relay's SKILL.md (or its version)
 
 Usage:
-  pane skill                          Print the full skill to stdout.
+  pane skill show                     Print the full skill to stdout.
   pane skill version [--plain]        Print just the relay's skill version.
 
 The skill is auto-updating: the relay's deployed image owns the version,
 so this is always the skill that matches the relay you are talking to.
 
 Unauthenticated — no API key needed. An agent can call either form
-before 'pane register' to bootstrap or refresh its local skill copy.
+before 'pane agent register' to bootstrap or refresh its local skill copy.
 
-Subcommands:
-  (bare)              Fetch GET /skills/pane/SKILL.md and write the raw
+Verbs:
+  show                Fetch GET /skills/pane/SKILL.md and write the raw
                       markdown to stdout. Pipe to your local skill path:
-                          pane skill > ~/.claude/skills/pane/SKILL.md
+                          pane skill show > ~/.claude/skills/pane/SKILL.md
   version             Fetch GET /skills/pane/SKILL.md/version and print
                       the relay's skill version. Default output is the
                       JSON envelope; --plain prints just the version
@@ -87,7 +87,7 @@ async function failOnNon2xx(res: Response, target: string): Promise<void> {
   );
 }
 
-// `pane skill` (no positional) — print the full skill.
+// `pane skill show` — print the full skill.
 async function runSkillFetch(args: ParsedArgs): Promise<void> {
   const url = resolveRelayUrl(args);
   const target = url + "/skills/pane/SKILL.md";
@@ -135,15 +135,21 @@ async function runSkillVersion(args: ParsedArgs): Promise<void> {
 export async function runSkill(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
-    case undefined:
+    case "show":
       await runSkillFetch(args);
       break;
     case "version":
       await runSkillVersion(args);
       break;
+    case undefined:
+      fail(
+        "missing verb — usage: pane skill <show|version> (run 'pane skill --help')",
+        "invalid_args",
+      );
+      break;
     default:
       fail(
-        `unknown skill subcommand '${sub}' — expected 'version' or no subcommand (run 'pane skill --help')`,
+        `unknown skill verb '${sub}' — expected show|version (run 'pane skill --help')`,
         "invalid_args",
       );
   }

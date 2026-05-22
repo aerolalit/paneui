@@ -20,6 +20,8 @@ import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
 import blobs from "./routes/blobs.js";
 import blobBridge from "../bridge/blob-bridge.js";
+import blobUploadBridge from "../bridge/blob-upload-bridge.js";
+import blobDownloadBridge from "../bridge/blob-download-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -192,6 +194,19 @@ export function buildApp(
       },
     }),
   );
+  // The participant-side blob upload (POST /s/:token/blobs, follow-up C of #156)
+  // is the only /s/* route that accepts a body large enough to need the cap.
+  // Reuse the same ceiling so the human-side upload path is no more permissive
+  // than the agent's `POST /v1/blobs`.
+  app.use(
+    "/s/*/blobs",
+    bodyLimit({
+      maxSize: globalBodyLimit,
+      onError: () => {
+        throw apiErrors.payloadTooLarge();
+      },
+    }),
+  );
 
   // General per-IP + per-token rate limit on every API/bridge route. /healthz
   // and /skills are registered above so they stay unmetered (load balancers
@@ -233,6 +248,16 @@ export function buildApp(
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
   app.route("/v1/blobs", blobs);
+  // POST /s/:participantToken/blobs — human-side blob upload (follow-up C
+  // of #156). Mounted BEFORE the general /s bridge so the POST route is
+  // matched cleanly; the bridge module only registers GET endpoints, but
+  // routing order keeps the surfaces visibly separate.
+  app.route("/s", blobUploadBridge);
+  // GET /s/:participantToken/blobs/:blob_id — human-side blob download
+  // (follow-up D of #156). The symmetric counterpart to the upload bridge:
+  // the iframe lazy-fetches blob bytes referenced by events through the
+  // shell so events can carry just a BlobRef instead of inlined base64.
+  app.route("/s", blobDownloadBridge);
   app.route("/s", bridge);
   // /b/<token> — capability-URL fetch path for blob bytes. The URL token IS
   // the credential (no API key, no participant token), so the route module

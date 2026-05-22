@@ -132,6 +132,7 @@ async function createSession(apiKey: string): Promise<{
         event_schema: minimalSchema,
       },
       participants: { humans: 1 },
+      title: "Test session",
     }),
   });
   const body = (await res.json()) as {

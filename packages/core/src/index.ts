@@ -12,6 +12,9 @@ export type {
   UploadBlobOptions,
   PresignBlobOptions,
   BlobTokenMintResponse,
+  ListBlobsOptions,
+  BlobTokenAuditEntry,
+  BlobTokenListResponse,
 } from "./client.js";
 
 export { openStream } from "./stream.js";
@@ -34,8 +37,16 @@ export {
   patchArtifactMetadataSchema,
   feedbackTypeSchema,
   submitFeedbackSchema,
+  listSessionsStatusSchema,
+  listSessionsQuerySchema,
+  mintParticipantSchema,
 } from "./schemas.js";
-export type { CreateSessionInput } from "./schemas.js";
+export type {
+  CreateSessionInput,
+  ListSessionsStatus,
+  ListSessionsQuery,
+  MintParticipantInput,
+} from "./schemas.js";
 
 export {
   MAX_EVENT_TYPE_LENGTH,
@@ -64,5 +75,10 @@ export type {
   CreateSessionResponse,
   SessionState,
   EventsPage,
+  ParticipantSummary,
+  ParticipantsList,
+  SessionSummary,
+  SessionsPage,
+  MintParticipantResponse,
   RelayError,
 } from "./types.js";

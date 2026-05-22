@@ -150,6 +150,142 @@ Things to watch for:
 
 See [`docs/RUNBOOK-LEAKED-TOKEN.md`](./RUNBOOK-LEAKED-TOKEN.md).
 
+## Participant uploads (`POST /s/:participantToken/blobs`)
+
+The agent-side upload path is `POST /v1/blobs` with an agent API key. To
+close the round-trip — so a human inside a rendered pane can upload a
+file BACK to the agent (a selfie, a PDF, a CSV) — the relay also accepts
+multipart uploads on `POST /s/:participantToken/blobs` authenticated by
+the participant token alone.
+
+The iframe shim exposes this as `window.pane.uploadBlob(file, options?)`.
+The shell (the participant-facing page that holds the token) brokers the
+fetch and returns a `BlobRef` to the iframe via postMessage. The agent
+then receives the BlobRef as part of a normal `pane.emit(...)` event
+payload and can download the bytes via the existing
+`/v1/blobs/:id` route or by minting a `/b/<token>` URL.
+
+### Threat model
+
+- **Auth.** The participant token in the path IS the credential. There is
+  no second factor. The token's surface is the same one already used by
+  the WebSocket-ticket mint, the presence-poll endpoint, and the event-
+  emit channel — so participant uploads inherit the same trust posture
+  as event emits. A leaked participant token already lets the holder
+  emit forged events; the upload path doesn't widen that.
+- **Scope pinning.** Scope is FORCED to `session`. Even if the multipart
+  body carries `scope=agent` or `scope=artifact`, the route ignores
+  those values. A human cannot mint long-lived agent-scope blobs through
+  a participant token, and cannot reach an artifact they don't own.
+  Session-scope blobs cascade-delete with the session, which bounds the
+  blast radius of a leaked participant token: when the agent ends the
+  session, the human's uploads go with it.
+- **Quota accounting.** Uploads count against the OWNING AGENT's quota
+  (`MAX_BLOBS_PER_AGENT_BYTES`), not the participant. The Blob row's
+  `ownerId` is `session.agentId`. This means a hostile / runaway
+  participant can DoS the agent's quota; agents should keep an eye on
+  `pane blob list` and/or set conservative per-session caps with
+  `MAX_BLOBS_PER_SESSION_BYTES`.
+- **Pipeline parity.** The participant route runs the EXACT same pipeline
+  as `POST /v1/blobs` — MIME sniff, polyglot defense via sharp, EXIF
+  strip, envelope encryption-at-rest, scan webhook. The shared
+  implementation lives in `packages/relay/src/blobs/upload-pipeline.ts`
+  so the two routes can't drift.
+
+### Wire shape
+
+```
+POST /s/<participantToken>/blobs
+Content-Type: multipart/form-data; boundary=...
+
+  file       — required, the binary file part
+  filename   — optional UX-only display name
+```
+
+Response: a `BlobRef` (same shape `POST /v1/blobs` returns).
+
+Errors are the standard envelope `{error: {code, message, hint, retryable, docs_url}}`:
+
+| HTTP | code | meaning |
+|------|------|---------|
+| 400  | `invalid_request` | missing `file` part / empty body |
+| 401  | `participant_token_invalid` | malformed / unknown / revoked token |
+| 410  | `gone` | the session is closed or expired |
+| 413  | `blob_size_exceeded` | upload > `MAX_BLOB_BYTES` |
+| 413  | `quota_exceeded` | the agent's aggregate quota is full |
+| 415  | `mime_mismatch` | declared Content-Type disagrees with sniffed |
+| 415  | `mime_disallowed` | sniffed MIME not in `BLOB_MIME_ALLOWLIST` |
+
+## Participant downloads (`GET /s/:participantToken/blobs/:blob_id`)
+
+The symmetric counterpart to `POST /s/:participantToken/blobs`. Lets the
+artifact running inside the rendered pane lazy-fetch blob bytes by id,
+without inlining bytes into events.
+
+Why the route exists: the iframe's CSP is `img-src data: blob:` and
+`connect-src 'none'` — the iframe cannot make its own HTTP fetches. The
+shell brokers the fetch with the participant token. Without this route,
+the only way to deliver an image to the iframe is to inline base64-
+encoded bytes inside an event payload (~33% overhead, duplicated on disk,
+re-sent over WS on every replay, doesn't fit under `MAX_EVENT_DATA_BYTES`
+once you cross a megabyte).
+
+The artifact API is `await window.pane.downloadBlob(blob_id)` — see
+`skills/pane/SKILL.md` for the full usage example.
+
+### Trust model
+
+- **Auth.** The participant token in the path IS the credential. There is
+  no second credential, exactly like every other `/s/:token/*` route.
+- **Authz.** The requested `blob_id` MUST be referenced from this
+  session — either in the session's initial `inputData` (validated
+  against the artifact version's `inputSchema`) or in any event in the
+  session (validated against the session's `eventSchema`). A participant
+  cannot use their token to enumerate blobs that aren't already part of
+  this session's transcript. Cross-session probing returns the same
+  opaque 404 as a nonexistent blob.
+- **Defense in depth.** After the ref check, the route also verifies the
+  blob's owning agent matches the session's owning agent and the blob is
+  not soft-deleted. The walker's set should already be agent-scoped (the
+  write-side check in `core/events.ts` only persists blob refs that
+  pass agent-access at write time), but this is belt-and-braces against
+  a future schema/walker bug.
+- **Decryption.** The route runs the EXACT same decrypt pipeline as the
+  agent-side `GET /v1/blobs/:id` when `BLOB_ENCRYPT_AT_REST` is on. Both
+  routes share the same `encrypt.parseEnvelope` + `decryptBlob` calls,
+  so the two cannot drift on envelope semantics.
+
+  > **NOTE — unrelated bug.** `GET /b/<token>` currently has a known
+  > defect where the capability URL serves the raw ciphertext bytes
+  > instead of decrypting. That is tracked separately and NOT fixed by
+  > this route. Capability URLs (`/b/<token>`) are for *external sharing*
+  > of a blob (a one-off "look at this image" link a human pastes into
+  > chat); the new participant-token route is for *internal iframe
+  > rendering* (the artifact's `img.src` pulls bytes through the shell).
+  > Two different surfaces, two different threat models.
+
+### Wire shape
+
+```
+GET /s/<participantToken>/blobs/<blob_id>
+  → 200 with the decrypted bytes
+    Content-Type:        <blob.mime>            (sniffed at upload time)
+    Content-Length:      <blob.size>            (plaintext)
+    X-Content-Type-Options: nosniff
+    Cache-Control:       private, no-store      (never cache the bytes)
+    Referrer-Policy:     no-referrer
+    Cross-Origin-Resource-Policy: same-origin
+```
+
+Errors:
+
+| HTTP | code | meaning |
+|------|------|---------|
+| 400  | `invalid_request` | malformed `blob_id` shape |
+| 401  | `participant_token_invalid` | malformed / unknown / revoked token |
+| 404  | `blob_ref_not_accessible` | blob_id is not referenced from this session, was soft-deleted, or never existed |
+| 410  | `gone` | the session is closed or expired |
+
 ## Related
 
 - [`docs/SECURITY-POLYGLOTS.md`](./SECURITY-POLYGLOTS.md) — polyglot defence

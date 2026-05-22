@@ -186,6 +186,21 @@ export const errors = {
       DOCS.api,
     ),
 
+  // Returned when a /s/:participantToken/* route is hit with a token that
+  // doesn't resolve to a live participant. Collapses all "this token won't
+  // work" cases (malformed, unknown, revoked, session-gone) into one code
+  // so a probing client can't distinguish them.
+  participantTokenInvalid: () =>
+    new ApiError(
+      401,
+      "participant_token_invalid",
+      undefined,
+      undefined,
+      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/sessions or by revoking + re-creating the session",
+      false,
+      DOCS.auth,
+    ),
+
   // Returned when /b/<token> is hit with a token that's expired, revoked,
   // already-used (for once-tokens), or never existed. We collapse all four
   // into one code so an attacker probing tokens can't distinguish "this
@@ -267,6 +282,44 @@ export const errors = {
       `blob exceeds the per-blob cap of ${maxBytes} bytes`,
       { max_bytes: maxBytes },
       "downscale or compress the blob to fit; for images, the client SDK does this automatically (max dimension + JPEG quality)",
+      false,
+      DOCS.api,
+    ),
+
+  // A blob_id baked into an event payload or session input_data points to
+  // a blob the calling agent can't access (wrong id, wrong owner, or
+  // soft-deleted). Surfaces *after* Ajv shape validation has passed but
+  // *before* the row hits Prisma — see packages/relay/src/blobs/ref-access.ts
+  // for the walker + batch check. 422 because the payload is structurally
+  // valid but semantically broken: it references a blob that does not
+  // exist (from this agent's vantage point).
+  blobRefNotAccessible: (inaccessibleIds: string[]) =>
+    new ApiError(
+      422,
+      "blob_ref_not_accessible",
+      `blob ref(s) not accessible: ${inaccessibleIds.join(", ")}`,
+      { inaccessible_ids: inaccessibleIds },
+      "the payload references one or more blob ids the calling agent does not own (or that have been deleted); upload the blob with POST /v1/blobs and use the returned blob_id, or check 'pane blob list' for ids you actually own",
+      false,
+      DOCS.api,
+    ),
+
+  // The READ-side counterpart of blobRefNotAccessible. Used by
+  // `GET /s/:participantToken/blobs/:blob_id` (follow-up D of #156): the
+  // requested blob isn't referenced from this session (or was deleted,
+  // or never existed). Same `code` so a single error branch covers both
+  // the write-time "ref dangling" surface and the read-time "ref not
+  // reachable from your token" surface; 404 here because the resource
+  // isn't found from the caller's vantage point — the request itself
+  // is structurally fine (vs the 422 write-side path, where the request
+  // body was malformed at the ref site).
+  blobRefNotAccessibleReadSide: (blobId: string) =>
+    new ApiError(
+      404,
+      "blob_ref_not_accessible",
+      `blob ref not accessible: ${blobId}`,
+      { blob_id: blobId },
+      "the participant token does not have read access to this blob_id from the current session; the blob must be referenced from this session's events or initial input_data and not be soft-deleted",
       false,
       DOCS.api,
     ),

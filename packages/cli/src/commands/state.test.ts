@@ -1,4 +1,4 @@
-// Tests for `pane state` — dispatch + the new --wait long-poll option.
+// Tests for `pane session show` — dispatch + the --wait long-poll option.
 //
 // Pins the contract that #137's follow-up introduced: --wait <secs> is
 // passed through to the relay's GET /v1/sessions/:id/events?wait=<secs>
@@ -64,7 +64,7 @@ async function run(tokens: string[]): Promise<void> {
   }
 }
 
-describe("pane state", () => {
+describe("pane session show", () => {
   it("fetches meta + events without --wait (non-blocking, default behaviour)", async () => {
     await run(["ses_abc"]);
     expect(exitCode).toBeUndefined();

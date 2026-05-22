@@ -41,9 +41,13 @@ const blobBridge = new Hono<AppEnv>();
 //   4. Expiry / revoke / status checks. All four "this token won't work"
 //      cases collapse to one error (blob_token_invalid) so an attacker
 //      probing tokens can't distinguish "expired" from "never existed".
-//   5. Stream the bytes with hardened headers.
-//   6. Audit metadata write (use_count + last_used_at + truncated IPs).
-//   7. If once=true, delete the token row (cascade to revoke cache).
+//   5. Decrypt the on-disk bytes when the row carries an encryption
+//      envelope (BLOB_ENCRYPT_AT_REST=true at upload time). Mirrors the
+//      logic in GET /v1/blobs/:id so both download paths return identical
+//      plaintext.
+//   6. Stream the bytes with hardened headers.
+//   7. Audit metadata write (use_count + last_used_at + truncated IPs).
+//   8. If once=true, delete the token row (cascade to revoke cache).
 blobBridge.get("/:token", async (c) => {
   const prisma = c.get("prisma");
   const store = c.get("blobStore");
@@ -96,9 +100,30 @@ blobBridge.get("/:token", async (c) => {
     throw errors.blobTokenInvalid();
   }
 
-  // 5. Hardened headers — same set as GET /v1/blobs/:id. Capability-URL
+  // 5. Decrypt (when encryption-at-rest is on for this blob). The
+  // capability-URL path must mirror GET /v1/blobs/:id's decrypt logic
+  // byte-for-byte: the on-disk bytes are ciphertext and the row's
+  // `encryptionEnvelope` carries the wrapped DEK + IV + tag. Absent
+  // envelope = plaintext bytes in the store (BLOB_ENCRYPT_AT_REST was off
+  // when this blob was written). Decryption buffers the full blob to
+  // verify the GCM tag — bounded by MAX_BLOB_BYTES so memory cost is
+  // known.
+  let outputStream: Readable = stream;
+  if (tok.blob.encryptionEnvelope) {
+    const { decryptBlob, parseEnvelope } = await import("../blobs/encrypt.js");
+    const { getMasterKey } = await import("../crypto.js");
+    const envelope = parseEnvelope(tok.blob.encryptionEnvelope);
+    const chunks: Buffer[] = [];
+    for await (const c of stream) chunks.push(c as Buffer);
+    const ciphertext = Buffer.concat(chunks);
+    const plaintext = decryptBlob(ciphertext, envelope, getMasterKey());
+    outputStream = Readable.from(plaintext);
+  }
+
+  // 6. Hardened headers — same set as GET /v1/blobs/:id. Capability-URL
   // surface is the riskier of the two (the URL itself IS the credential)
-  // so the defences here are non-negotiable.
+  // so the defences here are non-negotiable. Content-Length is the
+  // PLAINTEXT size (`tok.blob.size`) regardless of encryption.
   c.header("Content-Type", tok.blob.mime);
   c.header("Content-Length", String(tok.blob.size));
   c.header("X-Content-Type-Options", "nosniff");
@@ -110,14 +135,14 @@ blobBridge.get("/:token", async (c) => {
   c.header("Cross-Origin-Resource-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
 
-  // 6 + 7. Audit + once-cleanup. These run AFTER the body is enqueued so a
+  // 7 + 8. Audit + once-cleanup. These run AFTER the body is enqueued so a
   // client cancelling the download still gets credited a use (best-effort
   // semantics). Errors are swallowed — the human got their bytes.
   setImmediate(() => {
     void writeAuditAndConsume(prisma, tok, hash, c, cache);
   });
 
-  return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
+  return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
 });
 
 /** Fire-and-forget audit metadata update + once-token consumption. */

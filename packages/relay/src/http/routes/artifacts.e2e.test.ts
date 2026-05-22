@@ -494,11 +494,11 @@ describe("DELETE /v1/artifacts/:id (#137)", () => {
     expect(body.error.code).toBe("conflict");
     expect(body.error.message).toMatch(/1 referencing session/);
     // The hint points at the recovery action.
-    expect(body.error.hint).toMatch(/pane delete/);
+    expect(body.error.hint).toMatch(/pane session delete/);
   });
 
   it("refuses with 409 even after the referencing session is CLOSED", async () => {
-    // 'pane delete <session>' marks the session status=closed but the row
+    // 'pane session delete <session>' marks the session status=closed but the row
     // (and its FK to artifact_version_id) stays. Strict-cascade still
     // refuses; the reporter's "stale test artifacts" complaint is only
     // partially addressed until session rows are actually dropped, but

@@ -1,23 +1,22 @@
 #!/usr/bin/env node
 // pane — command-line client for the Pane relay.
 //
+// Shape: uniform `pane <noun> <verb> [options]`. Every command lives under a
+// noun; nothing is a bare top-level verb. See issue #163 for the rationale
+// behind the shape and the rename from the older flat layout.
+//
 // Config: PANE_URL and PANE_API_KEY (env), overridable with --url / --api-key.
-// Output is JSON by default. Every command self-documents via --help.
+// Output is JSON by default. Every noun self-documents via --help.
 
 import { parseArgs, ArgvError } from "./argv.js";
-import { runCreate, createHelp } from "./commands/create.js";
-import { runState, stateHelp } from "./commands/state.js";
-import { runSend, sendHelp } from "./commands/send.js";
-import { runWatch, watchHelp } from "./commands/watch.js";
-import { runRegister, registerHelp } from "./commands/register.js";
+import { runSession, sessionHelp } from "./commands/session.js";
 import { runArtifact, artifactHelp } from "./commands/artifact.js";
-import { runConfig, configHelp } from "./commands/config.js";
-import { runLogout, logoutHelp } from "./commands/logout.js";
-import { runKeys, keysHelp } from "./commands/keys.js";
+import { runAgent, agentHelp } from "./commands/agent.js";
+import { runKey, keyHelp } from "./commands/key.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runFeedback, feedbackHelp } from "./commands/feedback.js";
+import { runConfig, configHelp } from "./commands/config.js";
 import { runBlob, blobHelp } from "./commands/blob.js";
-import { runDelete, deleteHelp } from "./commands/delete.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
@@ -26,44 +25,37 @@ import { failUpgradeRequired } from "./output.js";
 const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
 
 Usage:
-  pane <command> [options]
+  pane <noun> <verb> [options]
 
-Commands:
-  register          Provision an agent API key (POST /v1/register) and save it
-                    to the CLI config file. Run this once before other commands.
-  create            Create a session (POST /v1/sessions). Prints session_id,
-                    urls, tokens, expires_at.
-  artifact          Manage reusable, versioned artifacts (create / version /
-                    update / search / list / show / delete).
-  state <id>        Non-blocking snapshot: session metadata + event log.
-  send <id>         Emit an agent event into a session.
-  watch <id>        Stream a session's events as JSON-lines on stdout
-                    (long-lived; the building block for pipe-readers).
-  delete <id>       Close/delete a session (DELETE /v1/sessions/:id).
-  keys              Inspect or revoke YOUR agent's API key (list / revoke).
-  taste             Read / write / clear YOUR agent's UI taste notes
-                    (get / set / clear) — presentation preferences the agent
+Nouns:
+  session           Open / observe / send to / close sessions
+                    (create | list | show | send | watch | delete |
+                     participant <list|new|revoke>).
+  artifact          Reusable, versioned UI templates
+                    (create | version | update | search | list | show | delete).
+  key               YOUR agent's API key (list | revoke).
+  taste             YOUR agent's freeform UI taste notes
+                    (get | set | clear) — presentation preferences the agent
                     has learned from human feedback and reads before
                     generating a pane artifact.
-  feedback          Submit / list one-shot feedback to the relay operator
-                    (create / list) — bug reports, feature requests, notes.
-  blob              Manage binary attachments (upload / download / show /
-                    delete / mint-token / revoke-token). Blobs are scoped
-                    to an agent, a session, or an artifact, and can be
-                    referenced from event payloads + input_data via
+  feedback          One-shot feedback to the relay operator
+                    (create | list) — bug reports, feature requests, notes.
+  blob              Binary attachments (upload | download | show | list |
+                    delete | token <mint|revoke|list>). Blobs are scoped to
+                    an agent, a session, or an artifact, and can be referenced
+                    from event payloads + input_data via
                     \`format: pane-blob-id\`.
-  config            Show the resolved relay config (no network call).
-  logout            Clear the locally-saved relay URL + API key.
-  skill             Fetch the relay's SKILL.md to stdout, or just its
-                    version with 'pane skill version'. Used to install
-                    and keep the local skill copy in sync; no API key.
+  agent             Agent identity on this machine (register | logout).
+  config            CLI config inspection (show).
+  skill             The relay's SKILL.md (show | version) — auto-updating;
+                    no API key required.
 
-Run \`pane <command> --help\` for command-specific options.
+Run \`pane <noun> --help\` for that noun's verbs.
 
 Config:
   PANE_URL          Relay base URL.        Override: --url <url>
   PANE_API_KEY      Agent API key.         Override: --api-key <key>
-  'pane register' provisions the API key and saves it (with the URL) to
+  'pane agent register' provisions the API key and saves it (with the URL) to
   \${XDG_CONFIG_HOME:-~/.config}/pane/config.json — afterwards commands need
   only PANE_URL (or nothing) set.
 
@@ -81,7 +73,7 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 //
 // `version` is deliberately NOT here: the top-level `-v` / `--version` is
 // handled from rawArgv[0] before parseArgs runs, so it never needs to be a
-// boolean flag — and keeping it out lets `pane create --version <n>` /
+// boolean flag — and keeping it out lets `pane session create --version <n>` /
 // `pane artifact version` consume a value as a normal value-flag.
 const BOOLEAN_FLAGS = new Set([
   "json",
@@ -101,14 +93,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const command = rawArgv[0];
+  const noun = rawArgv[0];
   const rest = rawArgv.slice(1);
 
   if (
-    command === undefined ||
-    command === "-h" ||
-    command === "--help" ||
-    command === "help"
+    noun === undefined ||
+    noun === "-h" ||
+    noun === "--help" ||
+    noun === "help"
   ) {
     process.stdout.write(ROOT_HELP + "\n");
     return;
@@ -130,63 +122,47 @@ async function main(): Promise<void> {
   }
 
   const helps: Record<string, string> = {
-    register: registerHelp,
-    create: createHelp,
+    session: sessionHelp,
     artifact: artifactHelp,
-    state: stateHelp,
-    send: sendHelp,
-    watch: watchHelp,
-    delete: deleteHelp,
-    keys: keysHelp,
+    key: keyHelp,
     taste: tasteHelp,
     feedback: feedbackHelp,
     blob: blobHelp,
+    agent: agentHelp,
     config: configHelp,
-    logout: logoutHelp,
     skill: skillHelp,
   };
 
-  if (!(command in helps)) {
+  if (!(noun in helps)) {
     process.stderr.write(
       JSON.stringify({
         error: {
           code: "unknown_command",
-          message: `unknown command '${command}' — run 'pane --help'`,
+          message: `unknown command '${noun}' — run 'pane --help'`,
         },
       }) + "\n",
     );
     process.exit(1);
   }
 
-  if (args.bools.has("help")) {
-    process.stdout.write(helps[command]! + "\n");
+  // `pane <noun> --help` with no verb prints the noun-level help. A verb-level
+  // --help is the responsibility of each runner (e.g. runSession dispatches to
+  // the verb runner which reads its own xxxHelp). This pre-empt only fires
+  // when --help is the FIRST positional-equivalent — i.e. no verb given.
+  if (args.bools.has("help") && args.positionals.length === 0) {
+    process.stdout.write(helps[noun]! + "\n");
     return;
   }
 
-  switch (command) {
-    case "register":
-      await runRegister(args);
-      break;
-    case "create":
-      await runCreate(args);
+  switch (noun) {
+    case "session":
+      await runSession(args);
       break;
     case "artifact":
       await runArtifact(args);
       break;
-    case "state":
-      await runState(args);
-      break;
-    case "send":
-      await runSend(args);
-      break;
-    case "watch":
-      await runWatch(args);
-      break;
-    case "delete":
-      await runDelete(args);
-      break;
-    case "keys":
-      await runKeys(args);
+    case "key":
+      await runKey(args);
       break;
     case "taste":
       await runTaste(args);
@@ -197,11 +173,11 @@ async function main(): Promise<void> {
     case "blob":
       await runBlob(args);
       break;
+    case "agent":
+      await runAgent(args);
+      break;
     case "config":
       await runConfig(args);
-      break;
-    case "logout":
-      await runLogout();
       break;
     case "skill":
       await runSkill(args);

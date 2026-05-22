@@ -70,6 +70,104 @@ export function sniffMime(buf: Uint8Array): string {
     return "image/webp";
   }
 
+  // WAV: RIFF container `52 49 46 46 ?? ?? ?? ??` followed by `57 41 56 45`.
+  // Same family as WebP — just the trailing 4 bytes differ.
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x41 &&
+    buf[10] === 0x56 &&
+    buf[11] === 0x45
+  ) {
+    return "audio/wav";
+  }
+
+  // MP3: either an ID3v2 tag (`49 44 33`) or a frame sync (`FF Fb` / `FF F3` /
+  // `FF F2` for MPEG audio layer III). The frame-sync variant covers files
+  // without an ID3 header — common for short streamed clips.
+  if (
+    buf.length >= 3 &&
+    buf[0] === 0x49 &&
+    buf[1] === 0x44 &&
+    buf[2] === 0x33
+  ) {
+    return "audio/mpeg";
+  }
+  if (
+    buf.length >= 2 &&
+    buf[0] === 0xff &&
+    (buf[1] === 0xfb || buf[1] === 0xf3 || buf[1] === 0xf2)
+  ) {
+    return "audio/mpeg";
+  }
+
+  // Ogg (Vorbis / Opus): signature `4F 67 67 53` ("OggS"). Disambiguating
+  // Vorbis vs Opus needs the page header further in — return the umbrella
+  // audio/ogg here and let the allowlist gate on `audio/` prefix.
+  if (
+    buf.length >= 4 &&
+    buf[0] === 0x4f &&
+    buf[1] === 0x67 &&
+    buf[2] === 0x67 &&
+    buf[3] === 0x53
+  ) {
+    return "audio/ogg";
+  }
+
+  // ISO BMFF (MP4 / MOV / 3GP / heic): byte 0..3 is the box size, byte 4..7
+  // is "ftyp", then a 4-byte major brand. The major brand tells us what
+  // flavour: `isom`/`mp4 `/`mp42`/`avc1`/`iso2` → video/mp4 in practice for
+  // the demo path. `qt  ` → video/quicktime. We return the umbrella
+  // video/mp4 for the common video-bearing brands so allowlist `video/`
+  // passes; refine here if a deployment needs finer control.
+  if (
+    buf.length >= 12 &&
+    buf[4] === 0x66 &&
+    buf[5] === 0x74 &&
+    buf[6] === 0x79 &&
+    buf[7] === 0x70
+  ) {
+    // Read major brand bytes 8..11. We've already gated on length, so the
+    // `!` is safe; the TS compiler doesn't narrow Uint8Array indexing on a
+    // numeric `.length` check (noUncheckedIndexedAccess is on).
+    const brand = String.fromCharCode(buf[8]!, buf[9]!, buf[10]!, buf[11]!);
+    if (
+      brand === "isom" ||
+      brand === "iso2" ||
+      brand === "iso3" ||
+      brand === "iso4" ||
+      brand === "iso5" ||
+      brand === "iso6" ||
+      brand === "mp41" ||
+      brand === "mp42" ||
+      brand === "mp4 " ||
+      brand === "avc1" ||
+      brand === "dash" ||
+      brand === "M4V " ||
+      brand === "f4v "
+    ) {
+      return "video/mp4";
+    }
+    if (brand === "qt  ") return "video/quicktime";
+    // WebM / 3GP / HEIC and others would land here too; leave as
+    // octet-stream so the allowlist gate decides.
+  }
+
+  // WebM (Matroska EBML): leading bytes `1A 45 DF A3`.
+  if (
+    buf.length >= 4 &&
+    buf[0] === 0x1a &&
+    buf[1] === 0x45 &&
+    buf[2] === 0xdf &&
+    buf[3] === 0xa3
+  ) {
+    return "video/webm";
+  }
+
   // PDF: "%PDF-".
   if (
     buf.length >= 5 &&

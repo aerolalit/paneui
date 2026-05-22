@@ -63,11 +63,20 @@ function bearer(apiKey: string): Record<string, string> {
 }
 
 function post(path: string, apiKey: string, body: unknown): Promise<Response> {
+  // Auto-fill `title` on POST /v1/sessions so the broad set of existing tests
+  // (which predate the required-title rule from #158) doesn't need to repeat
+  // it everywhere. Tests that specifically exercise the title rules pass an
+  // explicit `title` (or `title: undefined` to drop it before serialization).
+  let payload: unknown = body;
+  if (path === "/v1/sessions" && body && typeof body === "object") {
+    const b = body as Record<string, unknown>;
+    if (!("title" in b)) payload = { ...b, title: "Test session" };
+  }
   return app.fetch(
     new Request(`http://t${path}`, {
       method: "POST",
       headers: bearer(apiKey),
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     }),
   );
 }
@@ -477,5 +486,212 @@ describe("POST /v1/sessions — view-only artifact (no event_schema)", () => {
       input_data: { quarter: "Q4" },
     });
     expect(ok.status).toBe(201);
+  });
+});
+
+// Title is required on every session — the bridge shell renders it into
+// <title>, so the relay refuses to mint a session without one. The reference
+// form has one ergonomic fallback: a named artifact's `name` is used when the
+// caller omits `title`.
+describe("POST /v1/sessions — title", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  // postRaw bypasses the test-only auto-fill in `post(...)` so we can prove
+  // the relay's behaviour when the wire body has no `title` field at all.
+  function postRaw(
+    path: string,
+    apiKey: string,
+    body: unknown,
+  ): Promise<Response> {
+    return app.fetch(
+      new Request(`http://t${path}`, {
+        method: "POST",
+        headers: bearer(apiKey),
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  async function createNamedArtifact(
+    apiKey: string,
+    name: string | null,
+  ): Promise<string> {
+    if (name === null) {
+      // Anonymous artifact: name + slug null. The only way to create one is
+      // via the inline-session path that transparently spins one up. Re-use
+      // that flow to get an artifact_id we can reference.
+      const res = await post("/v1/sessions", apiKey, {
+        artifact: {
+          type: "html-inline",
+          source: "<html>x</html>",
+          event_schema: eventSchema,
+        },
+      });
+      const { session_id } = (await res.json()) as { session_id: string };
+      const sess = await prisma.session.findUnique({
+        where: { id: session_id },
+        include: { artifactVersion: true },
+      });
+      return sess!.artifactVersion.artifactId;
+    }
+    const res = await postRaw("/v1/artifacts", apiKey, {
+      name,
+      source: "<html>x</html>",
+      type: "html-inline",
+      event_schema: eventSchema,
+    });
+    return ((await res.json()) as { artifact_id: string }).artifact_id;
+  }
+
+  it("rejects the inline form with 400 when title is missing", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; hint?: string };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.hint).toMatch(/title/i);
+  });
+
+  it("accepts the inline form when title is provided and echoes it back", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "My pane",
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { title: string; session_id: string };
+    expect(body.title).toBe("My pane");
+    // GET also returns it.
+    const get = await app.fetch(
+      new Request(`http://t/v1/sessions/${body.session_id}`, {
+        headers: bearer(apiKey),
+      }),
+    );
+    expect(((await get.json()) as { title: string }).title).toBe("My pane");
+  });
+
+  it("falls back to Artifact.name when reference-form title is omitted", async () => {
+    const apiKey = await seedAgent();
+    await createNamedArtifact(apiKey, "PR Review");
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: { id: "PR Review".toLowerCase() }, // resolve by id below
+    });
+    // The slug lookup needs the actual id since we didn't set a slug. Re-issue
+    // with the id we just created.
+    if (res.status === 404) {
+      const head = await prisma.artifact.findFirst({
+        where: { name: "PR Review" },
+      });
+      const res2 = await postRaw("/v1/sessions", apiKey, {
+        artifact: { id: head!.id },
+      });
+      expect(res2.status).toBe(201);
+      const body = (await res2.json()) as { title: string };
+      expect(body.title).toBe("PR Review");
+      return;
+    }
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { title: string };
+    expect(body.title).toBe("PR Review");
+  });
+
+  it("rejects reference form with 400 when artifact has no name AND no title given", async () => {
+    const apiKey = await seedAgent();
+    const anonId = await createNamedArtifact(apiKey, null);
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: { id: anonId },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; hint?: string };
+    };
+    expect(body.error.code).toBe("invalid_request");
+    expect(body.error.hint).toMatch(/title/i);
+  });
+
+  it("prefers explicit title over Artifact.name", async () => {
+    const apiKey = await seedAgent();
+    await createNamedArtifact(apiKey, "Artifact Name");
+    const head = await prisma.artifact.findFirst({
+      where: { name: "Artifact Name" },
+    });
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: { id: head!.id },
+      title: "Explicit title",
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { title: string }).title).toBe(
+      "Explicit title",
+    );
+  });
+
+  it("rejects a title with control characters (400)", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "line one\nline two",
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "invalid_request",
+    );
+  });
+
+  it("rejects a title longer than 80 chars (400)", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "x".repeat(81),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a whitespace-only title that trims to empty (400)", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "    ",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("trims surrounding whitespace before storing", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "  Padded  ",
+    });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { title: string }).title).toBe("Padded");
   });
 });
