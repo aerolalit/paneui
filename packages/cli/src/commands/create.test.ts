@@ -109,6 +109,32 @@ describe("create — inline artifact form", () => {
     expect("event_schema" in req.artifact).toBe(false);
     expect(JSON.parse(stdout).session_id).toBe("ses_1");
   });
+
+  it("plumbs --input-schema into artifact.input_schema (inline JSON) — #208", async () => {
+    await run([
+      "--artifact",
+      "<html></html>",
+      "--input-schema",
+      '{"type":"object","properties":{"x":{"type":"string"}}}',
+    ]);
+    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
+    expect(req.artifact["input_schema"]).toEqual({
+      type: "object",
+      properties: { x: { type: "string" } },
+    });
+  });
+
+  it("rejects a non-object --input-schema (array/primitive)", async () => {
+    await run(["--artifact", "<html></html>", "--input-schema", "[]"]);
+    expect(calls).toHaveLength(0);
+    expect(stderr).toMatch(/--input-schema must be a JSON object/);
+  });
+
+  it("omits input_schema entirely when --input-schema isn't passed (no input contract)", async () => {
+    await run(["--artifact", "<html></html>"]);
+    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
+    expect("input_schema" in req.artifact).toBe(false);
+  });
 });
 
 describe("create — reference artifact form", () => {
@@ -146,6 +172,22 @@ describe("create — reference artifact form", () => {
     await run(["--artifact-id", "art_1", "--version", "0"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("--version must be a positive integer");
+  });
+
+  it("rejects --input-schema combined with --artifact-id (#208)", async () => {
+    // Named artifacts pin a version that already carries an input_schema;
+    // accepting --input-schema here would silently shadow it. Fail fast.
+    await run([
+      "--artifact-id",
+      "pr-review",
+      "--input-schema",
+      '{"type":"object"}',
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(
+      "--input-schema is incompatible with --artifact-id",
+    );
+    expect(calls).toHaveLength(0);
   });
 });
 

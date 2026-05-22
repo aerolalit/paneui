@@ -303,7 +303,8 @@ The `artifact` field takes **one of two forms** — exactly one of `artifact.id`
           "emittedBy": ["page", "agent"]
         }
       }
-    }
+    },
+    "input_schema": { "...": "JSON Schema for input_data — optional" }
   },
   "input_data": { "...": "..." }
 }
@@ -314,6 +315,14 @@ validates it against the pinned version's `input_schema` at create time (a
 clear error on mismatch, exactly like a rejected event). It is distinct from
 `metadata`, which the relay never reads or validates. The page reads
 `input_data` via the `window.pane.inputData` bridge field.
+
+`artifact.input_schema` on the **inline form** is optional. Pass it when
+`input_data` carries `blob_id`s the page needs to render: the participant
+blob-download bridge walks `input_data` against the version's `inputSchema`
+for `"format": "pane-blob-id"` sites, and a blob without a walkable site is
+unreachable from the page even when the agent owns it. The reference form
+has no equivalent flag because the schema lives on the artifact version
+already.
 
 Either form, the session ends up FK'd to an `artifact_version` — there is no
 nullable-FK branch. The inline form is sugar over the same model, not a

@@ -29,6 +29,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   "artifact.type": "--artifact-type",
   "artifact.source": "--artifact",
   "artifact.event_schema": "--event-schema",
+  "artifact.input_schema": "--input-schema",
 };
 
 function schemaPathToFlag(path: PropertyKey[]): string {
@@ -89,6 +90,15 @@ Artifact (choose one):
                       emittedBy is any non-empty subset of ["page", "agent"].
                       payload is a JSON Schema; the relay validates every
                       emit against it. See docs/SPEC.md for the full grammar.
+  --input-schema <v>  Inline-form input schema. A .json file, or inline JSON.
+                      Optional with --artifact, rejected with --artifact-id
+                      (the schema comes from the pinned artifact version
+                      there). When present, the session's --input-data is
+                      validated against it AND any blob ids declared at a
+                      "format": "pane-blob-id" site become reachable from the
+                      page via window.pane.downloadBlob. Without it, blob
+                      refs in --input-data are silently unreachable. See
+                      docs/SPEC.md and #208.
 
 Options:
   --title <text>      Tab title shown to the human (max 80 chars, single
@@ -146,7 +156,14 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
 
   if (artifactIdVal !== undefined) {
     // Reference form — instance an existing named artifact. --artifact /
-    // --event-schema are not needed here.
+    // --event-schema / --input-schema are not used here: the artifact's
+    // pinned version carries them already.
+    if (args.flags.get("input-schema") !== undefined) {
+      fail(
+        "--input-schema is incompatible with --artifact-id — the input schema comes from the pinned artifact version. Author the schema on the artifact (`pane artifact create --input-schema …`) instead.",
+        "invalid_args",
+      );
+    }
     const ref: Record<string, unknown> = { id: artifactIdVal };
     const versionRaw = args.flags.get("version");
     if (versionRaw !== undefined) {
@@ -158,12 +175,18 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     }
     candidate["artifact"] = ref;
   } else {
-    // Inline form — the event schema rides inside the `artifact` object; the
-    // relay transparently creates an anonymous artifact behind it.
-    // --event-schema is optional: omitting it makes a view-only one-off (a
-    // report/dashboard the human only views), and the relay then rejects every
-    // page/agent emit.
+    // Inline form — the event + input schemas ride inside the `artifact`
+    // object; the relay transparently creates an anonymous artifact behind
+    // it. Both schemas are optional:
+    //  - --event-schema absent → view-only one-off (no page/agent emits)
+    //  - --input-schema absent → no input contract; --input-data passes
+    //    through unvalidated AND any blob ids in it are unreachable from
+    //    the page (the participant blob-download bridge walks input_data
+    //    against the artifact version's inputSchema). Pass --input-schema
+    //    when --input-data carries blob refs the page needs to render.
+    //    See #208.
     const schemaVal = args.flags.get("event-schema");
+    const inputSchemaVal = args.flags.get("input-schema");
 
     const artifactType = (args.flags.get("artifact-type") ?? "html-inline") as
       | "html-inline"
@@ -184,8 +207,10 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       fail(e instanceof Error ? e.message : String(e), "invalid_args");
     }
 
-    // Build the inline artifact object. event_schema is OMITTED entirely (not
-    // set to undefined) when --event-schema is absent — a view-only artifact.
+    // Build the inline artifact object. event_schema / input_schema are
+    // OMITTED entirely (not set to undefined) when their flags are absent —
+    // omission is meaningful at the relay (view-only artifact / no input
+    // contract).
     const inlineArtifact: Record<string, unknown> = {
       type: artifactType,
       source,
@@ -196,6 +221,17 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
           schemaVal,
           "--event-schema",
         );
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e), "invalid_args");
+      }
+    }
+    if (inputSchemaVal !== undefined) {
+      try {
+        const v = resolveJson(inputSchemaVal, "--input-schema");
+        if (v === null || typeof v !== "object" || Array.isArray(v)) {
+          fail("--input-schema must be a JSON object", "invalid_args");
+        }
+        inlineArtifact["input_schema"] = v;
       } catch (e) {
         fail(e instanceof Error ? e.message : String(e), "invalid_args");
       }

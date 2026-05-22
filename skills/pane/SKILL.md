@@ -295,6 +295,14 @@ pane session create --artifact ./form.html --event-schema ./schema.json \
   file or inline JSON. Used with `--artifact`; not needed with `--artifact-id`.
   **Optional** — omit it for a view-only artifact (see **View-only artifacts**
   below); the session then accepts no `page`/`agent` events.
+- `--input-schema <v>` — inline-form input schema. JSON Schema for `--input-data`,
+  as a `.json` file or inline JSON. Used with `--artifact`; **rejected with
+  `--artifact-id`** (the schema comes from the pinned artifact version there).
+  Optional. **Pass it whenever `--input-data` carries `blob_id`s the page needs
+  to render** — the participant blob-download bridge walks `input_data` against
+  the artifact version's `inputSchema` for `"format": "pane-blob-id"` sites, and
+  a blob without a walkable site is unreachable from the page even when the
+  agent owns it.
 - `--input-data <v>` — this instance's seed data, a JSON object (file or inline
   JSON). The relay validates it against the artifact version's `input_schema`;
   the page reads it as `window.pane.inputData`. Works with either form.

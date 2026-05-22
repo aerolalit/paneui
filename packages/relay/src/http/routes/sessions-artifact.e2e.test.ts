@@ -380,6 +380,128 @@ describe("POST /v1/sessions — input_schema validation", () => {
   });
 });
 
+// Inline-form sessions can ALSO carry an input_schema (#208). Pre-fix the
+// relay's inline branch hardcoded `inputSchema: Prisma.JsonNull`, silently
+// dropping any schema sent on the wire — which made blob refs in
+// `input_data` unreachable from the page because the participant blob-
+// download bridge walks input_data against the artifact version's
+// inputSchema. These tests pin the new behaviour: the schema is persisted,
+// it gates input_data validation, and it surfaces blob-id sites to the
+// reachability walker just like the named-artifact path.
+describe("POST /v1/sessions — inline form with input_schema (#208)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  const inputSchema = {
+    type: "object",
+    properties: {
+      prTitle: { type: "string" },
+      diffUrl: { type: "string" },
+    },
+    required: ["prTitle"],
+    additionalProperties: false,
+  };
+
+  it("persists input_schema on the auto-created artifact version", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        input_schema: inputSchema,
+      },
+      input_data: { prTitle: "Fix the bug", diffUrl: "https://x/diff" },
+    });
+    expect(res.status).toBe(201);
+
+    // The auto-created artifact version carries the schema (pre-fix this was
+    // Prisma.JsonNull regardless of what the request sent).
+    const versions = await prisma.artifactVersion.findMany();
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.inputSchema).toEqual(inputSchema);
+  });
+
+  it("accepts inline session whose input_data satisfies the schema", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        input_schema: inputSchema,
+      },
+      input_data: { prTitle: "ok" },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects inline session whose input_data violates the schema", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        input_schema: inputSchema,
+      },
+      input_data: { prTitle: 123 }, // wrong type
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("input_schema_violation");
+    // Validation runs before the insert; no session row created.
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("rejects a missing required field in input_data", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        input_schema: inputSchema,
+      },
+      // input_data omitted entirely → validated as {} → required prTitle fails
+    });
+    expect(res.status).toBe(422);
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("rejects a malformed inline input_schema at session-create time", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        input_schema: { type: "not-a-real-type" },
+      },
+    });
+    expect(res.status).toBe(400);
+    // No artifact + no session leaked on the failed validation.
+    expect(await prisma.artifact.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it("input_schema is absent => no input contract (regression guard for the pre-fix default)", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/sessions", apiKey, {
+      artifact: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      input_data: { anything: "goes", n: 7 },
+    });
+    expect(res.status).toBe(201);
+    const versions = await prisma.artifactVersion.findMany();
+    expect(versions[0]!.inputSchema).toBeNull();
+  });
+});
+
 // View-only artifacts: an inline artifact created with NO event_schema declares
 // an empty, strictly-enforced event vocabulary. The session rejects every
 // page/agent emit; system events keep flowing; input_schema is independent.

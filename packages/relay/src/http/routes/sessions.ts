@@ -19,6 +19,7 @@ import { errors } from "../errors.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
+  assertValidInputSchema,
   validateSchemaShape,
   validateInputData,
   validateSessionTitle,
@@ -306,6 +307,7 @@ sessions.post("/", requireAgent, async (c) => {
       source: string;
       type: "html-inline" | "html-ref";
       event_schema?: unknown;
+      input_schema?: unknown;
     };
     if (Buffer.byteLength(inline.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
       throw errors.payloadTooLarge();
@@ -331,6 +333,24 @@ sessions.post("/", requireAgent, async (c) => {
       });
       eventSchema = validateSchemaShape(inline.event_schema);
     }
+    // An absent input_schema = no input contract; the session accepts any
+    // input_data (or none) and the participant blob-download bridge has no
+    // walkable sites for `format: pane-blob-id` in input_data. When present,
+    // the schema is compiled with the same Ajv pipeline used by named
+    // artifacts (`assertValidInputSchema`), persisted on the auto-created
+    // artifact version below, and surfaced to the downstream input_data
+    // validator + blob-ref access check via the outer `inputSchema` var.
+    // Before this branch existed, inline sessions hardcoded inputSchema to
+    // Prisma.JsonNull — making blob refs in input_data silently unreachable
+    // even when the agent owned the blob (#208).
+    if (inline.input_schema !== undefined) {
+      assertSchemaWithinLimits(inline.input_schema, {
+        maxBytes: config.MAX_SCHEMA_BYTES,
+        maxDepth: config.MAX_SCHEMA_DEPTH,
+      });
+      assertValidInputSchema(inline.input_schema);
+      inputSchema = inline.input_schema;
+    }
 
     const created = await prisma.$transaction(async (tx) => {
       const head = await tx.artifact.create({
@@ -346,7 +366,10 @@ sessions.post("/", requireAgent, async (c) => {
             eventSchema !== null
               ? (eventSchema as unknown as Prisma.InputJsonValue)
               : Prisma.JsonNull,
-          inputSchema: Prisma.JsonNull,
+          inputSchema:
+            inline.input_schema !== undefined
+              ? (inline.input_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
         },
       });
       return { headId: head.id, versionId: version.id };
