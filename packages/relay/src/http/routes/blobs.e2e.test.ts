@@ -119,6 +119,12 @@ beforeAll(async () => {
     MAX_BLOBS_PER_AGENT_BYTES: String(AGENT_CAP),
     // Keep MIME allowlist focused on what these tests upload.
     BLOB_MIME_ALLOWLIST: "image/jpeg,image/png,application/pdf",
+    // Disable the per-IP general rate limiter for this suite. All tests share
+    // one IP (jsdom / vitest), so the prod default (120 req/min) is consumed
+    // by the ~300+ HTTP calls this file makes — manifests as flaky 429s on
+    // whichever tests happen to land near the end of the window. Tests don't
+    // exercise the limiter itself; rate_limit.e2e.test.ts owns that surface.
+    RATE_LIMIT: "0",
   });
   const blobStore = await makeBlobStore(config);
   app = buildApp(config, prisma, undefined, blobStore);
