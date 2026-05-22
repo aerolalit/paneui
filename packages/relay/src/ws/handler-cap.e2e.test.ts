@@ -160,6 +160,7 @@ async function createSession(
           },
         },
       },
+      title: "Test session",
     }),
   });
   const body = (await res.json()) as {

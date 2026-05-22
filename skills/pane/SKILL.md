@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a session, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v1.3.0 -->
+<!-- pane skill v2.2.0 -->
 
 # pane
 
@@ -24,11 +24,11 @@ question, just ask in text; `pane` only wins on the rich slice.
 
 ## Setup
 
-The hosted relay (`https://relay.paneui.com`) is the default — `pane register`
+The hosted relay (`https://relay.paneui.com`) is the default — `pane agent register`
 works out of the box. The CLI needs:
 
 - **An agent API key.** Either pre-provided by the operator (as
-  `PANE_API_KEY`), or obtained yourself via `pane register` (see "Registering"
+  `PANE_API_KEY`), or obtained yourself via `pane agent register` (see "Registering"
   below). Once registered, the key is saved to the config file and you don't
   need `PANE_API_KEY` at all.
 - **A relay URL.** Only relevant for self-hosters — set `PANE_URL` (or pass
@@ -60,7 +60,7 @@ REMOTE_VER=$(pane skill version --plain)
 if [ "$REMOTE_VER" = "0.0.0" ]; then
   : # nothing to do
 elif [ "$LOCAL_VER" != "$REMOTE_VER" ]; then
-  pane skill > <path-to-your-local-skill>   # overwrites with the relay's current skill
+  pane skill show > <path-to-your-local-skill>   # overwrites with the relay's current skill
 fi
 ```
 
@@ -83,7 +83,7 @@ matching update.
 Rules:
 
 - If the local file has no `<!-- pane skill v... -->` comment, treat it as
-  stale and run `pane skill > <path>`.
+  stale and run `pane skill show > <path>`.
 - If `REMOTE_VER` is `0.0.0`, skip the update — the relay is on an old
   image without a version comment, and clobbering your (presumably newer)
   local copy with that would be a downgrade. The snippet above guards
@@ -95,7 +95,7 @@ Rules:
   this session and it's still mismatched, stop and surface the error to
   the human.
 - If you've hand-edited the local skill (added your own notes), save your
-  changes first — `pane skill > <path>` is a clobbering write.
+  changes first — `pane skill show > <path>` is a clobbering write.
 
 ## Discover the CLI with `--help`
 
@@ -105,8 +105,8 @@ argument, and default:
 
 - `pane --help` — the command list and global options.
 - `pane <command> --help` — every flag and option for that command, e.g.
-  `pane create --help`, `pane watch --help`, `pane send --help`,
-  `pane register --help`.
+  `pane session create --help`, `pane session watch --help`, `pane session send --help`,
+  `pane agent register --help`.
 
 If a command errors or you are unsure of an option name, **run `--help`
 instead of guessing** — the CLI is self-documenting and the help text reflects
@@ -136,7 +136,7 @@ What to do, in this order:
 If you weren't handed an API key, provision one yourself — **once** — with:
 
 ```sh
-pane register --name "<short-descriptive-agent-name>"
+pane agent register --name "<short-descriptive-agent-name>"
 ```
 
 Pick a stable, descriptive name — it's how a human tells your agent apart from
@@ -147,13 +147,13 @@ unhelpful; always set one.
 Self-hosters add `--url "$PANE_URL"` (or set `PANE_URL`) to target a
 non-hosted relay.
 
-Whether `pane register` works depends on the relay's `REGISTRATION_MODE`:
+Whether `pane agent register` works depends on the relay's `REGISTRATION_MODE`:
 
 - `closed` (the default) — the endpoint returns 404. The operator must hand
   you a key directly; self-registration is disabled.
 - `secret` — pass the operator-shared registration secret with `--secret <s>`
   or the `PANE_REGISTER_SECRET` env var. A missing/wrong secret is a 401.
-- `open` (the hosted relay's mode) — public; `pane register --name <name>`
+- `open` (the hosted relay's mode) — public; `pane agent register --name <name>`
   works with no secret.
 
 On success this calls the relay's `POST /v1/register`, mints an agent + API
@@ -164,7 +164,7 @@ vars needed.
 
 - The key is not printed by default. Pass `--print-key` if you need it echoed.
 - Run it just once; re-running mints a fresh agent each time.
-- The relay rate-limits `/v1/register` per IP; if you hit it, `pane register`
+- The relay rate-limits `/v1/register` per IP; if you hit it, `pane agent register`
   fails with `rate_limited` — wait and retry.
 
 ## Artifacts and sessions — the model
@@ -177,12 +177,12 @@ The reusable artifact is the unit you should think in. **Start every task with
 `pane artifact list`** (or `pane artifact search <keywords>`) to see what
 already exists — a previous run may have authored exactly the UI you need. The
 intended flow is: author an artifact **once** with `pane artifact create`, then
-instance it **many times** with `pane create --artifact-id <slug>` — no HTML
+instance it **many times** with `pane session create --artifact-id <slug>` — no HTML
 re-sent, no regeneration. Per-instance data (the "PR metadata" that makes the
 same PR-review page show _this_ PR) rides in `--input-data`; the page reads it
 as `window.pane.inputData`.
 
-There are two ways to give `pane create` an artifact:
+There are two ways to give `pane session create` an artifact:
 
 - **By reference** — `--artifact-id <id|slug>` — instance an existing reusable
   artifact. The reuse path, and the one you should reach for first.
@@ -210,13 +210,13 @@ source of truth.
 So the workflow is:
 
 1. `pane artifact search <keywords>` — does a suitable artifact already exist?
-2. **If yes** — use it: `pane create --artifact-id <id|slug>` (optionally
+2. **If yes** — use it: `pane session create --artifact-id <id|slug>` (optionally
    `--input-data` for this instance's data). Inspect it first with
    `pane artifact show <id|slug>` — the `description` and each version's
    `input_schema` tell you what it does and what data it needs. Done — no HTML
    written.
 3. **If nothing fits** — only then author. If the UI is genuinely a one-off,
-   use the inline `pane create --artifact ...` form. If it is something you (or
+   use the inline `pane session create --artifact ...` form. If it is something you (or
    the operator) will want again, register it: `pane artifact create` — so the
    next session can find and reuse it.
 
@@ -233,7 +233,7 @@ Populate, even briefly:
 
 - **`--name`** — human-readable label. "PR Review", not "Form 1".
 - **`--slug`** — a short, durable kebab-case handle. Record it; you (or any
-  future session) can later use `pane create --artifact-id <slug>` with no
+  future session) can later use `pane session create --artifact-id <slug>` with no
   search at all. Without a slug, the only handle is the relay-assigned id —
   which is not memorable and not stable in your prompt context.
 - **`--description`** — what a future you reads to decide "is this the one I
@@ -246,7 +246,7 @@ Populate, even briefly:
   `pane artifact search "review"` and `… "code"` both find it.
 - **`--input-schema`** — optional JSON Schema for the `input_data` the
   artifact expects. Doubles as documentation: a future you reads it to know
-  exactly what shape of data to pass at `pane create` time.
+  exactly what shape of data to pass at `pane session create` time.
 
 None of these are required by the relay. All of them are required if you
 want this artifact to be findable later. Treat them as a one-time author's
@@ -255,7 +255,7 @@ tax that pays back every reuse.
 Heuristic for when to bother:
 
 - **One-off shape** (a custom approval for *this specific* deploy, a survey
-  you're handing out once) → use the inline `pane create --artifact …` form,
+  you're handing out once) → use the inline `pane session create --artifact …` form,
   skip the metadata.
 - **Reusable shape** (a PR review page, a deploy approval, a generic survey
   template) → `pane artifact create` with `--name`, `--slug`, `--description`,
@@ -263,21 +263,29 @@ Heuristic for when to bother:
 
 ## The commands
 
-### `pane create` — start a session
+### `pane session create` — start a session
 
 Reference an existing artifact (the reuse path — see "Search before you
 generate" above):
 
 ```sh
-pane create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
+pane session create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
 ```
 
 Or inline a one-off artifact:
 
 ```sh
-pane create --artifact ./form.html --event-schema ./schema.json --ttl 600
+pane session create --artifact ./form.html --event-schema ./schema.json \
+  --title "Quick poll" --ttl 600
 ```
 
+- `--title <text>` — the human's browser tab title for this session (max 80
+  chars, single line). Set a descriptive, per-session value so a human with
+  several panes open can tell tabs apart. **Required, with one exception:**
+  reference-form sessions (`--artifact-id`) against a named artifact fall back
+  to the artifact's `name`. So `pane artifact create --name "PR Review"` +
+  `pane session create --artifact-id pr-review` is fine; `pane session create --artifact …`
+  (inline) always needs `--title`.
 - `--artifact-id <v>` — reference an existing artifact by id or slug. Pair with
   `--version <n>` to pin a specific version (defaults to the latest).
 - `--artifact <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
@@ -332,7 +340,7 @@ pane artifact update pr-review --description "..." --tags pr,review
 latest_version, last_used_at` — no HTML. Fetch the HTML with `show` once you
   have chosen one.
 - The `slug` is the durable handle: record it (`pr-review`) and later
-  `pane create --artifact-id pr-review` with no search at all.
+  `pane session create --artifact-id pr-review` with no search at all.
 - `--input-schema` is optional JSON Schema describing the `input_data` the
   artifact needs. It doubles as documentation — it tells a future you exactly
   what data to pass.
@@ -350,9 +358,9 @@ Each entry under `events` declares:
 
 - `payload` — a **JSON Schema** for the event's `data`. `{}` means "any
   object". Be as strict as you can: the relay validates `pane.emit(...)` /
-  `pane send` data against it and rejects mismatches.
+  `pane session send` data against it and rejects mismatches.
 - `emittedBy` — who may emit this type: `"page"` (the human's UI, via the
-  `pane.emit` bridge) and/or `"agent"` (you, via `pane send`). Emitting a
+  `pane.emit` bridge) and/or `"agent"` (you, via `pane session send`). Emitting a
   type your side isn't listed in fails with `author_not_allowed`.
 
 ```json
@@ -390,11 +398,11 @@ The event schema is **optional**. An artifact created with no `--event-schema` i
 **view-only**: a report, dashboard, or chart the human only _reads_ — there is
 nothing to submit back.
 
-- Omit `--event-schema` on `pane create --artifact ...` or `pane artifact create` to
+- Omit `--event-schema` on `pane session create --artifact ...` or `pane artifact create` to
   make a view-only artifact. The CLI sends no event schema.
 - A view-only session declares an **empty event vocabulary, strictly enforced**.
   Every `page`/`agent` emit is rejected `422 unknown_event_type` — `pane.emit`
-  in the page and `pane send` from the agent both fail. There is no event type
+  in the page and `pane session send` from the agent both fail. There is no event type
   the session will accept.
 - A view-only artifact can still carry an `--input-schema` and be seeded per
   session with `--input-data` — that is how one report template renders many
@@ -417,7 +425,7 @@ the session _only_ through it:
   `type` must exist in the schema with `"page"` in `emittedBy`; `data` must
   satisfy its `payload`. This is how the human's answer reaches you.
 - `pane.on(type, handler)` → `unsubscribe` — react to events (e.g. an
-  `assistant.reply` you sent via `pane send`).
+  `assistant.reply` you sent via `pane session send`).
 - `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
 - `pane.inputData` — this session's per-instance seed data: the `input_data`
   passed to `POST /v1/sessions`, validated by the relay against the artifact
@@ -437,8 +445,8 @@ envelope**, _not_ the bare payload. The envelope shape is:
 ```
 
 The payload — the object you passed to `pane.emit(...)` or to
-`pane send --data` — is in **`ev.data`**. So an event sent with
-`pane send --type assistant.reply --data '{"title":"...","message":"..."}'`
+`pane session send --data` — is in **`ev.data`**. So an event sent with
+`pane session send --type assistant.reply --data '{"title":"...","message":"..."}'`
 arrives at the handler as `ev`, and the content is `ev.data.title` /
 `ev.data.message`.
 
@@ -486,7 +494,7 @@ A minimal working artifact for the schema above:
 
 <script>
   // The agent pushes a rich reply with
-  //   pane send --type assistant.reply --data '{"title":"…","message":"…"}'
+  //   pane session send --type assistant.reply --data '{"title":"…","message":"…"}'
   // `ev` is the envelope; the payload is `ev.data`.
   pane.on("assistant.reply", (ev) => {
     const { title, message } = ev.data;
@@ -503,7 +511,7 @@ A minimal working artifact for the schema above:
     // Basic validation — the sandbox doesn't give us native form validation
     // here because we're not using <form>'s submit pipeline.
     if (!name || !(rating >= 1 && rating <= 5)) return;
-    // Emit the terminal event — this is what `pane watch --type` waits for.
+    // Emit the terminal event — this is what `pane session watch --type` waits for.
     // Await it: pane.emit resolves only once the relay has accepted the
     // event, and rejects if delivery fails. Only show "Sent" after that.
     await pane.emit("form.submitted", { name, rating });
@@ -521,7 +529,7 @@ into real DOM. The whole point of Pane is a proper UI; a JSON dump is a bug.
 Rules of thumb when authoring the artifact:
 
 - The event type you `pane.emit` for the human's final action **must match**
-  the `--type` you later `pane watch` for. Above: `form.submitted`.
+  the `--type` you later `pane session watch` for. Above: `form.submitted`.
 - A handler's argument is the **envelope** — read the payload from `ev.data`,
   and render its individual fields with `.textContent` into real elements.
 - `pane` is ready by the time inline `<script>` runs — no need to wait for an
@@ -530,14 +538,14 @@ Rules of thumb when authoring the artifact:
   the sandbox CSP blocks them. Inline everything, or use data URIs.
 - Keep the artifact self-contained — it's one HTML document.
 
-### `pane watch <id>` — wait for the answer
+### `pane session watch <id>` — wait for the answer
 
-`pane watch` holds a WebSocket and prints **one compact JSON object per line**
+`pane session watch` holds a WebSocket and prints **one compact JSON object per line**
 to stdout, flushing after each. This is the key command — it's how you wait for
 the human.
 
 ```sh
-pane watch ses_xxxx --type form.submitted
+pane session watch ses_xxxx --type form.submitted
 ```
 
 - `--type <t[,t2,…]>` — exit 0 after the first event whose type is in this
@@ -571,12 +579,12 @@ pane watch ses_xxxx --type form.submitted
 - The relay drops the connection abnormally → `ws_closed_abnormally` on
   stderr, non-zero exit (distinct from a clean `_closed`).
 
-### `pane state <id>` — snapshot, optionally long-polled
+### `pane session show <id>` — snapshot, optionally long-polled
 
 ```sh
-pane state ses_xxxx                          # snapshot, returns immediately
-pane state ses_xxxx --since <next_cursor>    # only events past the cursor
-pane state ses_xxxx --since <next_cursor> --wait 30
+pane session show ses_xxxx                          # snapshot, returns immediately
+pane session show ses_xxxx --since <next_cursor>    # only events past the cursor
+pane session show ses_xxxx --since <next_cursor> --wait 30
 ```
 
 Prints `{ meta, events, next_cursor }` without holding a WebSocket. Two
@@ -589,15 +597,15 @@ modes:
   soon as a new event arrives. Use this for **headless polling agents
   that can't keep a WebSocket open** (cron, FaaS, slow links): call,
   re-call with the previous `next_cursor` as `--since`, repeat. Higher
-  latency per round-trip than `pane watch` but no long-lived connection.
+  latency per round-trip than `pane session watch` but no long-lived connection.
 
 Choose `watch` (streaming) when you can hold a process; choose
 `state --wait` (polling) when you can't.
 
-### `pane send <id>` — emit your own event
+### `pane session send <id>` — emit your own event
 
 ```sh
-pane send ses_xxxx --type assistant.reply \
+pane session send ses_xxxx --type assistant.reply \
   --data '{"title":"Got it","message":"Thanks — your rating is recorded."}'
 ```
 
@@ -605,15 +613,89 @@ pane send ses_xxxx --type assistant.reply \
 with `agent` in its `emittedBy`. Use this to update the UI live while the human
 works.
 
-### `pane delete <id>` — close a session
+### `pane session delete <id>` — close a session
 
 ```sh
-pane delete ses_xxxx
+pane session delete ses_xxxx
 ```
 
 Closes the session and tears it down (`DELETE /v1/sessions/:id`). Idempotent —
 re-deleting an already-closed session is a no-op. Use it to clean up a session
 you are done with rather than waiting for its TTL to expire.
+
+### `pane session list` — enumerate your sessions
+
+```sh
+pane session list                                  # default --status=open
+pane session list --status all
+pane session list --status closed --limit 100
+pane session list --artifact-id pane-pitch-deck    # filter by named artifact
+pane session list --cursor <opaque>                # next page
+```
+
+Lists your agent's sessions, newest first. The response is intentionally
+LEAN: each row carries `active_human_participants` (a count of non-revoked
+human URLs on that session) but NOT the full participant array — agents
+with many sessions × many humans should not pay that bandwidth on every
+list call. To see the participants themselves (including revoked rows),
+call `pane session participant list <session-id>`.
+
+The response also carries NO secrets: no participant tokens, no callback
+URL, no metadata or input_data.
+
+**Load-bearing caveat — participant tokens are unrecoverable.** The relay
+stores only the hash of each participant token; the plaintext URL is returned
+exactly once in the `pane session create` response and **cannot be retrieved
+later**. If you lost a URL, neither `pane session list` nor `pane session
+participant list` will return it; instead, use `pane session participant new`
+to mint a fresh URL on the still-alive session.
+
+### `pane session participant list|new|revoke` — manage URLs on a live session
+
+```sh
+# Find the participant ids on one session.
+pane session participant list ses_abc123
+
+# Lost the URL but the session is still alive — mint a new entry door.
+pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+
+# Invalidate a URL you no longer want usable.
+pane session participant revoke ses_abc123 p_xyz
+```
+
+Three primitives that together replace `pane session delete + pane session
+create` for the lost-URL case (which would destroy the session's event log,
+artifact pin, and created_at — `participant new` preserves all of that).
+
+- `pane session participant list <session-id>` — returns the full
+  participant array for one session (active AND revoked rows). Each row has
+  `participant_id` (the revoke handle), `kind`, `token_prefix` (non-secret
+  correlator like `tok_h_BUcx`), `joined_at`, and `revoked_at`. This is the
+  step you use to find a participant_id to pass to `revoke`.
+- `pane session participant new <session-id>` — mints a fresh human URL on
+  an existing session. Returns `{ participant_id, kind, token, url,
+  created_at }` exactly ONCE. Save the response (pipe to a JSONL log) before
+  delivering the URL.
+- `pane session participant revoke <session-id> <participant-id>` —
+  invalidates one URL. The session's other URLs (and your own websocket)
+  are untouched. Idempotent: running revoke twice still returns success.
+  **Caveat:** in this version, existing WebSocket connections held under
+  the revoked token are NOT actively kicked; only new HTTP and WS
+  connections under that token fail.
+
+**Recovery recipe** when you dropped the create response:
+
+```sh
+pane session list                                          # find session_id
+pane session participant list ses_abc123                   # find participant
+                                                           #   ids on that
+                                                           #   session
+pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+# use the new url; the old one is still valid until you revoke
+pane session participant revoke ses_abc123 p_xyz           # optional —
+                                                           #   invalidate
+                                                           #   the old URL
+```
 
 ### `pane config` — inspect the resolved config
 
@@ -626,27 +708,27 @@ came from (`flag` / `env` / `store`), and the config-file path. Makes **no
 network call**. The full API key is never printed — only a masked prefix. Run
 it when a command fails with `config_error` to see what is actually set.
 
-### `pane logout` — clear the saved credentials
+### `pane agent logout` — clear the saved credentials
 
 ```sh
-pane logout
+pane agent logout
 ```
 
 Deletes the locally-saved relay URL + API key from the CLI config file. This is
 **local only** — it does not revoke the key on the relay; the key still works
-if used again. To actually revoke the key, use `pane keys revoke`.
+if used again. To actually revoke the key, use `pane key revoke`.
 
-### `pane keys` — inspect or revoke your API key
+### `pane key` — inspect or revoke your API key
 
 ```sh
-pane keys list                 # show your agent's key info (one key per agent)
-pane keys revoke --yes         # REVOKE your own key — a self-destruct
+pane key list                 # show your agent's key info (one key per agent)
+pane key revoke --yes         # REVOKE your own key — a self-destruct
 ```
 
 A pane agent has exactly one API key. `keys list` shows its metadata
 (`key_prefix`, created/last-used, etc.) — never the full key. `keys revoke`
 **permanently revokes your own key**; it stops working immediately and you
-would have to `pane register` again. It refuses to run without `--yes`.
+would have to `pane agent register` again. It refuses to run without `--yes`.
 
 ### `pane taste` — remembering UI preferences across sessions
 
@@ -941,18 +1023,18 @@ full trust model.
 
 ## The watch → Monitor pattern
 
-`pane watch` is built to be a **monitored subprocess**. It blocks until the
+`pane session watch` is built to be a **monitored subprocess**. It blocks until the
 awaited event lands, prints it, and exits 0 — so a supervising harness can wake
 you with the result.
 
-- **Claude Code Monitor tool**: launch `pane watch <id> --type form.submitted`
+- **Claude Code Monitor tool**: launch `pane session watch <id> --type form.submitted`
   as a monitored process. When the human submits, the line is printed, the
   process exits 0, and you are re-invoked with the event payload. No polling.
-- **Shell pipeline**: `pane watch <id> | while read -r line; do ...; done`.
-- **`--filter-type` for clean stdout**: `pane watch <id> --filter-type comment.added`
+- **Shell pipeline**: `pane session watch <id> | while read -r line; do ...; done`.
+- **`--filter-type` for clean stdout**: `pane session watch <id> --filter-type comment.added`
   (built-in equivalent of `jq -c 'select(.type=="comment.added")'`; `system.*`
   lifecycle events still pass through so the harness sees them).
-- **Polling alternative**: loop `pane state <id> --since <cursor> --wait 30`
+- **Polling alternative**: loop `pane session show <id> --since <cursor> --wait 30`
   for environments that can't hold a WebSocket (cron, FaaS, slow links).
 
 ## Typical round trip
@@ -962,14 +1044,14 @@ you with the result.
 
 ```sh
 # 1. create the session
-OUT=$(pane create --artifact ./review.html --event-schema ./review-schema.json --ttl 900)
+OUT=$(pane session create --artifact ./review.html --event-schema ./review-schema.json --ttl 900)
 SID=$(echo "$OUT" | jq -r .session_id)
 URL=$(echo "$OUT" | jq -r '.urls.humans[0]')
 
 # 2. deliver $URL to the human over your own channel (Telegram/Slack/email)
 
 # 3. wait for the human's submit — run as a monitored process
-pane watch "$SID" --type review.submitted
+pane session watch "$SID" --type review.submitted
 #    -> prints the review.submitted event as a JSON line, exits 0
 
 # 4. act on the event's `data`

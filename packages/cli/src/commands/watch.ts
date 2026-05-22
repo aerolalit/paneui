@@ -1,4 +1,4 @@
-// `pane watch <id>` — long-lived: hold a WebSocket and stream events as
+// `pane session watch <id>` — long-lived: hold a WebSocket and stream events as
 // JSON-lines on stdout. This harness-agnostic stdout is the core contract:
 // one compact JSON object per line, flushed after every event, so any
 // pipe-reader (Claude Code's Monitor tool, `while read line`, jq -c, ...)
@@ -11,10 +11,10 @@ import { PaneClient } from "@paneui/core";
 import { printJsonLine, fail } from "../output.js";
 import { VERSION } from "../version.js";
 
-export const watchHelp = `pane watch — stream a session's events as JSON-lines
+export const watchHelp = `pane session watch — stream a session's events as JSON-lines
 
 Usage:
-  pane watch <session-id> [options]
+  pane session watch <session-id> [options]
 
 Holds a WebSocket to WS /v1/sessions/:id/stream. Prints ONE compact JSON
 object per line to stdout, flushing after each — designed to be piped into a
@@ -55,14 +55,14 @@ Options:
 Each line is one event envelope: { id, session_id, author, ts, type, data,
 causation_id, idempotency_key }. The terminal line is {"type":"_closed"}.
 
-Pattern — Claude Code Monitor tool: run \`pane watch <id> --type form.submitted\`
+Pattern — Claude Code Monitor tool: run \`pane session watch <id> --type form.submitted\`
 as a monitored process; the harness re-invokes the model when the line lands.
 
 Wait for any of several events:
-  pane watch <id> --type form.submitted,form.cancelled --timeout 60
+  pane session watch <id> --type form.submitted,form.cancelled --timeout 60
 
 Stream only matching events to stdout, exit on the first:
-  pane watch <id> --type form.submitted --filter-type form.submitted`;
+  pane session watch <id> --type form.submitted --filter-type form.submitted`;
 
 // Parse a comma-separated event-type list (e.g. "form.submitted,form.cancelled")
 // into a Set. Empty/whitespace entries are dropped. Returns null when the flag

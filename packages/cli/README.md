@@ -18,10 +18,10 @@ The binary is `pane`.
 
 ```sh
 export PANE_URL=https://relay.paneui.com   # or your self-hosted relay
-pane register --name "my-agent"            # provisions and saves an API key
+pane agent register --name "my-agent"            # provisions and saves an API key
 ```
 
-`pane register` writes the URL + API key to
+`pane agent register` writes the URL + API key to
 `${XDG_CONFIG_HOME:-~/.config}/pane/config.json`. Subsequent commands need
 only `PANE_URL` (or nothing) in the environment.
 
@@ -29,20 +29,26 @@ Override per-invocation with `--url <url>` and `--api-key <key>`.
 
 ## Commands
 
+Uniform `pane <noun> <verb> [options]`:
+
 ```
-pane register          Provision an agent API key and save it locally
-pane create            Create a session — returns session_id, urls, tokens
-pane artifact          Manage reusable, versioned artifacts
-pane state <id>        Non-blocking snapshot: metadata + event log
-pane send <id>         Emit an agent event into a session
-pane watch <id>        Stream a session's events as JSON-lines on stdout
-pane delete <id>       Close / delete a session
-pane keys              Inspect or revoke your agent's API key
-pane config            Show the resolved relay config (no network call)
-pane logout            Clear the locally-saved URL + API key
+pane agent register            Provision an agent API key and save it locally
+pane agent logout              Clear the locally-saved URL + API key
+pane session create            Create a session — returns session_id, urls, tokens
+pane session show <id>         Non-blocking snapshot: metadata + event log
+pane session send <id>         Emit an agent event into a session
+pane session watch <id>        Stream a session's events as JSON-lines on stdout
+pane session delete <id>       Close / delete a session
+pane artifact <verb>           Manage reusable, versioned artifacts
+pane key list | revoke         Inspect or revoke your agent's API key
+pane taste get | set | clear   Read / write / clear UI-taste notes
+pane feedback create | list    Submit / list one-shot feedback to the operator
+pane config show               Show the resolved relay config (no network call)
+pane skill show | version      Fetch the relay's SKILL.md (or its version)
 ```
 
-Run `pane <command> --help` for command-specific options.
+Run `pane <noun> --help` for that noun's verbs, and
+`pane <noun> <verb> --help` for verb-specific options.
 
 ## Output
 
@@ -50,8 +56,8 @@ stdout is machine-readable JSON. Errors go to stderr as
 `{"error":{"code","message"}}` with a non-zero exit.
 
 ```sh
-SESSION=$(pane create --template form --schema ./q.json | jq -r .session_id)
-pane watch "$SESSION" | jq 'select(.type == "human_response")'
+SESSION=$(pane session create --template form --schema ./q.json | jq -r .session_id)
+pane session watch "$SESSION" | jq 'select(.type == "human_response")'
 ```
 
 ## Links

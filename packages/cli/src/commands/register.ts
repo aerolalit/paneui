@@ -1,4 +1,4 @@
-// `pane register` — self-provision an agent API key from the relay.
+// `pane agent register` — self-provision an agent API key from the relay.
 //
 // This is the one command that needs no API key: it is the call that obtains
 // one. If the relay runs REGISTRATION_MODE=secret, pass the shared
@@ -13,10 +13,10 @@ import { printJson, fail, failUpgradeRequired } from "../output.js";
 import { readStore, writeStore } from "../store.js";
 import { VERSION } from "../version.js";
 
-export const registerHelp = `pane register — register this agent with the relay and save the key locally
+export const registerHelp = `pane agent register — register this agent with the relay and save the key locally
 
 Usage:
-  pane register [options]
+  pane agent register [options]
 
 Calls POST /v1/register, then saves the returned API key (and relay URL) to the
 CLI config file — so afterwards every other command works with only PANE_URL
@@ -63,7 +63,7 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
     if (e instanceof PaneApiError) {
       // 426 cli_upgrade_required goes through the shared upgrade-message
       // path (stderr block + exit 75) so the SKILL.md's instructions to the
-      // agent's harness fire on `pane register` too.
+      // agent's harness fire on `pane agent register` too.
       if (e.status === 426 && e.code === "cli_upgrade_required") {
         failUpgradeRequired(e);
       }

@@ -5,8 +5,8 @@
 // delete).
 // An artifact is a reusable UI template (HTML + event schema + optional input
 // schema); a session is one *use* of one version of it. Authoring an artifact
-// once and instancing it via `pane create --artifact-id` removes the per-use
-// cost of regenerating the same HTML.
+// once and instancing it via `pane session create --artifact-id` removes the
+// per-use cost of regenerating the same HTML.
 
 import {
   createArtifactSchema,
@@ -25,7 +25,7 @@ export const artifactHelp = `pane artifact — manage reusable, versioned artifa
 
 An artifact is a reusable UI template: HTML + an event schema + an optional
 input schema. A session is one use of one version of it. Author an artifact
-once, then instance it many times with 'pane create --artifact-id <id|slug>'
+once, then instance it many times with 'pane session create --artifact-id <id|slug>'
 instead of regenerating the HTML on every session.
 
 Usage:
@@ -71,7 +71,7 @@ Subcommands:
   pane artifact delete <id|slug> --yes
       Permanently deletes the artifact and all its versions. Refused
       (409 conflict) if any session in any state still references one
-      of the artifact's versions — run 'pane delete <session-id>' on
+      of the artifact's versions — run 'pane session delete <session-id>' on
       each first, or wait for the relay's TTL sweeper to reclaim them.
       Prints { artifact, deleted: true } on success.
 

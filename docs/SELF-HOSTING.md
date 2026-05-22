@@ -137,10 +137,10 @@ Point the CLI at your relay and do a round trip:
 
 ```bash
 PANE_URL=https://pane.example.com PANE_API_KEY=<your key> \
-  pane create --artifact ./form.html --schema ./schema.json --ttl 600
+  pane session create --artifact ./form.html --schema ./schema.json --ttl 600
 ```
 
-Or save the URL + key once with `pane register --url https://pane.example.com`,
+Or save the URL + key once with `pane agent register --url https://pane.example.com`,
 after which every command works with no env vars.
 
 ## See also

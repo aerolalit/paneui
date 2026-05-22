@@ -237,6 +237,7 @@ bridge.get("/:token", async (c) => {
       agentLive,
       agentLastEventAt,
       agentLastUsedAt,
+      title: session.title,
     }),
   );
 });
@@ -320,7 +321,7 @@ ${artifactBody}
 
 // Lightweight presence endpoint. The shell polls this every ~10s so the
 // agent-presence pill reflects a polling agent (one that monitors via
-// `pane state` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// `pane session show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
 // keeps advancing server-side but the page-load config seed cannot see it.
 //
 // Trust model: the URL token IS the auth, identical to the shell page
@@ -355,6 +356,10 @@ interface ShellArgs {
   agentLive: boolean;
   agentLastEventAt: string | null;
   agentLastUsedAt: string | null;
+  // Agent-supplied (or Artifact.name-resolved) per-session title. Validated at
+  // session create — non-empty, ≤80 chars, no control chars — but still
+  // untrusted at this point; HTML-escaped into <title> at render time.
+  title: string;
 }
 
 function renderShell(args: ShellArgs): string {
@@ -379,7 +384,7 @@ function renderShell(args: ShellArgs): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pane — Session</title>
+<title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style nonce="${args.nonce}">
   html, body { height: 100%; margin: 0; }

@@ -1,4 +1,4 @@
-// Unit tests for the pure helpers in `pane watch` — the CSV parser for
+// Unit tests for the pure helpers in `pane session watch` — the CSV parser for
 // --type / --filter-type, and the output-filter predicate that decides
 // whether a given event reaches stdout.
 //
@@ -30,7 +30,7 @@ describe("parseTypeList", () => {
   });
 
   it("trims whitespace around each entry", () => {
-    // Common shell mistake: 'pane watch --type "a, b ,c"' — the inner
+    // Common shell mistake: 'pane session watch --type "a, b ,c"' — the inner
     // spaces are easy to type and shouldn't poison the lookup.
     const out = parseTypeList("a , b ,c");
     expect(out).toEqual(new Set(["a", "b", "c"]));
@@ -73,7 +73,7 @@ describe("shouldPrintEvent", () => {
 
   it("always passes system.* lifecycle events through, even with a filter", () => {
     // The load-bearing invariant: an agent that runs
-    //   pane watch --filter-type form.submitted
+    //   pane session watch --filter-type form.submitted
     // must still see system.participant.joined (the "human opened the
     // URL" signal) and system.session.expired (the "give up" signal).
     // Without this carve-out the agent's harness would lose visibility

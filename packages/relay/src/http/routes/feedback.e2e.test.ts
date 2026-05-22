@@ -66,6 +66,7 @@ async function seedSession(agentId: string): Promise<string> {
       id: "sess_" + randomBytes(8).toString("hex"),
       agentId,
       artifactVersionId: av.id,
+      title: "Test session",
       expiresAt: new Date(Date.now() + 60_000),
     },
   });

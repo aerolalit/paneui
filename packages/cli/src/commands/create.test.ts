@@ -1,4 +1,4 @@
-// Tests for `pane create` — the inline and reference artifact forms.
+// Tests for `pane session create` — the inline and reference artifact forms.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -11,6 +11,7 @@ const fakeClient = {
       tokens: { humans: [], agent: "t" },
       urls: { humans: [], agent_stream: "ws" },
       expires_at: "2026-01-01T00:00:00Z",
+      title: "Test session",
     });
   }),
 };
@@ -206,5 +207,23 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
       JSON.stringify({ ok: 1 }),
     ]);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("create — --title flag", () => {
+  it("passes --title through to the request body", async () => {
+    await run(["--artifact", "<html></html>", "--title", "Quarterly Review"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { title?: string };
+    expect(req.title).toBe("Quarterly Review");
+  });
+
+  it("omits title from the body when --title is not given (relay decides)", async () => {
+    // The CLI deliberately doesn't enforce required-ness locally — the relay
+    // is the single source of truth for "required + Artifact.name fallback".
+    await run(["--artifact-id", "pr-review"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect(req).not.toHaveProperty("title");
   });
 });

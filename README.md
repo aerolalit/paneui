@@ -42,16 +42,16 @@ Do the following:
    - Claude Code: ~/.claude/skills/pane/SKILL.md  (NOT .claude/skills/ in the current repo)
    - Cursor: user-level rules, NOT .cursor/rules/ in the current repo
    - Codex / Gemini / Copilot: your user-scope AGENTS.md / GEMINI.md / instructions file, NOT the project root
-   Run `pane skill` to fetch the skill from the relay you're targeting — it prints the raw markdown to stdout, version-matched to that relay. Capture that output and save it in the appropriate format for your runtime (Claude Code keeps the markdown as-is; Cursor wants `.mdc` rules; Codex / Gemini compose it into the user-scope AGENTS.md / GEMINI.md).
-3. Register against the hosted relay: `pane register --name "<short-descriptive-agent-name>"`. Pick a name that identifies your agent (e.g. `claude-code-lalit-macbook`, `cursor-work-laptop`) — the default is unhelpful. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
-4. Confirm install with `pane keys list`. This round-trips your key against the relay and prints { agent_id, name, key_prefix, ... } — proves the CLI is installed AND registration succeeded.
+   Run `pane skill show` to fetch the skill from the relay you're targeting — it prints the raw markdown to stdout, version-matched to that relay. Capture that output and save it in the appropriate format for your runtime (Claude Code keeps the markdown as-is; Cursor wants `.mdc` rules; Codex / Gemini compose it into the user-scope AGENTS.md / GEMINI.md).
+3. Register against the hosted relay: `pane agent register --name "<short-descriptive-agent-name>"`. Pick a name that identifies your agent (e.g. `claude-code-lalit-macbook`, `cursor-work-laptop`) — the default is unhelpful. One-time, writes a key to ~/.config/pane/config.json (already user-scope).
+4. Confirm install with `pane key list`. This round-trips your key against the relay and prints { agent_id, name, key_prefix, ... } — proves the CLI is installed AND registration succeeded.
 5. Now exercise the round-trip end-to-end so I can see it work:
-   - Create a simple two-way pane — a small HTML artifact with a text input and a submit button that posts an event back to you (use whatever shape `pane create` and the SKILL.md describe; the simplest "hello" form is fine).
+   - Create a simple two-way pane — a small HTML artifact with a text input and a submit button that posts an event back to you (use whatever shape `pane session create` and the SKILL.md describe; the simplest "hello" form is fine).
    - Print the resulting pane URL and ask me to open it.
-   - Start watching for the submit event (e.g. `pane watch <session-id>`).
+   - Start watching for the submit event (e.g. `pane session watch <session-id>`).
    - When I submit, show me the structured event payload you received. That's the "aha" moment — confirms the full round-trip works.
 
-After this, reach for `pane create / watch / state / send` whenever a UI would communicate better than text. Run `pane <cmd> --help` for authoritative options.
+After this, reach for `pane session create / show / send / watch` whenever a UI would communicate better than text. Run `pane <noun> <verb> --help` for authoritative options.
 ````
 
 ### Run yourself (human)
@@ -63,10 +63,10 @@ Five commands. Needs Node 20+. The skill-install step auto-detects your agent (C
 npm i -g @paneui/cli
 
 # 2. Register with the hosted relay — pick a short, descriptive agent name
-pane register --name "<short-descriptive-agent-name>"
+pane agent register --name "<short-descriptive-agent-name>"
 
 # 3. Confirm — round-trips your key against the relay
-pane keys list
+pane key list
 
 # 4. Install the skill into your agent (auto-detects Claude Code,
 #    Cursor, Codex, Gemini, Copilot, Windsurf, Continue, …)
@@ -74,9 +74,9 @@ npx skills add aerolalit/paneui
 
 # 5. Try it — create a tiny round-trip pane, then watch for the event.
 #    Open the urls.humans link it prints, type something, hit submit.
-pane create --artifact '<form onsubmit="event.preventDefault();pane.send({type:\"hello\",payload:{msg:this.m.value}})"><input name=m><button>send</button></form>' --event-schema '{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'
+pane session create --artifact '<form onsubmit="event.preventDefault();pane.send({type:\"hello\",payload:{msg:this.m.value}})"><input name=m><button>send</button></form>' --event-schema '{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'
 
-pane watch <session-id> --type hello
+pane session watch <session-id> --type hello
 ```
 
 ## Distribution
@@ -85,7 +85,7 @@ The repo is an npm-workspaces monorepo with three packages:
 
 - **`@paneui/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
 - **`@paneui/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
-- **`@paneui/cli`** — the `pane` command-line tool. The agent's entry point: emits JSON on stdout, so it's harness-agnostic — works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process supervisor. `pane watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands. A LangChain tool wrapper may come later (v2).
+- **`@paneui/cli`** — the `pane` command-line tool. The agent's entry point: emits JSON on stdout, so it's harness-agnostic — works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process supervisor. `pane session watch <id> --type <event>` streams a session as JSON-lines and exits when the awaited event lands. A LangChain tool wrapper may come later (v2).
 
 ## Stack
 

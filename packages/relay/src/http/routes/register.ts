@@ -66,7 +66,7 @@ register.post("/", async (c) => {
   await enforceRegisterRateLimit(c);
   const prisma = c.get("prisma");
 
-  // Body is optional — a bare `pane register` sends none. Treat missing /
+  // Body is optional — a bare `pane agent register` sends none. Treat missing /
   // empty / non-JSON body as {} so the only failure path is a malformed name.
   const raw = await c.req.json().catch(() => null);
   const parsed = bodySchema.safeParse(raw ?? {});
