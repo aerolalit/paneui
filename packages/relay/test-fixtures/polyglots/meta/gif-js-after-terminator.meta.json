@@ -1,0 +1,12 @@
+{
+  "name": "gif-js-after-terminator",
+  "mime": "image/gif",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "GIF with a bare <script> tag appended after the terminator. Smaller and uglier than the html-after-terminator variant — the corpus carries both because the failure modes differ between MIME sniffers.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "gif-trailer-polyglot"]
+  }
+}

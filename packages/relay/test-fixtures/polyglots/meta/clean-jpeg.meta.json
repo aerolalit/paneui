@@ -1,0 +1,13 @@
+{
+  "name": "clean-jpeg",
+  "mime": "image/jpeg",
+  "threatClass": "baseline",
+  "source": "sharp-generated reference image",
+  "description": "Known-good JPEG with no polyglot tail or metadata. The corpus needs a clean baseline so the test can prove the normaliser preserves legitimate content while sanitising hostile inputs.",
+  "expectedNormalisation": "clean",
+  "assertions": {
+    "normalised": true,
+    "idempotent": true,
+    "dimensionsPreserved": true
+  }
+}

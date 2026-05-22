@@ -1,0 +1,12 @@
+{
+  "name": "webp-extra-riff-chunks",
+  "mime": "image/webp",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "WebP with unknown bytes appended past the RIFF chunk size. Some parsers walk for additional RIFF chunks instead of trusting the size field; re-encode emits a clean RIFF.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["BOGUSCHUNKHEADER", "html-payload"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "png-data-after-iend",
+  "mime": "image/png",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "PNG with arbitrary binary content appended after the IEND chunk. PNG decoders stop at IEND but raw bytes survive on disk and round-trip to mirrors / proxies.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["APPENDED-AFTER-IEND-PAYLOAD"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "gif-html-after-terminator",
+  "mime": "image/gif",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "GIF with HTML appended after the trailing 0x3B terminator. GIF decoders stop at the terminator; sniffing browsers can wander past it.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "xss-polyglot"]
+  }
+}

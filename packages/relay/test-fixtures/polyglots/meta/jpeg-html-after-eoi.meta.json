@@ -1,0 +1,12 @@
+{
+  "name": "jpeg-html-after-eoi",
+  "mime": "image/jpeg",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "Valid JPEG with HTML+JS appended after the EOI marker (FF D9). Classic XSS polyglot: a proxy that strips Content-Type lets the browser sniff the trailing HTML.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "alert(", "</html>"]
+  }
+}

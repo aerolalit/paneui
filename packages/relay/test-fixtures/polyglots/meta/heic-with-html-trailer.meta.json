@@ -1,0 +1,12 @@
+{
+  "name": "heic-with-html-trailer",
+  "mime": "image/heic",
+  "threatClass": "passthrough-untouched",
+  "source": "hand-authored",
+  "description": "HEIC ftyp head followed by HTML. HEIC is NOT in the default BLOB_MIME_ALLOWLIST (image/jpeg, image/png, image/gif, image/webp, application/pdf) — this fixture exists to document that even if an operator widens the allowlist, the relay's libvips build does not normalise HEIC and the bytes pass through.",
+  "expectedNormalisation": "pass-through",
+  "assertions": {
+    "normalised": false,
+    "bytesUnchanged": true
+  }
+}

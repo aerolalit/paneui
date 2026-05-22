@@ -43,10 +43,13 @@ keeps its own GPS coordinates. Sharp drops both.
 Implementation: `packages/relay/src/blobs/normalize.ts`. Pinned dependency:
 
 ```json
-"sharp": "^0.34.0"
+"sharp": "~0.34.5"
 ```
 
-Any minor bump re-runs the full polyglot test suite before merge.
+The tilde pin is deliberate: Dependabot opens a patch-bump PR within 24h
+of any sharp `0.34.x` release, the polyglot corpus + the rest of CI gate
+the auto-merge ([`.github/workflows/dependabot-auto-merge.yml`](../.github/workflows/dependabot-auto-merge.yml)),
+and minor / major bumps require manual review + a fresh corpus run.
 
 ## Pass-through MIMEs and their risks
 
@@ -120,6 +123,45 @@ two cannot drift on encryption-at-rest semantics.
 > a known defect serving raw ciphertext, tracked separately. Use it
 > only for external sharing of plaintext blobs.
 
+## The polyglot corpus
+
+The claim "sharp's decode-encode drops appended polyglot payloads" is
+verified by a tracked corpus at
+[`packages/relay/test-fixtures/polyglots/`](../packages/relay/test-fixtures/polyglots/).
+
+25 hand-authored fixtures cover five threat classes:
+
+| Threat class | Count | What it tests |
+|--------------|-------|---------------|
+| `appended-payload` | 12 | HTML / EXE / ZIP appended after JPEG EOI, PNG IEND, GIF terminator, WebP RIFF |
+| `in-format-chunk` | 4 | JPEG COM segment, PNG iTXt / zTXt / tEXt with script payloads |
+| `metadata` | 1 | EXIF IFD0 with script-shaped Artist / ImageDescription |
+| `passthrough-untouched` | 3 | SVG inline `<script>`, PDF `/JS` action, HEIC + HTML trailer — documents what we *don't* normalise |
+| `baseline` | 4 | known-good JPEG / PNG / GIF / WebP — verifies the normaliser preserves legitimate content |
+
+Every fixture has a builder (`packages/relay/test-fixtures/polyglots/builders.ts`)
++ a sidecar (`meta/<name>.meta.json`) declaring its `mime`,
+`threatClass`, expected normalisation outcome, and concrete assertions
+(`outputDoesNotContain`, `bytesUnchanged`, etc.). The corpus loader
+([`index.ts`](../packages/relay/test-fixtures/polyglots/index.ts))
+enforces that builders and sidecars stay in sync — a missing pair
+fails the suite at load time.
+
+The corpus has a **negative-control meta-test**: a deliberately broken
+"normaliser" that just passes the bytes through must FAIL the
+assertions on at least one fixture. If `normalize.ts` ever regresses
+to a pass-through, the corpus catches it.
+
+### Adding a fixture
+
+1. Drop a builder function in [`builders.ts`](../packages/relay/test-fixtures/polyglots/builders.ts).
+2. Register it under a name in the `builders` map at the bottom.
+3. Drop a matching `meta/<name>.meta.json` sidecar declaring the
+   expected behaviour.
+4. Run `npm test -- normalize.test.ts` from `packages/relay/`.
+
+Full reference: [`packages/relay/test-fixtures/polyglots/README.md`](../packages/relay/test-fixtures/polyglots/README.md).
+
 ## If you find a bypass
 
 If you can construct a file that:
@@ -134,12 +176,20 @@ the underlying library is patched.
 
 ## Versioning
 
-- **sharp pinned** to `^0.34.0` in `packages/relay/package.json`.
-- Dependabot opens patch-version bumps within 24h of upstream release.
+- **sharp pinned** to `~0.34.5` in `packages/relay/package.json`.
+- Dependabot ([`/.github/dependabot.yml`](../.github/dependabot.yml))
+  opens patch-version bumps within 24h of upstream release.
+- The auto-merge workflow
+  ([`/.github/workflows/dependabot-auto-merge.yml`](../.github/workflows/dependabot-auto-merge.yml))
+  flips on `gh pr merge --auto` for sharp patch bumps once every CI
+  check — including the polyglot suite — is green. No other dependency
+  is auto-merged.
 - Minor bumps (`0.34.x → 0.35.x`) require manual review + a corpus rerun
   before merge — never auto-merged.
-- Major bumps go through a full security review (the encoder semantics
-  may shift between sharp majors).
+- Major bumps are blocked at the Dependabot config layer: the
+  `version-update:semver-major` ignore rule prevents the PR from
+  opening at all. Trigger one manually when the encoder semantics have
+  been reviewed and the corpus has run against the new major.
 
 ## Blob-reference access check (events + session input_data)
 

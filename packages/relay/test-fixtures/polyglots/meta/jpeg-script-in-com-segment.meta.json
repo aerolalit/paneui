@@ -1,0 +1,12 @@
+{
+  "name": "jpeg-script-in-com-segment",
+  "mime": "image/jpeg",
+  "threatClass": "in-format-chunk",
+  "source": "hand-authored",
+  "description": "JPEG with a COM (FF FE) comment marker injected right after SOI, carrying an inline <script> payload. JPEG decoders skip COM segments; sharp's re-encode drops them entirely.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "com-segment-polyglot"]
+  }
+}

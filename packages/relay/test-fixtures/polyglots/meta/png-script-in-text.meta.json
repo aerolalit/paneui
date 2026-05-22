@@ -1,0 +1,12 @@
+{
+  "name": "png-script-in-text",
+  "mime": "image/png",
+  "threatClass": "in-format-chunk",
+  "source": "hand-authored",
+  "description": "PNG with a plaintext tEXt chunk carrying a script payload. Older PNG metadata tooling (and some browser viewers) renders tEXt; re-encode drops it.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "text-polyglot"]
+  }
+}

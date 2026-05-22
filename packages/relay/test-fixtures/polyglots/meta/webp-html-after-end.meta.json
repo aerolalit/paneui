@@ -1,0 +1,12 @@
+{
+  "name": "webp-html-after-end",
+  "mime": "image/webp",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "WebP with HTML/JS appended after the RIFF data. Same XSS vector as the JPEG/PNG/GIF variants — included for parity so the corpus covers every normalised MIME with at least one HTML-tail polyglot.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "xss-polyglot"]
+  }
+}

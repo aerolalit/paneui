@@ -1,0 +1,12 @@
+{
+  "name": "png-html-after-iend",
+  "mime": "image/png",
+  "threatClass": "appended-payload",
+  "source": "hand-authored",
+  "description": "PNG with an HTML/JS payload appended after IEND. Same shape as png-data-after-iend but with a directly-executable HTML payload — the canonical PNG-XSS polyglot.",
+  "expectedNormalisation": "stripped",
+  "assertions": {
+    "normalised": true,
+    "outputDoesNotContain": ["<script>", "</html>", "xss-polyglot"]
+  }
+}
