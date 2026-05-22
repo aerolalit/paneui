@@ -386,3 +386,79 @@ describe("blob-ref DB access check — session create (input_data)", () => {
     expect(body.error.details.inaccessible_ids).toEqual([aliceBlobId]);
   });
 });
+
+// Same set of guarantees, but driven by an INLINE artifact's input_schema
+// instead of a named one (#208 regression). Pre-fix the inline branch
+// hardcoded inputSchema to null, so the ref-access walker had nothing to
+// walk — agent X could put any blob_id into input_data and the access check
+// would never fire, AND the participant blob-download bridge would refuse
+// to serve the agent's OWN blob because the same null-schema gap made it
+// invisible to the read-side walker.
+describe("blob-ref DB access check — inline session create with input_schema (#208)", () => {
+  const inlineInputSchema = {
+    type: "object",
+    properties: {
+      cover: {
+        type: "object",
+        properties: {
+          blob_id: { type: "string", format: "pane-blob-id" },
+        },
+        required: ["blob_id"],
+      },
+    },
+  };
+
+  it("accepts an inline session referencing the agent's own blob via input_data", async () => {
+    const { id: agentId, apiKey } = await seedAgent();
+    const blobId = await seedReadyBlob(agentId);
+
+    const res = await app.fetch(
+      new Request("http://t/v1/sessions", {
+        method: "POST",
+        headers: bearer(apiKey),
+        body: JSON.stringify({
+          artifact: {
+            type: "html-inline",
+            source: "<html></html>",
+            event_schema: blobEventSchema,
+            input_schema: inlineInputSchema,
+          },
+          participants: { humans: 1 },
+          title: "Blob ref test",
+          input_data: { cover: { blob_id: blobId } },
+        }),
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("rejects an inline session referencing another agent's blob (the gate fires the same way as for named artifacts)", async () => {
+    const { id: aliceId } = await seedAgent();
+    const { apiKey: bobKey } = await seedAgent();
+    const aliceBlobId = await seedReadyBlob(aliceId);
+
+    const res = await app.fetch(
+      new Request("http://t/v1/sessions", {
+        method: "POST",
+        headers: bearer(bobKey),
+        body: JSON.stringify({
+          artifact: {
+            type: "html-inline",
+            source: "<html></html>",
+            event_schema: blobEventSchema,
+            input_schema: inlineInputSchema,
+          },
+          participants: { humans: 1 },
+          title: "Blob ref test",
+          input_data: { cover: { blob_id: aliceBlobId } },
+        }),
+      }),
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      error: { code: string; details: { inaccessible_ids: string[] } };
+    };
+    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.details.inaccessible_ids).toEqual([aliceBlobId]);
+  });
+});

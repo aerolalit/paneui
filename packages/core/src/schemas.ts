@@ -30,6 +30,14 @@ const inlineArtifactSchema = z.object({
   // Optional: omit for a view-only one-off (a report/dashboard the human only
   // views — the session then accepts no page/agent events).
   event_schema: z.unknown().optional(),
+  // Optional: when present, the session's `input_data` is validated against
+  // this JSON Schema before the session row is created — and any blob refs
+  // declared at `format: pane-blob-id` sites become reachable from the page
+  // via `window.pane.downloadBlob()`. Without this, blob refs in
+  // `input_data` are silently unreachable for inline sessions (the
+  // participant blob-download bridge walks input_data against the artifact
+  // version's inputSchema; no schema means no walkable sites). See #208.
+  input_schema: z.record(z.string(), z.unknown()).optional(),
 });
 
 // The reference form for POST /v1/sessions — instances an existing named
