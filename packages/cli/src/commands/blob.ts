@@ -6,8 +6,8 @@
 // minted capability URL (/b/<token>) without needing the agent's API key.
 //
 // This file is a thin dispatcher — each verb's actual logic lives in its own
-// file (blob-upload.ts, blob-download.ts, blob-show.ts, blob-delete.ts,
-// blob-mint-token.ts, blob-revoke-token.ts).
+// file (blob-upload.ts, blob-download.ts, blob-show.ts, blob-delete.ts) and
+// the token sub-noun is dispatched via blob-token.ts.
 //
 // Most blob verbs read their primary positional (the blob_id) at
 // positionals[0]; we slice off our own verb before delegating so each verb
@@ -18,11 +18,7 @@ import { runBlobUpload, blobUploadHelp } from "./blob-upload.js";
 import { runBlobDownload, blobDownloadHelp } from "./blob-download.js";
 import { runBlobShow, blobShowHelp } from "./blob-show.js";
 import { runBlobDelete, blobDeleteHelp } from "./blob-delete.js";
-import { runBlobMintToken, blobMintTokenHelp } from "./blob-mint-token.js";
-import {
-  runBlobRevokeToken,
-  blobRevokeTokenHelp,
-} from "./blob-revoke-token.js";
+import { runBlobToken, blobTokenHelp } from "./blob-token.js";
 import { fail } from "../output.js";
 
 export const blobHelp = `pane blob — manage blobs (binary attachments) on the relay
@@ -36,7 +32,7 @@ uploaded to the relay. Blobs are scoped:
 
 Pages reference blobs by id (the relay's schema validates the id with
 \`format: pane-blob-id\`). For a participant-facing URL that bypasses the
-agent's API key, mint a token with 'pane blob mint-token'.
+agent's API key, mint a token with 'pane blob token mint'.
 
 Usage:
   pane blob <verb> [options]
@@ -55,13 +51,10 @@ Verbs:
 
   delete <blob-id>       Soft-delete a blob. Idempotent.
 
-  mint-token <blob-id>   Mint a /b/<token> capability URL. Options: --ttl
-                         <seconds> (defaults by scope), --once (token self-
-                         deletes on first successful GET). Prints { token,
-                         url, expires_at } — ONCE.
-
-  revoke-token <blob-id> <token-id>
-                         Revoke a previously-minted token by id. Idempotent.
+  token <verb>           Capability URLs for a blob (mint | revoke). 'mint'
+                         returns a /b/<token> URL anyone can GET, with
+                         optional --ttl and --once. 'revoke' invalidates one
+                         token.
 
 Run \`pane blob <verb> --help\` for verb-specific options.
 
@@ -85,6 +78,19 @@ function shiftPositionals(args: ParsedArgs): ParsedArgs {
 export async function runBlob(args: ParsedArgs): Promise<void> {
   const verb = args.positionals[0];
 
+  // `pane blob token --help` (verb-level help on the token sub-noun, with no
+  // further sub-verb). The general --help pre-empt in index.ts only fires
+  // when no positional follows the noun; here a positional ("token") is
+  // present, so the sub-noun must own its own --help routing.
+  if (
+    verb === "token" &&
+    args.bools.has("help") &&
+    args.positionals.length === 1
+  ) {
+    process.stdout.write(blobTokenHelp + "\n");
+    return;
+  }
+
   const inner = shiftPositionals(args);
   switch (verb) {
     case "upload":
@@ -99,21 +105,18 @@ export async function runBlob(args: ParsedArgs): Promise<void> {
     case "delete":
       await runBlobDelete(inner);
       break;
-    case "mint-token":
-      await runBlobMintToken(inner);
-      break;
-    case "revoke-token":
-      await runBlobRevokeToken(inner);
+    case "token":
+      await runBlobToken(inner);
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane blob <upload|download|show|delete|mint-token|revoke-token> (run 'pane blob --help')",
+        "missing verb — usage: pane blob <upload|download|show|delete|token> (run 'pane blob --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown blob verb '${verb}' — expected upload|download|show|delete|mint-token|revoke-token (run 'pane blob --help')`,
+        `unknown blob verb '${verb}' — expected upload|download|show|delete|token (run 'pane blob --help')`,
         "invalid_args",
       );
   }
@@ -126,6 +129,5 @@ export {
   blobDownloadHelp,
   blobShowHelp,
   blobDeleteHelp,
-  blobMintTokenHelp,
-  blobRevokeTokenHelp,
+  blobTokenHelp,
 };
