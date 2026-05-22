@@ -40,10 +40,11 @@ Nouns:
                     generating a pane artifact.
   feedback          One-shot feedback to the relay operator
                     (create | list) — bug reports, feature requests, notes.
-  blob              Binary attachments (upload | download | show | delete |
-                    token <mint|revoke>). Blobs are scoped to an agent, a
-                    session, or an artifact, and can be referenced from event
-                    payloads + input_data via \`format: pane-blob-id\`.
+  blob              Binary attachments (upload | download | show | list |
+                    delete | token <mint|revoke|list>). Blobs are scoped to
+                    an agent, a session, or an artifact, and can be referenced
+                    from event payloads + input_data via
+                    \`format: pane-blob-id\`.
   agent             Agent identity on this machine (register | logout).
   config            CLI config inspection (show).
   skill             The relay's SKILL.md (show | version) — auto-updating;

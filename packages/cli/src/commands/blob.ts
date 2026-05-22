@@ -17,6 +17,7 @@ import type { ParsedArgs } from "../argv.js";
 import { runBlobUpload, blobUploadHelp } from "./blob-upload.js";
 import { runBlobDownload, blobDownloadHelp } from "./blob-download.js";
 import { runBlobShow, blobShowHelp } from "./blob-show.js";
+import { runBlobList, blobListHelp } from "./blob-list.js";
 import { runBlobDelete, blobDeleteHelp } from "./blob-delete.js";
 import { runBlobToken, blobTokenHelp } from "./blob-token.js";
 import { fail } from "../output.js";
@@ -49,12 +50,16 @@ Verbs:
   show <blob-id>         Print a blob's metadata (HEAD-based — doesn't
                          download the bytes).
 
+  list                   Enumerate YOUR agent's non-deleted blobs (newest
+                         first). Supports --cursor + --limit for pagination.
+
   delete <blob-id>       Soft-delete a blob. Idempotent.
 
-  token <verb>           Capability URLs for a blob (mint | revoke). 'mint'
-                         returns a /b/<token> URL anyone can GET, with
+  token <verb>           Capability URLs for a blob (mint | revoke | list).
+                         'mint' returns a /b/<token> URL anyone can GET, with
                          optional --ttl and --once. 'revoke' invalidates one
-                         token.
+                         token. 'list' enumerates a blob's tokens (without
+                         the token plaintext, which is unrecoverable).
 
 Run \`pane blob <verb> --help\` for verb-specific options.
 
@@ -90,6 +95,17 @@ export async function runBlob(args: ParsedArgs): Promise<void> {
     process.stdout.write(blobTokenHelp + "\n");
     return;
   }
+  // `pane blob list --help` — same pattern (list takes no required positional
+  // so the general pre-empt would already fire, but for parity with session.ts
+  // we route through here when args carry the "list" positional explicitly).
+  if (
+    verb === "list" &&
+    args.bools.has("help") &&
+    args.positionals.length === 1
+  ) {
+    process.stdout.write(blobListHelp + "\n");
+    return;
+  }
 
   const inner = shiftPositionals(args);
   switch (verb) {
@@ -102,6 +118,9 @@ export async function runBlob(args: ParsedArgs): Promise<void> {
     case "show":
       await runBlobShow(inner);
       break;
+    case "list":
+      await runBlobList(inner);
+      break;
     case "delete":
       await runBlobDelete(inner);
       break;
@@ -110,13 +129,13 @@ export async function runBlob(args: ParsedArgs): Promise<void> {
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane blob <upload|download|show|delete|token> (run 'pane blob --help')",
+        "missing verb — usage: pane blob <upload|download|show|list|delete|token> (run 'pane blob --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown blob verb '${verb}' — expected upload|download|show|delete|token (run 'pane blob --help')`,
+        `unknown blob verb '${verb}' — expected upload|download|show|list|delete|token (run 'pane blob --help')`,
         "invalid_args",
       );
   }
@@ -128,6 +147,7 @@ export {
   blobUploadHelp,
   blobDownloadHelp,
   blobShowHelp,
+  blobListHelp,
   blobDeleteHelp,
   blobTokenHelp,
 };

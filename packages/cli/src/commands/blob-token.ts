@@ -1,4 +1,4 @@
-// `pane blob token <mint|revoke>` — capability URLs for a blob.
+// `pane blob token <mint|revoke|list>` — capability URLs for a blob.
 //
 // A capability URL (/b/<token>) is a participant-facing way to fetch a blob
 // without holding the agent's API key. Tokens are minted per-blob, can be
@@ -37,6 +37,13 @@ Verbs:
   revoke <blob-id> <token-id>
                           Invalidate one previously-minted token by id.
                           Idempotent: revoking twice still returns success.
+
+  list <blob-id>          Enumerate the tokens minted against one blob,
+                          including revoked rows (for audit). Returns
+                          { blob_id, items: [...] } where each item carries
+                          { token_id, token_prefix, expires_at, once,
+                          created_at, last_used_at, use_count, revoked_at }.
+                          The token plaintext is NEVER returned.
 
 Options:
   --ttl <seconds>         (mint) per-token TTL; clamped by scope default.
@@ -90,9 +97,26 @@ async function runBlobTokenRevoke(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runBlobTokenList(args: ParsedArgs): Promise<void> {
+  const blobId = args.positionals[1];
+  if (!blobId) {
+    fail(
+      "missing <blob-id> — 'pane blob token list <blob-id>'",
+      "invalid_args",
+    );
+  }
+  const client = makeClient(args);
+  try {
+    const r = await client.listBlobTokens(blobId!);
+    printJson(r);
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
 export async function runBlobToken(args: ParsedArgs): Promise<void> {
-  // positionals[0] is the verb (mint | revoke), positionals[1..] are the
-  // verb's args. (The blob.ts dispatcher already shifted off the "token"
+  // positionals[0] is the verb (mint | revoke | list), positionals[1..] are
+  // the verb's args. (The blob.ts dispatcher already shifted off the "token"
   // marker before calling us.)
   const verb = args.positionals[0];
   switch (verb) {
@@ -102,15 +126,18 @@ export async function runBlobToken(args: ParsedArgs): Promise<void> {
     case "revoke":
       await runBlobTokenRevoke(args);
       break;
+    case "list":
+      await runBlobTokenList(args);
+      break;
     case undefined:
       fail(
-        "missing verb — usage: pane blob token <mint|revoke> (run 'pane blob token --help')",
+        "missing verb — usage: pane blob token <mint|revoke|list> (run 'pane blob token --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown token verb '${verb}' — expected mint|revoke (run 'pane blob token --help')`,
+        `unknown token verb '${verb}' — expected mint|revoke|list (run 'pane blob token --help')`,
         "invalid_args",
       );
   }
