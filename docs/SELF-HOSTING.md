@@ -104,6 +104,30 @@ reverse proxy (Caddy, nginx, Traefik) in front to terminate TLS. The proxy
 `PUBLIC_URL` must exactly match the public scheme + host the proxy serves — the
 relay bakes it into every participant URL and the WebSocket CSP origin.
 
+## Blob attachments
+
+The relay accepts file attachments (images, audio, video, PDF — full allowlist
+in [BLOB_BACKENDS.md](BLOB_BACKENDS.md)) from agents and humans. The single-box
+self-host runs the **filesystem backend** with no extra setup: the published
+image pins `BLOB_STORE_FS_DIR=/app/data/blobs`, so blobs land in the same
+`/app/data` volume as the SQLite DB and persist across restarts. Files on disk
+are mode `0600`; the relay refuses to start if the directory exists with
+world-readable permissions.
+
+You only need to tune env vars if you want different limits:
+
+| Var | Default | Notes |
+|-----|---------|-------|
+| `MAX_BLOB_BYTES` | `5_000_000` | Per-blob ceiling (5 MB). |
+| `MAX_BLOBS_PER_SESSION_BYTES` | `100_000_000` | Aggregate per session (100 MB). |
+| `MAX_BLOBS_PER_AGENT_BYTES` | `500_000_000` | Aggregate across all of one agent's blobs (500 MB). |
+| `BLOB_ENCRYPT_AT_REST` | `false` | Envelope-encrypt blobs on disk with `PANE_SECRET_KEY`. Adds latency; turn on if the host disk isn't already encrypted. |
+| `BLOB_MIME_ALLOWLIST` | `image/,application/pdf` | Comma-separated MIME prefixes. The pipeline also sniffs file content — the declared MIME is never trusted. |
+
+The filesystem backend is **single-VM only**: replicas see different disks. If
+you outgrow one box, switch to the Azure Blob backend — see
+[BLOB_BACKENDS.md](BLOB_BACKENDS.md) and [DEPLOY.md](DEPLOY.md#blob-storage).
+
 ## The encryption key
 
 Pane encrypts secrets at rest (currently webhook callback secrets) with an

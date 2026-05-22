@@ -38,6 +38,7 @@ The deployment-critical ones:
 | `API_KEY` | recommended | Bootstraps the default agent. If unset, one is minted and printed once at boot. |
 | `REGISTRATION_MODE` | no | `closed` (default) · `secret` · `open` — controls `POST /v1/register`. See "Registration mode" below. |
 | `REGISTRATION_SECRET` | when `REGISTRATION_MODE=secret` | Shared bearer secret callers must present. Boot fails fast if the mode is `secret` and this is unset. |
+| `BLOB_STORE` | no | `filesystem` (default) · `azure`. Pick `azure` for multi-replica; `filesystem` only works for single-VM. See "Blob storage" below. |
 | `PORT` | no | Defaults to `3000`. |
 
 ## Registration mode
@@ -147,6 +148,45 @@ automatically.
 
 To build the Postgres variant locally: `docker build --build-arg
 DATABASE_PROVIDER=postgres` (no `--build-arg` gives the SQLite image).
+
+## Blob storage
+
+The relay accepts file attachments (images, audio, video, PDF — see
+[BLOB_BACKENDS.md](BLOB_BACKENDS.md) for the allowlist and the full upload
+pipeline) and stores them through a `BlobStore` interface with two backends.
+
+| `BLOB_STORE` | Use it for | Notes |
+|--------------|------------|-------|
+| `filesystem` *(default)* | Single-VM deployments — the self-host quickstart. | Files on disk under `BLOB_STORE_FS_DIR` (mode `0600`). **Does not work with multiple replicas** — each replica sees a different filesystem. |
+| `azure` | The hosted / multi-replica path. | Microsoft `@azure/storage-blob` SDK with `DefaultAzureCredential`. Dynamic-imported so a filesystem self-host never pulls the Azure deps. |
+
+The Azure variant is what we run in production on Azure Container Apps. To
+enable it:
+
+```bash
+BLOB_STORE=azure
+BLOB_STORE_AZURE_CONTAINER=pane-blobs                            # created if missing
+BLOB_STORE_AZURE_ACCOUNT_URL=https://<account>.blob.core.windows.net
+# DEV / Azurite only — takes precedence over managed identity:
+# BLOB_STORE_AZURE_CONNECTION_STRING=DefaultEndpointsProtocol=...
+```
+
+For managed-identity auth (the production path), grant the Container App's
+identity the `Storage Blob Data Contributor` role on the storage account /
+container. No secrets on disk. Presigned PUT uploads are SAS URLs minted by
+the relay; humans upload **directly** to Azure Blob, bypassing the relay.
+
+Capacity limits (`MAX_BLOB_BYTES`, `MAX_BLOBS_PER_SESSION_BYTES`,
+`MAX_BLOBS_PER_AGENT_BYTES`, etc.) apply to both backends.
+`BLOB_ENCRYPT_AT_REST` adds envelope encryption under `PANE_SECRET_KEY` on
+top of the backend's own encryption — useful when you don't trust the storage
+tier or want defence in depth.
+
+See [BLOB_BACKENDS.md](BLOB_BACKENDS.md) for the full env-var reference,
+encryption-at-rest semantics, and the SSRF + polyglot defenses on the upload
+path. Capability URLs (`/b/<token>`) for handing blobs to third parties are
+documented in [CAPABILITY-URLS.md](CAPABILITY-URLS.md); the leaked-token
+playbook is in [RUNBOOK-LEAKED-TOKEN.md](RUNBOOK-LEAKED-TOKEN.md).
 
 ## Running multiple replicas
 
