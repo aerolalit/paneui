@@ -280,3 +280,164 @@ describe("collectBlobRefs", () => {
     );
   });
 });
+
+describe("collectBlobRefs — patternProperties / additionalProperties (#200)", () => {
+  // Before the fix, both forms were declared on the JsonSchema type but
+  // the walker never traversed them. A schema using `patternProperties`
+  // or `additionalProperties` with `format: pane-blob-id` Ajv-validated
+  // fine but the walker returned [] — bypassing the cross-tenant access
+  // check the module is designed to enforce.
+
+  it("collects from patternProperties when a key matches the regex", () => {
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "^attachment_": { format: "pane-blob-id" },
+      },
+    };
+    const refs = collectBlobRefs(schema, {
+      attachment_a: "cmpel3zb30000k923tf77pjrw",
+      attachment_b: "cmqfx4ac41111l834ug88qksx",
+      ignored_key: "not-a-blob-id-shape",
+    });
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("collects nothing from patternProperties when no key matches", () => {
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "^attachment_": { format: "pane-blob-id" },
+      },
+    };
+    expect(
+      collectBlobRefs(schema, { other_key: "cmpel3zb30000k923tf77pjrw" }),
+    ).toEqual([]);
+  });
+
+  it("collects from multiple patternProperties patterns", () => {
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "^image_": { format: "pane-blob-id" },
+        "^audio_": { format: "pane-blob-id" },
+      },
+    };
+    const refs = collectBlobRefs(schema, {
+      image_1: "cmpel3zb30000k923tf77pjrw",
+      audio_1: "cmqfx4ac41111l834ug88qksx",
+      video_1: "cmrev0xz52222m945hh99rmty",
+    });
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("collects from additionalProperties (the catch-all branch)", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: { format: "pane-blob-id" },
+    };
+    const refs = collectBlobRefs(schema, {
+      anything: "cmpel3zb30000k923tf77pjrw",
+      else: "cmqfx4ac41111l834ug88qksx",
+    });
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("additionalProperties: false (boolean) is a no-op", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+    };
+    // Even though the payload has a string at a dynamic key, the boolean
+    // shape carries no sub-schema, so nothing is collected.
+    expect(
+      collectBlobRefs(schema, { foo: "cmpel3zb30000k923tf77pjrw" }),
+    ).toEqual([]);
+  });
+
+  it("combined: properties + patternProperties + additionalProperties — each branch contributes only its share", () => {
+    // Spec-compliant interaction:
+    //   - keys named in `properties` are walked via `properties`
+    //   - keys matching a `patternProperties` regex are walked via that regex
+    //   - everything else is walked via `additionalProperties`
+    // Each key is walked exactly once; no double-counting.
+    const schema = {
+      type: "object",
+      properties: {
+        cover: { format: "pane-blob-id" },
+      },
+      patternProperties: {
+        "^audio_": { format: "pane-blob-id" },
+      },
+      additionalProperties: { format: "pane-blob-id" },
+    };
+    const refs = collectBlobRefs(schema, {
+      cover: "cmpel3zb30000k923tf77pjrw", // via properties
+      audio_intro: "cmqfx4ac41111l834ug88qksx", // via patternProperties
+      misc: "cmrev0xz52222m945hh99rmty", // via additionalProperties
+    });
+    // toHaveLength is the explicit guard against the walker double-counting
+    // a key that matches both `properties` and a `patternProperties` regex:
+    // the second walk would re-add the same blob_id to `out` and the Set
+    // dedup would silently mask it. Asserting length=3 catches a future
+    // regression where dedup is removed or weakened.
+    expect(refs).toHaveLength(3);
+    expect(refs.sort()).toEqual(
+      [
+        "cmpel3zb30000k923tf77pjrw",
+        "cmqfx4ac41111l834ug88qksx",
+        "cmrev0xz52222m945hh99rmty",
+      ].sort(),
+    );
+  });
+
+  it("nested: patternProperties holding an object that itself declares format", () => {
+    // Catches a regression where the walker recurses INTO the pattern's
+    // sub-schema (so blob_ids nested under a dynamic-key object are
+    // still collected, not just direct-value blob ids).
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "^item_": {
+          type: "object",
+          properties: {
+            blob_id: { format: "pane-blob-id" },
+          },
+        },
+      },
+    };
+    const refs = collectBlobRefs(schema, {
+      item_1: { blob_id: "cmpel3zb30000k923tf77pjrw" },
+      item_2: { blob_id: "cmqfx4ac41111l834ug88qksx" },
+    });
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("malformed regex in patternProperties is skipped, doesn't throw", () => {
+    // Defensive: Ajv would catch this at schema-compile time, but the
+    // walker shouldn't crash if it ever sees one.
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "[invalid(": { format: "pane-blob-id" }, // unbalanced bracket
+      },
+      properties: {
+        cover: { format: "pane-blob-id" },
+      },
+    };
+    // `cover` still gets collected via the properties branch.
+    expect(
+      collectBlobRefs(schema, {
+        cover: "cmpel3zb30000k923tf77pjrw",
+      }),
+    ).toEqual(["cmpel3zb30000k923tf77pjrw"]);
+  });
+});

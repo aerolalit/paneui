@@ -60,6 +60,8 @@ type JsonSchema = {
  *
  * Handles:
  *   - nested objects (recurse on `properties`)
+ *   - dynamic keys (recurse on `patternProperties` regexes + on
+ *     `additionalProperties` for keys not matched by either)
  *   - arrays (recurse on `items`)
  *   - `oneOf` / `anyOf` / `allOf` branches — recurse into every branch
  *     and let the dedup at return collapse repeats. Choosing the "right"
@@ -138,6 +140,87 @@ function walk(
     } else {
       // List form: one schema for every item.
       for (const item of value) walk(schema.items, item, out);
+    }
+  }
+
+  // patternProperties — iterate over each regex in the schema, match
+  // against the payload's actual keys, recurse on every match. Without
+  // this branch, a schema like
+  //   { patternProperties: { ".*": { format: "pane-blob-id" } } }
+  // would Ajv-validate fine but the walker would collect zero refs,
+  // skipping the cross-tenant access check entirely (#200).
+  //
+  // NOTE on the asymmetry with the additionalProperties branch below:
+  // this loop does NOT exclude keys that are already named in
+  // `properties`. Per the JSON Schema spec, when a key matches both
+  // `properties` and a `patternProperties` regex, BOTH sub-schemas
+  // apply independently. The `properties` branch above already
+  // recursed into the named-key value; we recurse again here under
+  // the pattern's sub-schema. The `out` Set dedupes any blob_ids
+  // collected twice, so the only visible effect is a duplicate walk
+  // — correct behaviour, not a leak. The `additionalProperties` block
+  // below DOES exclude declared + pattern-matched keys (that's spec
+  // too — `additionalProperties` applies ONLY to keys not matched by
+  // either of the other two). The asymmetry looks wrong at a glance
+  // and is right by the spec.
+  if (
+    schema.patternProperties &&
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    const obj = value as Record<string, unknown>;
+    const objKeys = Object.keys(obj);
+    for (const [pattern, propSchema] of Object.entries(
+      schema.patternProperties,
+    )) {
+      let re: RegExp;
+      try {
+        re = new RegExp(pattern);
+      } catch {
+        // Malformed pattern in the schema. Ajv would have caught this
+        // at schema-compile time, so reaching here means the schema
+        // bypassed validation. Skip rather than throw; the rest of the
+        // walk continues.
+        continue;
+      }
+      for (const k of objKeys) {
+        if (re.test(k)) walk(propSchema, obj[k], out);
+      }
+    }
+  }
+
+  // additionalProperties — iterate over the payload's keys NOT matched by
+  // `properties` and NOT matched by any `patternProperties` regex (per
+  // JSON Schema spec). The boolean shape (`additionalProperties: true/false`)
+  // carries no sub-schema so we only act when it's an object.
+  //
+  // The exclusion (declared + pattern-matched) is intentional and
+  // spec-compliant — see the note on patternProperties above for the
+  // counterpart asymmetry. `additionalProperties` is a catch-all that
+  // applies ONLY where neither of the other two does.
+  if (
+    schema.additionalProperties &&
+    typeof schema.additionalProperties === "object" &&
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    const obj = value as Record<string, unknown>;
+    const declared = new Set(Object.keys(schema.properties ?? {}));
+    const patternRes: RegExp[] = [];
+    for (const p of Object.keys(schema.patternProperties ?? {})) {
+      try {
+        patternRes.push(new RegExp(p));
+      } catch {
+        /* malformed — same handling as the patternProperties branch above */
+      }
+    }
+    const additional = schema.additionalProperties;
+    for (const k of Object.keys(obj)) {
+      if (declared.has(k)) continue;
+      if (patternRes.some((re) => re.test(k))) continue;
+      walk(additional, obj[k], out);
     }
   }
 }
