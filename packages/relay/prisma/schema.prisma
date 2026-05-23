@@ -147,6 +147,18 @@ model Participant {
   joinedAt     DateTime? @map("joined_at")
   revokedAt    DateTime? @map("revoked_at")
 
+  // The (sessionId, identityId) pair must be unique even across revoked
+  // rows. The mint route derives identityId monotonically from the
+  // ever-minted human count (#206 / #201), but two concurrent POSTs to
+  // `/v1/sessions/:id/participants` can both read the same count and
+  // both attempt `h_${N}`. The constraint serialises the write at the
+  // DB layer (P2002 on the loser); the route catches the error and
+  // retries against the new count. Without the constraint, the race
+  // surfaces as silently aliased identityIds — the WS handler's
+  // `findFirst({ where: { sessionId, identityId } })` would then
+  // non-deterministically resolve events to whichever row sorted first.
+  // See #215.
+  @@unique([sessionId, identityId])
   @@index([sessionId])
   @@index([tokenHash])
   @@map("participants")
