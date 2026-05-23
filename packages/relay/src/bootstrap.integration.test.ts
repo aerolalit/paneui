@@ -14,8 +14,9 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@prisma/client";
 import { runBootstrap } from "./bootstrap.js";
+import { createPrismaClient } from "./db.js";
 import { hashKey } from "./keys.js";
 import type { Config } from "./config.js";
 import { setupTestDb, type TestDb } from "./test-helpers/db.js";
@@ -45,7 +46,7 @@ describe("bootstrap (integration, real DB)", () => {
 
   beforeAll(async () => {
     testDb = await setupTestDb();
-    prisma = new PrismaClient({ datasourceUrl: testDb.dbUrl });
+    prisma = createPrismaClient(testDb.dbUrl);
     await testDb.applyMigration(prisma);
   });
 
