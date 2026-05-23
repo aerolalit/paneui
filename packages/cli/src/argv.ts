@@ -8,6 +8,21 @@ export interface ParsedArgs {
   positionals: string[];
   flags: Map<string, string>;
   bools: Set<string>;
+  /**
+   * Value-flag names (`--name` form) that were seen with no following value
+   * — either at end-of-argv or with another `--flag` next. The parser
+   * deliberately does NOT classify these as known-vs-unknown; that's
+   * assertKnownFlags's job. Splitting the two responsibilities means the
+   * message is uniform regardless of whether the user wrote
+   * `pane config show --bogus` or `pane config show --bogus something`:
+   * an unknown flag is "unknown flag(s)" in both cases. A known flag
+   * that's missing its value is the only path that surfaces as
+   * "requires a value". See PR #227 follow-up note for the rationale.
+   *
+   * Optional so handwritten ParsedArgs literals (tests) don't need to set
+   * it — assertKnownFlags treats undefined as empty.
+   */
+  danglingValueFlags?: Set<string>;
 }
 
 /**
@@ -33,6 +48,14 @@ export class ArgvError extends Error {
  * Bails with ArgvError on the first duplicate (`--foo x --foo y` or
  * `--once --once`) so a typo'd repeat doesn't silently overwrite the first
  * value the way a plain `Map.set` would.
+ *
+ * Does NOT throw on a value-flag with no following value. Instead it
+ * records the name in `danglingValueFlags` so `assertKnownFlags` can
+ * produce the right message — "unknown flag(s)" for typos, "requires a
+ * value" for genuine known-flag-missing-value cases. Without this split,
+ * the message was non-uniform (a `--bogus` at end of argv said "requires
+ * a value" while `--bogus something` said "unknown flag(s)" — same root
+ * cause, two messages).
  */
 export function parseArgs(
   tokens: string[],
@@ -41,6 +64,7 @@ export function parseArgs(
   const positionals: string[] = [];
   const flags = new Map<string, string>();
   const bools = new Set<string>();
+  const danglingValueFlags = new Set<string>();
 
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]!;
@@ -68,9 +92,12 @@ export function parseArgs(
       }
       const next = tokens[i + 1];
       if (next === undefined || next.startsWith("--")) {
-        // A value-flag with no argument is a user error — don't silently
-        // demote it to a boolean (which hides the mistake).
-        throw new ArgvError(`--${body} requires a value`);
+        // No value follows. Don't decide whether this is a typo or a
+        // forgotten value — record it; assertKnownFlags resolves both
+        // with one consistent message shape (see the field doc on
+        // ParsedArgs).
+        danglingValueFlags.add(body);
+        continue;
       }
       if (flags.has(body)) {
         throw new ArgvError(`duplicate flag: --${body}`);
@@ -82,7 +109,7 @@ export function parseArgs(
     positionals.push(tok);
   }
 
-  return { positionals, flags, bools };
+  return { positionals, flags, bools, danglingValueFlags };
 }
 
 /**
@@ -103,6 +130,12 @@ const GLOBAL_BOOLS: readonly string[] = ["help", "json"];
  * generic on purpose — adding a new flag to one verb should not require a
  * shared registry. Keeping the allow-list co-located with the runner that
  * consumes it means the two cannot drift.
+ *
+ * Also resolves the parser's `danglingValueFlags`: an unknown name there
+ * is reported alongside other unknowns ("unknown flag(s): --bogus"); a
+ * known name there surfaces as "--name requires a value". This is what
+ * keeps the error message uniform for a typo whether or not a value
+ * follows it.
  */
 export function assertKnownFlags(
   args: ParsedArgs,
@@ -112,6 +145,8 @@ export function assertKnownFlags(
 ): void {
   const flagSet = new Set<string>([...GLOBAL_FLAGS, ...knownFlags]);
   const boolSet = new Set<string>([...GLOBAL_BOOLS, ...knownBools]);
+  const dangling = args.danglingValueFlags ?? new Set<string>();
+
   const unknown: string[] = [];
   for (const k of args.flags.keys()) {
     if (!flagSet.has(k) && !boolSet.has(k)) unknown.push(`--${k}`);
@@ -119,9 +154,23 @@ export function assertKnownFlags(
   for (const k of args.bools) {
     if (!boolSet.has(k) && !flagSet.has(k)) unknown.push(`--${k}`);
   }
-  if (unknown.length === 0) return;
-  throw new ArgvError(
-    `unknown flag(s): ${unknown.join(", ")}`,
-    `run \`${helpCommand} --help\` for the supported flags`,
-  );
+  for (const k of dangling) {
+    if (!flagSet.has(k) && !boolSet.has(k)) unknown.push(`--${k}`);
+  }
+  if (unknown.length > 0) {
+    throw new ArgvError(
+      `unknown flag(s): ${unknown.join(", ")}`,
+      `run \`${helpCommand} --help\` for the supported flags`,
+    );
+  }
+
+  // No unknowns — but a known value-flag may still have been left without
+  // a value. Surface the first such case with the pre-existing message
+  // shape ("--name requires a value"). Reporting only the first keeps the
+  // message simple; the user fixes that flag, re-runs, sees the next one.
+  for (const k of dangling) {
+    if (flagSet.has(k)) {
+      throw new ArgvError(`--${k} requires a value`);
+    }
+  }
 }

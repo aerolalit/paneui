@@ -57,11 +57,18 @@ Run \`pane session <verb> --help\` for verb-specific options.`;
  * looks exactly like the pre-restructure invocation.
  */
 function shiftPositionals(args: ParsedArgs): ParsedArgs {
-  return {
+  // Propagate danglingValueFlags too — otherwise the leaf runner's
+  // assertKnownFlags can't tell that the user wrote `--title` without a
+  // value, and falls through to a less-useful downstream error.
+  const out: ParsedArgs = {
     positionals: args.positionals.slice(1),
     flags: args.flags,
     bools: args.bools,
   };
+  if (args.danglingValueFlags !== undefined) {
+    out.danglingValueFlags = args.danglingValueFlags;
+  }
+  return out;
 }
 
 export async function runSession(args: ParsedArgs): Promise<void> {
