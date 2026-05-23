@@ -45,6 +45,10 @@ COPY packages/relay/prisma ./packages/relay/prisma
 # be present. The prisma dir now also includes prisma/postgres/ (schema +
 # migrations) — copied implicitly since it sits under prisma/.
 COPY packages/relay/scripts ./packages/relay/scripts
+# Prisma 7 reads the datasource URL from prisma.config.ts (the schemas no
+# longer carry `url = env(...)`). Without it, `prisma generate` / `migrate`
+# bail with P1012 / "datasource.url property is required".
+COPY packages/relay/prisma.config.ts ./packages/relay/prisma.config.ts
 
 COPY packages/relay/tsconfig.json packages/relay/tsconfig.client.json ./packages/relay/
 COPY packages/relay/src ./packages/relay/src
@@ -95,6 +99,9 @@ COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
 # Migration runner (bounded retry wrapper around `prisma migrate deploy`).
 COPY packages/relay/scripts ./packages/relay/scripts
+# `migrate deploy` (run on every boot from CMD) reads DATABASE_URL through
+# this config in Prisma 7 — the schemas no longer carry `url = env(...)`.
+COPY packages/relay/prisma.config.ts ./packages/relay/prisma.config.ts
 # The pane agent skill, served verbatim at GET /skills/pane/SKILL.md. The skill
 # route resolves it relative to the relay package root (see routes/skill.ts),
 # so it is copied into the package rather than to the image root.
