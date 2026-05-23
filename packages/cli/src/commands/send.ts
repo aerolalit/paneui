@@ -3,9 +3,13 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const KNOWN_FLAGS = ["type", "data", "blob", "causation-id", "idempotency-key"];
+const KNOWN_BOOLS: string[] = [];
 
 export const sendHelp = `pane session send — emit an agent event into a session
 
@@ -39,6 +43,8 @@ Output (stdout, JSON):
   { event, deduped }`;
 
 export async function runSend(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session send");
+
   const sessionId = args.positionals[0];
   if (!sessionId) fail("missing <session-id>", "invalid_args");
 

@@ -1,7 +1,7 @@
 // Unit tests for the hand-rolled argv parser.
 
 import { describe, it, expect } from "vitest";
-import { parseArgs, ArgvError } from "./argv.js";
+import { parseArgs, ArgvError, assertKnownFlags } from "./argv.js";
 
 const BOOLS = new Set(["json", "once", "help", "version"]);
 
@@ -54,5 +54,122 @@ describe("parseArgs", () => {
     expect(r.positionals).toEqual(["watch", "ses_1"]);
     expect(r.flags.get("type")).toBe("form.submitted");
     expect(r.bools.has("once")).toBe(true);
+  });
+
+  it("throws on a repeated value-flag (space form)", () => {
+    expect(() => parseArgs(["--url", "a", "--url", "b"], BOOLS)).toThrow(
+      ArgvError,
+    );
+    expect(() => parseArgs(["--url", "a", "--url", "b"], BOOLS)).toThrow(
+      "duplicate flag: --url",
+    );
+  });
+
+  it("throws on a repeated value-flag (equals form)", () => {
+    expect(() => parseArgs(["--url=a", "--url=b"], BOOLS)).toThrow(
+      "duplicate flag: --url",
+    );
+  });
+
+  it("throws on a repeated value-flag mixing space + equals", () => {
+    expect(() => parseArgs(["--url", "a", "--url=b"], BOOLS)).toThrow(
+      "duplicate flag: --url",
+    );
+  });
+
+  it("throws on a repeated boolean flag", () => {
+    expect(() => parseArgs(["--once", "--once"], BOOLS)).toThrow(
+      "duplicate flag: --once",
+    );
+  });
+});
+
+describe("assertKnownFlags", () => {
+  const empty = {
+    positionals: [],
+    flags: new Map<string, string>(),
+    bools: new Set<string>(),
+  };
+
+  it("accepts nothing-passed", () => {
+    expect(() => assertKnownFlags(empty, [], [], "pane example")).not.toThrow();
+  });
+
+  it("accepts the per-command allow-list", () => {
+    const args = {
+      positionals: [],
+      flags: new Map([
+        ["file", "/tmp/x"],
+        ["scope", "agent"],
+      ]),
+      bools: new Set(["once"]),
+    };
+    expect(() =>
+      assertKnownFlags(args, ["file", "scope"], ["once"], "pane example"),
+    ).not.toThrow();
+  });
+
+  it("always accepts global flags (--url / --api-key / --json / --help)", () => {
+    const args = {
+      positionals: [],
+      flags: new Map([
+        ["url", "https://x.test"],
+        ["api-key", "pk_secret"],
+      ]),
+      bools: new Set(["json", "help"]),
+    };
+    // No per-command knowledge — globals still pass.
+    expect(() => assertKnownFlags(args, [], [], "pane example")).not.toThrow();
+  });
+
+  it("rejects an unknown value-flag with a hinted ArgvError", () => {
+    const args = {
+      positionals: [],
+      flags: new Map([["totally-fake-flag", "oops"]]),
+      bools: new Set<string>(),
+    };
+    let caught: ArgvError | undefined;
+    try {
+      assertKnownFlags(args, ["file"], [], "pane blob upload");
+    } catch (e) {
+      caught = e as ArgvError;
+    }
+    expect(caught).toBeInstanceOf(ArgvError);
+    expect(caught!.message).toBe("unknown flag(s): --totally-fake-flag");
+    expect(caught!.hint).toBe(
+      "run `pane blob upload --help` for the supported flags",
+    );
+  });
+
+  it("rejects an unknown boolean flag", () => {
+    const args = {
+      positionals: [],
+      flags: new Map<string, string>(),
+      bools: new Set(["bogus"]),
+    };
+    expect(() => assertKnownFlags(args, [], [], "pane example")).toThrow(
+      "unknown flag(s): --bogus",
+    );
+  });
+
+  it("reports every unknown flag in one message", () => {
+    const args = {
+      positionals: [],
+      flags: new Map([
+        ["foo", "1"],
+        ["bar", "2"],
+      ]),
+      bools: new Set(["baz"]),
+    };
+    let msg = "";
+    try {
+      assertKnownFlags(args, [], [], "pane example");
+    } catch (e) {
+      msg = (e as ArgvError).message;
+    }
+    // All three reported — saves the user re-running once per typo.
+    expect(msg).toContain("--foo");
+    expect(msg).toContain("--bar");
+    expect(msg).toContain("--baz");
   });
 });

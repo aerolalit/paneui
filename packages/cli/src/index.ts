@@ -9,6 +9,21 @@
 // Output is JSON by default. Every noun self-documents via --help.
 
 import { parseArgs, ArgvError } from "./argv.js";
+
+/**
+ * Translate an ArgvError into the canonical `invalid_args` envelope and exit
+ * non-zero. The parser throws ArgvError up-front; assertKnownFlags throws it
+ * from inside a runner. Both paths funnel here so the on-wire shape is one.
+ */
+function failArgvError(e: ArgvError): never {
+  const error: Record<string, unknown> = {
+    code: "invalid_args",
+    message: e.message,
+  };
+  if (e.hint !== undefined) error["hint"] = e.hint;
+  process.stderr.write(JSON.stringify({ error }) + "\n");
+  process.exit(1);
+}
 import { runSession, sessionHelp } from "./commands/session.js";
 import { runArtifact, artifactHelp } from "./commands/artifact.js";
 import { runAgent, agentHelp } from "./commands/agent.js";
@@ -111,12 +126,7 @@ async function main(): Promise<void> {
     args = parseArgs(rest, BOOLEAN_FLAGS);
   } catch (e) {
     if (e instanceof ArgvError) {
-      process.stderr.write(
-        JSON.stringify({
-          error: { code: "invalid_args", message: e.message },
-        }) + "\n",
-      );
-      process.exit(1);
+      failArgvError(e);
     }
     throw e;
   }
@@ -186,6 +196,13 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // ArgvError thrown from a runner (e.g. assertKnownFlags) reaches here —
+  // funnel it through the same invalid_args envelope as the parse-time path
+  // so unknown-flag rejection looks identical no matter which layer caught
+  // the user error.
+  if (err instanceof ArgvError) {
+    failArgvError(err);
+  }
   // Funnel 426 cli_upgrade_required through the dedicated upgrade-message
   // path so a command that throws raw (instead of going through
   // failFromError) still produces the exact stderr block + exit 75 the

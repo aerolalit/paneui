@@ -11,8 +11,12 @@
 // after a single shift.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
 
 export const participantHelp = `pane session participant — manage one session's participant URLs
 
@@ -65,6 +69,8 @@ Recovery recipe:
 Output: stdout is machine-readable JSON.`;
 
 async function runParticipantList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane session participant list");
+
   const sessionId = args.positionals[1];
   if (!sessionId) {
     fail(
@@ -83,6 +89,8 @@ async function runParticipantList(args: ParsedArgs): Promise<void> {
 }
 
 async function runParticipantNew(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane session participant new");
+
   const sessionId = args.positionals[1];
   if (!sessionId) {
     fail(
@@ -101,6 +109,8 @@ async function runParticipantNew(args: ParsedArgs): Promise<void> {
 }
 
 async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane session participant revoke");
+
   const sessionId = args.positionals[1];
   const participantId = args.positionals[2];
   if (!sessionId || !participantId) {

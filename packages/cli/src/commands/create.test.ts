@@ -269,3 +269,41 @@ describe("create — --title flag", () => {
     expect(req).not.toHaveProperty("title");
   });
 });
+
+describe("create — unknown-flag rejection (#224)", () => {
+  it("rejects an unknown value-flag and never reaches the relay", async () => {
+    // Pre-#224 the CLI silently dropped the flag and created the session.
+    // Now it must throw an ArgvError before makeClient is touched — the
+    // top-level main().catch translates that to an invalid_args envelope.
+    await expect(
+      runCreate(
+        argv([
+          "--totally-fake-flag",
+          "oops",
+          "--artifact",
+          "<html></html>",
+          "--title",
+          "smoke",
+          "--ttl",
+          "60",
+        ]),
+      ),
+    ).rejects.toThrow("unknown flag(s): --totally-fake-flag");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unknown boolean flag", async () => {
+    await expect(
+      runCreate(
+        argv([
+          "--artifact",
+          "<html></html>",
+          "--title",
+          "smoke",
+          "--once", // --once is parsed as a bool (it's in BOOLS) but `create` does not accept it
+        ]),
+      ),
+    ).rejects.toThrow("unknown flag(s): --once");
+    expect(calls).toHaveLength(0);
+  });
+});

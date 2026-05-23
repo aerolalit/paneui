@@ -1,8 +1,12 @@
 // `pane blob delete <blob-id>` — soft-delete a blob.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, failFromError, printJson } from "../output.js";
+
+const KNOWN_FLAGS: string[] = [];
+const KNOWN_BOOLS: string[] = [];
 
 export const blobDeleteHelp = `pane blob delete — soft-delete a blob
 
@@ -22,6 +26,8 @@ Output (stdout, JSON):
   { blob_id, deleted: true }`;
 
 export async function runBlobDelete(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane blob delete");
+
   const blobId = args.positionals[0];
   if (!blobId) {
     fail("missing <blob-id> — 'pane blob delete <blob-id>'", "invalid_args");

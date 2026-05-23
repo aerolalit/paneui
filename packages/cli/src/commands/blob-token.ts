@@ -13,8 +13,14 @@
 // session participant`.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, failFromError, printJson } from "../output.js";
+
+const MINT_FLAGS = ["ttl"];
+const MINT_BOOLS = ["once"];
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
 
 export const blobTokenHelp = `pane blob token — manage a blob's capability URLs
 
@@ -55,6 +61,8 @@ Options:
 Output: stdout is machine-readable JSON.`;
 
 async function runBlobTokenMint(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, MINT_FLAGS, MINT_BOOLS, "pane blob token mint");
+
   const blobId = args.positionals[1];
   if (!blobId) {
     fail(
@@ -80,6 +88,8 @@ async function runBlobTokenMint(args: ParsedArgs): Promise<void> {
 }
 
 async function runBlobTokenRevoke(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane blob token revoke");
+
   const blobId = args.positionals[1];
   const tokenId = args.positionals[2];
   if (!blobId || !tokenId) {
@@ -98,6 +108,8 @@ async function runBlobTokenRevoke(args: ParsedArgs): Promise<void> {
 }
 
 async function runBlobTokenList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane blob token list");
+
   const blobId = args.positionals[1];
   if (!blobId) {
     fail(

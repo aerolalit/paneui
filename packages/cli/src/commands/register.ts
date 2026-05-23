@@ -8,10 +8,14 @@
 
 import { registerAgent, PaneApiError } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { DEFAULT_RELAY_URL } from "../config.js";
 import { printJson, fail, failUpgradeRequired } from "../output.js";
 import { readStore, writeStore } from "../store.js";
 import { VERSION } from "../version.js";
+
+const KNOWN_FLAGS = ["name", "secret"];
+const KNOWN_BOOLS = ["print-key"];
 
 export const registerHelp = `pane agent register — register this agent with the relay and save the key locally
 
@@ -40,6 +44,8 @@ The API key is saved to the CLI config file (mode 0600); it is not printed
 unless --print-key is passed.`;
 
 export async function runRegister(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane agent register");
+
   const store = readStore();
   const url =
     args.flags.get("url") ??

@@ -6,10 +6,14 @@
 
 import { openStream, type PaneEvent } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { resolveConfig } from "../config.js";
 import { PaneClient } from "@paneui/core";
 import { printJsonLine, fail } from "../output.js";
 import { VERSION } from "../version.js";
+
+const KNOWN_FLAGS = ["since", "type", "filter-type", "timeout"];
+const KNOWN_BOOLS = ["once"];
 
 export const watchHelp = `pane session watch — stream a session's events as JSON-lines
 
@@ -94,6 +98,8 @@ export function shouldPrintEvent(
 }
 
 export async function runWatch(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session watch");
+
   const sessionId = args.positionals[0];
   if (!sessionId) fail("missing <session-id>", "invalid_args");
 

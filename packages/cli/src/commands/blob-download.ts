@@ -2,8 +2,12 @@
 
 import { writeFileSync } from "node:fs";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, failFromError, printJson } from "../output.js";
+
+const KNOWN_FLAGS = ["out"];
+const KNOWN_BOOLS: string[] = [];
 
 export const blobDownloadHelp = `pane blob download — fetch a blob's bytes
 
@@ -26,6 +30,8 @@ Output:
   With --out:    { blob_id, written: <path>, bytes: <n> } to stdout.`;
 
 export async function runBlobDownload(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane blob download");
+
   const blobId = args.positionals[0];
   if (!blobId) {
     fail("missing <blob-id> — 'pane blob download <blob-id>'", "invalid_args");

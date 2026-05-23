@@ -5,8 +5,12 @@
 // <blob-id>' for that).
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, printJson, failFromError } from "../output.js";
+
+const KNOWN_FLAGS = ["cursor", "limit"];
+const KNOWN_BOOLS: string[] = [];
 
 export const blobListHelp = `pane blob list — enumerate YOUR agent's blobs
 
@@ -29,6 +33,8 @@ Output (stdout, JSON):
   { items: BlobRef[], next_cursor: string | null }`;
 
 export async function runBlobList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane blob list");
+
   const cursor = args.flags.get("cursor");
   const limitRaw = args.flags.get("limit");
   let limit: number | undefined;

@@ -34,7 +34,7 @@ export async function runAgent(args: ParsedArgs): Promise<void> {
       await runRegister(args);
       break;
     case "logout":
-      await runLogout();
+      await runLogout(args);
       break;
     case undefined:
       fail(

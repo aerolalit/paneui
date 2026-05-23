@@ -34,7 +34,7 @@ describe("runLogout", () => {
     writeStore({ url: "https://relay.test", apiKey: "pk_secret" });
     expect(existsSync(storePath())).toBe(true);
 
-    await runLogout();
+    await runLogout({ positionals: [], flags: new Map(), bools: new Set() });
 
     expect(existsSync(storePath())).toBe(false);
     expect(JSON.parse(stdout)).toEqual({ cleared: true, path: storePath() });
@@ -42,7 +42,7 @@ describe("runLogout", () => {
 
   it("is idempotent when no config file exists", async () => {
     expect(existsSync(storePath())).toBe(false);
-    await runLogout();
+    await runLogout({ positionals: [], flags: new Map(), bools: new Set() });
     expect(JSON.parse(stdout)).toEqual({ cleared: true, path: storePath() });
   });
 });
