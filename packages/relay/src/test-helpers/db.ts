@@ -24,8 +24,22 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 export type Engine = "sqlite" | "postgresql";
+
+// Postgres admin client used to CREATE / DROP SCHEMA in the test setup
+// (separate from the per-schema PrismaClient that tests run against).
+// Prisma 7 requires a driver adapter — the schema no longer carries the URL,
+// and `new PrismaClient({ datasourceUrl })` no longer exists. The helper
+// wraps a fresh pg.Pool per call so the admin connection is independent of
+// the namespaced ones the test files own.
+function pgAdminClient(url: string): PrismaClient {
+  return new PrismaClient({
+    adapter: new PrismaPg(new pg.Pool({ connectionString: url })),
+  });
+}
 
 function detectEngine(url: string | undefined): Engine {
   if (!url) return "sqlite";
@@ -249,7 +263,7 @@ export async function setupTestDb(): Promise<TestDb> {
 
   // We need a one-shot connection on the BASE url to CREATE SCHEMA, then the
   // returned dbUrl is what tests actually use.
-  const admin = new PrismaClient({ datasourceUrl: base });
+  const admin = pgAdminClient(base);
   await admin.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`);
   await admin.$disconnect();
 
@@ -266,7 +280,7 @@ export async function setupTestDb(): Promise<TestDb> {
       );
     },
     cleanup: async () => {
-      const cleanupAdmin = new PrismaClient({ datasourceUrl: base });
+      const cleanupAdmin = pgAdminClient(base);
       await cleanupAdmin.$executeRawUnsafe(
         `DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`,
       );

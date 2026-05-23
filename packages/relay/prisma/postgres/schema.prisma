@@ -4,6 +4,10 @@
 //   npx prisma generate --schema prisma/postgres/schema.prisma
 //   npx prisma migrate dev --schema prisma/postgres/schema.prisma --name <name>
 // Migrations live in prisma/postgres/migrations/ (separate from the sqlite set).
+//
+// Prisma 7 notes — see packages/relay/prisma/schema.prisma's header.
+// Connection URL now lives in packages/relay/prisma.config.ts (CLI) and is
+// passed at runtime as a driver adapter in packages/relay/src/db.ts.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,7 +15,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Agent {

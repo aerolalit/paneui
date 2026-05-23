@@ -1,6 +1,15 @@
 // prisma/schema.prisma
 // provider = "sqlite" for the self-host/default build; "postgresql" for the hosted build (build-time switch).
 // See docs/SPEC.md (Data model) and docs/architecture/phase-1-skeleton-and-data.md (Prisma schema section).
+//
+// Prisma 7 notes:
+//   - The connection URL no longer lives here; the runtime creates a driver
+//     adapter (better-sqlite3 / pg) from env and passes it to PrismaClient,
+//     and the migrate CLI reads `prisma.config.ts` for the same URL. See
+//     packages/relay/prisma.config.ts and packages/relay/src/db.ts.
+//   - The legacy `prisma-client-js` generator is still accepted in 7 and
+//     emits to node_modules/@prisma/client/ as before, so the relay's
+//     `import { ... } from "@prisma/client"` import surface stays unchanged.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,7 +17,6 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 model Agent {

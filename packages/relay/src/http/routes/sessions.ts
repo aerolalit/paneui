@@ -769,20 +769,25 @@ sessions.post("/:id/participants", requireAgent, async (c) => {
       break;
     } catch (e) {
       // Prisma's known-error code for unique constraint violation is P2002.
-      // Detect it structurally (not by message string) so a future Prisma
-      // upgrade that adjusts the message doesn't silently turn this into
-      // an unhandled crash.
+      // The collision fingerprint differs across Prisma versions + engines:
+      //   - Prisma 6 (Rust engine): `meta.target = ["session_id", "identity_id"]`
+      //     on SQLite; constraint name on Postgres.
+      //   - Prisma 7 (driver adapter): `meta.target` is empty / absent;
+      //     the field list is carried in the message body
+      //     ("Unique constraint failed on the fields: (`session_id`, `identity_id`)").
+      // Match either shape so the catch survives engine churn.
       const code = (e as { code?: string } | null)?.code;
       const target = (e as { meta?: { target?: unknown } } | null)?.meta
         ?.target;
       const targetStr = Array.isArray(target)
         ? target.join(",")
-        : String(target);
+        : String(target ?? "");
+      const message = (e as { message?: string } | null)?.message ?? "";
       const isIdentityCollision =
         code === "P2002" &&
-        // Postgres returns the constraint name; SQLite returns the column list.
         (targetStr.includes("identity_id") ||
-          targetStr.includes("participants_session_id_identity_id_key"));
+          targetStr.includes("participants_session_id_identity_id_key") ||
+          message.includes("identity_id"));
       if (!isIdentityCollision || attempt >= MAX_MINT_ATTEMPTS - 1) throw e;
       // A concurrent mint won the row for `h_${everMintedHumans}`. Loop
       // back, re-read the count, and pick the next index. No backoff —

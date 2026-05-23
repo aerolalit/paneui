@@ -35,8 +35,11 @@ export async function startRelay(): Promise<RelayHandle> {
   process.env.TTL_SWEEP_SECONDS = "0";
 
   // Apply the migration before importing src/db.ts (which reads DATABASE_URL).
-  const { PrismaClient } = await import("@prisma/client");
-  const prisma = new PrismaClient();
+  // Prisma 7 needs a driver adapter on construction; route through the same
+  // createPrismaClient factory the relay uses at boot so the test client
+  // matches the production code path.
+  const { createPrismaClient } = await import("../../src/db.js");
+  const prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
   const { serve } = await import("@hono/node-server");
