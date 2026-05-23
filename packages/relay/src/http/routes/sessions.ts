@@ -729,32 +729,66 @@ sessions.post("/:id/participants", requireAgent, async (c) => {
   //     two non-revoked rows could share `h_1`, and the WS handler's
   //     `findFirst({ where: { sessionId, identityId } })` would non-
   //     deterministically resolve events to whichever row sorted first.
-  const [activeHumans, everMintedHumans] = await Promise.all([
-    prisma.participant.count({
-      where: { sessionId: id, kind: "human", revokedAt: null },
-    }),
-    prisma.participant.count({
-      where: { sessionId: id, kind: "human" },
-    }),
-  ]);
-  if (activeHumans >= config.MAX_PARTICIPANTS_PER_SESSION) {
-    throw errors.conflict(
-      `session already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_SESSION}); revoke one before minting another`,
-      false,
-      "revoke an existing participant first with DELETE /v1/sessions/:id/participants/:participant_id (CLI: `pane participant revoke`), then retry",
-    );
-  }
-
+  //
+  // The (sessionId, identityId) unique constraint (#215) is the belt-and-
+  // braces on this: two concurrent POSTs can both read everMintedHumans=N
+  // and both try `h_${N}`, and the DB serialises the write so exactly one
+  // wins on the constraint. The loser sees P2002 and the catch block below
+  // re-reads the count + retries. Bounded to a small number of attempts —
+  // a stuck retry loop is its own pathology.
   const token = generateHumanParticipantToken();
-  const participant = await prisma.participant.create({
-    data: {
-      sessionId: id,
-      kind: "human",
-      identityId: `h_${everMintedHumans}`,
-      tokenHash: hashKey(token),
-      tokenPrefix: keyPrefix(token),
-    },
-  });
+  let participant;
+  const MAX_MINT_ATTEMPTS = 5;
+  for (let attempt = 0; ; attempt++) {
+    const [activeHumans, everMintedHumans] = await Promise.all([
+      prisma.participant.count({
+        where: { sessionId: id, kind: "human", revokedAt: null },
+      }),
+      prisma.participant.count({
+        where: { sessionId: id, kind: "human" },
+      }),
+    ]);
+    if (activeHumans >= config.MAX_PARTICIPANTS_PER_SESSION) {
+      throw errors.conflict(
+        `session already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_SESSION}); revoke one before minting another`,
+        false,
+        "revoke an existing participant first with DELETE /v1/sessions/:id/participants/:participant_id (CLI: `pane participant revoke`), then retry",
+      );
+    }
+
+    try {
+      participant = await prisma.participant.create({
+        data: {
+          sessionId: id,
+          kind: "human",
+          identityId: `h_${everMintedHumans}`,
+          tokenHash: hashKey(token),
+          tokenPrefix: keyPrefix(token),
+        },
+      });
+      break;
+    } catch (e) {
+      // Prisma's known-error code for unique constraint violation is P2002.
+      // Detect it structurally (not by message string) so a future Prisma
+      // upgrade that adjusts the message doesn't silently turn this into
+      // an unhandled crash.
+      const code = (e as { code?: string } | null)?.code;
+      const target = (e as { meta?: { target?: unknown } } | null)?.meta
+        ?.target;
+      const targetStr = Array.isArray(target)
+        ? target.join(",")
+        : String(target);
+      const isIdentityCollision =
+        code === "P2002" &&
+        // Postgres returns the constraint name; SQLite returns the column list.
+        (targetStr.includes("identity_id") ||
+          targetStr.includes("participants_session_id_identity_id_key"));
+      if (!isIdentityCollision || attempt >= MAX_MINT_ATTEMPTS - 1) throw e;
+      // A concurrent mint won the row for `h_${everMintedHumans}`. Loop
+      // back, re-read the count, and pick the next index. No backoff —
+      // the next iteration's COUNT(*) already sees the winner's row.
+    }
+  }
 
   return c.json(
     {

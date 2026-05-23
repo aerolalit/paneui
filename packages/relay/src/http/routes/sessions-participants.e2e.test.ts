@@ -362,6 +362,49 @@ describe("POST /v1/sessions/:id/participants — mint", () => {
     expect(new Set(active).size).toBe(active.length); // no aliasing
     expect(all.map((p) => p.identityId)).toEqual(["h_0", "h_1", "h_2"]);
   });
+
+  it("concurrent mints retry on P2002 and produce distinct identityIds (#215)", async () => {
+    // Two parallel POSTs to the mint route both read everMintedHumans=N
+    // and both try `h_${N}`. Pre-#215 the second would have succeeded
+    // anyway and silently aliased h_N (corrupting downstream
+    // findFirst({ identityId }) attribution). Post-#215 the DB's
+    // (sessionId, identityId) unique index serialises the write — exactly
+    // one wins on first try; the loser sees P2002, re-reads the count,
+    // and retries to get `h_${N+1}`. Both succeed; both rows are distinct.
+    //
+    // Test config caps the session at CAP humans total (3). Session is
+    // created with 1 default (h_0), so we fire CAP-1=2 concurrent mints
+    // to fill the cap without ever bumping into it.
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+
+    const N = CAP - 1; // 2 — exercises the race without tripping the cap
+    const responses = await Promise.all(
+      Array.from({ length: N }, () => mint(a.apiKey, sid)),
+    );
+
+    // All succeed — the retry loop closes the race.
+    for (const r of responses) {
+      expect(r.status).toBe(201);
+    }
+
+    // Every minted participant has a distinct identityId. The DB's unique
+    // constraint enforces this even if the retry logic had a bug — but
+    // assert at the row level so a future refactor that routes around the
+    // constraint (e.g. soft-deleting and re-inserting) trips the test.
+    const allHumans = await prisma.participant.findMany({
+      where: { sessionId: sid, kind: "human" },
+      select: { identityId: true },
+    });
+    expect(allHumans).toHaveLength(N + 1); // +1 for the default h_0
+    const identityIds = allHumans.map((p) => p.identityId);
+    expect(new Set(identityIds).size).toBe(identityIds.length);
+    // The labels run h_0 through h_N inclusive (no gaps; the retry loop
+    // doesn't skip indices on collision — it re-reads the count + retries).
+    expect(identityIds.sort()).toEqual(
+      Array.from({ length: N + 1 }, (_, i) => `h_${i}`).sort(),
+    );
+  });
 });
 
 describe("DELETE /v1/sessions/:id/participants/:participant_id — revoke", () => {
