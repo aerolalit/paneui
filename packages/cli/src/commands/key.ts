@@ -6,8 +6,13 @@
 // verbs therefore act ONLY on the caller's own key.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
+const REVOKE_BOOLS = ["yes"];
 
 export const keyHelp = `pane key — inspect or revoke YOUR agent's API key
 
@@ -35,6 +40,8 @@ Options:
 Output: stdout is machine-readable JSON.`;
 
 async function runKeyList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane key list");
+
   const client = makeClient(args);
   try {
     const info = await client.listKeys();
@@ -45,6 +52,8 @@ async function runKeyList(args: ParsedArgs): Promise<void> {
 }
 
 async function runKeyRevoke(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, REVOKE_BOOLS, "pane key revoke");
+
   if (!args.bools.has("yes")) {
     fail(
       "'pane key revoke' revokes YOUR OWN API key — it stops working " +

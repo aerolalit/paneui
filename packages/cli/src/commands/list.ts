@@ -8,8 +8,12 @@
 
 import type { ListSessionsStatus } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const KNOWN_FLAGS = ["status", "limit", "cursor", "artifact-id"];
+const KNOWN_BOOLS: string[] = [];
 
 export const listHelp = `pane session list — list YOUR agent's sessions
 
@@ -59,6 +63,8 @@ Output (stdout, JSON):
 const STATUSES: readonly ListSessionsStatus[] = ["open", "closed", "all"];
 
 export async function runList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session list");
+
   const opts: {
     status?: ListSessionsStatus;
     limit?: number;

@@ -21,8 +21,13 @@
 // even before it has registered (or before its key was minted).
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { resolveRelayUrl } from "../config.js";
 import { fail } from "../output.js";
+
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
+const VERSION_BOOLS = ["plain"];
 import { VERSION } from "../version.js";
 
 export const skillHelp = `pane skill — fetch the relay's SKILL.md (or its version)
@@ -89,6 +94,8 @@ async function failOnNon2xx(res: Response, target: string): Promise<void> {
 
 // `pane skill show` — print the full skill.
 async function runSkillFetch(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane skill show");
+
   const url = resolveRelayUrl(args);
   const target = url + "/skills/pane/SKILL.md";
   const res = await fetchOrFail(target);
@@ -103,6 +110,8 @@ async function runSkillFetch(args: ParsedArgs): Promise<void> {
 
 // `pane skill version [--plain]` — print just the version.
 async function runSkillVersion(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, VERSION_BOOLS, "pane skill version");
+
   const url = resolveRelayUrl(args);
   const target = url + "/skills/pane/SKILL.md/version";
   const res = await fetchOrFail(target);

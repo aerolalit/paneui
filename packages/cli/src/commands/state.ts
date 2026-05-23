@@ -1,8 +1,12 @@
 // `pane session show <id>` — snapshot of a session, optionally long-polled.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const KNOWN_FLAGS = ["since", "wait"];
+const KNOWN_BOOLS: string[] = [];
 
 export const stateHelp = `pane session show — show a session's metadata and event log
 
@@ -35,6 +39,8 @@ Output (stdout, JSON):
   { meta, events, next_cursor }`;
 
 export async function runState(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session show");
+
   const sessionId = args.positionals[0];
   if (!sessionId) fail("missing <session-id>", "invalid_args");
 

@@ -1,7 +1,12 @@
 // `pane agent logout` — clear the locally-saved relay URL + API key.
 
+import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { clearStore } from "../store.js";
 import { printJson } from "../output.js";
+
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
 
 export const logoutHelp = `pane agent logout — clear the saved relay URL + API key
 
@@ -22,7 +27,9 @@ Options:
 Output (stdout, JSON):
   { cleared: true, path }`;
 
-export async function runLogout(): Promise<void> {
+export async function runLogout(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane agent logout");
+
   const path = clearStore();
   printJson({ cleared: true, path });
 }

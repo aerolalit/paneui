@@ -1,7 +1,12 @@
 import type { FeedbackType } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const CREATE_FLAGS = ["type", "message", "session-id"];
+const LIST_FLAGS = ["limit", "before"];
+const NO_BOOLS: string[] = [];
 
 export const feedbackHelp = `pane feedback — submit / list feedback to the relay operator
 
@@ -54,6 +59,8 @@ async function readStdin(): Promise<string> {
 }
 
 async function runFeedbackCreate(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, CREATE_FLAGS, NO_BOOLS, "pane feedback create");
+
   const type = args.flags.get("type");
   const rawMessage = args.flags.get("message");
   const sessionId = args.flags.get("session-id");
@@ -111,6 +118,8 @@ async function runFeedbackCreate(args: ParsedArgs): Promise<void> {
 }
 
 async function runFeedbackList(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, LIST_FLAGS, NO_BOOLS, "pane feedback list");
+
   const limitRaw = args.flags.get("limit");
   const before = args.flags.get("before");
 

@@ -17,9 +17,31 @@ import {
   type PatchArtifactMetadataRequest,
 } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const CREATE_FLAGS = [
+  "name",
+  "slug",
+  "description",
+  "tags",
+  "artifact",
+  "artifact-type",
+  "event-schema",
+  "input-schema",
+];
+const VERSION_FLAGS = [
+  "artifact",
+  "artifact-type",
+  "event-schema",
+  "input-schema",
+];
+const UPDATE_FLAGS = ["name", "slug", "description", "tags"];
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
+const DELETE_BOOLS = ["yes"];
 
 export const artifactHelp = `pane artifact — manage reusable, versioned artifacts
 
@@ -185,6 +207,8 @@ function resolveTags(args: ParsedArgs): string[] | undefined {
 }
 
 async function runArtifactCreate(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, CREATE_FLAGS, NO_BOOLS, "pane artifact create");
+
   const name = args.flags.get("name");
   if (!name) fail("missing --name", "invalid_args");
 
@@ -236,6 +260,8 @@ async function runArtifactCreate(args: ParsedArgs): Promise<void> {
 }
 
 async function runArtifactVersion(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, VERSION_FLAGS, NO_BOOLS, "pane artifact version");
+
   const idOrSlug = args.positionals[1];
   if (!idOrSlug) {
     fail(
@@ -281,6 +307,8 @@ async function runArtifactVersion(args: ParsedArgs): Promise<void> {
 }
 
 async function runArtifactUpdate(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, UPDATE_FLAGS, NO_BOOLS, "pane artifact update");
+
   const idOrSlug = args.positionals[1];
   if (!idOrSlug) {
     fail(
@@ -332,6 +360,13 @@ async function runArtifactSearch(
   args: ParsedArgs,
   query?: string,
 ): Promise<void> {
+  assertKnownFlags(
+    args,
+    NO_FLAGS,
+    NO_BOOLS,
+    query === undefined ? "pane artifact list" : "pane artifact search",
+  );
+
   const client = makeClient(args);
   try {
     const res = await client.searchArtifacts(query);
@@ -342,6 +377,8 @@ async function runArtifactSearch(
 }
 
 async function runArtifactShow(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane artifact show");
+
   const idOrSlug = args.positionals[1];
   if (!idOrSlug) {
     fail(
@@ -364,6 +401,8 @@ async function runArtifactShow(args: ParsedArgs): Promise<void> {
 // envelope. `--yes` is required because there's no Undo button on a delete
 // and the same `pane artifact create` slug isn't reservable once gone.
 async function runArtifactDelete(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, DELETE_BOOLS, "pane artifact delete");
+
   const idOrSlug = args.positionals[1];
   if (!idOrSlug) {
     fail(

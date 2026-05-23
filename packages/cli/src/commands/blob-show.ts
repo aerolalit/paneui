@@ -1,8 +1,12 @@
 // `pane blob show <blob-id>` — print a blob's metadata.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, failFromError, printJson } from "../output.js";
+
+const KNOWN_FLAGS: string[] = [];
+const KNOWN_BOOLS: string[] = [];
 
 export const blobShowHelp = `pane blob show — print a blob's metadata (no bytes)
 
@@ -22,6 +26,8 @@ Output (stdout, JSON):
   BlobRef`;
 
 export async function runBlobShow(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane blob show");
+
   const blobId = args.positionals[0];
   if (!blobId) {
     fail("missing <blob-id> — 'pane blob show <blob-id>'", "invalid_args");

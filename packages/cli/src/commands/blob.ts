@@ -73,11 +73,18 @@ Output: stdout is machine-readable JSON. Errors go to stderr as
  * they were called directly — mirrors session.ts's shiftPositionals.
  */
 function shiftPositionals(args: ParsedArgs): ParsedArgs {
-  return {
+  // Propagate danglingValueFlags so the leaf runner's assertKnownFlags
+  // can still distinguish "unknown flag" from "missing value" — see the
+  // matching note in session.ts's shiftPositionals.
+  const out: ParsedArgs = {
     positionals: args.positionals.slice(1),
     flags: args.flags,
     bools: args.bools,
   };
+  if (args.danglingValueFlags !== undefined) {
+    out.danglingValueFlags = args.danglingValueFlags;
+  }
+  return out;
 }
 
 export async function runBlob(args: ParsedArgs): Promise<void> {

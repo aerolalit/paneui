@@ -1,8 +1,12 @@
 // `pane config show` — show the resolved relay config without a network call.
 
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { describeConfig } from "../config.js";
 import { printJson, fail } from "../output.js";
+
+const NO_FLAGS: string[] = [];
+const NO_BOOLS: string[] = [];
 
 export const configHelp = `pane config — show the resolved relay config
 
@@ -33,6 +37,8 @@ Output (stdout, JSON):
   }`;
 
 async function runConfigShow(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane config show");
+
   printJson(describeConfig(args));
 }
 

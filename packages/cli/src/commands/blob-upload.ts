@@ -3,8 +3,19 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { fail, failFromError, printJson } from "../output.js";
+
+const KNOWN_FLAGS = [
+  "file",
+  "scope",
+  "session-id",
+  "artifact-id",
+  "filename",
+  "mime",
+];
+const KNOWN_BOOLS: string[] = [];
 
 export const blobUploadHelp = `pane blob upload — upload a local file as a blob
 
@@ -31,6 +42,8 @@ Output (stdout, JSON):
   BlobRef — { blob_id, scope, mime, size, sha256, ... }`;
 
 export async function runBlobUpload(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane blob upload");
+
   const filePath = args.flags.get("file");
   if (!filePath) {
     fail(

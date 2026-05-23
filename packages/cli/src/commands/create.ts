@@ -2,9 +2,26 @@
 
 import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
+import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
+
+const KNOWN_FLAGS = [
+  "artifact",
+  "artifact-id",
+  "artifact-type",
+  "version",
+  "event-schema",
+  "input-schema",
+  "title",
+  "input-data",
+  "ttl",
+  "participants",
+  "metadata",
+  "callback",
+];
+const KNOWN_BOOLS: string[] = [];
 
 // Translate a Zod schema path (e.g. ["participants","humans"]) back to the
 // public CLI flag the user actually typed. Without this, a `--participants 0`
@@ -131,6 +148,8 @@ Output (stdout, JSON):
 Deliver urls.humans to the human(s); keep tokens.agent for the WS stream.`;
 
 export async function runCreate(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session create");
+
   const artifactIdVal = args.flags.get("artifact-id");
   const artifactVal = args.flags.get("artifact");
 
