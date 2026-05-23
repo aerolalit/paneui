@@ -22,7 +22,11 @@ ARG DATABASE_PROVIDER=sqlite
 
 # Prisma needs libssl to pick the right query-engine binary; node:20-slim ships
 # without it, so Prisma guesses (openssl-1.1.x) and warns. Install it explicitly.
-RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+# python3 + make + g++ are present so better-sqlite3 can build its native
+# binding from source (see the rebuild step below); the runtime stage stays
+# slim and just copies the compiled package across.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssl python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Workspace manifests first, for layer caching. The relay depends on the
@@ -35,6 +39,15 @@ COPY packages/core/package.json ./packages/core/package.json
 RUN npm ci --workspace @paneui/relay --workspace @paneui/core \
     --include-workspace-root --ignore-scripts
 
+# Re-run install scripts for better-sqlite3 only — the `--ignore-scripts`
+# above skipped its prebuild-install/node-gyp postinstall, so its native
+# binding never landed. prebuild-install falls back to node-gyp when no
+# matching prebuilt binary is published (e.g. brand-new Node patch releases),
+# which is why python3 + g++ are installed in this stage. The compiled
+# package is copied verbatim into the runtime stage further down. pg is
+# pure JS so doesn't need this dance.
+RUN npm rebuild better-sqlite3 --workspace @paneui/relay
+
 # Build @paneui/core first — the relay imports its compiled output.
 COPY packages/core/tsconfig.json ./packages/core/tsconfig.json
 COPY packages/core/src ./packages/core/src
@@ -45,6 +58,10 @@ COPY packages/relay/prisma ./packages/relay/prisma
 # be present. The prisma dir now also includes prisma/postgres/ (schema +
 # migrations) — copied implicitly since it sits under prisma/.
 COPY packages/relay/scripts ./packages/relay/scripts
+# Prisma 7 reads the datasource URL from prisma.config.ts (the schemas no
+# longer carry `url = env(...)`). Without it, `prisma generate` / `migrate`
+# bail with P1012 / "datasource.url property is required".
+COPY packages/relay/prisma.config.ts ./packages/relay/prisma.config.ts
 
 COPY packages/relay/tsconfig.json packages/relay/tsconfig.client.json ./packages/relay/
 COPY packages/relay/src ./packages/relay/src
@@ -90,11 +107,19 @@ RUN npm ci --omit=dev --workspace @paneui/relay --workspace @paneui/core \
 # copied so the workspace symlink resolves to real built output at runtime.
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+# better-sqlite3's native binding (.node) is built in the build stage (which
+# has python3/g++); the runtime stage's `npm ci --ignore-scripts` left it
+# missing, so the Prisma sqlite adapter would throw "Could not locate the
+# bindings file" on first connect. Overlay the compiled package from build.
+COPY --from=build /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
 # Migration runner (bounded retry wrapper around `prisma migrate deploy`).
 COPY packages/relay/scripts ./packages/relay/scripts
+# `migrate deploy` (run on every boot from CMD) reads DATABASE_URL through
+# this config in Prisma 7 — the schemas no longer carry `url = env(...)`.
+COPY packages/relay/prisma.config.ts ./packages/relay/prisma.config.ts
 # The pane agent skill, served verbatim at GET /skills/pane/SKILL.md. The skill
 # route resolves it relative to the relay package root (see routes/skill.ts),
 # so it is copied into the package rather than to the image root.
