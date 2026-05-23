@@ -488,3 +488,76 @@ describe("DELETE /v1/sessions/:id/participants/:participant_id — revoke", () =
     expect((await revoke(b.apiKey, sid, pid)).status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression guard for #231 — under high concurrency, the original
+// MAX_MINT_ATTEMPTS=5 retry budget starved: ~8 concurrent mints already
+// leaked P2002 as 500s, and the failure rate climbed to ~60% by N=20.
+// The fix makes the budget proportional to the cap (Math.max(5, cap)),
+// which provably bounds the worst-case attempt count (cap-check at the top
+// of each iteration limits concurrent in-flight mints to cap; each round
+// produces ≥1 winner, so a worst-case loser succeeds within cap attempts).
+//
+// The describe block above uses CAP=3 (so the cap-409 test stays cheap),
+// which never exercises this regime — the racing test there fires
+// N=CAP-1=2 mints, well inside any sane budget. This block re-builds the
+// app with a production-shaped cap and fires N=CAP-1 contenders to assert
+// the budget actually scales. The helpers below (`mint`, `createSession`,
+// `humanParticipantId`) close over the module-level `app`, so re-binding
+// it here propagates to all of them automatically — same pattern
+// register-modes.e2e.test.ts uses for its multi-config layout.
+// ---------------------------------------------------------------------------
+describe("POST /v1/sessions/:id/participants — high-contention mint (#231)", () => {
+  const BIG_CAP = 20;
+
+  beforeAll(() => {
+    app = buildApp(
+      loadConfig({
+        DATABASE_URL: testDb.dbUrl,
+        PUBLIC_URL: "http://localhost:3000",
+        MAX_PARTICIPANTS_PER_SESSION: String(BIG_CAP),
+        // The general per-IP rate limiter would 429-bomb a Promise.all of
+        // 19 mints from the same in-process source. Disable it for this
+        // describe; rate-limit.e2e.test.ts owns coverage for that surface.
+        RATE_LIMIT: "0",
+      }),
+      prisma,
+    );
+  });
+
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("BIG_CAP-1 concurrent mints all return 201 with distinct identityIds — no P2002 leaks as 500", async () => {
+    const a = await seedAgent();
+    const sid = await createSession(a.apiKey);
+
+    const N = BIG_CAP - 1; // 19 — room left over the implicit h_0 from create
+    const responses = await Promise.all(
+      Array.from({ length: N }, () => mint(a.apiKey, sid)),
+    );
+
+    // The load-bearing assertion: zero P2002-as-500 leaks. Pre-fix, this
+    // would have ~8 responses come back 500 with `error.code === "internal"`
+    // at the default `MAX_MINT_ATTEMPTS = 5`.
+    const non201 = responses.filter((r) => r.status !== 201);
+    expect(non201).toEqual([]);
+
+    // Belt-and-braces on the DB shape — every identityId is distinct, dense
+    // h_0..h_N inclusive. The unique constraint (#215) would catch dupes
+    // even if the retry budget were broken, so a future refactor that
+    // bypasses the constraint (e.g. soft-deleting + re-inserting) still
+    // trips this assert.
+    const allHumans = await prisma.participant.findMany({
+      where: { sessionId: sid, kind: "human" },
+      select: { identityId: true },
+    });
+    expect(allHumans).toHaveLength(N + 1); // +1 for h_0 from session-create
+    const identityIds = allHumans.map((p) => p.identityId).sort();
+    expect(new Set(identityIds).size).toBe(identityIds.length);
+    expect(identityIds).toEqual(
+      Array.from({ length: N + 1 }, (_, i) => `h_${i}`).sort(),
+    );
+  });
+});

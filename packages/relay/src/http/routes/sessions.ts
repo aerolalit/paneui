@@ -734,11 +734,20 @@ sessions.post("/:id/participants", requireAgent, async (c) => {
   // braces on this: two concurrent POSTs can both read everMintedHumans=N
   // and both try `h_${N}`, and the DB serialises the write so exactly one
   // wins on the constraint. The loser sees P2002 and the catch block below
-  // re-reads the count + retries. Bounded to a small number of attempts —
-  // a stuck retry loop is its own pathology.
+  // re-reads the count + retries.
+  //
+  // Budget = max(cap, 5). The cap check at the top of every iteration
+  // bounds the in-flight count of CONCURRENT mints to `cap` (anyone past
+  // that point sees `activeHumans >= cap` and bails with 409). Each round
+  // of the retry loop produces at least one winner — so the worst-case
+  // loser succeeds within `cap` attempts. Pinning the budget to a fixed
+  // small number (was 5) starved under reasonable concurrency: at the
+  // default cap of 32, ~8 concurrent mints already started leaking P2002
+  // as 500s (issue #231). The floor of 5 preserves prior behaviour for
+  // tiny caps where the cap check itself prevents the race.
   const token = generateHumanParticipantToken();
   let participant;
-  const MAX_MINT_ATTEMPTS = 5;
+  const MAX_MINT_ATTEMPTS = Math.max(5, config.MAX_PARTICIPANTS_PER_SESSION);
   for (let attempt = 0; ; attempt++) {
     const [activeHumans, everMintedHumans] = await Promise.all([
       prisma.participant.count({
