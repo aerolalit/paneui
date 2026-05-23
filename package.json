@@ -30,6 +30,11 @@
     "site:favicons": "node scripts/render-favicons.mjs",
     "prepare": "husky"
   },
+  "overrides": {
+    "@prisma/instrumentation": {
+      "@opentelemetry/instrumentation": "^0.218.0"
+    }
+  },
   "lint-staged": {
     "*.ts": [
       "eslint --fix",
