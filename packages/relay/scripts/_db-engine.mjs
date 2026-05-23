@@ -1,9 +1,15 @@
 // scripts/_db-engine.mjs
 //
-// Shared database-engine detection used by prisma-generate.mjs and
-// migrate-deploy.mjs. The relay ships two Prisma schema files (sqlite +
-// postgres); this module maps a DATABASE_URL to the right engine/schema so
-// both the client generation and the boot-time `migrate deploy` agree.
+// Database-engine detection used by prisma-generate.mjs. Maps a DATABASE_URL
+// to the right schema file so client codegen picks the engine the runtime
+// will actually connect against.
+//
+// Used to also be shared with migrate-deploy.mjs, but Prisma 7's
+// prisma.config.ts (packages/relay/prisma.config.ts) now does the same
+// schema selection for migrate / studio / introspection — so those CLI
+// surfaces all read DATABASE_URL through the config. `prisma generate` is
+// the lone holdout: it does codegen before the config's connection layer
+// runs, so it still needs an explicit `--schema` path from this module.
 //
 // No dependencies — a tiny .env reader is inlined (the project keeps `.env`
 // gitignored, so absence is normal and handled gracefully).
