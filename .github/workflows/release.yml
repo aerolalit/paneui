@@ -3,15 +3,21 @@ name: release
 # Publishes @paneui/core and @paneui/cli to npm when a v* tag is pushed.
 #
 # This is the canonical release path. Procedure:
-#   1. Bump the "version" field in packages/core, packages/cli (and, for
-#      consistency, packages/relay + the root) to the new version. Bump the
-#      `VERSION` constant in packages/cli/src/index.ts to match.
-#   2. Update the `@paneui/core` dependency in packages/cli/package.json to the
-#      same new version. Run `npm install` so package-lock.json picks it up.
-#   3. Commit, then tag and push:
-#         git tag v0.1.0 && git push origin main --tags
+#   1. Run `./scripts/cut-release.sh <version>` — bumps every package's
+#      "version", bumps the @paneui/core dep in @paneui/cli and @paneui/relay
+#      (so workspace links resolve to the local copy at build time), bumps
+#      the VERSION constant in packages/cli/src/version.ts, refreshes the
+#      lockfile, runs a smoke build, and commits the changes on a release-
+#      prep branch. Pass --push to also push and open the PR.
+#   2. Review the diff, merge the PR.
+#   3. Tag and push:
+#         git tag v0.1.0 <merge-commit-sha> && git push origin v0.1.0
 #   4. This workflow builds, runs unit tests, and publishes both packages with
 #      npm provenance attached.
+#
+# (Steps 1-2 can also be done by hand — the script just removes the easy-to-
+# miss "@paneui/core dep in every package" bump that breaks the workspace
+# build at tag-cut time.)
 #
 # Setup (one-time):
 #   - Repo secret NPM_TOKEN — an npm automation token with publish rights on
