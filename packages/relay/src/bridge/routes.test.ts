@@ -9,6 +9,6 @@ describe("loadClient", () => {
   });
 
   it("loads an existing client bundle", () => {
-    expect(typeof loadClient("shim.client.js")).toBe("string");
+    expect(typeof loadClient("runtime.client.js")).toBe("string");
   });
 });

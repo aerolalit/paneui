@@ -11,7 +11,7 @@ Goal: an agent can hand a human a UI by URL and get a structured answer back. No
 - [ ] Four-table Prisma schema (`agents`, `sessions`, `participants`, `events`) per `SPEC.md`. `prisma migrate`, TTL cleanup job. `events.id` is an autoincrement `Int` today; the `?since=` cursor is opaque in the API. (Widening `events.id` to BigInt is tracked as future work.)
 - [ ] Schema validation: every write checks `type` exists in `session.event_schema`, `data` validates against the type's payload (Ajv), and `author.kind ∈ emittedBy`. Idempotency-key dedup on `(session_id, author_id, key)`.
 - [ ] Identity stamping: relay stamps `author` server-side from the auth token; clients cannot spoof. `causation_id` stored verbatim as metadata.
-- [ ] Sandboxed iframe shell + bridge shim: `sandbox="allow-scripts"` (no `allow-same-origin`), CSP `connect-src 'none'` on `/s/{token}/content`. `pane.emit / pane.on / pane.state` shim, `postMessage` origin check on the shell-iframe boundary.
+- [ ] Sandboxed iframe shell + pane runtime: `sandbox="allow-scripts"` (no `allow-same-origin`), CSP `connect-src 'none'` on `/s/{token}/content`. `pane.emit / pane.on / pane.state` runtime, `postMessage` origin check on the shell-iframe boundary.
 - [ ] DB-backed bearer-token auth for agent → relay: keys in `agents` (`sha256` + display prefix + `revoked_at`). `POST /register` gated by `REGISTRATION_MODE` (closed default / secret / open), bounded by a per-IP rate limiter in the secret and open modes. Per-identity participant tokens issued at session create.
 - [ ] Security caps: 2 MB artifact, 64 KB event data, per-agent session-create rate limit. Best-effort webhook delivery with HMAC signing (durable retry deferred to hosted).
 - [ ] The `pane` CLI (`@paneui/cli`): `pane session create` returns the human URL(s); `pane session watch <id> --type <event>` streams the session as JSON-lines and exits when that event lands; `pane session show` / `pane session send` cover non-blocking reads and agent emits. Harness-agnostic — works for MCP hosts, cron agents, shell pipelines, CI, Claude Code's process tools.
@@ -50,7 +50,7 @@ Shared, live UI where the agent is a participant, not just a form-handler: agent
 
 ## Open questions
 
-- ~~Bridge contract.~~ DECIDED in `SPEC.md` v1: thin `pane.emit / pane.on / pane.state` shim. An MCP-Apps-compat adapter is a v2 candidate.
+- ~~Bridge contract.~~ DECIDED in `SPEC.md` v1: thin `pane.emit / pane.on / pane.state` runtime. An MCP-Apps-compat adapter is a v2 candidate.
 - Name. ("Pane" is a placeholder; see strategy note above.)
 - Is request/response genuinely enough for adoption, or does it need the collaborative-canvas hook to be interesting? (Bet: enough; ship and find out cheaply.)
 - Eventual hosted pricing shape: per-session volume, seats, or both?

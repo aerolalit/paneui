@@ -1,35 +1,36 @@
 // @vitest-environment jsdom
 //
-// Unit test for the page-side `pane.*` shim. Executes the COMPILED bundle
-// (dist/client/shim.client.js — produced by the pretest:unit `build:client`
-// hook) inside a jsdom window. The shim is authored as a TS module; loadClient
-// strips the `export {}` marker so the result runs as a classic script.
+// Unit test for the page-side `pane.*` runtime. Executes the COMPILED bundle
+// (dist/client/runtime.client.js — produced by the pretest:unit `build:client`
+// hook) inside a jsdom window. The runtime is authored as a TS module;
+// loadClient strips the `export {}` marker so the result runs as a classic
+// script.
 //
-// In jsdom `window.parent === window`, so the shim's `parent.postMessage` and
-// the `e.source !== parent` guard both resolve against this same window — we
-// dispatch MessageEvents with `source: window` and spy on `postMessage`.
+// In jsdom `window.parent === window`, so the runtime's `parent.postMessage`
+// and the `e.source !== parent` guard both resolve against this same window —
+// we dispatch MessageEvents with `source: window` and spy on `postMessage`.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { loadClient } from "./routes.js";
 
-const SHIM_JS = loadClient("shim.client.js");
+const RUNTIME_JS = loadClient("runtime.client.js");
 
-// The shim installs `window.pane` and a `message` listener. Each test needs a
-// pristine instance, so we tear those down and re-run the bundle per test.
-function freshShim(): void {
+// The runtime installs `window.pane` and a `message` listener. Each test needs
+// a pristine instance, so we tear those down and re-run the bundle per test.
+function freshRuntime(): void {
   // Remove a prior install's global so the new IIFE assigns cleanly
   // (window.pane is frozen, so delete rather than overwrite).
   delete (window as unknown as { pane?: unknown }).pane;
-  new Function(SHIM_JS)();
+  new Function(RUNTIME_JS)();
 }
 
-describe("pane shim", () => {
+describe("pane runtime", () => {
   let postSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // Spy BEFORE running the shim so the startup `ready` post is captured too.
+    // Spy BEFORE running the runtime so the startup `ready` post is captured too.
     postSpy = vi.spyOn(window.parent, "postMessage");
-    freshShim();
+    freshRuntime();
   });
 
   afterEach(() => {
@@ -216,7 +217,7 @@ describe("pane.uploadBlob", () => {
 
   beforeEach(() => {
     postSpy = vi.spyOn(window.parent, "postMessage");
-    freshShim();
+    freshRuntime();
   });
 
   afterEach(() => {
@@ -395,7 +396,7 @@ describe("pane.downloadBlob", () => {
 
   beforeEach(() => {
     postSpy = vi.spyOn(window.parent, "postMessage");
-    freshShim();
+    freshRuntime();
   });
 
   afterEach(() => {

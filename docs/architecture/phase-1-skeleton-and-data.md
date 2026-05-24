@@ -46,7 +46,7 @@ pane/
     log.ts                     # tiny leveled logger (or pino; lean: tiny hand-rolled)
     http/                      # phase 2: app.ts, auth.ts, routes/*, errors.ts, broadcast.ts, validation.ts
     ws/                        # phase 2: handler.ts (WebSocket lifecycle, replay-on-connect)
-    bridge/                    # phase 3: shell.ts, content.ts, shim.ts
+    bridge/                    # phase 3: shell.ts, content.ts, runtime.ts
     mcp/                       # phase 4: server.ts
   docs/
 ```
