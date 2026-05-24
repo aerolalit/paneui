@@ -196,7 +196,7 @@ model Event {
 
 // A binary attachment scoped to a template, a surface, or an agent's reusable
 // asset library. The bytes themselves live in the configured AttachmentStore
-// (filesystem self-host or Azure Blob hosted); this row is the metadata,
+// (filesystem self-host or Azure Attachment hosted); this row is the metadata,
 // authz anchor, and lifecycle hook.
 //
 // Scopes:
@@ -244,7 +244,7 @@ model Attachment {
   // Opaque key inside the AttachmentStore. Never user-supplied; never used as
   // a filesystem path component directly. Storage backends derive their own
   // path from this id (e.g. filesystem uses `<root>/att_<id>`, Azure uses
-  // `att_<id>` as the blob name).
+  // `att_<id>` as the attachment name).
   storageKey    String    @unique @map("storage_key")
 
   // Lifecycle status:
