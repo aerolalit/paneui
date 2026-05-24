@@ -135,14 +135,14 @@ describe("assertKnownFlags", () => {
     };
     let caught: ArgvError | undefined;
     try {
-      assertKnownFlags(args, ["file"], [], "pane blob upload");
+      assertKnownFlags(args, ["file"], [], "pane attachment upload");
     } catch (e) {
       caught = e as ArgvError;
     }
     expect(caught).toBeInstanceOf(ArgvError);
     expect(caught!.message).toBe("unknown flag(s): --totally-fake-flag");
     expect(caught!.hint).toBe(
-      "run `pane blob upload --help` for the supported flags",
+      "run `pane attachment upload --help` for the supported flags",
     );
   });
 
@@ -217,7 +217,7 @@ describe("assertKnownFlags", () => {
       danglingValueFlags: new Set(["title"]),
     };
     expect(() =>
-      assertKnownFlags(args, ["title"], [], "pane session create"),
+      assertKnownFlags(args, ["title"], [], "pane surface create"),
     ).toThrow("--title requires a value");
   });
 
@@ -244,7 +244,7 @@ describe("assertKnownFlags", () => {
       danglingValueFlags: new Set(["title", "bogus"]),
     };
     expect(() =>
-      assertKnownFlags(args, ["title"], [], "pane session create"),
+      assertKnownFlags(args, ["title"], [], "pane surface create"),
     ).toThrow("unknown flag(s): --bogus");
   });
 });

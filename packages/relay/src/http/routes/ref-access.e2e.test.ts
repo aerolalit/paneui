@@ -1,9 +1,9 @@
-// End-to-end tests for the blob-reference DB access check (follow-up B
-// of #156). Exercises both the event-POST path and the session-create
-// path: each MUST reject a payload whose `format: pane-blob-id` site
-// refers to a blob the calling agent cannot access.
+// End-to-end tests for the attachment-reference DB access check (follow-up B
+// of #156). Exercises both the event-POST path and the surface-create
+// path: each MUST reject a payload whose `format: pane-attachment-id` site
+// refers to a attachment the calling agent cannot access.
 //
-// The walker itself has unit coverage in src/blobs/ref-access.test.ts;
+// The walker itself has unit coverage in src/attachments/ref-access.test.ts;
 // these tests verify the wiring + HTTP semantics (status code,
 // error_code, error envelope shape).
 
@@ -19,14 +19,14 @@ import { createPrismaClient } from "../../db.js";
 import { loadConfig } from "../../config.js";
 import { hashKey, keyPrefix } from "../../keys.js";
 import { buildApp } from "../app.js";
-import { makeBlobStore } from "../../blobs/index.js";
+import { makeBlobStore } from "../../attachments/index.js";
 
 let testDb: TestDb;
 let app: Hono;
 let prisma: PrismaClient;
 let blobDir: string;
 
-// Schema declaring a blob ref inside an event payload — mirrors the
+// Schema declaring a attachment ref inside an event payload — mirrors the
 // example from Phase D of #156.
 const blobEventSchema = {
   events: {
@@ -34,20 +34,20 @@ const blobEventSchema = {
       payload: {
         type: "object",
         properties: {
-          blob: {
+          attachment: {
             type: "object",
             properties: {
-              blob_id: { type: "string", format: "pane-blob-id" },
+              attachment_id: { type: "string", format: "pane-attachment-id" },
               mime: { type: "string" },
             },
-            required: ["blob_id"],
+            required: ["attachment_id"],
           },
         },
-        required: ["blob"],
+        required: ["attachment"],
       },
       emittedBy: ["page", "agent"],
     },
-    // A "plain" event used by the regression test — no blob refs at all.
+    // A "plain" event used by the regression test — no attachment refs at all.
     "review.commentAdded": {
       payload: {
         type: "object",
@@ -108,30 +108,30 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
   return { id: agent.id, apiKey };
 }
 
-/** Create a `ready` agent-scope blob owned by `ownerId`. Bypasses the
+/** Create a `ready` agent-scope attachment owned by `ownerId`. Bypasses the
  *  upload route — we don't care about the bytes here, only the FK row. */
 async function seedReadyBlob(
   ownerId: string,
-  opts: { deleted?: boolean; sessionId?: string } = {},
+  opts: { deleted?: boolean; surfaceId?: string } = {},
 ): Promise<string> {
-  const blob = await prisma.blob.create({
+  const attachment = await prisma.attachment.create({
     data: {
       ownerId,
-      scope: opts.sessionId ? "session" : "agent",
-      sessionId: opts.sessionId ?? null,
+      scope: opts.surfaceId ? "surface" : "agent",
+      surfaceId: opts.surfaceId ?? null,
       mime: "image/png",
       size: 1,
       sha256: randomBytes(32).toString("hex"),
-      storageKey: `blob_${randomBytes(8).toString("hex")}`,
+      storageKey: `attachment_${randomBytes(8).toString("hex")}`,
       status: "ready",
       ...(opts.deleted ? { status: "deleted", deletedAt: new Date() } : {}),
     },
   });
-  return blob.id;
+  return attachment.id;
 }
 
 interface CreatedSession {
-  sessionId: string;
+  surfaceId: string;
   agentToken: string;
   humanToken: string;
 }
@@ -141,12 +141,12 @@ async function createSessionWithBlobSchema(
   body: Record<string, unknown> = {},
 ): Promise<CreatedSession> {
   const res = await app.fetch(
-    new Request("http://t/v1/sessions", {
+    new Request("http://t/v1/surfaces", {
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify({
-        title: "blob-ref-access test session",
-        artifact: {
+        title: "attachment-ref-access test surface",
+        template: {
           type: "html-inline",
           source: "<html></html>",
           event_schema: blobEventSchema,
@@ -158,53 +158,57 @@ async function createSessionWithBlobSchema(
   );
   expect(res.status).toBe(201);
   const json = (await res.json()) as {
-    session_id: string;
+    surface_id: string;
     tokens: { humans: string[]; agent: string };
   };
   return {
-    sessionId: json.session_id,
+    surfaceId: json.surface_id,
     agentToken: json.tokens.agent,
     humanToken: json.tokens.humans[0]!,
   };
 }
 
-describe("blob-ref DB access check — events", () => {
-  it("accepts an event referencing the agent's own blob", async () => {
+describe("attachment-ref DB access check — events", () => {
+  it("accepts an event referencing the agent's own attachment", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSessionWithBlobSchema(apiKey);
-    const blobId = await seedReadyBlob(agentId);
+    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
           type: "image.attach",
-          data: { blob: { blob_id: blobId, mime: "image/png" } },
+          data: {
+            attachment: { attachment_id: attachmentId, mime: "image/png" },
+          },
         }),
       }),
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      event: { type: string; data: { blob: { blob_id: string } } };
+      event: { type: string; data: { attachment: { attachment_id: string } } };
     };
     expect(body.event.type).toBe("image.attach");
-    expect(body.event.data.blob.blob_id).toBe(blobId);
+    expect(body.event.data.attachment.attachment_id).toBe(attachmentId);
   });
 
-  it("rejects an event referencing another agent's blob with 422 blob_ref_not_accessible", async () => {
+  it("rejects an event referencing another agent's attachment with 422 attachment_ref_not_accessible", async () => {
     const { id: aliceId } = await seedAgent();
     const { apiKey: bobKey } = await seedAgent();
     const aliceBlobId = await seedReadyBlob(aliceId);
-    const { sessionId, agentToken } = await createSessionWithBlobSchema(bobKey);
+    const { surfaceId, agentToken } = await createSessionWithBlobSchema(bobKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
           type: "image.attach",
-          data: { blob: { blob_id: aliceBlobId, mime: "image/png" } },
+          data: {
+            attachment: { attachment_id: aliceBlobId, mime: "image/png" },
+          },
         }),
       }),
     );
@@ -216,44 +220,46 @@ describe("blob-ref DB access check — events", () => {
         details: { inaccessible_ids: string[] };
       };
     };
-    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
     expect(body.error.details.inaccessible_ids).toEqual([aliceBlobId]);
     expect(body.error.message).toContain(aliceBlobId);
   });
 
-  it("rejects an event referencing a soft-deleted blob", async () => {
+  it("rejects an event referencing a soft-deleted attachment", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const blobId = await seedReadyBlob(agentId, { deleted: true });
-    const { sessionId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const attachmentId = await seedReadyBlob(agentId, { deleted: true });
+    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
           type: "image.attach",
-          data: { blob: { blob_id: blobId, mime: "image/png" } },
+          data: {
+            attachment: { attachment_id: attachmentId, mime: "image/png" },
+          },
         }),
       }),
     );
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
   });
 
-  it("rejects an event referencing a well-formed-but-nonexistent blob_id", async () => {
+  it("rejects an event referencing a well-formed-but-nonexistent attachment_id", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
     // cuid-shaped (passes Ajv format) but no Blob row exists.
     const ghostId = "cm00000000000000000000000z";
 
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
           type: "image.attach",
-          data: { blob: { blob_id: ghostId, mime: "image/png" } },
+          data: { attachment: { attachment_id: ghostId, mime: "image/png" } },
         }),
       }),
     );
@@ -261,21 +267,21 @@ describe("blob-ref DB access check — events", () => {
     const body = (await res.json()) as {
       error: { code: string; details: { inaccessible_ids: string[] } };
     };
-    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
     expect(body.error.details.inaccessible_ids).toEqual([ghostId]);
   });
 
-  it("regression: events with NO blob refs are unaffected (no DB lookup needed)", async () => {
+  it("regression: events with NO attachment refs are unaffected (no DB lookup needed)", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
           type: "review.commentAdded",
-          data: { body: "no blobs here" },
+          data: { body: "no attachments here" },
         }),
       }),
     );
@@ -284,18 +290,20 @@ describe("blob-ref DB access check — events", () => {
 
   it("a participant posting through their token is gated by the SESSION's agent, not the participant", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const blobId = await seedReadyBlob(agentId);
-    const { sessionId, humanToken } = await createSessionWithBlobSchema(apiKey);
+    const attachmentId = await seedReadyBlob(agentId);
+    const { surfaceId, humanToken } = await createSessionWithBlobSchema(apiKey);
 
-    // Human-side reference to the agent's blob — should be accepted, since
-    // the session's owning agent owns the blob.
+    // Human-side reference to the agent's attachment — should be accepted, since
+    // the surface's owning agent owns the attachment.
     const res = await app.fetch(
-      new Request(`http://t/v1/sessions/${sessionId}/events`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: bearer(humanToken),
         body: JSON.stringify({
           type: "image.attach",
-          data: { blob: { blob_id: blobId, mime: "image/png" } },
+          data: {
+            attachment: { attachment_id: attachmentId, mime: "image/png" },
+          },
         }),
       }),
     );
@@ -303,14 +311,14 @@ describe("blob-ref DB access check — events", () => {
   });
 });
 
-describe("blob-ref DB access check — session create (input_data)", () => {
-  // Helper: create a NAMED artifact + version with an input_schema declaring
-  // a blob ref. The session-create path will then validate input_data
+describe("attachment-ref DB access check — surface create (input_data)", () => {
+  // Helper: create a NAMED template + version with an input_schema declaring
+  // a attachment ref. The surface-create path will then validate input_data
   // against this schema and run the ref-access check.
   async function seedArtifactWithBlobInputSchema(
     ownerId: string,
   ): Promise<string> {
-    const artifact = await prisma.artifact.create({
+    const template = await prisma.template.create({
       data: {
         ownerId,
         name: `art-${randomBytes(4).toString("hex")}`,
@@ -318,12 +326,12 @@ describe("blob-ref DB access check — session create (input_data)", () => {
         latestVersion: 1,
       },
     });
-    await prisma.artifactVersion.create({
+    await prisma.templateVersion.create({
       data: {
-        artifactId: artifact.id,
+        templateId: template.id,
         version: 1,
-        artifactType: "html-inline",
-        artifactSource: "<html></html>",
+        templateType: "html-inline",
+        templateSource: "<html></html>",
         eventSchema: blobEventSchema,
         inputSchema: {
           type: "object",
@@ -331,50 +339,50 @@ describe("blob-ref DB access check — session create (input_data)", () => {
             cover: {
               type: "object",
               properties: {
-                blob_id: { type: "string", format: "pane-blob-id" },
+                attachment_id: { type: "string", format: "pane-attachment-id" },
               },
-              required: ["blob_id"],
+              required: ["attachment_id"],
             },
           },
         },
       },
     });
-    return artifact.id;
+    return template.id;
   }
 
-  it("accepts initial state referencing the agent's own blob", async () => {
+  it("accepts initial state referencing the agent's own attachment", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const artifactId = await seedArtifactWithBlobInputSchema(agentId);
-    const blobId = await seedReadyBlob(agentId);
+    const templateId = await seedArtifactWithBlobInputSchema(agentId);
+    const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/sessions", {
+      new Request("http://t/v1/surfaces", {
         method: "POST",
         headers: bearer(apiKey),
         body: JSON.stringify({
-          artifact: { id: artifactId },
+          template: { id: templateId },
           participants: { humans: 1 },
-          input_data: { cover: { blob_id: blobId } },
+          input_data: { cover: { attachment_id: attachmentId } },
         }),
       }),
     );
     expect(res.status).toBe(201);
   });
 
-  it("rejects initial state referencing another agent's blob with 422 blob_ref_not_accessible", async () => {
+  it("rejects initial state referencing another agent's attachment with 422 attachment_ref_not_accessible", async () => {
     const { id: aliceId } = await seedAgent();
     const { id: bobId, apiKey: bobKey } = await seedAgent();
-    const artifactId = await seedArtifactWithBlobInputSchema(bobId);
+    const templateId = await seedArtifactWithBlobInputSchema(bobId);
     const aliceBlobId = await seedReadyBlob(aliceId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/sessions", {
+      new Request("http://t/v1/surfaces", {
         method: "POST",
         headers: bearer(bobKey),
         body: JSON.stringify({
-          artifact: { id: artifactId },
+          template: { id: templateId },
           participants: { humans: 1 },
-          input_data: { cover: { blob_id: aliceBlobId } },
+          input_data: { cover: { attachment_id: aliceBlobId } },
         }),
       }),
     );
@@ -382,42 +390,42 @@ describe("blob-ref DB access check — session create (input_data)", () => {
     const body = (await res.json()) as {
       error: { code: string; details: { inaccessible_ids: string[] } };
     };
-    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
     expect(body.error.details.inaccessible_ids).toEqual([aliceBlobId]);
   });
 });
 
-// Same set of guarantees, but driven by an INLINE artifact's input_schema
+// Same set of guarantees, but driven by an INLINE template's input_schema
 // instead of a named one (#208 regression). Pre-fix the inline branch
 // hardcoded inputSchema to null, so the ref-access walker had nothing to
-// walk — agent X could put any blob_id into input_data and the access check
-// would never fire, AND the participant blob-download bridge would refuse
-// to serve the agent's OWN blob because the same null-schema gap made it
+// walk — agent X could put any attachment_id into input_data and the access check
+// would never fire, AND the participant attachment-download bridge would refuse
+// to serve the agent's OWN attachment because the same null-schema gap made it
 // invisible to the read-side walker.
-describe("blob-ref DB access check — inline session create with input_schema (#208)", () => {
+describe("attachment-ref DB access check — inline surface create with input_schema (#208)", () => {
   const inlineInputSchema = {
     type: "object",
     properties: {
       cover: {
         type: "object",
         properties: {
-          blob_id: { type: "string", format: "pane-blob-id" },
+          attachment_id: { type: "string", format: "pane-attachment-id" },
         },
-        required: ["blob_id"],
+        required: ["attachment_id"],
       },
     },
   };
 
-  it("accepts an inline session referencing the agent's own blob via input_data", async () => {
+  it("accepts an inline surface referencing the agent's own attachment via input_data", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const blobId = await seedReadyBlob(agentId);
+    const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/sessions", {
+      new Request("http://t/v1/surfaces", {
         method: "POST",
         headers: bearer(apiKey),
         body: JSON.stringify({
-          artifact: {
+          template: {
             type: "html-inline",
             source: "<html></html>",
             event_schema: blobEventSchema,
@@ -425,24 +433,24 @@ describe("blob-ref DB access check — inline session create with input_schema (
           },
           participants: { humans: 1 },
           title: "Blob ref test",
-          input_data: { cover: { blob_id: blobId } },
+          input_data: { cover: { attachment_id: attachmentId } },
         }),
       }),
     );
     expect(res.status).toBe(201);
   });
 
-  it("rejects an inline session referencing another agent's blob (the gate fires the same way as for named artifacts)", async () => {
+  it("rejects an inline surface referencing another agent's attachment (the gate fires the same way as for named templates)", async () => {
     const { id: aliceId } = await seedAgent();
     const { apiKey: bobKey } = await seedAgent();
     const aliceBlobId = await seedReadyBlob(aliceId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/sessions", {
+      new Request("http://t/v1/surfaces", {
         method: "POST",
         headers: bearer(bobKey),
         body: JSON.stringify({
-          artifact: {
+          template: {
             type: "html-inline",
             source: "<html></html>",
             event_schema: blobEventSchema,
@@ -450,7 +458,7 @@ describe("blob-ref DB access check — inline session create with input_schema (
           },
           participants: { humans: 1 },
           title: "Blob ref test",
-          input_data: { cover: { blob_id: aliceBlobId } },
+          input_data: { cover: { attachment_id: aliceBlobId } },
         }),
       }),
     );
@@ -458,7 +466,7 @@ describe("blob-ref DB access check — inline session create with input_schema (
     const body = (await res.json()) as {
       error: { code: string; details: { inaccessible_ids: string[] } };
     };
-    expect(body.error.code).toBe("blob_ref_not_accessible");
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
     expect(body.error.details.inaccessible_ids).toEqual([aliceBlobId]);
   });
 });

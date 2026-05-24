@@ -39,11 +39,11 @@ export function shouldFire(
 // but should not await on the request path.
 export async function fire(
   cfg: WebhookConfig,
-  sessionId: string,
+  surfaceId: string,
   event: SerializedEvent,
 ): Promise<void> {
   const ts = Math.floor(Date.now() / 1000);
-  const body = JSON.stringify({ session_id: sessionId, event });
+  const body = JSON.stringify({ surface_id: surfaceId, event });
   const sig = createHmac("sha256", cfg.secret)
     .update(`${ts}.${body}`)
     .digest("hex");
@@ -62,7 +62,7 @@ export async function fire(
         },
         body,
         // redirect: "manual" — do NOT follow 3xx. The webhook URL is SSRF-
-        // validated only at session-create time; following a redirect would
+        // validated only at surface-create time; following a redirect would
         // let a validated public target 302 the relay to an internal address
         // (e.g. the cloud metadata service at 169.254.169.254), bypassing the
         // guard. A redirect is treated as a failed delivery, not chased.

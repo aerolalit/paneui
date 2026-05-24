@@ -108,19 +108,19 @@ async function loadByToken(prisma: PrismaClient, token: string) {
     where: { tokenHash: hashKey(token) },
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
-  const session = await prisma.session.findUnique({
-    where: { id: participant.sessionId },
-    include: { artifactVersion: true },
+  const surface = await prisma.surface.findUnique({
+    where: { id: participant.surfaceId },
+    include: { templateVersion: true },
   });
-  if (!session) throw errors.notFound();
-  return { participant, session };
+  if (!surface) throw errors.notFound();
+  return { participant, surface };
 }
 
 // The shell shows an "agent presence" pill. Presence is LIVE runtime state,
 // so it is computed from three present-tense signals — NOT by replaying the
 // persisted `system.participant.*` log (a `left` event can be lost, which
 // would leave a stale `joined` claiming an agent is connected forever):
-//  1) agentLive        — an agent WebSocket is open on this session right now.
+//  1) agentLive        — an agent WebSocket is open on this surface right now.
 //  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
 //  3) agentLastUsedAt  — the owning agent's last authenticated request.
 // Shared by the `/:token` route (seeds the shell config once) and the
@@ -134,13 +134,13 @@ interface AgentPresence {
 
 async function computeAgentPresence(
   prisma: PrismaClient,
-  session: {
+  surface: {
     id: string;
     agentId: string;
   },
 ): Promise<AgentPresence> {
   const agent = await prisma.agent.findUnique({
-    where: { id: session.agentId },
+    where: { id: surface.agentId },
     select: { lastUsedAt: true },
   });
   const agentLastUsedAt = agent?.lastUsedAt
@@ -148,7 +148,7 @@ async function computeAgentPresence(
     : null;
 
   const lastAgentEvent = await prisma.event.findFirst({
-    where: { sessionId: session.id, authorKind: "agent" },
+    where: { surfaceId: surface.id, authorKind: "agent" },
     orderBy: { ts: "desc" },
     select: { ts: true },
   });
@@ -156,7 +156,7 @@ async function computeAgentPresence(
     ? lastAgentEvent.ts.toISOString()
     : null;
 
-  const agentLive = (await agentCount(session.id)) > 0;
+  const agentLive = (await agentCount(surface.id)) > 0;
 
   return { agentLive, agentLastEventAt, agentLastUsedAt };
 }
@@ -177,19 +177,19 @@ bridge.get("/:token", async (c) => {
     }
     throw err;
   }
-  const { session } = loaded;
+  const { surface } = loaded;
 
   // Live agent-presence facts that SEED the shell's pill — see
   // computeAgentPresence. The shell then keeps them fresh by polling
   // /:token/presence (a polling agent never opens a WebSocket, so the seed
   // would otherwise go stale within ~30s).
   const { agentLive, agentLastEventAt, agentLastUsedAt } =
-    await computeAgentPresence(prisma, session);
+    await computeAgentPresence(prisma, surface);
 
   const isClosed =
-    session.status !== "open" || session.expiresAt.getTime() < Date.now();
-  const wsUrl = publicWsBase(config) + "/v1/sessions/" + session.id + "/stream";
-  const schema = session.artifactVersion.eventSchema as unknown as EventSchema;
+    surface.status !== "open" || surface.expiresAt.getTime() < Date.now();
+  const wsUrl = publicWsBase(config) + "/v1/surfaces/" + surface.id + "/stream";
+  const schema = surface.templateVersion.eventSchema as unknown as EventSchema;
   // 16 bytes of entropy, base64url so the value is safe inside both CSP and
   // an HTML attribute without escaping.
   const nonceBuf = new Uint8Array(16);
@@ -210,7 +210,7 @@ bridge.get("/:token", async (c) => {
       "img-src 'self' data:",
       // 'self' covers same-origin HTTP fetches but NOT the ws:/wss: scheme —
       // CSP treats a WebSocket as a distinct scheme and would block the shell's
-      // connection to /v1/sessions/:id/stream. Allow the relay's own ws origin.
+      // connection to /v1/surfaces/:id/stream. Allow the relay's own ws origin.
       `connect-src 'self' ${publicWsBase(config)}`,
       "frame-src 'self'",
       "base-uri 'none'",
@@ -229,15 +229,15 @@ bridge.get("/:token", async (c) => {
     renderShell({
       nonce,
       token,
-      sessionId: session.id,
+      surfaceId: surface.id,
       schema,
-      inputData: session.inputData ?? null,
+      inputData: surface.inputData ?? null,
       wsUrl,
       isClosed,
       agentLive,
       agentLastEventAt,
       agentLastUsedAt,
-      title: session.title,
+      title: surface.title,
     }),
   );
 });
@@ -257,24 +257,24 @@ bridge.get("/:token/content", async (c) => {
     }
     throw err;
   }
-  const { session } = loaded;
+  const { surface } = loaded;
 
-  // Gate the artifact body on the session being live. The shell page renders
+  // Gate the template body on the surface being live. The shell page renders
   // a "closed" banner instead of the iframe, but a client that bookmarked
-  // /content directly would otherwise still receive the artifact (and any
+  // /content directly would otherwise still receive the template (and any
   // sensitive data baked into it) until the participant is revoked.
-  if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
+  if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
     return humanOrJsonError(c, errors.gone());
   }
 
   let artifactBody: string;
-  if (session.artifactVersion.artifactType === "html-inline") {
-    artifactBody = session.artifactVersion.artifactSource;
+  if (surface.templateVersion.templateType === "html-inline") {
+    artifactBody = surface.templateVersion.templateSource;
   } else {
-    // html-ref is rejected at POST /v1/sessions in this release, so no new
-    // session reaches here with that type. Kept as defence-in-depth for any
+    // html-ref is rejected at POST /v1/surfaces in this release, so no new
+    // surface reaches here with that type. Kept as defence-in-depth for any
     // pre-existing row; fetch + cache support is deferred to a later phase.
-    artifactBody = "<!-- artifact.type=html-ref is not implemented in v1 -->";
+    artifactBody = "<!-- template.type=html-ref is not implemented in v1 -->";
   }
 
   c.header(
@@ -287,12 +287,12 @@ bridge.get("/:token/content", async (c) => {
       // script under the same sandbox; both are covered by 'unsafe-inline'.
       "script-src 'unsafe-inline'",
       "style-src 'unsafe-inline'",
-      "img-src data: blob:",
-      // Audio / video the agent uploads as blobs and the iframe renders via
-      // <audio src="blob:…"> or <video src="blob:…"> after lazy-fetching with
+      "img-src data: attachment:",
+      // Audio / video the agent uploads as attachments and the iframe renders via
+      // <audio src="attachment:…"> or <video src="attachment:…"> after lazy-fetching with
       // window.pane.downloadBlob(). Without this directive, `media-src` falls
       // back to `default-src 'none'` and blocks both elements.
-      "media-src blob:",
+      "media-src attachment:",
       "font-src data:",
       "connect-src 'none'",
       "base-uri 'none'",
@@ -321,7 +321,7 @@ ${artifactBody}
 
 // Lightweight presence endpoint. The shell polls this every ~10s so the
 // agent-presence pill reflects a polling agent (one that monitors via
-// `pane session show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// `pane surface show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
 // keeps advancing server-side but the page-load config seed cannot see it.
 //
 // Trust model: the URL token IS the auth, identical to the shell page
@@ -331,9 +331,9 @@ bridge.get("/:token/presence", async (c) => {
   const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { session } = await loadByToken(prisma, token);
+  const { surface } = await loadByToken(prisma, token);
 
-  const presence = await computeAgentPresence(prisma, session);
+  const presence = await computeAgentPresence(prisma, surface);
 
   c.header("Content-Type", "application/json; charset=utf-8");
   c.header("Cache-Control", "no-store");
@@ -343,11 +343,11 @@ bridge.get("/:token/presence", async (c) => {
 interface ShellArgs {
   nonce: string;
   token: string;
-  sessionId: string;
+  surfaceId: string;
   schema: EventSchema;
-  // The session's per-instance input_data (validated against the artifact
+  // The surface's per-instance input_data (validated against the template
   // version's input_schema at create time). Threaded through the shell config
-  // and the init frame so the artifact can read it as `window.pane.inputData`.
+  // and the init frame so the template can read it as `window.pane.inputData`.
   inputData: unknown;
   wsUrl: string;
   isClosed: boolean;
@@ -356,15 +356,15 @@ interface ShellArgs {
   agentLive: boolean;
   agentLastEventAt: string | null;
   agentLastUsedAt: string | null;
-  // Agent-supplied (or Artifact.name-resolved) per-session title. Validated at
-  // session create — non-empty, ≤80 chars, no control chars — but still
+  // Agent-supplied (or Template.name-resolved) per-surface title. Validated at
+  // surface create — non-empty, ≤80 chars, no control chars — but still
   // untrusted at this point; HTML-escaped into <title> at render time.
   title: string;
 }
 
 function renderShell(args: ShellArgs): string {
   const cfg = {
-    sessionId: args.sessionId,
+    surfaceId: args.surfaceId,
     schema: args.schema,
     inputData: args.inputData,
     token: args.token,
@@ -471,15 +471,15 @@ function renderShell(args: ShellArgs): string {
       <line x1="15" y1="14" x2="15" y2="14.5"/>
     </svg>
     <span id="agent-dot" class="dot"></span>
-    <span id="agent-status" class="info">${args.isClosed ? "session closed" : "no agent yet"}</span>
+    <span id="agent-status" class="info">${args.isClosed ? "surface closed" : "no agent yet"}</span>
   </span>
 </header>
 ${
   args.isClosed
-    ? `<div class="closed">This session is closed. It cannot accept new events.</div>`
-    : // `allow-downloads` is required for `<a download href="blob:...">` to
+    ? `<div class="closed">This surface is closed. It cannot accept new events.</div>`
+    : // `allow-downloads` is required for `<a download href="attachment:...">` to
       // actually fire on Chromium-based browsers (especially mobile Chrome),
-      // which silently drops the navigation otherwise. Without it, an artifact
+      // which silently drops the navigation otherwise. Without it, an template
       // that delivers a non-image file (PDF, CSV, archive) the human is meant
       // to save has no working code path — the file can be fetched via
       // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
@@ -542,9 +542,9 @@ interface ErrorPageCopy {
 }
 
 // The status-code-keyed copy. 404 covers "unknown token | revoked
-// participant | session row deleted" — all three look identical in the
+// participant | surface row deleted" — all three look identical in the
 // rendered page on purpose, so the bridge isn't a participant-token
-// enumeration oracle. 410 covers TTL-expired and explicitly-closed sessions
+// enumeration oracle. 410 covers TTL-expired and explicitly-closed surfaces
 // reached through the /content sub-route.
 function errorPageFor(err: ApiError): string {
   const copy: ErrorPageCopy =
@@ -552,12 +552,12 @@ function errorPageFor(err: ApiError): string {
       ? {
           tabTitle: "Closed",
           headline: "This pane has been closed",
-          body: "The session has expired or been closed by the agent. Ask for a new link if you still need to act.",
+          body: "The surface has expired or been closed by the agent. Ask for a new link if you still need to act.",
         }
       : {
           tabTitle: "Not found",
           headline: "This pane link isn't valid",
-          body: "The link may be mistyped, or the session may have been cleaned up. Ask the agent for a fresh one.",
+          body: "The link may be mistyped, or the surface may have been cleaned up. Ask the agent for a fresh one.",
         };
   return renderHumanError(copy);
 }

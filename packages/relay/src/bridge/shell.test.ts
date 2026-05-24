@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
-// Unit test for the shell-side `upload-blob-request` handler (follow-up C of
+// Unit test for the shell-side `upload-attachment-request` handler (follow-up C of
 // #156). Runs the compiled shell bundle (dist/client/shell.client.js) inside
 // a jsdom window, with a mocked `fetch` so we can assert exactly what the
-// shell posts to /s/:token/blobs and how it forwards the relay's reply back
+// shell posts to /s/:token/attachments and how it forwards the relay's reply back
 // to the iframe.
 //
 // The shell IIFE reads:
@@ -11,7 +11,7 @@
 //   * `#frame` iframe — the destination for postMessage replies. In jsdom
 //     we render a stub iframe and dispatch frames as if they came from its
 //     contentWindow.
-//   * /v1/sessions/:id/ws-ticket — minted on the WebSocket-connect path; we
+//   * /v1/surfaces/:id/ws-ticket — minted on the WebSocket-connect path; we
 //     mock fetch so the connect never blocks the test.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -24,11 +24,11 @@ const SESSION_ID = "ses_test";
 
 // Minimal cfg that satisfies the shell IIFE.
 const CFG = {
-  sessionId: SESSION_ID,
+  surfaceId: SESSION_ID,
   schema: {},
   inputData: null,
   token: TOKEN,
-  wsUrl: "ws://localhost/v1/sessions/ses_test/stream",
+  wsUrl: "ws://localhost/v1/surfaces/ses_test/stream",
   isClosed: false,
   agentLive: false,
   agentLastEventAt: null,
@@ -68,7 +68,7 @@ function bootShell(): void {
   new Function(SHELL_JS)();
 }
 
-describe("shell — upload-blob-request handler", () => {
+describe("shell — upload-attachment-request handler", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
   let iframePostSpy: ReturnType<typeof vi.fn>;
 
@@ -110,10 +110,10 @@ describe("shell — upload-blob-request handler", () => {
     }
   }
 
-  it("posts upload-blob-result ok:true with the relay's BlobRef on 2xx", async () => {
+  it("posts upload-attachment-result ok:true with the relay's AttachmentRef on 2xx", async () => {
     const blobRef = {
-      blob_id: "blob_abc",
-      scope: "session",
+      attachment_id: "attachment_abc",
+      scope: "surface",
       mime: "image/jpeg",
       size: 1234,
       sha256: "f".repeat(64),
@@ -121,14 +121,14 @@ describe("shell — upload-blob-request handler", () => {
       width: 64,
       height: 64,
       status: "ready",
-      session_id: SESSION_ID,
-      artifact_id: null,
+      surface_id: SESSION_ID,
+      template_id: null,
       created_at: "2026-05-21T00:00:00.000Z",
       confirmed_at: "2026-05-21T00:00:00.000Z",
       deleted_at: null,
     };
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs")) {
+      if (typeof url === "string" && url.includes("/attachments")) {
         return new Response(JSON.stringify(blobRef), {
           status: 201,
           headers: { "content-type": "application/json" },
@@ -146,40 +146,40 @@ describe("shell — upload-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-request",
+      kind: "upload-attachment-request",
       id: "u1",
       file,
     });
 
     await flushMicrotasks();
 
-    // The shell must have fetched the /s/:token/blobs URL.
+    // The shell must have fetched the /s/:token/attachments URL.
     const uploadCall = fetchSpy.mock.calls.find((c) =>
-      (c[0] as string).includes("/blobs"),
+      (c[0] as string).includes("/attachments"),
     );
     expect(uploadCall).toBeTruthy();
     expect(uploadCall![0] as string).toContain("/s/");
-    expect(uploadCall![0] as string).toContain("/blobs");
+    expect(uploadCall![0] as string).toContain("/attachments");
     expect((uploadCall![1] as RequestInit).method).toBe("POST");
 
-    // It must have posted upload-blob-result back to the iframe with ok:true.
+    // It must have posted upload-attachment-result back to the iframe with ok:true.
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "upload-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "upload-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: "u1",
       ok: true,
-      blob: { blob_id: "blob_abc", scope: "session" },
+      attachment: { attachment_id: "attachment_abc", scope: "surface" },
     });
   });
 
   it("posts ok:false with the relay's error code on a 4xx response", async () => {
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs")) {
+      if (typeof url === "string" && url.includes("/attachments")) {
         return new Response(
           JSON.stringify({
             error: {
@@ -202,18 +202,18 @@ describe("shell — upload-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-request",
+      kind: "upload-attachment-request",
       id: "u2",
       file,
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "upload-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "upload-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: "u2",
       ok: false,
       error: { code: "mime_disallowed" },
@@ -222,7 +222,7 @@ describe("shell — upload-blob-request handler", () => {
 
   it("posts ok:false with code='network_error' when the fetch rejects", async () => {
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs")) {
+      if (typeof url === "string" && url.includes("/attachments")) {
         throw new TypeError("network failed");
       }
       return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
@@ -234,18 +234,18 @@ describe("shell — upload-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-request",
+      kind: "upload-attachment-request",
       id: "u3",
       file,
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "upload-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "upload-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: "u3",
       ok: false,
       error: { code: "network_error" },
@@ -260,18 +260,18 @@ describe("shell — upload-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-request",
+      kind: "upload-attachment-request",
       id: "u4",
       // file is missing
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "upload-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "upload-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: "u4",
       ok: false,
       error: { code: "invalid_request" },
@@ -280,20 +280,20 @@ describe("shell — upload-blob-request handler", () => {
     // The shell must NOT have called fetch for an upload — only the
     // ws-ticket mint is allowed.
     const uploadCalls = fetchSpy.mock.calls.filter((c) =>
-      (c[0] as string).includes("/blobs"),
+      (c[0] as string).includes("/attachments"),
     );
     expect(uploadCalls).toHaveLength(0);
   });
 });
 
 // ===========================================================================
-// shell — download-blob-request handler (follow-up D of #156). Symmetric to
-// the upload handler tests above; the shell brokers a GET to /s/:token/blobs/
-// :blob_id and posts the resulting Blob back to the iframe via structured
+// shell — download-attachment-request handler (follow-up D of #156). Symmetric to
+// the upload handler tests above; the shell brokers a GET to /s/:token/attachments/
+// :attachment_id and posts the resulting Blob back to the iframe via structured
 // clone.
 // ===========================================================================
 
-describe("shell — download-blob-request handler", () => {
+describe("shell — download-attachment-request handler", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
   let iframePostSpy: ReturnType<typeof vi.fn>;
 
@@ -328,9 +328,9 @@ describe("shell — download-blob-request handler", () => {
     }
   }
 
-  it("posts download-blob-result ok:true with a Blob on 2xx", async () => {
+  it("posts download-attachment-result ok:true with a Blob on 2xx", async () => {
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs/")) {
+      if (typeof url === "string" && url.includes("/attachments/")) {
         return new Response(new Uint8Array([1, 2, 3, 4]), {
           status: 200,
           headers: { "content-type": "image/jpeg" },
@@ -342,9 +342,9 @@ describe("shell — download-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "download-blob-request",
+      kind: "download-attachment-request",
       id: "d1",
-      blob_id: "blob_abc",
+      attachment_id: "attachment_abc",
     });
 
     await flushMicrotasks();
@@ -352,7 +352,7 @@ describe("shell — download-blob-request handler", () => {
     const downloadCall = fetchSpy.mock.calls.find(
       (c) =>
         typeof c[0] === "string" &&
-        (c[0] as string).includes("/blobs/blob_abc"),
+        (c[0] as string).includes("/attachments/attachment_abc"),
     );
     expect(downloadCall).toBeTruthy();
     expect(downloadCall![0] as string).toContain("/s/");
@@ -360,45 +360,45 @@ describe("shell — download-blob-request handler", () => {
     expect((downloadCall![1] as RequestInit).cache).toBe("no-store");
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "download-attachment-result",
     );
     expect(reply).toBeTruthy();
     const payload = reply![0] as {
       kind: string;
       id: string;
       ok: boolean;
-      blob: Blob;
+      attachment: Blob;
       mime: string;
       size: number;
     };
     expect(payload).toMatchObject({
       __pane: 1,
       v: 1,
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: "d1",
       ok: true,
     });
-    // The forwarded value is whatever `response.blob()` returned. Node 20
+    // The forwarded value is whatever `response.attachment()` returned. Node 20
     // has two `Blob` constructors (`node:buffer`'s global vs undici's) and
     // happy-dom in tests returns yet another shape — `instanceof Blob` is
     // unreliable across CI vs local. Verify by the observable surface: the
     // type and size the iframe actually uses, which the shell pulled off
     // the Response and put into the result frame.
-    expect(payload.blob).toBeTruthy();
-    expect(payload.blob.constructor.name).toBe("Blob");
-    expect(payload.blob.type).toBe("image/jpeg");
+    expect(payload.attachment).toBeTruthy();
+    expect(payload.attachment.constructor.name).toBe("Blob");
+    expect(payload.attachment.type).toBe("image/jpeg");
     expect(payload.mime).toBe("image/jpeg");
     expect(payload.size).toBe(4);
   });
 
   it("posts ok:false with the relay's error code on a 4xx response", async () => {
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs/")) {
+      if (typeof url === "string" && url.includes("/attachments/")) {
         return new Response(
           JSON.stringify({
             error: {
-              code: "blob_ref_not_accessible",
-              message: "blob ref(s) not accessible: blob_abc",
+              code: "attachment_ref_not_accessible",
+              message: "attachment ref(s) not accessible: attachment_abc",
             },
           }),
           {
@@ -413,27 +413,27 @@ describe("shell — download-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "download-blob-request",
+      kind: "download-attachment-request",
       id: "d2",
-      blob_id: "blob_abc",
+      attachment_id: "attachment_abc",
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "download-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: "d2",
       ok: false,
-      error: { code: "blob_ref_not_accessible" },
+      error: { code: "attachment_ref_not_accessible" },
     });
   });
 
   it("posts ok:false with code='fetch_error' when the fetch rejects", async () => {
     fetchSpy.mockImplementation(async (url: string) => {
-      if (typeof url === "string" && url.includes("/blobs/")) {
+      if (typeof url === "string" && url.includes("/attachments/")) {
         throw new TypeError("network failed");
       }
       return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
@@ -442,25 +442,25 @@ describe("shell — download-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "download-blob-request",
+      kind: "download-attachment-request",
       id: "d3",
-      blob_id: "blob_abc",
+      attachment_id: "attachment_abc",
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "download-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: "d3",
       ok: false,
       error: { code: "fetch_error" },
     });
   });
 
-  it("replies with invalid_request when the request lacks blob_id", async () => {
+  it("replies with invalid_request when the request lacks attachment_id", async () => {
     fetchSpy.mockResolvedValue(
       new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 }),
     );
@@ -468,18 +468,18 @@ describe("shell — download-blob-request handler", () => {
     dispatchFromIframe({
       __pane: 1,
       v: 1,
-      kind: "download-blob-request",
+      kind: "download-attachment-request",
       id: "d4",
-      // blob_id is missing
+      // attachment_id is missing
     });
     await flushMicrotasks();
 
     const reply = iframePostSpy.mock.calls.find(
-      (c) => (c[0] as { kind?: string }).kind === "download-blob-result",
+      (c) => (c[0] as { kind?: string }).kind === "download-attachment-result",
     );
     expect(reply).toBeTruthy();
     expect(reply![0]).toMatchObject({
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: "d4",
       ok: false,
       error: { code: "invalid_request" },
@@ -487,7 +487,8 @@ describe("shell — download-blob-request handler", () => {
 
     // No download fetch should have been made — only the ws-ticket mint.
     const downloadCalls = fetchSpy.mock.calls.filter(
-      (c) => typeof c[0] === "string" && (c[0] as string).includes("/blobs/"),
+      (c) =>
+        typeof c[0] === "string" && (c[0] as string).includes("/attachments/"),
     );
     expect(downloadCalls).toHaveLength(0);
   });

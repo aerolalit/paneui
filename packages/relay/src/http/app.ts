@@ -3,8 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { ZodError } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import type { BlobStore, RevokeCache } from "../blobs/index.js";
-import { makeRevokeCache } from "../blobs/index.js";
+import type { AttachmentStore, RevokeCache } from "../attachments/index.js";
+import { makeRevokeCache } from "../attachments/index.js";
 import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
@@ -12,16 +12,16 @@ import { log } from "../log.js";
 import { recordError, recordHttpDuration } from "../telemetry/metrics.js";
 import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
-import sessions from "./routes/sessions.js";
-import artifacts from "./routes/artifacts.js";
+import surfaces from "./routes/surfaces.js";
+import templates from "./routes/templates.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
-import blobs from "./routes/blobs.js";
-import blobBridge from "../bridge/blob-bridge.js";
-import blobUploadBridge from "../bridge/blob-upload-bridge.js";
-import blobDownloadBridge from "../bridge/blob-download-bridge.js";
+import attachments from "./routes/attachments.js";
+import blobBridge from "../bridge/attachment-bridge.js";
+import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
+import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -40,7 +40,7 @@ export function buildApp(
   config: Config,
   prisma: PrismaClient,
   generalLimiter?: SlidingWindowLimiter,
-  blobStore?: BlobStore,
+  blobStore?: AttachmentStore,
   blobRevokeCache?: RevokeCache,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -61,7 +61,7 @@ export function buildApp(
       config.RATE_LIMIT_WINDOW_SECONDS * 1000,
     );
 
-  // BlobStore + RevokeCache come as a pair: if a blobStore is configured,
+  // AttachmentStore + RevokeCache come as a pair: if a blobStore is configured,
   // the cache exists (caller-supplied for tests, or auto-instantiated here
   // for the HTTP-only convenience path).
   const effectiveBlobRevokeCache =
@@ -86,7 +86,7 @@ export function buildApp(
       await next();
     } finally {
       const ms = Date.now() - start;
-      // Redact the session token in /s/<tok>/... bridge paths AND the blob
+      // Redact the surface token in /s/<tok>/... bridge paths AND the attachment
       // capability token in /b/<tok> paths — both are bearer secrets in the
       // URL itself and must never reach access logs / log aggregators in
       // unredacted form.
@@ -103,7 +103,7 @@ export function buildApp(
         });
       }
       // Record request duration against the matched ROUTE PATTERN (e.g.
-      // /v1/sessions/:id/events) — never the concrete path — to keep the
+      // /v1/surfaces/:id/events) — never the concrete path — to keep the
       // histogram's label cardinality bounded. No-op when metrics are disabled.
       recordHttpDuration(ms / 1000, {
         method: c.req.method,
@@ -180,7 +180,7 @@ export function buildApp(
   // MAX_BLOB_BYTES) are only checked AFTER a full parse, so without this an
   // oversized body is buffered and JSON.parse'd in memory before being
   // rejected — a trivial OOM DoS. This ceiling sits a little above the
-  // largest legitimate body (max of artifacts and blob uploads) to leave room
+  // largest legitimate body (max of templates and attachment uploads) to leave room
   // for JSON envelope / multipart boundary overhead. The tighter /events
   // limit is applied on that route below.
   const globalBodyLimit =
@@ -194,12 +194,12 @@ export function buildApp(
       },
     }),
   );
-  // The participant-side blob upload (POST /s/:token/blobs, follow-up C of #156)
+  // The participant-side attachment upload (POST /s/:token/attachments, follow-up C of #156)
   // is the only /s/* route that accepts a body large enough to need the cap.
   // Reuse the same ceiling so the human-side upload path is no more permissive
-  // than the agent's `POST /v1/blobs`.
+  // than the agent's `POST /v1/attachments`.
   app.use(
-    "/s/*/blobs",
+    "/s/*/attachments",
     bodyLimit({
       maxSize: globalBodyLimit,
       onError: () => {
@@ -229,12 +229,12 @@ export function buildApp(
   // `Authorization: Bearer <REGISTRATION_SECRET>` token; `open` is public.
   // In the secret and open modes a per-IP rate limit bounds abuse.
   app.route("/v1/register", register);
-  app.route("/v1/sessions", sessions);
+  app.route("/v1/surfaces", surfaces);
   // Event bodies carry at most MAX_EVENT_DATA_BYTES of `data`; a tighter cap
   // here (leaving headroom for the JSON envelope) rejects an oversized event
   // body before it is buffered/parsed, ahead of the global /v1/* limit.
   app.use(
-    "/v1/sessions/:id/events",
+    "/v1/surfaces/:id/events",
     bodyLimit({
       maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
       onError: () => {
@@ -242,24 +242,24 @@ export function buildApp(
       },
     }),
   );
-  app.route("/v1/sessions/:id/events", events);
-  app.route("/v1/artifacts", artifacts);
+  app.route("/v1/surfaces/:id/events", events);
+  app.route("/v1/templates", templates);
   app.route("/v1/keys", keys);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
-  app.route("/v1/blobs", blobs);
-  // POST /s/:participantToken/blobs — human-side blob upload (follow-up C
+  app.route("/v1/attachments", attachments);
+  // POST /s/:participantToken/attachments — human-side attachment upload (follow-up C
   // of #156). Mounted BEFORE the general /s bridge so the POST route is
   // matched cleanly; the bridge module only registers GET endpoints, but
   // routing order keeps the surfaces visibly separate.
   app.route("/s", blobUploadBridge);
-  // GET /s/:participantToken/blobs/:blob_id — human-side blob download
+  // GET /s/:participantToken/attachments/:attachment_id — human-side attachment download
   // (follow-up D of #156). The symmetric counterpart to the upload bridge:
-  // the iframe lazy-fetches blob bytes referenced by events through the
-  // shell so events can carry just a BlobRef instead of inlined base64.
+  // the iframe lazy-fetches attachment bytes referenced by events through the
+  // shell so events can carry just a AttachmentRef instead of inlined base64.
   app.route("/s", blobDownloadBridge);
   app.route("/s", bridge);
-  // /b/<token> — capability-URL fetch path for blob bytes. The URL token IS
+  // /b/<token> — capability-URL fetch path for attachment bytes. The URL token IS
   // the credential (no API key, no participant token), so the route module
   // does its own validation; no agent-auth middleware here.
   app.route("/b", blobBridge);

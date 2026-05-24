@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 describe("presence (in-process backend, REDIS_URL unset)", () => {
-  it("counts agent and human connections per session", async () => {
+  it("counts agent and human connections per surface", async () => {
     await addConnection("ses_a", "c1", "agent");
     await addConnection("ses_a", "c2", "human");
     await addConnection("ses_a", "c3", "agent");
@@ -33,12 +33,12 @@ describe("presence (in-process backend, REDIS_URL unset)", () => {
     expect(await connectionCount("ses_a")).toBe(3);
   });
 
-  it("an unknown session has zero connections", async () => {
+  it("an unknown surface has zero connections", async () => {
     expect(await agentCount("nope")).toBe(0);
     expect(await connectionCount("nope")).toBe(0);
   });
 
-  it("removeConnection drops a connection and prunes the empty session", async () => {
+  it("removeConnection drops a connection and prunes the empty surface", async () => {
     await addConnection("ses_b", "c1", "agent");
     await removeConnection("ses_b", "c1");
     expect(await connectionCount("ses_b")).toBe(0);
@@ -47,7 +47,7 @@ describe("presence (in-process backend, REDIS_URL unset)", () => {
     expect(await connectionCount("ses_b")).toBe(0);
   });
 
-  it("totalConnections sums across sessions and filters by kind", async () => {
+  it("totalConnections sums across surfaces and filters by kind", async () => {
     await addConnection("s1", "c1", "agent");
     await addConnection("s1", "c2", "human");
     await addConnection("s2", "c3", "agent");

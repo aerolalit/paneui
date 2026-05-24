@@ -134,7 +134,7 @@ describe("assertSchemaWithinLimits", () => {
 
 describe("validateEvent", () => {
   const args = {
-    sessionId: "ses_test1",
+    surfaceId: "ses_test1",
     schemaVersion: 1,
     schema: exampleSchema,
   };
@@ -181,7 +181,7 @@ describe("validateEvent", () => {
   });
 
   it("schema_violation details lists ALL failing fields, not just the first (#137)", () => {
-    // Multi-field schema in a one-off session so we can violate two
+    // Multi-field schema in a one-off surface so we can violate two
     // constraints simultaneously and verify both are surfaced.
     const multiFieldSchema: EventSchema = {
       events: {
@@ -201,7 +201,7 @@ describe("validateEvent", () => {
     };
     try {
       validateEvent({
-        sessionId: "ses_multi",
+        surfaceId: "ses_multi",
         schemaVersion: 1,
         schema: multiFieldSchema,
         type: "form.submitted",
@@ -251,15 +251,15 @@ describe("validateEvent", () => {
     ).not.toThrow();
   });
 
-  // View-only artifact: a session with no event schema declares an empty,
+  // View-only template: a surface with no event schema declares an empty,
   // strictly-enforced vocabulary — every page/agent emit is rejected.
   // The error's `code`/`message` is `unknown_event_type`; the view-only
   // explanation rides in the `hint`.
-  it("rejects an agent emit on a schemaless (view-only) session", () => {
+  it("rejects an agent emit on a schemaless (view-only) surface", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        sessionId: "ses_viewonly",
+        surfaceId: "ses_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -273,11 +273,11 @@ describe("validateEvent", () => {
     expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
   });
 
-  it("rejects a human emit on a schemaless (view-only) session", () => {
+  it("rejects a human emit on a schemaless (view-only) surface", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        sessionId: "ses_viewonly",
+        surfaceId: "ses_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -291,12 +291,12 @@ describe("validateEvent", () => {
     expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
   });
 
-  it("does NOT reject a system event on a schemaless session", () => {
+  it("does NOT reject a system event on a schemaless surface", () => {
     // System events bypass the view-only guard — they keep flowing so
-    // system.session.expired, participant.joined, etc. still work.
+    // system.surface.expired, participant.joined, etc. still work.
     expect(() =>
       validateEvent({
-        sessionId: "ses_viewonly",
+        surfaceId: "ses_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "system.note",
@@ -373,11 +373,11 @@ describe("compiled-validator cache (LRU)", () => {
       "x.event": { payload: { type: "object" }, emittedBy: ["agent"] },
     },
   };
-  // Validating an event for a session populates the cache for that
-  // (sessionId, schemaVersion) key.
-  const touch = (sessionId: string): void =>
+  // Validating an event for a surface populates the cache for that
+  // (surfaceId, schemaVersion) key.
+  const touch = (surfaceId: string): void =>
     validateEvent({
-      sessionId,
+      surfaceId,
       schemaVersion: 1,
       schema,
       type: "x.event",
@@ -387,13 +387,13 @@ describe("compiled-validator cache (LRU)", () => {
 
   beforeEach(() => __schemaCacheInternals.clear());
 
-  it("caches a compiled validator per session", () => {
+  it("caches a compiled validator per surface", () => {
     touch("s1");
     expect(__schemaCacheInternals.has("s1", 1)).toBe(true);
     expect(__schemaCacheInternals.size()).toBe(1);
   });
 
-  it("invalidateSchemaCache drops a session's entries", () => {
+  it("invalidateSchemaCache drops a surface's entries", () => {
     touch("s1");
     invalidateSchemaCache("s1");
     expect(__schemaCacheInternals.has("s1", 1)).toBe(false);
@@ -407,7 +407,7 @@ describe("compiled-validator cache (LRU)", () => {
 
     // Re-touch the oldest entry so it is no longer the LRU.
     touch("sess_0");
-    // One more distinct session pushes the cache over cap → one eviction.
+    // One more distinct surface pushes the cache over cap → one eviction.
     touch("overflow");
 
     expect(__schemaCacheInternals.size()).toBe(max);
@@ -500,7 +500,7 @@ describe("validateInputData", () => {
   });
 });
 
-describe("format: pane-blob-id", () => {
+describe("format: pane-attachment-id", () => {
   const schemaWithBlobRef: EventSchema = {
     events: {
       "image.attach": {
@@ -508,36 +508,36 @@ describe("format: pane-blob-id", () => {
         payload: {
           type: "object",
           properties: {
-            blob: {
+            attachment: {
               type: "object",
               properties: {
-                blob_id: {
+                attachment_id: {
                   type: "string",
-                  format: "pane-blob-id",
+                  format: "pane-attachment-id",
                 },
               },
-              required: ["blob_id"],
+              required: ["attachment_id"],
             },
           },
-          required: ["blob"],
+          required: ["attachment"],
         },
       },
     },
   };
 
   const baseArgs = {
-    sessionId: "ses_blob_format",
+    surfaceId: "ses_blob_format",
     schemaVersion: 1,
     schema: schemaWithBlobRef,
     type: "image.attach",
     authorKind: "agent" as const,
   };
 
-  it("accepts a cuid-shaped blob_id", () => {
+  it("accepts a cuid-shaped attachment_id", () => {
     expect(() =>
       validateEvent({
         ...baseArgs,
-        data: { blob: { blob_id: "cmpel3zb30000k923tf77pjrw" } },
+        data: { attachment: { attachment_id: "cmpel3zb30000k923tf77pjrw" } },
       }),
     ).not.toThrow();
   });
@@ -546,7 +546,7 @@ describe("format: pane-blob-id", () => {
     try {
       validateEvent({
         ...baseArgs,
-        data: { blob: { blob_id: "not-a-cuid" } },
+        data: { attachment: { attachment_id: "not-a-cuid" } },
       });
       throw new Error("should have thrown");
     } catch (err) {
@@ -556,26 +556,26 @@ describe("format: pane-blob-id", () => {
     }
   });
 
-  it("rejects empty / missing blob_id", () => {
+  it("rejects empty / missing attachment_id", () => {
     expect(() =>
       validateEvent({
         ...baseArgs,
-        data: { blob: { blob_id: "" } },
+        data: { attachment: { attachment_id: "" } },
       }),
     ).toThrow();
     expect(() =>
       validateEvent({
         ...baseArgs,
-        data: { blob: {} },
+        data: { attachment: {} },
       }),
     ).toThrow();
   });
 
-  it("rejects wrong type for blob_id (e.g. number)", () => {
+  it("rejects wrong type for attachment_id (e.g. number)", () => {
     expect(() =>
       validateEvent({
         ...baseArgs,
-        data: { blob: { blob_id: 12345 } },
+        data: { attachment: { attachment_id: 12345 } },
       }),
     ).toThrow();
   });

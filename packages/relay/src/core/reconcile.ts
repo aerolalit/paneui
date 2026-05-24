@@ -9,10 +9,10 @@
 //
 // At process startup there are, by definition, zero live WebSocket connections:
 // the in-memory presence registry is empty. So any `joined` on a still-open
-// session that has no matching `left` is provably stale. We emit one synthetic
+// surface that has no matching `left` is provably stale. We emit one synthetic
 // `system.participant.left` per surplus `joined` to close the log out.
 //
-// Pairing is per (sessionId, author): each session can have one agent author
+// Pairing is per (surfaceId, author): each surface can have one agent author
 // plus N human authors, and each may connect/disconnect repeatedly, so we
 // compare counts rather than assuming a single join.
 
@@ -34,7 +34,7 @@ function authorOf(data: unknown): AuthorRef | null {
 }
 
 // Emit a synthetic `system.participant.left` for every `joined` that has no
-// matching `left`, across all still-open sessions. Returns the number of
+// matching `left`, across all still-open surfaces. Returns the number of
 // synthetic events written. Best-effort: a failure is logged, not thrown, so a
 // reconciliation hiccup never blocks relay startup.
 //
@@ -44,15 +44,15 @@ export async function reconcileOrphanedParticipants(
 ): Promise<number> {
   let written = 0;
   try {
-    const openSessions = await prisma.session.findMany({
+    const openSessions = await prisma.surface.findMany({
       where: { status: "open" },
       select: { id: true },
     });
 
-    for (const { id: sessionId } of openSessions) {
+    for (const { id: surfaceId } of openSessions) {
       const events = await prisma.event.findMany({
         where: {
-          sessionId,
+          surfaceId,
           authorKind: "system",
           type: {
             in: ["system.participant.joined", "system.participant.left"],
@@ -78,7 +78,7 @@ export async function reconcileOrphanedParticipants(
         for (let i = 0; i < net; i++) {
           await prisma.event.create({
             data: {
-              sessionId,
+              surfaceId,
               authorKind: "system",
               authorId: "system",
               type: "system.participant.left",

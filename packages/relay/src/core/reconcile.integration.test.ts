@@ -1,5 +1,5 @@
 // Integration test for startup reconciliation of orphaned participant.joined
-// events. Simulates an abrupt relay restart mid-session: a `joined` row exists
+// events. Simulates an abrupt relay restart mid-surface: a `joined` row exists
 // with no matching `left`, and proves reconcileOrphanedParticipants(prisma) closes
 // the log out by emitting a synthetic `system.participant.left`.
 //
@@ -32,7 +32,7 @@ afterAll(async () => {
 
 async function seedSession(
   status = "open",
-): Promise<{ sessionId: string; agentId: string }> {
+): Promise<{ surfaceId: string; agentId: string }> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -40,18 +40,18 @@ async function seedSession(
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { sessionId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSessionRow(prisma, {
     agentId: agent.id,
     eventSchema: { events: {} },
     status: status as "open" | "closed",
   });
-  return { sessionId, agentId: agent.id };
+  return { surfaceId, agentId: agent.id };
 }
 
-function joined(sessionId: string, author: { kind: string; id: string }) {
+function joined(surfaceId: string, author: { kind: string; id: string }) {
   return prisma.event.create({
     data: {
-      sessionId,
+      surfaceId,
       authorKind: "system",
       authorId: "system",
       type: "system.participant.joined",
@@ -60,10 +60,10 @@ function joined(sessionId: string, author: { kind: string; id: string }) {
   });
 }
 
-function left(sessionId: string, author: { kind: string; id: string }) {
+function left(surfaceId: string, author: { kind: string; id: string }) {
   return prisma.event.create({
     data: {
-      sessionId,
+      surfaceId,
       authorKind: "system",
       authorId: "system",
       type: "system.participant.left",
@@ -72,9 +72,9 @@ function left(sessionId: string, author: { kind: string; id: string }) {
   });
 }
 
-async function leftEvents(sessionId: string) {
+async function leftEvents(surfaceId: string) {
   return prisma.event.findMany({
-    where: { sessionId, type: "system.participant.left" },
+    where: { surfaceId, type: "system.participant.left" },
     orderBy: { id: "asc" },
   });
 }
@@ -85,77 +85,77 @@ describe("reconcileOrphanedParticipants (integration)", () => {
   });
 
   it("emits a synthetic left for an orphaned joined after an abrupt restart", async () => {
-    // Simulate a crash mid-session: joined written, close handler never ran.
-    const { sessionId } = await seedSession();
+    // Simulate a crash mid-surface: joined written, close handler never ran.
+    const { surfaceId } = await seedSession();
     const author = { kind: "human", id: "h_0" };
-    await joined(sessionId, author);
+    await joined(surfaceId, author);
 
     const written = await reconcileOrphanedParticipants(prisma);
     expect(written).toBe(1);
 
-    const lefts = await leftEvents(sessionId);
+    const lefts = await leftEvents(surfaceId);
     expect(lefts).toHaveLength(1);
     expect(lefts[0]!.data).toEqual({ author });
     expect(lefts[0]!.authorKind).toBe("system");
   });
 
   it("leaves a cleanly-paired joined/left alone", async () => {
-    const { sessionId } = await seedSession();
+    const { surfaceId } = await seedSession();
     const author = { kind: "agent", id: "a_0" };
-    await joined(sessionId, author);
-    await left(sessionId, author);
+    await joined(surfaceId, author);
+    await left(surfaceId, author);
 
     const written = await reconcileOrphanedParticipants(prisma);
     expect(written).toBe(0);
-    expect(await leftEvents(sessionId)).toHaveLength(1);
+    expect(await leftEvents(surfaceId)).toHaveLength(1);
   });
 
   it("pairs by author: only the orphaned author gets a synthetic left", async () => {
-    const { sessionId } = await seedSession();
+    const { surfaceId } = await seedSession();
     const agent = { kind: "agent", id: "a_0" };
     const human = { kind: "human", id: "h_0" };
-    await joined(sessionId, agent);
-    await left(sessionId, agent);
-    await joined(sessionId, human); // orphan
+    await joined(surfaceId, agent);
+    await left(surfaceId, agent);
+    await joined(surfaceId, human); // orphan
 
     const written = await reconcileOrphanedParticipants(prisma);
     expect(written).toBe(1);
 
-    const lefts = await leftEvents(sessionId);
+    const lefts = await leftEvents(surfaceId);
     expect(lefts).toHaveLength(2);
     expect(lefts[1]!.data).toEqual({ author: human });
   });
 
   it("handles repeated connects: nets joined vs left per author", async () => {
     // Author joined three times, left twice -> one orphan remains.
-    const { sessionId } = await seedSession();
+    const { surfaceId } = await seedSession();
     const author = { kind: "human", id: "h_0" };
-    await joined(sessionId, author);
-    await left(sessionId, author);
-    await joined(sessionId, author);
-    await joined(sessionId, author);
-    await left(sessionId, author);
+    await joined(surfaceId, author);
+    await left(surfaceId, author);
+    await joined(surfaceId, author);
+    await joined(surfaceId, author);
+    await left(surfaceId, author);
 
     const written = await reconcileOrphanedParticipants(prisma);
     expect(written).toBe(1);
-    expect(await leftEvents(sessionId)).toHaveLength(3);
+    expect(await leftEvents(surfaceId)).toHaveLength(3);
   });
 
-  it("ignores sessions that are not open", async () => {
-    const { sessionId } = await seedSession("closed");
-    await joined(sessionId, { kind: "human", id: "h_0" });
+  it("ignores surfaces that are not open", async () => {
+    const { surfaceId } = await seedSession("closed");
+    await joined(surfaceId, { kind: "human", id: "h_0" });
 
     const written = await reconcileOrphanedParticipants(prisma);
     expect(written).toBe(0);
-    expect(await leftEvents(sessionId)).toHaveLength(0);
+    expect(await leftEvents(surfaceId)).toHaveLength(0);
   });
 
   it("is idempotent: a second run finds nothing to reconcile", async () => {
-    const { sessionId } = await seedSession();
-    await joined(sessionId, { kind: "human", id: "h_0" });
+    const { surfaceId } = await seedSession();
+    await joined(surfaceId, { kind: "human", id: "h_0" });
 
     expect(await reconcileOrphanedParticipants(prisma)).toBe(1);
     expect(await reconcileOrphanedParticipants(prisma)).toBe(0);
-    expect(await leftEvents(sessionId)).toHaveLength(1);
+    expect(await leftEvents(surfaceId)).toHaveLength(1);
   });
 });

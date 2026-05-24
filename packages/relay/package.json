@@ -1,7 +1,7 @@
 {
   "name": "@paneui/relay",
   "version": "0.0.6",
-  "description": "Pane relay: HTTP + WebSocket server brokering UI sessions between agents and humans.",
+  "description": "Pane relay: HTTP + WebSocket server brokering UI surfaces between agents and humans.",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -68,7 +68,7 @@
   "optionalDependencies": {
     "@azure/identity": "^4.13.1",
     "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
-    "@azure/storage-blob": "^12.31.0",
+    "@azure/storage-attachment": "^12.31.0",
     "ioredis": "^5.4.1"
   },
   "devDependencies": {

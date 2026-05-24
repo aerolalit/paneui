@@ -16,7 +16,7 @@ import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
 import { createRateLimiter } from "./http/rate-limit.js";
-import { makeBlobStore, makeRevokeCache } from "./blobs/index.js";
+import { makeBlobStore, makeRevokeCache } from "./attachments/index.js";
 import { attachWs } from "./ws/handler.js";
 import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
@@ -26,22 +26,22 @@ import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
 
-// One TTL sweep pass: collect the expired session ids first, then deleteMany,
-// then drop each session's compiled-validator cache entry. Two queries (no
-// per-session round-trip), so still O(1) DB calls regardless of batch size.
+// One TTL sweep pass: collect the expired surface ids first, then deleteMany,
+// then drop each surface's compiled-validator cache entry. Two queries (no
+// per-surface round-trip), so still O(1) DB calls regardless of batch size.
 // Takes the Prisma client as a parameter — no module-level singleton — so the
 // integration test can run it against its own isolated database.
 export async function sweepExpiredSessions(
   prisma: PrismaClient,
 ): Promise<number> {
   const now = new Date();
-  const expired = await prisma.session.findMany({
+  const expired = await prisma.surface.findMany({
     where: { expiresAt: { lt: now } },
     select: { id: true },
   });
   if (expired.length === 0) return 0;
   const ids = expired.map((s) => s.id);
-  const r = await prisma.session.deleteMany({ where: { id: { in: ids } } });
+  const r = await prisma.surface.deleteMany({ where: { id: { in: ids } } });
   for (const id of ids) invalidateSchemaCache(id);
   return r.count;
 }
@@ -126,11 +126,11 @@ async function main(): Promise<void> {
     config.RATE_LIMIT_WINDOW_SECONDS * 1000,
   );
 
-  // Construct the configured BlobStore. Filesystem self-host validates +
+  // Construct the configured AttachmentStore. Filesystem self-host validates +
   // creates BLOB_STORE_FS_DIR and refuses to start if it's world-readable.
   // Azure dynamic-imports its SDK + verifies / creates the container.
   const blobStore = await makeBlobStore(config);
-  log.info("blob store ready", {
+  log.info("attachment store ready", {
     backend: config.BLOB_STORE,
     encryptAtRest: config.BLOB_ENCRYPT_AT_REST,
   });
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
   if (config.BLOB_SCAN_HOOK) {
     const { assertSafeBlobScanHookUrl } = await import("./http/ssrf.js");
     await assertSafeBlobScanHookUrl(config.BLOB_SCAN_HOOK);
-    log.info("blob scan hook ready", {
+    log.info("attachment scan hook ready", {
       timeoutMs: config.BLOB_SCAN_TIMEOUT_MS,
     });
   }

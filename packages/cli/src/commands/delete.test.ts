@@ -1,4 +1,4 @@
-// Tests for `pane session delete` — session deletion and missing-id handling.
+// Tests for `pane surface delete` — surface deletion and missing-id handling.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -59,22 +59,22 @@ async function run(tokens: string[]): Promise<void> {
 }
 
 describe("runDelete", () => {
-  it("deletes the given session id", async () => {
+  it("deletes the given surface id", async () => {
     await run(["ses_abc"]);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.method).toBe("deleteSession");
     expect(calls[0]!.args[0]).toBe("ses_abc");
     expect(JSON.parse(stdout)).toEqual({
-      session_id: "ses_abc",
+      surface_id: "ses_abc",
       deleted: true,
     });
   });
 
-  it("fails when the session id is missing", async () => {
+  it("fails when the surface id is missing", async () => {
     await run([]);
     expect(exitCode).toBe(1);
     expect(JSON.parse(stderr).error.code).toBe("invalid_args");
-    expect(stderr).toContain("missing <session-id>");
+    expect(stderr).toContain("missing <surface-id>");
     expect(calls).toHaveLength(0);
   });
 });

@@ -69,7 +69,7 @@ function isBlockedHostname(host: string): boolean {
 }
 
 export interface AssertSafeUrlOptions {
-  /** Field name used in error messages (e.g. "callback.url", "artifact.source"). */
+  /** Field name used in error messages (e.g. "callback.url", "template.source"). */
   field?: string;
 }
 
@@ -77,7 +77,7 @@ export interface AssertSafeUrlOptions {
  * Validates that `rawUrl` does not point at a private/loopback/metadata/CGNAT
  * target, resolving DNS and checking every returned address.
  *
- * Residual risk — create-time vs fire-time TOCTOU. This runs when the session
+ * Residual risk — create-time vs fire-time TOCTOU. This runs when the surface
  * is created; the actual outbound request (the webhook callback) happens later
  * in webhook.ts and is NOT re-validated. An attacker who controls DNS for the
  * host can let it resolve to a public IP at create time, then rebind it to a
@@ -160,6 +160,6 @@ export async function assertSafeOutboundUrl(
 export const assertSafeWebhookUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "callback.url" });
 export const assertSafeArtifactUrl = (url: string): Promise<void> =>
-  assertSafeOutboundUrl(url, { field: "artifact.source" });
+  assertSafeOutboundUrl(url, { field: "template.source" });
 export const assertSafeBlobScanHookUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "BLOB_SCAN_HOOK" });

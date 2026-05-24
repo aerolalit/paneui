@@ -1,5 +1,5 @@
 // The `pane.*` shim. Compiled (with the client tsconfig) to
-// `dist/client/shim.client.js` and inlined verbatim into the wrapped artifact
+// `dist/client/shim.client.js` and inlined verbatim into the wrapped template
 // page by `src/bridge/routes.ts`.
 //
 // Wire format mirrors docs/architecture/phase-3-human-side.md and is defined
@@ -19,7 +19,7 @@ export {};
 // shared (as a type) with the shell bundle, so the two sides cannot drift.
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
 import type {
-  BlobRefLike,
+  AttachmentRefLike,
   PaneFrameEnvelope,
   ShimToShellKind,
 } from "./protocol.js";
@@ -61,38 +61,38 @@ interface PaneApi {
   };
   /**
    * Upload a browser `File` to the relay over the participant token bridge.
-   * Returns a `BlobRef` the artifact can attach to a `pane.emit(...)` event
-   * (e.g. `pane.emit('photo', { blob })`). Scope is forced to `session` on
-   * the server — see `POST /s/:participantToken/blobs` in the relay.
+   * Returns a `AttachmentRef` the template can attach to a `pane.emit(...)` event
+   * (e.g. `pane.emit('photo', { attachment })`). Scope is forced to `surface` on
+   * the server — see `POST /s/:participantToken/attachments` in the relay.
    *
-   * Resolves with the BlobRef on success. Rejects with an `Error` whose
+   * Resolves with the AttachmentRef on success. Rejects with an `Error` whose
    * `.code` carries the relay's error code (`mime_disallowed`,
-   * `mime_mismatch`, `blob_size_exceeded`, `quota_exceeded`,
+   * `mime_mismatch`, `attachment_size_exceeded`, `quota_exceeded`,
    * `participant_token_invalid`, `gone`, `invalid_request`, etc.) so the
-   * artifact can branch on it.
+   * template can branch on it.
    */
-  uploadBlob(file: File, options?: UploadBlobOpts): Promise<BlobRefLike>;
+  uploadBlob(file: File, options?: UploadBlobOpts): Promise<AttachmentRefLike>;
   /**
-   * Lazily fetch a blob's bytes by id. The blob must be referenced from
-   * this session — either in the agent's initial `inputData` or in an
+   * Lazily fetch a attachment's bytes by id. The attachment must be referenced from
+   * this surface — either in the agent's initial `inputData` or in an
    * event the agent has emitted. The shell brokers the fetch with the
    * participant token; the iframe receives a live `Blob` it can render
-   * via `URL.createObjectURL(blob)` (the iframe CSP allows `blob:` URLs
+   * via `URL.createObjectURL(attachment)` (the iframe CSP allows `attachment:` URLs
    * in `img-src`).
    *
    * Resolves with the `Blob` on success. Rejects with an `Error` whose
-   * `.code` carries the relay's error code (`blob_ref_not_accessible`,
-   * `participant_token_invalid`, `gone`, etc.) so the artifact can branch
+   * `.code` carries the relay's error code (`attachment_ref_not_accessible`,
+   * `participant_token_invalid`, `gone`, etc.) so the template can branch
    * on it.
    *
    * Prefer this over embedding the bytes in the event data: a 1 MB image
    * won't fit under `MAX_EVENT_DATA_BYTES`, and replayed inline bytes are
    * sent over WS on every reconnect.
    */
-  downloadBlob(blobId: string): Promise<Blob>;
+  downloadBlob(attachmentId: string): Promise<Blob>;
   /**
-   * Trigger a browser save (download to disk / Files / Photos) of a blob
-   * the session references. Unlike `downloadBlob` which hands the iframe
+   * Trigger a browser save (download to disk / Files / Photos) of a attachment
+   * the surface references. Unlike `downloadBlob` which hands the iframe
    * the bytes, `saveBlob` only kicks off the OS save flow — the iframe
    * doesn't receive the bytes. Use this for non-image files (PDFs, CSVs,
    * archives) the human is meant to save rather than view inline.
@@ -105,12 +105,12 @@ interface PaneApi {
    * Resolves when the shell has kicked off the download; rejects with
    * an `Error` whose `.code` carries the relay's error code on failure.
    */
-  saveBlob(blobId: string, filename?: string): Promise<void>;
+  saveBlob(attachmentId: string, filename?: string): Promise<void>;
   /**
-   * The session's per-instance seed data — the `input_data` the agent passed
-   * to `POST /v1/sessions`, validated by the relay against the artifact
-   * version's `input_schema`. `null` when the session was created without
-   * `input_data`. Read it to render this instance, e.g. a PR-review artifact
+   * The surface's per-instance seed data — the `input_data` the agent passed
+   * to `POST /v1/surfaces`, validated by the relay against the template
+   * version's `input_schema`. `null` when the surface was created without
+   * `input_data`. Read it to render this instance, e.g. a PR-review template
    * does `window.pane.inputData.prTitle`.
    *
    * Not populated until the shell delivers the `init` frame — read it AFTER
@@ -131,7 +131,7 @@ interface PaneApi {
    *
    * The Promise stays pending if the page never receives an `init` frame
    * (e.g. it was loaded outside a Pane shell). Resolves with `void`;
-   * sessions with no `input_data` still resolve (the resolution signals
+   * surfaces with no `input_data` still resolve (the resolution signals
    * "init received," not "input_data is non-null").
    */
   readonly ready: Promise<void>;
@@ -144,13 +144,13 @@ interface PendingEmit {
 }
 
 interface PendingUpload {
-  resolve: (blob: BlobRefLike) => void;
+  resolve: (attachment: AttachmentRefLike) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
 interface PendingDownload {
-  resolve: (blob: Blob) => void;
+  resolve: (attachment: Blob) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -185,9 +185,9 @@ declare global {
   let nextUploadId = 1;
   let nextDownloadId = 1;
   let nextSaveId = 1;
-  // The session's per-instance input_data. Unknown until the 'init' frame
-  // arrives (the relay validated it against the artifact version's
-  // input_schema at session-create time). Exposed on the frozen `window.pane`
+  // The surface's per-instance input_data. Unknown until the 'init' frame
+  // arrives (the relay validated it against the template version's
+  // input_schema at surface-create time). Exposed on the frozen `window.pane`
   // via a getter (see below) so the value can be filled in after `window.pane`
   // is already published — the getter reads this mutable backing variable.
   let inputData: unknown = null;
@@ -300,7 +300,7 @@ declare global {
 
   // window.pane.uploadBlob(file, options?) — thin postMessage RPC to the
   // shell, which holds the participant token and brokers the
-  // POST /s/:token/blobs request. The browser's structured-clone of `File`
+  // POST /s/:token/attachments request. The browser's structured-clone of `File`
   // means the shell receives a live File handle it can hand to FormData
   // without any base64/ArrayBuffer round trip.
   //
@@ -310,7 +310,7 @@ declare global {
   function uploadBlob(
     file: File,
     options?: UploadBlobOpts,
-  ): Promise<BlobRefLike> {
+  ): Promise<AttachmentRefLike> {
     if (!(file instanceof File)) {
       return Promise.reject(new Error("uploadBlob: argument must be a File"));
     }
@@ -318,7 +318,7 @@ declare global {
     const frame: OutboundFrame = {
       __pane: 1,
       v: 1,
-      kind: "upload-blob-request",
+      kind: "upload-attachment-request",
       id,
       file,
     };
@@ -332,7 +332,7 @@ declare global {
     // shellOrigin defaults to "*" until init lands; mirroring how emit()
     // posts to shellOrigin keeps the cross-origin posture consistent.
     parent.postMessage(frame, shellOrigin);
-    return new Promise<BlobRefLike>((resolve, reject) => {
+    return new Promise<AttachmentRefLike>((resolve, reject) => {
       const timer = setTimeout(
         () => {
           if (pendingUploads.has(id)) {
@@ -348,20 +348,20 @@ declare global {
     });
   }
 
-  // window.pane.downloadBlob(blob_id) — thin postMessage RPC to the shell,
+  // window.pane.downloadBlob(attachment_id) — thin postMessage RPC to the shell,
   // which holds the participant token and brokers a GET to
-  // /s/:token/blobs/:blob_id on the iframe's behalf. The browser's
+  // /s/:token/attachments/:attachment_id on the iframe's behalf. The browser's
   // structured-clone of `Blob` means the shell can hand the iframe a live
-  // Blob reference (no base64 round trip). The iframe's CSP allows `blob:`
-  // URLs in `img-src`, so `URL.createObjectURL(blob)` renders cleanly.
+  // Blob reference (no base64 round trip). The iframe's CSP allows `attachment:`
+  // URLs in `img-src`, so `URL.createObjectURL(attachment)` renders cleanly.
   //
   // Follow-up D of #156. Symmetric to uploadBlob.
-  function downloadBlob(blobId: string): Promise<Blob> {
-    if (typeof blobId !== "string" || blobId.length === 0) {
+  function downloadBlob(attachmentId: string): Promise<Blob> {
+    if (typeof attachmentId !== "string" || attachmentId.length === 0) {
       // Local rejection — never post a malformed frame. Mirrors the
       // non-File guard in uploadBlob and the relay's invalid_args surface.
       const err: PaneError = new Error(
-        "downloadBlob: blob_id must be a non-empty string",
+        "downloadBlob: attachment_id must be a non-empty string",
       );
       err.code = "invalid_args";
       return Promise.reject(err);
@@ -370,9 +370,9 @@ declare global {
     const frame: OutboundFrame = {
       __pane: 1,
       v: 1,
-      kind: "download-blob-request",
+      kind: "download-attachment-request",
       id,
-      blob_id: blobId,
+      attachment_id: attachmentId,
     };
     parent.postMessage(frame, shellOrigin);
     return new Promise<Blob>((resolve, reject) => {
@@ -391,8 +391,8 @@ declare global {
     });
   }
 
-  // window.pane.saveBlob(blob_id, filename?) — asks the shell to trigger a
-  // browser save (download) for a blob referenced by this session. The shell
+  // window.pane.saveBlob(attachment_id, filename?) — asks the shell to trigger a
+  // browser save (download) for a attachment referenced by this surface. The shell
   // does the `<a download>` click from its own (non-sandboxed) document; the
   // sandbox `allow-downloads` flag is NOT sufficient on iOS WebKit, which
   // silently drops sandboxed-iframe downloads even with it. Returning from
@@ -400,10 +400,10 @@ declare global {
   //
   // No bytes flow back to the iframe — the iframe only learns whether the
   // download started (ok) or which error fired.
-  function saveBlob(blobId: string, filename?: string): Promise<void> {
-    if (typeof blobId !== "string" || blobId.length === 0) {
+  function saveBlob(attachmentId: string, filename?: string): Promise<void> {
+    if (typeof attachmentId !== "string" || attachmentId.length === 0) {
       const err: PaneError = new Error(
-        "saveBlob: blob_id must be a non-empty string",
+        "saveBlob: attachment_id must be a non-empty string",
       );
       err.code = "invalid_args";
       return Promise.reject(err);
@@ -412,9 +412,9 @@ declare global {
     const frame: OutboundFrame = {
       __pane: 1,
       v: 1,
-      kind: "save-blob-request",
+      kind: "save-attachment-request",
       id,
-      blob_id: blobId,
+      attachment_id: attachmentId,
     };
     if (typeof filename === "string" && filename.length > 0) {
       // Trim oversized / weird filenames defensively — the shell sanitises
@@ -447,10 +447,10 @@ declare global {
       if (m.payload && typeof m.payload.shell_origin === "string") {
         shellOrigin = m.payload.shell_origin;
       }
-      // The init frame carries this session's `input_data` — the per-instance
-      // seed data the agent passed at session-create, already validated by the
-      // relay against the artifact version's `input_schema`. Store it so the
-      // `window.pane.inputData` getter can surface it to the artifact.
+      // The init frame carries this surface's `input_data` — the per-instance
+      // seed data the agent passed at surface-create, already validated by the
+      // relay against the template version's `input_schema`. Store it so the
+      // `window.pane.inputData` getter can surface it to the template.
       if (m.payload && "input_data" in m.payload) {
         inputData = m.payload.input_data;
       }
@@ -501,14 +501,14 @@ declare global {
       }
       return;
     }
-    if (m.kind === "upload-blob-result") {
+    if (m.kind === "upload-attachment-result") {
       const uid: string | undefined = m.id;
       if (!uid || !pendingUploads.has(uid)) return;
       const pu = pendingUploads.get(uid)!;
       pendingUploads.delete(uid);
       clearTimeout(pu.timer);
-      if (m.ok === true && m.blob) {
-        pu.resolve(m.blob as BlobRefLike);
+      if (m.ok === true && m.attachment) {
+        pu.resolve(m.attachment as AttachmentRefLike);
       } else {
         const errInfo = (m.error || {}) as { code?: string; message?: string };
         const err: PaneError = new Error(
@@ -519,14 +519,14 @@ declare global {
       }
       return;
     }
-    if (m.kind === "download-blob-result") {
+    if (m.kind === "download-attachment-result") {
       const did: string | undefined = m.id;
       if (!did || !pendingDownloads.has(did)) return;
       const pd = pendingDownloads.get(did)!;
       pendingDownloads.delete(did);
       clearTimeout(pd.timer);
-      if (m.ok === true && m.blob instanceof Blob) {
-        pd.resolve(m.blob as Blob);
+      if (m.ok === true && m.attachment instanceof Blob) {
+        pd.resolve(m.attachment as Blob);
       } else {
         const errInfo = (m.error || {}) as { code?: string; message?: string };
         const err: PaneError = new Error(
@@ -537,7 +537,7 @@ declare global {
       }
       return;
     }
-    if (m.kind === "save-blob-result") {
+    if (m.kind === "save-attachment-result") {
       const sid: string | undefined = m.id;
       if (!sid || !pendingSaves.has(sid)) return;
       const ps = pendingSaves.get(sid)!;
@@ -557,12 +557,12 @@ declare global {
     }
   });
 
-  // `window.pane` is frozen so the artifact can't tamper with the bridge. But
+  // `window.pane` is frozen so the template can't tamper with the bridge. But
   // `inputData` only becomes known when the `init` frame arrives — after this
   // object is published. So `inputData` is exposed as a GETTER over the
   // mutable `inputData` backing variable: the property descriptor is frozen
-  // (the artifact can't replace the getter), yet the value it returns reflects
-  // whatever `init` delivered. An artifact reads its per-instance seed data as
+  // (the template can't replace the getter), yet the value it returns reflects
+  // whatever `init` delivered. An template reads its per-instance seed data as
   // `window.pane.inputData` — e.g. a PR-review page does
   // `window.pane.inputData.prTitle`.
   window.pane = Object.freeze({

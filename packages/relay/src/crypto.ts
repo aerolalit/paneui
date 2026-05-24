@@ -95,8 +95,8 @@ export function ensureKeyLoaded(): void {
 
 /**
  * Return the 32-byte master key as a Buffer. Used by callers that need to
- * derive their own DEKs or HMACs from it — e.g. blob-at-rest encryption and
- * the blob scan-hook signature. Caller must NOT cache or pass this Buffer
+ * derive their own DEKs or HMACs from it — e.g. attachment-at-rest encryption and
+ * the attachment scan-hook signature. Caller must NOT cache or pass this Buffer
  * across module boundaries beyond what's strictly necessary.
  */
 export function getMasterKey(): Buffer {
@@ -116,8 +116,8 @@ export function encryptSecret(plain: string): string {
   ].join(".");
 }
 
-export function decryptSecret(blob: string): string {
-  const parts = blob.split(".");
+export function decryptSecret(attachment: string): string {
+  const parts = attachment.split(".");
   if (parts.length !== 4 || parts[0] !== FORMAT) {
     throw new Error("invalid encrypted secret format");
   }
@@ -131,6 +131,6 @@ export function decryptSecret(blob: string): string {
 }
 
 // Stable fingerprint of a secret for logging without leaking the secret itself.
-export function secretFingerprint(blob: string): string {
-  return createHash("sha256").update(blob).digest("hex").slice(0, 12);
+export function secretFingerprint(attachment: string): string {
+  return createHash("sha256").update(attachment).digest("hex").slice(0, 12);
 }

@@ -51,30 +51,30 @@ const schema = z.object({
         .map((v) => v.trim())
         .filter((v) => v.length > 0),
     ),
-  // Max concurrent WebSocket connections per session/token.
+  // Max concurrent WebSocket connections per surface/token.
   // MAX_WS_CONNECTIONS_PER_SESSION=0 disables the cap.
   MAX_WS_CONNECTIONS_PER_SESSION: z.coerce.number().int().min(0).default(16),
-  // Max number of open (non-closed) sessions a single agent may hold.
+  // Max number of open (non-closed) surfaces a single agent may hold.
   // MAX_SESSIONS_PER_AGENT=0 disables the cap.
   MAX_SESSIONS_PER_AGENT: z.coerce.number().int().min(0).default(50),
-  // Max number of events a single session may accumulate.
+  // Max number of events a single surface may accumulate.
   // MAX_EVENTS_PER_SESSION=0 disables the cap.
   MAX_EVENTS_PER_SESSION: z.coerce.number().int().min(0).default(10_000),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
-  // Cap on a single agent's freeform "taste notes" markdown blob (see
+  // Cap on a single agent's freeform "taste notes" markdown attachment (see
   // /v1/taste). Stored verbatim on the Agent row, fetched and rewritten by
   // the agent itself, so this needs to fit comfortably in a prompt while
   // still bounding storage. 8 KiB is plenty for presentation-taste notes.
   MAX_TASTE_BYTES: z.coerce.number().int().positive().default(8_192),
-  // Max number of artifacts (named + anonymous) a single agent may own.
+  // Max number of templates (named + anonymous) a single agent may own.
   // MAX_ARTIFACTS_PER_AGENT=0 disables the cap.
   MAX_ARTIFACTS_PER_AGENT: z.coerce.number().int().min(0).default(100),
-  // Max number of versions a single artifact may accumulate.
+  // Max number of versions a single template may accumulate.
   // MAX_VERSIONS_PER_ARTIFACT=0 disables the cap.
   MAX_VERSIONS_PER_ARTIFACT: z.coerce.number().int().min(0).default(50),
-  // Caps on the agent-supplied per-session JSON Schema. The schema is compiled
-  // by Ajv at session-create / schema-patch time; an oversized or
+  // Caps on the agent-supplied per-surface JSON Schema. The schema is compiled
+  // by Ajv at surface-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
   MAX_SCHEMA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_SCHEMA_DEPTH: z.coerce.number().int().positive().default(32),
@@ -86,27 +86,27 @@ const schema = z.object({
   // ------------------------------------------------------------------
   // Blob attachments (v0.1.0)
   // ------------------------------------------------------------------
-  // Selects the BlobStore implementation. "filesystem" is the zero-config
+  // Selects the AttachmentStore implementation. "filesystem" is the zero-config
   // self-host default (single-VM only — does not work behind a multi-replica
   // autoscaler). "azure" requires the @azure/storage-blob runtime and is
   // gated behind this setting so a filesystem self-host never loads the SDK.
   // Other backends (s3, r2, gcs) are not implemented in v0.1.0 — see #152.
   BLOB_STORE: z.enum(["filesystem", "azure"]).default("filesystem"),
 
-  // Per-blob upload size cap. 5 MB covers any reasonable image or short PDF
-  // and bounds the cost of being wrong about a single blob. Raise per-relay
+  // Per-attachment upload size cap. 5 MB covers any reasonable image or short PDF
+  // and bounds the cost of being wrong about a single attachment. Raise per-relay
   // if needed; lower is the right v0.1.0 default.
   MAX_BLOB_BYTES: z.coerce.number().int().positive().default(5_000_000),
 
-  // Per-session aggregate cap on attached blobs. 100 MB ≈ 20 max-size blobs.
+  // Per-surface aggregate cap on attached attachments. 100 MB ≈ 20 max-size attachments.
   MAX_BLOBS_PER_SESSION_BYTES: z.coerce
     .number()
     .int()
     .positive()
     .default(100_000_000),
 
-  // Per-agent aggregate cap (across all of the agent's blobs in every scope).
-  // 500 MB ≈ 100 max-size blobs. LRU eviction kicks in at this ceiling in a
+  // Per-agent aggregate cap (across all of the agent's attachments in every scope).
+  // 500 MB ≈ 100 max-size attachments. LRU eviction kicks in at this ceiling in a
   // later PR (#152 hardening section); v0.0-foundation just rejects at the cap.
   MAX_BLOBS_PER_AGENT_BYTES: z.coerce
     .number()
@@ -114,8 +114,8 @@ const schema = z.object({
     .positive()
     .default(500_000_000),
 
-  // Per-artifact aggregate cap (icons / fonts / static assets a UI needs to
-  // render). Smaller than session by design — artifact assets should be
+  // Per-template aggregate cap (icons / fonts / static assets a UI needs to
+  // render). Smaller than surface by design — template assets should be
   // lightweight.
   MAX_BLOBS_PER_ARTIFACT_BYTES: z.coerce
     .number()
@@ -126,15 +126,15 @@ const schema = z.object({
   // Filesystem backend root directory. Created on boot if missing; the relay
   // refuses to start if it exists with world-readable permissions (mode bits
   // & 0o007 !== 0). Files inside are written 0600.
-  BLOB_STORE_FS_DIR: z.string().default("./data/blobs"),
+  BLOB_STORE_FS_DIR: z.string().default("./data/attachments"),
 
   // ---- Azure Blob Storage backend (only consulted when BLOB_STORE=azure) ---
   //
   // The container the relay reads/writes. Created at startup if missing.
-  BLOB_STORE_AZURE_CONTAINER: z.string().default("pane-blobs"),
+  BLOB_STORE_AZURE_CONTAINER: z.string().default("pane-attachments"),
   // Storage account URL — required for managed-identity auth (the production
   // path on Azure Container Apps). Example:
-  //   https://stpaneeurprodblobs.blob.core.windows.net
+  //   https://stpaneeurprodblobs.attachment.core.windows.net
   // The hostname's first label is the account name; DefaultAzureCredential
   // negotiates the token.
   BLOB_STORE_AZURE_ACCOUNT_URL: z.string().optional(),
@@ -153,10 +153,10 @@ const schema = z.object({
     .positive()
     .default(10 * 60),
 
-  // Encrypt blob bytes at rest before writing to the BlobStore. Off by
+  // Encrypt attachment bytes at rest before writing to the AttachmentStore. Off by
   // default — the hosted relay relies on Azure Blob's native at-rest
-  // encryption. Self-host turning this on adds a per-blob random DEK
-  // wrapped under PANE_SECRET_KEY. See blobs/encrypt.ts for the threat
+  // encryption. Self-host turning this on adds a per-attachment random DEK
+  // wrapped under PANE_SECRET_KEY. See attachments/encrypt.ts for the threat
   // model (defends against storage-backend compromise without relay
   // compromise; does NOT defend against relay compromise).
   //
@@ -169,8 +169,8 @@ const schema = z.object({
 
   // Optional virus / content scan webhook. When set, every successful
   // upload is POSTed (HMAC-signed) to this URL; a non-clean verdict
-  // refuses the blob and deletes its bytes. Empty string / unset = no
-  // scan. Validated at startup with the same SSRF guard as the artifact
+  // refuses the attachment and deletes its bytes. Empty string / unset = no
+  // scan. Validated at startup with the same SSRF guard as the template
   // and callback URLs — HTTPS only, no RFC1918, no cloud-metadata IPs.
   BLOB_SCAN_HOOK: z.string().optional(),
 
@@ -180,9 +180,9 @@ const schema = z.object({
   BLOB_SCAN_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
 
   // When the per-agent aggregate cap would be exceeded, evict oldest
-  // agent-scope blobs (LRU by createdAt) to make room for the new one.
-  // Session-scope and artifact-scope blobs are NEVER evicted — they're
-  // tied to a live session / artifact and the cascade handles their
+  // agent-scope attachments (LRU by createdAt) to make room for the new one.
+  // Surface-scope and template-scope attachments are NEVER evicted — they're
+  // tied to a live surface / template and the cascade handles their
   // cleanup. When false, the relay rejects the upload with
   // quota_exceeded instead of evicting.
   BLOB_LRU_EVICTION: z
@@ -205,8 +205,8 @@ const schema = z.object({
     ),
 
   // Default TTL for a /b/<token> capability URL minted against an
-  // artifact-scope blob. 30 days. Artifact-scope is the longest-lived; these
-  // tokens are typically reused across many session instances. Operators
+  // template-scope attachment. 30 days. Template-scope is the longest-lived; these
+  // tokens are typically reused across many surface instances. Operators
   // tighten this if exposure tolerance is lower.
   BLOB_TOKEN_TTL_ARTIFACT_SECONDS: z.coerce
     .number()
@@ -215,10 +215,10 @@ const schema = z.object({
     .default(30 * 24 * 60 * 60),
 
   // Default TTL for a /b/<token> capability URL minted against an agent-
-  // scope blob. 24 hours. Tightened from the original 7d design after the
+  // scope attachment. 24 hours. Tightened from the original 7d design after the
   // security review (proposal #152) — long-lived agent tokens invited
-  // "set and forget" leaks. Session-scope tokens don't get a knob here:
-  // they always inherit their session's TTL exactly.
+  // "set and forget" leaks. Surface-scope tokens don't get a knob here:
+  // they always inherit their surface's TTL exactly.
   BLOB_TOKEN_TTL_AGENT_SECONDS: z.coerce
     .number()
     .int()
@@ -351,7 +351,7 @@ export function loadConfig(
  * Production-only sanity checks for config that is fine to default in local dev
  * but silently breaks a real deployment.
  *
- * PUBLIC_URL: human-facing session URLs are built from it. On Azure Container
+ * PUBLIC_URL: human-facing surface URLs are built from it. On Azure Container
  * Apps the ingress FQDN isn't known until the app exists, so PUBLIC_URL is
  * wired in a second deploy step — until then it falls back to localhost and
  * every URL handed to a human is unreachable. Fail loudly rather than hand out
@@ -365,7 +365,7 @@ export function validateProductionConfig(c: Config): void {
   const pub = c.PUBLIC_URL?.trim();
   if (!pub) {
     throw new Error(
-      "PUBLIC_URL must be set in production — session URLs are built from it. " +
+      "PUBLIC_URL must be set in production — surface URLs are built from it. " +
         "On Azure Container Apps, set it to the ingress FQDN in a second deploy " +
         "step (https://<fqdn>). See docs/DEPLOY.md.",
     );
@@ -373,7 +373,7 @@ export function validateProductionConfig(c: Config): void {
   if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(pub)) {
     throw new Error(
       `PUBLIC_URL still points at localhost (${pub}) in production — human-facing ` +
-        "session URLs would be unreachable. Set it to the public ingress URL. " +
+        "surface URLs would be unreachable. Set it to the public ingress URL. " +
         "See docs/DEPLOY.md.",
     );
   }

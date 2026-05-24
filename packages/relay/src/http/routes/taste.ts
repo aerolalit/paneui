@@ -1,16 +1,16 @@
-// /v1/taste — per-agent freeform "taste notes" markdown blob.
+// /v1/taste — per-agent freeform "taste notes" markdown attachment.
 //
-// A pane agent generates HTML artifacts for humans, and humans give the
-// agent feedback on how those artifacts should look ("denser", "no rounded
+// A pane agent generates HTML templates for humans, and humans give the
+// agent feedback on how those templates should look ("denser", "no rounded
 // corners", "use a dark header"). Taste notes are where that feedback
-// accumulates between sessions: the agent reads the blob before generating
-// an artifact and rewrites it when the human gives new presentation
+// accumulates between surfaces: the agent reads the attachment before generating
+// an template and rewrites it when the human gives new presentation
 // feedback. Keyed by the calling agent's API key. Humans don't yet exist as
 // a first-class identity in pane (v1), so per-agent is the closest available
 // scope — this may move to per-human later.
 //
-// Body shape is whole-blob replace, not append: the agent reads the current
-// notes, merges in the new feedback, and writes back the full new blob.
+// Body shape is whole-attachment replace, not append: the agent reads the current
+// notes, merges in the new feedback, and writes back the full new attachment.
 // Capped by config.MAX_TASTE_BYTES (utf8 bytes).
 
 import { Hono } from "hono";
@@ -34,7 +34,7 @@ function serialize(row: { taste: string | null; tasteUpdatedAt: Date | null }) {
   };
 }
 
-// GET /v1/taste — return the current notes blob, the last update timestamp,
+// GET /v1/taste — return the current notes attachment, the last update timestamp,
 // and the utf8 byte size. taste/updated_at are null when the agent has never
 // written notes.
 taste.get("/", async (c) => {
@@ -48,7 +48,7 @@ taste.get("/", async (c) => {
   return c.json(serialize(row));
 });
 
-// PUT /v1/taste — whole-blob replace. Empty/whitespace-only is rejected:
+// PUT /v1/taste — whole-attachment replace. Empty/whitespace-only is rejected:
 // callers asking to clear must DELETE. The cap is enforced on utf8 byte
 // length, not character count.
 taste.put("/", async (c) => {
@@ -87,7 +87,7 @@ taste.put("/", async (c) => {
   return c.json(serialize(row));
 });
 
-// DELETE /v1/taste — clear the notes blob. Idempotent: clearing already-null
+// DELETE /v1/taste — clear the notes attachment. Idempotent: clearing already-null
 // notes still returns 204.
 taste.delete("/", async (c) => {
   const prisma = c.get("prisma");

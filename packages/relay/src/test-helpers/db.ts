@@ -233,17 +233,17 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.event.deleteMany();
         await p.participant.deleteMany();
         // Blobs FK agent with ON DELETE RESTRICT (an agent cannot be deleted
-        // while it still owns blobs) — must go before the agent purge. Blobs
-        // also FK session + artifact (ON DELETE CASCADE), so per-table order
-        // for those doesn't matter for the blob rows themselves.
-        // BlobTokens FK blob with CASCADE; deleting blob rows takes them
+        // while it still owns attachments) — must go before the agent purge. Blobs
+        // also FK surface + template (ON DELETE CASCADE), so per-table order
+        // for those doesn't matter for the attachment rows themselves.
+        // AttachmentTokens FK attachment with CASCADE; deleting attachment rows takes them
         // along, but doing it explicitly first keeps the row counts honest
         // when tests assert on token counts.
-        await p.blobToken.deleteMany();
-        await p.blob.deleteMany();
-        await p.session.deleteMany();
-        await p.artifactVersion.deleteMany();
-        await p.artifact.deleteMany();
+        await p.attachmentToken.deleteMany();
+        await p.attachment.deleteMany();
+        await p.surface.deleteMany();
+        await p.templateVersion.deleteMany();
+        await p.template.deleteMany();
         await p.agent.deleteMany();
       },
       cleanup: async () => {
@@ -276,7 +276,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "blob_tokens", "blobs", "feedback", "events", "participants", "sessions", "artifact_versions", "artifacts", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "attachment_tokens", "attachments", "feedback", "events", "participants", "surfaces", "artifact_versions", "templates", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

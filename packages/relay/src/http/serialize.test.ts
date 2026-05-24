@@ -6,7 +6,7 @@ describe("serializeEvent", () => {
   it("converts numeric id to a string and flattens author", () => {
     const row: EventRow = {
       id: 42,
-      sessionId: "ses_x",
+      surfaceId: "ses_x",
       authorKind: "human",
       authorId: "h_0",
       type: "review.commentAdded",
@@ -17,7 +17,7 @@ describe("serializeEvent", () => {
     };
     const s = serializeEvent(row);
     expect(s.id).toBe("42");
-    expect(s.session_id).toBe("ses_x");
+    expect(s.surface_id).toBe("ses_x");
     expect(s.author).toEqual({ kind: "human", id: "h_0" });
     expect(s.ts).toBe("2026-05-13T10:00:00.000Z");
     expect(s.type).toBe("review.commentAdded");
@@ -29,7 +29,7 @@ describe("serializeEvent", () => {
   it("preserves causation_id and idempotency_key when present", () => {
     const row: EventRow = {
       id: 100,
-      sessionId: "ses_x",
+      surfaceId: "ses_x",
       authorKind: "agent",
       authorId: "agent_1",
       type: "review.commentAdded",

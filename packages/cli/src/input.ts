@@ -1,5 +1,5 @@
 // Helpers for reading CLI inputs that may be either a file path or an inline
-// literal (JSON, or raw text for an HTML artifact body).
+// literal (JSON, or raw text for an HTML template body).
 
 import { readFileSync, statSync } from "node:fs";
 
@@ -48,7 +48,7 @@ export function resolveJson(value: string, label: string): unknown {
 
 /**
  * Resolve raw text that is either a file path or an inline literal — no JSON
- * parsing. Used for an inline HTML artifact body.
+ * parsing. Used for an inline HTML template body.
  */
 export function resolveText(value: string): string {
   return isFilePath(value) ? readFileSync(value, "utf8") : value;

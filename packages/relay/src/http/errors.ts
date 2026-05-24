@@ -3,11 +3,11 @@
 // how to fix its input (`hint`), and where to read more (`docsUrl`).
 
 // No hosted docs site yet — link the repo SPEC with verified heading anchors.
-const SPEC = "https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md";
+const SPEC = "https://github.com/aerolalit/paneui/attachment/main/docs/SPEC.md";
 const DOCS = {
   auth: `${SPEC}#auth-three-layers-only-1-and-2-in-v1`,
   api: `${SPEC}#http-api-v1`,
-  schema: `${SPEC}#per-session-event-schema`,
+  schema: `${SPEC}#per-surface-event-schema`,
   validation: `${SPEC}#validation-flow`,
   event: `${SPEC}#event-the-only-primitive`,
   rateLimit: `${SPEC}#security-checklist`,
@@ -53,8 +53,8 @@ export const errors = {
     ),
 
   // Generic 404 — still used for endpoints where the missing resource kind
-  // isn't worth distinguishing (e.g. a bridge token). For artifacts, artifact
-  // versions, and sessions, prefer the dedicated constructors below so an
+  // isn't worth distinguishing (e.g. a bridge token). For templates, template
+  // versions, and surfaces, prefer the dedicated constructors below so an
   // agent can branch on the code instead of parsing the hint.
   notFound: () =>
     new ApiError(
@@ -68,15 +68,15 @@ export const errors = {
     ),
 
   // Distinct from `not_found` so an agent can act differently when the
-  // missing thing is a session (likely expired/cleaned up) vs an artifact
-  // (likely wrong slug/id) vs an artifact version (likely wrong --version).
+  // missing thing is a surface (likely expired/cleaned up) vs an template
+  // (likely wrong slug/id) vs an template version (likely wrong --version).
   sessionNotFound: () =>
     new ApiError(
       404,
       "session_not_found",
       undefined,
       undefined,
-      "the session id may be wrong, or the session expired and was cleaned up; verify the id and create a new session if needed",
+      "the surface id may be wrong, or the surface expired and was cleaned up; verify the id and create a new surface if needed",
       false,
       DOCS.api,
     ),
@@ -87,7 +87,7 @@ export const errors = {
       "artifact_not_found",
       undefined,
       undefined,
-      "the artifact id or slug is wrong, or the artifact does not belong to the calling agent; run 'pane artifact list' or 'pane artifact search' to find the right id",
+      "the template id or slug is wrong, or the template does not belong to the calling agent; run 'pane template list' or 'pane template search' to find the right id",
       false,
       DOCS.api,
     ),
@@ -98,7 +98,7 @@ export const errors = {
       "artifact_version_not_found",
       undefined,
       undefined,
-      "the requested --version does not exist for this artifact; run 'pane artifact show <id|slug>' to list its versions",
+      "the requested --version does not exist for this template; run 'pane template show <id|slug>' to list its versions",
       false,
       DOCS.api,
     ),
@@ -121,7 +121,7 @@ export const errors = {
       "payload_too_large",
       undefined,
       undefined,
-      "the payload exceeds the configured size cap (MAX_ARTIFACT_BYTES for artifacts, MAX_EVENT_DATA_BYTES for event data, MAX_TASTE_BYTES for taste notes); send a smaller payload",
+      "the payload exceeds the configured size cap (MAX_ARTIFACT_BYTES for templates, MAX_EVENT_DATA_BYTES for event data, MAX_TASTE_BYTES for taste notes); send a smaller payload",
       false,
       DOCS.api,
     ),
@@ -148,13 +148,13 @@ export const errors = {
       DOCS.api,
     ),
 
-  gone: (message = "session is closed") =>
+  gone: (message = "surface is closed") =>
     new ApiError(
       410,
       "gone",
       message,
       undefined,
-      "the session is closed or expired and cannot accept new events; create a new session to continue",
+      "the surface is closed or expired and cannot accept new events; create a new surface to continue",
       false,
       DOCS.api,
     ),
@@ -166,7 +166,7 @@ export const errors = {
       undefined,
       details,
       hint ??
-        "the event does not satisfy the session's event schema; check the event type and payload against the declared schema",
+        "the event does not satisfy the surface's event schema; check the event type and payload against the declared schema",
       false,
       DOCS.schema,
     ),
@@ -188,7 +188,7 @@ export const errors = {
 
   // Returned when a /s/:participantToken/* route is hit with a token that
   // doesn't resolve to a live participant. Collapses all "this token won't
-  // work" cases (malformed, unknown, revoked, session-gone) into one code
+  // work" cases (malformed, unknown, revoked, surface-gone) into one code
   // so a probing client can't distinguish them.
   participantTokenInvalid: () =>
     new ApiError(
@@ -196,7 +196,7 @@ export const errors = {
       "participant_token_invalid",
       undefined,
       undefined,
-      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/sessions or by revoking + re-creating the session",
+      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/surfaces or by revoking + re-creating the surface",
       false,
       DOCS.auth,
     ),
@@ -208,39 +208,39 @@ export const errors = {
   blobTokenInvalid: () =>
     new ApiError(
       401,
-      "blob_token_invalid",
+      "attachment_token_invalid",
       undefined,
       undefined,
-      "the blob token is unknown, expired, revoked, or has been spent (once-tokens); request a fresh token from the agent that owns the blob",
+      "the attachment token is unknown, expired, revoked, or has been spent (once-tokens); request a fresh token from the agent that owns the attachment",
       false,
       DOCS.auth,
     ),
 
-  // Distinct from `blob_not_found` so the route layer (and a future audit
-  // log analysis) can tell "this blob token is gone" from "this blob token
+  // Distinct from `attachment_not_found` so the route layer (and a future audit
+  // log analysis) can tell "this attachment token is gone" from "this attachment token
   // never existed." Same status + hint as blobTokenInvalid by design — the
   // caller has no business knowing which it was.
   blobTokenNotFound: () =>
     new ApiError(
       404,
-      "blob_token_not_found",
+      "attachment_token_not_found",
       undefined,
       undefined,
-      "the token id is wrong, or the token does not belong to this blob; run 'pane blob show <id>' to list active tokens",
+      "the token id is wrong, or the token does not belong to this attachment; run 'pane attachment show <id>' to list active tokens",
       false,
       DOCS.api,
     ),
 
   // Distinct from `not_found` so an agent can branch on the kind of missing
-  // resource (a blob lookup typically follows a known blob_id, so a 404 here
-  // means the agent guessed wrong or the blob was deleted).
+  // resource (a attachment lookup typically follows a known attachment_id, so a 404 here
+  // means the agent guessed wrong or the attachment was deleted).
   blobNotFound: () =>
     new ApiError(
       404,
-      "blob_not_found",
+      "attachment_not_found",
       undefined,
       undefined,
-      "the blob id is wrong, the blob was deleted, or it does not belong to the calling agent; run 'pane blob list' to find the right id",
+      "the attachment id is wrong, the attachment was deleted, or it does not belong to the calling agent; run 'pane attachment list' to find the right id",
       false,
       DOCS.api,
     ),
@@ -273,66 +273,66 @@ export const errors = {
       DOCS.api,
     ),
 
-  // Per-blob size cap exceeded. Distinct hint from generic payloadTooLarge so
-  // a blob caller doesn't go hunting for MAX_ARTIFACT_BYTES / MAX_TASTE_BYTES.
+  // Per-attachment size cap exceeded. Distinct hint from generic payloadTooLarge so
+  // a attachment caller doesn't go hunting for MAX_ARTIFACT_BYTES / MAX_TASTE_BYTES.
   blobSizeExceeded: (maxBytes: number) =>
     new ApiError(
       413,
-      "blob_size_exceeded",
-      `blob exceeds the per-blob cap of ${maxBytes} bytes`,
+      "attachment_size_exceeded",
+      `attachment exceeds the per-attachment cap of ${maxBytes} bytes`,
       { max_bytes: maxBytes },
-      "downscale or compress the blob to fit; for images, the client SDK does this automatically (max dimension + JPEG quality)",
+      "downscale or compress the attachment to fit; for images, the client SDK does this automatically (max dimension + JPEG quality)",
       false,
       DOCS.api,
     ),
 
-  // A blob_id baked into an event payload or session input_data points to
-  // a blob the calling agent can't access (wrong id, wrong owner, or
+  // A attachment_id baked into an event payload or surface input_data points to
+  // a attachment the calling agent can't access (wrong id, wrong owner, or
   // soft-deleted). Surfaces *after* Ajv shape validation has passed but
-  // *before* the row hits Prisma — see packages/relay/src/blobs/ref-access.ts
+  // *before* the row hits Prisma — see packages/relay/src/attachments/ref-access.ts
   // for the walker + batch check. 422 because the payload is structurally
-  // valid but semantically broken: it references a blob that does not
+  // valid but semantically broken: it references a attachment that does not
   // exist (from this agent's vantage point).
   blobRefNotAccessible: (inaccessibleIds: string[]) =>
     new ApiError(
       422,
-      "blob_ref_not_accessible",
-      `blob ref(s) not accessible: ${inaccessibleIds.join(", ")}`,
+      "attachment_ref_not_accessible",
+      `attachment ref(s) not accessible: ${inaccessibleIds.join(", ")}`,
       { inaccessible_ids: inaccessibleIds },
-      "the payload references one or more blob ids the calling agent does not own (or that have been deleted); upload the blob with POST /v1/blobs and use the returned blob_id, or check 'pane blob list' for ids you actually own",
+      "the payload references one or more attachment ids the calling agent does not own (or that have been deleted); upload the attachment with POST /v1/attachments and use the returned attachment_id, or check 'pane attachment list' for ids you actually own",
       false,
       DOCS.api,
     ),
 
   // The READ-side counterpart of blobRefNotAccessible. Used by
-  // `GET /s/:participantToken/blobs/:blob_id` (follow-up D of #156): the
-  // requested blob isn't referenced from this session (or was deleted,
+  // `GET /s/:participantToken/attachments/:attachment_id` (follow-up D of #156): the
+  // requested attachment isn't referenced from this surface (or was deleted,
   // or never existed). Same `code` so a single error branch covers both
   // the write-time "ref dangling" surface and the read-time "ref not
   // reachable from your token" surface; 404 here because the resource
   // isn't found from the caller's vantage point — the request itself
   // is structurally fine (vs the 422 write-side path, where the request
   // body was malformed at the ref site).
-  blobRefNotAccessibleReadSide: (blobId: string) =>
+  blobRefNotAccessibleReadSide: (attachmentId: string) =>
     new ApiError(
       404,
-      "blob_ref_not_accessible",
-      `blob ref not accessible: ${blobId}`,
-      { blob_id: blobId },
-      "the participant token does not have read access to this blob_id from the current session; the blob must be referenced from this session's events or initial input_data and not be soft-deleted",
+      "attachment_ref_not_accessible",
+      `attachment ref not accessible: ${attachmentId}`,
+      { attachment_id: attachmentId },
+      "the participant token does not have read access to this attachment_id from the current surface; the attachment must be referenced from this surface's events or initial input_data and not be soft-deleted",
       false,
       DOCS.api,
     ),
 
-  // Per-scope aggregate quota exceeded (per-agent, per-session, or
-  // per-artifact). `scope` carries which one.
-  quotaExceeded: (scope: "agent" | "session" | "artifact", maxBytes: number) =>
+  // Per-scope aggregate quota exceeded (per-agent, per-surface, or
+  // per-template). `scope` carries which one.
+  quotaExceeded: (scope: "agent" | "surface" | "template", maxBytes: number) =>
     new ApiError(
       413,
       "quota_exceeded",
-      `${scope} blob quota of ${maxBytes} bytes reached`,
+      `${scope} attachment quota of ${maxBytes} bytes reached`,
       { scope, max_bytes: maxBytes },
-      "delete unused blobs in this scope and retry, or ask the operator to widen the configured quota",
+      "delete unused attachments in this scope and retry, or ask the operator to widen the configured quota",
       false,
       DOCS.api,
     ),

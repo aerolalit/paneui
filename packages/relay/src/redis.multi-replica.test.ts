@@ -34,10 +34,10 @@ const REDIS_URL =
 // Gate: skip the whole suite when no Redis is configured.
 const describeRedis = REDIS_URL ? describe : describe.skip;
 
-function makeEvent(id: string, sessionId: string): SerializedEvent {
+function makeEvent(id: string, surfaceId: string): SerializedEvent {
   return {
     id,
-    session_id: sessionId,
+    surface_id: surfaceId,
     author: { kind: "agent", id: "a_0" },
     ts: new Date().toISOString(),
     type: "review.commentAdded",

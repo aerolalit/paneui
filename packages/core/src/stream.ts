@@ -1,4 +1,4 @@
-// WebSocket client for WS /v1/sessions/:id/stream.
+// WebSocket client for WS /v1/surfaces/:id/stream.
 //
 // The relay protocol (see the relay's src/ws/handler.ts):
 //   - on connect, the relay replays every event since `?since=` (or from the
@@ -21,8 +21,8 @@ import { MAX_FRAME_SNIPPET_LENGTH } from "./limits.js";
 export interface OpenStreamOptions {
   /** WebSocket base URL, e.g. wss://pane.example.com (no trailing slash). */
   wsBaseUrl: string;
-  /** Session id. */
-  sessionId: string;
+  /** Surface id. */
+  surfaceId: string;
   /** Agent (or participant) bearer token. */
   token: string;
   /** Opaque cursor: replay only events strictly after this id. */
@@ -49,7 +49,7 @@ export interface StreamHandlers {
 
 /** A live handle to an open stream. */
 export interface StreamHandle {
-  /** Send an event frame into the session. */
+  /** Send an event frame into the surface. */
   send(frame: {
     type: string;
     data?: unknown;
@@ -63,7 +63,7 @@ export interface StreamHandle {
 }
 
 /**
- * Open a WebSocket stream to a Pane session. Replays on connect, then streams
+ * Open a WebSocket stream to a Pane surface. Replays on connect, then streams
  * live. Returns a handle for sending frames and closing.
  */
 export function openStream(
@@ -72,7 +72,7 @@ export function openStream(
 ): StreamHandle {
   const base = opts.wsBaseUrl.replace(/\/$/, "");
   const u = new URL(
-    `${base}/v1/sessions/${encodeURIComponent(opts.sessionId)}/stream`,
+    `${base}/v1/surfaces/${encodeURIComponent(opts.surfaceId)}/stream`,
   );
   if (opts.since != null && opts.since !== "") {
     u.searchParams.set("since", opts.since);

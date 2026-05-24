@@ -13,7 +13,7 @@ export type AuthorKind = "human" | "agent" | "system";
 /** A single event envelope as emitted by the relay. */
 export interface PaneEvent {
   id: string;
-  session_id: string;
+  surface_id: string;
   author: { kind: AuthorKind; id: string };
   ts: string;
   type: string;
@@ -22,15 +22,15 @@ export interface PaneEvent {
   idempotency_key: string | null;
 }
 
-/** The artifact content type. `html-ref` is rejected by the relay for now. */
-export type ArtifactType = "html-inline" | "html-ref";
+/** The template content type. `html-ref` is rejected by the relay for now. */
+export type TemplateType = "html-inline" | "html-ref";
 
 /**
- * An artifact: discriminated on `type`. `html-inline` carries raw HTML in
+ * An template: discriminated on `type`. `html-inline` carries raw HTML in
  * `source`; `html-ref` carries a URL the relay/shell fetches on the human's
  * behalf. The discriminant keeps the type↔source coupling explicit.
  */
-export type Artifact =
+export type Template =
   | { type: "html-inline"; source: string }
   | { type: "html-ref"; source: string };
 
@@ -42,31 +42,31 @@ export interface Callback {
 }
 
 /**
- * Request body for POST /v1/sessions. Derived from `createSessionSchema` so the
+ * Request body for POST /v1/surfaces. Derived from `createSessionSchema` so the
  * runtime validator and the static type cannot drift.
  */
 export type CreateSessionRequest = z.infer<typeof createSessionSchema>;
 
-/** Response from POST /v1/sessions. */
+/** Response from POST /v1/surfaces. */
 export interface CreateSessionResponse {
-  session_id: string;
+  surface_id: string;
   tokens: { humans: string[]; agent: string };
   urls: { humans: string[]; agent_stream: string };
   expires_at: string;
-  /** The resolved tab title persisted on the session (the agent's value, or
-   * the Artifact.name fallback). */
+  /** The resolved tab title persisted on the surface (the agent's value, or
+   * the Template.name fallback). */
   title: string;
 }
 
-/** Response from GET /v1/sessions/:id. */
-export interface SessionState {
-  session_id: string;
+/** Response from GET /v1/surfaces/:id. */
+export interface SurfaceState {
+  surface_id: string;
   status: string;
-  /** The artifact version this session is pinned to. */
-  artifact_id: string;
-  artifact_version_id: string;
-  artifact_version: number;
-  /** The tab title this session was created with (frozen for its lifetime). */
+  /** The template version this surface is pinned to. */
+  template_id: string;
+  template_version_id: string;
+  template_version: number;
+  /** The tab title this surface was created with (frozen for its lifetime). */
   title: string;
   metadata: Record<string, unknown> | null;
   input_data: Record<string, unknown> | null;
@@ -74,13 +74,13 @@ export interface SessionState {
   expires_at: string;
 }
 
-/** Response from GET /v1/sessions/:id/events. */
+/** Response from GET /v1/surfaces/:id/events. */
 export interface EventsPage {
   events: PaneEvent[];
   next_cursor: string | null;
 }
 
-/** A non-secret summary of one participant on a session — safe to list. */
+/** A non-secret summary of one participant on a surface — safe to list. */
 export interface ParticipantSummary {
   /** The revoke handle (Participant.id). */
   participant_id: string;
@@ -94,46 +94,46 @@ export interface ParticipantSummary {
   revoked_at: string | null;
 }
 
-/** A row in the GET /v1/sessions list response (no secrets, lean). */
-export interface SessionSummary {
-  session_id: string;
-  /** Tab title (required column; agent input or Artifact.name fallback). */
+/** A row in the GET /v1/surfaces list response (no secrets, lean). */
+export interface SurfaceSummary {
+  surface_id: string;
+  /** Tab title (required column; agent input or Template.name fallback). */
   title: string;
   /** Effective status — respects expiresAt projection (the column may say
    *  "open" while `expires_at` is in the past; the projection reports "closed"). */
   status: "open" | "closed";
-  /** Owning artifact's head id. Null for inline (anonymous) artifacts. */
-  artifact_id: string | null;
-  artifact_version_id: string;
-  artifact_version: number;
+  /** Owning template's head id. Null for inline (anonymous) templates. */
+  template_id: string | null;
+  template_version_id: string;
+  template_version: number;
   /** Count of active (non-revoked) human participants. The full participant
-   *  array is intentionally NOT inlined here — agents with many sessions
+   *  array is intentionally NOT inlined here — agents with many surfaces
    *  would pay the bandwidth on every list call. Fetch
-   *  `GET /v1/sessions/:id/participants` when you need the rows. */
+   *  `GET /v1/surfaces/:id/participants` when you need the rows. */
   active_human_participants: number;
   created_at: string;
   expires_at: string;
-  /** Whether the session has a webhook callback configured (URL is NOT
+  /** Whether the surface has a webhook callback configured (URL is NOT
    *  returned — it may carry a secret in the path). */
   has_callback: boolean;
 }
 
-/** Response from GET /v1/sessions/:id/participants — every participant on
- *  one session (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+/** Response from GET /v1/surfaces/:id/participants — every participant on
+ *  one surface (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
  *  on the relay so no pagination is needed. */
 export interface ParticipantsList {
-  session_id: string;
+  surface_id: string;
   items: ParticipantSummary[];
 }
 
-/** Response from GET /v1/sessions. */
-export interface SessionsPage {
-  items: SessionSummary[];
+/** Response from GET /v1/surfaces. */
+export interface SurfacesPage {
+  items: SurfaceSummary[];
   /** Opaque cursor for the next page; null when no more rows. */
   next_cursor: string | null;
 }
 
-/** Response from POST /v1/sessions/:id/participants — one-shot, includes the
+/** Response from POST /v1/surfaces/:id/participants — one-shot, includes the
  *  plaintext token exactly once. The relay stores only the hash. */
 export interface MintParticipantResponse {
   participant_id: string;
@@ -145,20 +145,20 @@ export interface MintParticipantResponse {
   created_at: string;
 }
 
-/** One immutable version of an artifact's content. */
-export interface ArtifactVersion {
+/** One immutable version of an template's content. */
+export interface TemplateVersion {
   id: string;
   version: number;
-  type: ArtifactType;
+  type: TemplateType;
   source: string;
-  // null = view-only artifact (no event vocabulary). The `unknown` type
+  // null = view-only template (no event vocabulary). The `unknown` type
   // subsumes null, so no separate union is needed.
   event_schema: unknown;
   input_schema: Record<string, unknown> | null;
   created_at: string;
 }
 
-/** A full artifact — head metadata plus its version list. */
+/** A full template — head metadata plus its version list. */
 export interface Artifact_ {
   id: string;
   slug: string | null;
@@ -169,20 +169,20 @@ export interface Artifact_ {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
-  versions: ArtifactVersion[];
+  versions: TemplateVersion[];
 }
 
 /**
- * A full artifact — head metadata plus its version list. (`ArtifactRecord` is
- * the public name; `Artifact` is kept as the older inline-artifact union.)
+ * A full template — head metadata plus its version list. (`TemplateRecord` is
+ * the public name; `Template` is kept as the older inline-template union.)
  */
-export type ArtifactRecord = Artifact_;
+export type TemplateRecord = Artifact_;
 
 /**
- * A lean artifact summary for list/search responses — head metadata only, no
- * `source` blob. See GET /v1/artifacts.
+ * A lean template summary for list/search responses — head metadata only, no
+ * `source` attachment. See GET /v1/templates.
  */
-export interface ArtifactSummary {
+export interface TemplateSummary {
   id: string;
   slug: string | null;
   name: string | null;
@@ -192,9 +192,9 @@ export interface ArtifactSummary {
   last_used_at: string | null;
 }
 
-/** Response from POST /v1/artifacts and POST /v1/artifacts/:id/versions. */
+/** Response from POST /v1/templates and POST /v1/templates/:id/versions. */
 export interface CreateArtifactResponse {
-  artifact_id: string;
+  template_id: string;
   version: number;
 }
 
@@ -214,7 +214,7 @@ export interface KeyInfo {
 
 /**
  * Response from GET /v1/taste, PUT /v1/taste — the calling agent's freeform
- * "taste notes" markdown blob (presentation preferences the agent has picked
+ * "taste notes" markdown attachment (presentation preferences the agent has picked
  * up from human feedback over time). `taste` and `updated_at` are null when
  * the agent has never written notes; `bytes` is the utf8 byte length and 0
  * when `taste` is null.
@@ -240,7 +240,7 @@ export interface FeedbackRecord {
   id: string;
   type: FeedbackType;
   message: string;
-  session_id: string | null;
+  surface_id: string | null;
   created_at: string;
 }
 

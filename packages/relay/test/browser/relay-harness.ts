@@ -31,7 +31,7 @@ export async function startRelay(): Promise<RelayHandle> {
   process.env.PANE_SECRET_KEY = randomBytes(32).toString("base64");
   process.env.PORT = String(port);
   process.env.PUBLIC_URL = `http://localhost:${port}`;
-  // Disable the TTL sweeper so it can't delete the session mid-test.
+  // Disable the TTL sweeper so it can't delete the surface mid-test.
   process.env.TTL_SWEEP_SECONDS = "0";
 
   // Apply the migration before importing src/db.ts (which reads DATABASE_URL).
@@ -66,12 +66,12 @@ export async function startRelay(): Promise<RelayHandle> {
 }
 
 export interface CreatedSession {
-  sessionId: string;
+  surfaceId: string;
   humanUrl: string;
   apiKey: string;
 }
 
-// Registers an agent and creates a session whose artifact renders a visible
+// Registers an agent and creates a surface whose template renders a visible
 // marker and exposes a button that calls `pane.emit` — enough to assert the
 // iframe rendered and the emit round-trip works.
 export async function createSession(base: string): Promise<CreatedSession> {
@@ -79,8 +79,8 @@ export async function createSession(base: string): Promise<CreatedSession> {
     await fetch(base + "/v1/register", { method: "POST" })
   ).json()) as { api_key: string };
 
-  const artifact = [
-    '<div id="artifact-marker">PANE ARTIFACT RENDERED</div>',
+  const template = [
+    '<div id="template-marker">PANE ARTIFACT RENDERED</div>',
     '<button id="emit-btn">emit</button>',
     "<script>",
     'document.getElementById("emit-btn").addEventListener("click", function () {',
@@ -102,26 +102,26 @@ export async function createSession(base: string): Promise<CreatedSession> {
   ].join("\n");
 
   const created = (await (
-    await fetch(base + "/v1/sessions", {
+    await fetch(base + "/v1/surfaces", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: "Bearer " + reg.api_key,
       },
       body: JSON.stringify({
-        artifact: { type: "html-inline", source: artifact },
+        template: { type: "html-inline", source: template },
         schema: {
           events: {
             ping: { payload: { type: "object" }, emittedBy: ["page"] },
           },
         },
-        title: "Test session",
+        title: "Test surface",
       }),
     })
-  ).json()) as { session_id: string; urls: { humans: string[] } };
+  ).json()) as { surface_id: string; urls: { humans: string[] } };
 
   return {
-    sessionId: created.session_id,
+    surfaceId: created.surface_id,
     humanUrl: created.urls.humans[0]!,
     apiKey: reg.api_key,
   };

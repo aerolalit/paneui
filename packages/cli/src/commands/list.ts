@@ -1,9 +1,9 @@
-// `pane session list` — enumerate YOUR agent's sessions.
+// `pane surface list` — enumerate YOUR agent's surfaces.
 //
 // The recovery primitive when the create-response was dropped: the URL itself
 // is unrecoverable (the relay stores only the token hash), but every other
-// field of the session is intact and listable here. Pair with
-// `pane session participant new` to mint a fresh URL on a session whose
+// field of the surface is intact and listable here. Pair with
+// `pane surface participant new` to mint a fresh URL on a surface whose
 // original was lost.
 
 import type { ListSessionsStatus } from "@paneui/core";
@@ -12,17 +12,17 @@ import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-const KNOWN_FLAGS = ["status", "limit", "cursor", "artifact-id"];
+const KNOWN_FLAGS = ["status", "limit", "cursor", "template-id"];
 const KNOWN_BOOLS: string[] = [];
 
-export const listHelp = `pane session list — list YOUR agent's sessions
+export const listHelp = `pane surface list — list YOUR agent's surfaces
 
-Prints sessions (newest first) with no secrets in the response. Participant
-tokens are stored hashed and CANNOT be recovered — if you lost a session URL,
-mint a fresh one with 'pane session participant new <session-id>'.
+Prints surfaces (newest first) with no secrets in the response. Participant
+tokens are stored hashed and CANNOT be recovered — if you lost a surface URL,
+mint a fresh one with 'pane surface participant new <surface-id>'.
 
 Usage:
-  pane session list [options]
+  pane surface list [options]
 
 Options:
   --status <s>      open | closed | all. Default: open. The status reported
@@ -30,29 +30,29 @@ Options:
                     is reported as 'closed' even if not yet swept.
   --limit <N>       Page size (default 50, max 200).
   --cursor <c>      Opaque cursor from a previous page's next_cursor.
-  --artifact-id <i> Filter to sessions instantiated from a specific named
-                    artifact (head id; not version id). Inline (anonymous)
-                    artifacts cannot be filtered this way — they have no
+  --template-id <i> Filter to surfaces instantiated from a specific named
+                    template (head id; not version id). Inline (anonymous)
+                    templates cannot be filtered this way — they have no
                     stable handle.
   --url <url>       Relay base URL (overrides PANE_URL).
   --api-key <key>   Agent API key (overrides PANE_API_KEY).
   -h, --help        Show this help.
 
-Recovery recipe (lost the URL but the session is still alive):
-  pane session list                                       # find the
-                                                          #   session_id +
+Recovery recipe (lost the URL but the surface is still alive):
+  pane surface list                                       # find the
+                                                          #   surface_id +
                                                           #   participant_id
                                                           #   you lost
-  pane session participant new <session-id>               # mint a fresh URL
-  pane session participant revoke <session-id> <p-id>     # invalidate the
+  pane surface participant new <surface-id>               # mint a fresh URL
+  pane surface participant revoke <surface-id> <p-id>     # invalidate the
                                                           #   old URL
 
 Output (stdout, JSON):
   {
     items: [
       {
-        session_id, title, status, artifact_id, artifact_version_id,
-        artifact_version, participants: [...], created_at, expires_at,
+        surface_id, title, status, template_id, template_version_id,
+        template_version, participants: [...], created_at, expires_at,
         has_callback
       },
       ...
@@ -63,13 +63,13 @@ Output (stdout, JSON):
 const STATUSES: readonly ListSessionsStatus[] = ["open", "closed", "all"];
 
 export async function runList(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session list");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface list");
 
   const opts: {
     status?: ListSessionsStatus;
     limit?: number;
     cursor?: string;
-    artifact_id?: string;
+    template_id?: string;
   } = {};
 
   const status = args.flags.get("status");
@@ -98,9 +98,9 @@ export async function runList(args: ParsedArgs): Promise<void> {
   const cursor = args.flags.get("cursor");
   if (cursor !== undefined && cursor !== "") opts.cursor = cursor;
 
-  const artifactId = args.flags.get("artifact-id");
-  if (artifactId !== undefined && artifactId !== "") {
-    opts.artifact_id = artifactId;
+  const templateId = args.flags.get("template-id");
+  if (templateId !== undefined && templateId !== "") {
+    opts.template_id = templateId;
   }
 
   const client = makeClient(args);

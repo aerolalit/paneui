@@ -1,4 +1,4 @@
-// End-to-end test for the per-session WebSocket connection cap (abuse
+// End-to-end test for the per-surface WebSocket connection cap (abuse
 // control B2).
 //
 // MAX_WS_CONNECTIONS_PER_SESSION is supplied via the config injected into
@@ -44,7 +44,7 @@ beforeAll(async () => {
   prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
-  // This file exercises the per-session connection cap by opening many
+  // This file exercises the per-surface connection cap by opening many
   // upgrades from one (loopback) IP. RATE_LIMIT=0 disables the general per-IP
   // rate limiter so it doesn't fire first — RATE_LIMIT is covered by its own
   // test.
@@ -140,15 +140,15 @@ async function seedAgent(): Promise<string> {
 
 async function createSession(
   apiKey: string,
-): Promise<{ sessionId: string; agentToken: string }> {
-  const res = await fetch(`http://localhost:${port}/v1/sessions`, {
+): Promise<{ surfaceId: string; agentToken: string }> {
+  const res = await fetch(`http://localhost:${port}/v1/surfaces`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      artifact: {
+      template: {
         type: "html-inline",
         source: "<html></html>",
         event_schema: {
@@ -160,22 +160,22 @@ async function createSession(
           },
         },
       },
-      title: "Test session",
+      title: "Test surface",
     }),
   });
   const body = (await res.json()) as {
-    session_id: string;
+    surface_id: string;
     tokens: { agent: string };
   };
-  return { sessionId: body.session_id, agentToken: body.tokens.agent };
+  return { surfaceId: body.surface_id, agentToken: body.tokens.agent };
 }
 
 // Open a socket and resolve once it is OPEN, or reject with the HTTP status
 // when the upgrade is refused.
-function open(sessionId: string, token: string): Promise<WebSocket> {
+function open(surfaceId: string, token: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(
-      `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${token}`,
+      `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream?token=${token}`,
     );
     track(ws);
     ws.once("open", () => resolve(ws));
@@ -186,7 +186,7 @@ function open(sessionId: string, token: string): Promise<WebSocket> {
   });
 }
 
-describe("per-session WebSocket connection cap", () => {
+describe("per-surface WebSocket connection cap", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -197,24 +197,24 @@ describe("per-session WebSocket connection cap", () => {
 
   it("rejects the connection past MAX_WS_CONNECTIONS_PER_SESSION", async () => {
     const apiKey = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
+    const { surfaceId, agentToken } = await createSession(apiKey);
 
-    const open1 = await open(sessionId, agentToken);
-    const open2 = await open(sessionId, agentToken);
+    const open1 = await open(surfaceId, agentToken);
+    const open2 = await open(surfaceId, agentToken);
     expect(open1.readyState).toBe(WebSocket.OPEN);
     expect(open2.readyState).toBe(WebSocket.OPEN);
 
     // The third concurrent socket exceeds the cap of 2 — upgrade refused 429.
-    await expect(open(sessionId, agentToken)).rejects.toThrow(/429/);
+    await expect(open(surfaceId, agentToken)).rejects.toThrow(/429/);
   });
 
   it("frees a slot when a socket closes", async () => {
     const apiKey = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
+    const { surfaceId, agentToken } = await createSession(apiKey);
 
-    const a = await open(sessionId, agentToken);
-    await open(sessionId, agentToken);
-    await expect(open(sessionId, agentToken)).rejects.toThrow(/429/);
+    const a = await open(surfaceId, agentToken);
+    await open(surfaceId, agentToken);
+    await expect(open(surfaceId, agentToken)).rejects.toThrow(/429/);
 
     // Close one and wait for the server to deregister it.
     await new Promise<void>((resolve) => {
@@ -228,7 +228,7 @@ describe("per-session WebSocket connection cap", () => {
     // that budget isn't always enough, and a 429 leaks through (issue #145).
     // Re-attempt the open with a deadline; treat 429s as "slot not yet free,
     // try again" and surface anything else verbatim.
-    const c = await openWhenSlotFree(sessionId, agentToken, 2000);
+    const c = await openWhenSlotFree(surfaceId, agentToken, 2000);
     expect(c.readyState).toBe(WebSocket.OPEN);
   });
 });
@@ -238,14 +238,14 @@ describe("per-session WebSocket connection cap", () => {
 // wrong token) propagates immediately. Bounded by `deadlineMs` so a real
 // deadlock still surfaces as a test failure within a sane budget.
 async function openWhenSlotFree(
-  sessionId: string,
+  surfaceId: string,
   token: string,
   deadlineMs: number,
 ): Promise<WebSocket> {
   const giveUpAt = Date.now() + deadlineMs;
   for (;;) {
     try {
-      return await open(sessionId, token);
+      return await open(surfaceId, token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/upgrade rejected: 429/.test(msg) || Date.now() >= giveUpAt) {

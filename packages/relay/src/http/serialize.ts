@@ -4,7 +4,7 @@ import type { AuthorKind, SerializedEvent } from "../types.js";
 export function serializeEvent(e: EventRow): SerializedEvent {
   return {
     id: String(e.id),
-    session_id: e.sessionId,
+    surface_id: e.surfaceId,
     author: { kind: e.authorKind as AuthorKind, id: e.authorId },
     ts: e.ts.toISOString(),
     type: e.type,

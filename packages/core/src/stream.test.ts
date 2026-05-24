@@ -13,7 +13,7 @@ let handles: StreamHandle[] = [];
 function open(handlers: Parameters<typeof openStream>[1]): StreamHandle {
   // Point at a non-routable address so no real connection ever establishes.
   const h = openStream(
-    { wsBaseUrl: "ws://127.0.0.1:0", sessionId: "ses_x", token: "k" },
+    { wsBaseUrl: "ws://127.0.0.1:0", surfaceId: "ses_x", token: "k" },
     handlers,
   );
   // Swallow the inevitable connection-failure error (no server listening) so
@@ -56,7 +56,7 @@ describe("openStream frame routing", () => {
   it("delivers a well-formed event envelope to onEvent", () => {
     const events: unknown[] = [];
     const h = open({ onEvent: (e) => events.push(e) });
-    const env = { id: "evt_1", type: "form.submitted", session_id: "ses_x" };
+    const env = { id: "evt_1", type: "form.submitted", surface_id: "ses_x" };
     h.socket.emit("message", Buffer.from(JSON.stringify(env)));
     expect(events).toHaveLength(1);
     expect((events[0] as { id: string }).id).toBe("evt_1");

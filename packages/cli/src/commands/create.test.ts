@@ -1,4 +1,4 @@
-// Tests for `pane session create` — the inline and reference artifact forms.
+// Tests for `pane surface create` — the inline and reference template forms.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -7,11 +7,11 @@ const fakeClient = {
   createSession: vi.fn((req: unknown) => {
     calls.push({ method: "createSession", args: [req] });
     return Promise.resolve({
-      session_id: "ses_1",
+      surface_id: "ses_1",
       tokens: { humans: [], agent: "t" },
       urls: { humans: [], agent_stream: "ws" },
       expires_at: "2026-01-01T00:00:00Z",
-      title: "Test session",
+      title: "Test surface",
     });
   }),
 };
@@ -64,10 +64,10 @@ async function run(tokens: string[]): Promise<void> {
   }
 }
 
-describe("create — inline artifact form", () => {
-  it("builds the inline-form request with the event schema inside artifact", async () => {
+describe("create — inline template form", () => {
+  it("builds the inline-form request with the event schema inside template", async () => {
     await run([
-      "--artifact",
+      "--template",
       "<html></html>",
       "--event-schema",
       '{"events":{}}',
@@ -75,18 +75,18 @@ describe("create — inline artifact form", () => {
       "600",
     ]);
     expect(calls).toHaveLength(1);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
-    expect(req.artifact).toEqual({
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template).toEqual({
       type: "html-inline",
       source: "<html></html>",
       event_schema: { events: {} },
     });
-    expect(JSON.parse(stdout).session_id).toBe("ses_1");
+    expect(JSON.parse(stdout).surface_id).toBe("ses_1");
   });
 
   it("accepts --input-data on the inline path", async () => {
     await run([
-      "--artifact",
+      "--template",
       "<html></html>",
       "--event-schema",
       '{"events":{}}',
@@ -97,63 +97,63 @@ describe("create — inline artifact form", () => {
     expect(req["input_data"]).toEqual({ prTitle: "x" });
   });
 
-  it("omits event_schema entirely for a view-only artifact (no --event-schema)", async () => {
-    await run(["--artifact", "<html></html>"]);
+  it("omits event_schema entirely for a view-only template (no --event-schema)", async () => {
+    await run(["--template", "<html></html>"]);
     expect(calls).toHaveLength(1);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
     // event_schema must be ABSENT, not set to undefined.
-    expect(req.artifact).toEqual({
+    expect(req.template).toEqual({
       type: "html-inline",
       source: "<html></html>",
     });
-    expect("event_schema" in req.artifact).toBe(false);
-    expect(JSON.parse(stdout).session_id).toBe("ses_1");
+    expect("event_schema" in req.template).toBe(false);
+    expect(JSON.parse(stdout).surface_id).toBe("ses_1");
   });
 
-  it("plumbs --input-schema into artifact.input_schema (inline JSON) — #208", async () => {
+  it("plumbs --input-schema into template.input_schema (inline JSON) — #208", async () => {
     await run([
-      "--artifact",
+      "--template",
       "<html></html>",
       "--input-schema",
       '{"type":"object","properties":{"x":{"type":"string"}}}',
     ]);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
-    expect(req.artifact["input_schema"]).toEqual({
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template["input_schema"]).toEqual({
       type: "object",
       properties: { x: { type: "string" } },
     });
   });
 
   it("rejects a non-object --input-schema (array/primitive)", async () => {
-    await run(["--artifact", "<html></html>", "--input-schema", "[]"]);
+    await run(["--template", "<html></html>", "--input-schema", "[]"]);
     expect(calls).toHaveLength(0);
     expect(stderr).toMatch(/--input-schema must be a JSON object/);
   });
 
   it("omits input_schema entirely when --input-schema isn't passed (no input contract)", async () => {
-    await run(["--artifact", "<html></html>"]);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
-    expect("input_schema" in req.artifact).toBe(false);
+    await run(["--template", "<html></html>"]);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect("input_schema" in req.template).toBe(false);
   });
 });
 
-describe("create — reference artifact form", () => {
-  it("builds a reference-form request from --artifact-id", async () => {
-    await run(["--artifact-id", "pr-review"]);
+describe("create — reference template form", () => {
+  it("builds a reference-form request from --template-id", async () => {
+    await run(["--template-id", "pr-review"]);
     expect(calls).toHaveLength(1);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
-    expect(req.artifact).toEqual({ id: "pr-review" });
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template).toEqual({ id: "pr-review" });
   });
 
   it("pins a version with --version", async () => {
-    await run(["--artifact-id", "art_1", "--version", "3"]);
-    const req = calls[0]!.args[0] as { artifact: Record<string, unknown> };
-    expect(req.artifact).toEqual({ id: "art_1", version: 3 });
+    await run(["--template-id", "art_1", "--version", "3"]);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template).toEqual({ id: "art_1", version: 3 });
   });
 
   it("carries --input-data on the reference path", async () => {
     await run([
-      "--artifact-id",
+      "--template-id",
       "pr-review",
       "--input-data",
       '{"diffUrl":"u"}',
@@ -162,48 +162,48 @@ describe("create — reference artifact form", () => {
     expect(req["input_data"]).toEqual({ diffUrl: "u" });
   });
 
-  it("does not require --artifact or --event-schema in the reference path", async () => {
-    await run(["--artifact-id", "pr-review"]);
+  it("does not require --template or --event-schema in the reference path", async () => {
+    await run(["--template-id", "pr-review"]);
     expect(exitCode).toBeUndefined();
     expect(calls).toHaveLength(1);
   });
 
   it("rejects a non-positive --version", async () => {
-    await run(["--artifact-id", "art_1", "--version", "0"]);
+    await run(["--template-id", "art_1", "--version", "0"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("--version must be a positive integer");
   });
 
-  it("rejects --input-schema combined with --artifact-id (#208)", async () => {
-    // Named artifacts pin a version that already carries an input_schema;
+  it("rejects --input-schema combined with --template-id (#208)", async () => {
+    // Named templates pin a version that already carries an input_schema;
     // accepting --input-schema here would silently shadow it. Fail fast.
     await run([
-      "--artifact-id",
+      "--template-id",
       "pr-review",
       "--input-schema",
       '{"type":"object"}',
     ]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain(
-      "--input-schema is incompatible with --artifact-id",
+      "--input-schema is incompatible with --template-id",
     );
     expect(calls).toHaveLength(0);
   });
 });
 
 describe("create — exactly-one-of enforcement", () => {
-  it("fails when neither --artifact nor --artifact-id is given", async () => {
+  it("fails when neither --template nor --template-id is given", async () => {
     await run(["--event-schema", "{}"]);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("missing artifact");
+    expect(stderr).toContain("missing template");
     expect(calls).toHaveLength(0);
   });
 
-  it("fails when both --artifact and --artifact-id are given", async () => {
+  it("fails when both --template and --template-id are given", async () => {
     await run([
-      "--artifact-id",
+      "--template-id",
       "pr-review",
-      "--artifact",
+      "--template",
       "<html></html>",
       "--event-schema",
       "{}",
@@ -220,7 +220,7 @@ describe("create — exactly-one-of enforcement", () => {
 // internal field path".
 describe("create — schema-rejection messages use --flag names, not wire paths", () => {
   it("rejects --participants 0 with the --participants flag in the message", async () => {
-    await run(["--artifact", "<html></html>", "--participants", "0"]);
+    await run(["--template", "<html></html>", "--participants", "0"]);
     expect(exitCode).toBe(1);
     // The flag the user CAN fix; not the internal path "participants.humans".
     expect(stderr).toContain("--participants");
@@ -231,7 +231,7 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
   it("rejects --ttl 0 with the --ttl flag in the message", async () => {
     // ttl is a top-level field; the mapping table translates the bare
     // path so the public name is consistent across flag families.
-    await run(["--artifact", "<html></html>", "--ttl", "0"]);
+    await run(["--template", "<html></html>", "--ttl", "0"]);
     expect(exitCode).toBe(1);
     expect(stderr).toMatch(/invalid create request: --ttl:/);
     expect(calls).toHaveLength(0);
@@ -243,7 +243,7 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
     // exercises the fallback path's existence without manufacturing a
     // synthetic rejection.
     await run([
-      "--artifact",
+      "--template",
       "<html></html>",
       "--input-data",
       JSON.stringify({ ok: 1 }),
@@ -254,7 +254,7 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
 
 describe("create — --title flag", () => {
   it("passes --title through to the request body", async () => {
-    await run(["--artifact", "<html></html>", "--title", "Quarterly Review"]);
+    await run(["--template", "<html></html>", "--title", "Quarterly Review"]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as { title?: string };
     expect(req.title).toBe("Quarterly Review");
@@ -262,8 +262,8 @@ describe("create — --title flag", () => {
 
   it("omits title from the body when --title is not given (relay decides)", async () => {
     // The CLI deliberately doesn't enforce required-ness locally — the relay
-    // is the single source of truth for "required + Artifact.name fallback".
-    await run(["--artifact-id", "pr-review"]);
+    // is the single source of truth for "required + Template.name fallback".
+    await run(["--template-id", "pr-review"]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as Record<string, unknown>;
     expect(req).not.toHaveProperty("title");
@@ -272,7 +272,7 @@ describe("create — --title flag", () => {
 
 describe("create — unknown-flag rejection (#224)", () => {
   it("rejects an unknown value-flag and never reaches the relay", async () => {
-    // Pre-#224 the CLI silently dropped the flag and created the session.
+    // Pre-#224 the CLI silently dropped the flag and created the surface.
     // Now it must throw an ArgvError before makeClient is touched — the
     // top-level main().catch translates that to an invalid_args envelope.
     await expect(
@@ -280,7 +280,7 @@ describe("create — unknown-flag rejection (#224)", () => {
         argv([
           "--totally-fake-flag",
           "oops",
-          "--artifact",
+          "--template",
           "<html></html>",
           "--title",
           "smoke",
@@ -296,7 +296,7 @@ describe("create — unknown-flag rejection (#224)", () => {
     await expect(
       runCreate(
         argv([
-          "--artifact",
+          "--template",
           "<html></html>",
           "--title",
           "smoke",

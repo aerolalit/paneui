@@ -4,7 +4,7 @@
 // All builders return raw bytes. The corpus loader (index.ts) pairs them
 // with the matching <name>.meta.json sidecar and feeds the assembled list
 // into normalize.test.ts. The same builder is run on every test run, so
-// the fixtures are reproducible — no hidden source-of-truth binary blob.
+// the fixtures are reproducible — no hidden source-of-truth binary attachment.
 
 import { deflateSync } from "node:zlib";
 import sharp from "sharp";

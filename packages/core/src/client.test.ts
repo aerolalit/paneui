@@ -184,15 +184,15 @@ describe("PaneClient typed operations", () => {
     const c = clientWith(async () =>
       res({
         status: 200,
-        body: JSON.stringify({ session_id: "ses_x", status: "open" }),
+        body: JSON.stringify({ surface_id: "ses_x", status: "open" }),
       }),
     );
     const s = await c.getSession("ses_x");
-    expect(s.session_id).toBe("ses_x");
+    expect(s.surface_id).toBe("ses_x");
   });
 });
 
-describe("PaneClient artifact operations", () => {
+describe("PaneClient template operations", () => {
   /** Capture the request method/path/body of a single call. */
   function capturingClient(body: string, status = 200) {
     let seen: { method: string; url: string; body: unknown } | undefined;
@@ -207,9 +207,9 @@ describe("PaneClient artifact operations", () => {
     return { c, seen: () => seen! };
   }
 
-  it("createArtifact POSTs /v1/artifacts and returns artifact_id + version", async () => {
+  it("createArtifact POSTs /v1/templates and returns template_id + version", async () => {
     const { c, seen } = capturingClient(
-      JSON.stringify({ artifact_id: "art_1", version: 1 }),
+      JSON.stringify({ template_id: "art_1", version: 1 }),
       201,
     );
     const out = await c.createArtifact({
@@ -220,15 +220,15 @@ describe("PaneClient artifact operations", () => {
       type: "html-inline",
       event_schema: { events: {} },
     });
-    expect(out).toEqual({ artifact_id: "art_1", version: 1 });
+    expect(out).toEqual({ template_id: "art_1", version: 1 });
     expect(seen().method).toBe("POST");
-    expect(seen().url).toBe("https://relay.test/v1/artifacts");
+    expect(seen().url).toBe("https://relay.test/v1/templates");
     expect(seen().body).toMatchObject({ name: "PR Review", slug: "pr-review" });
   });
 
-  it("createArtifactVersion POSTs /v1/artifacts/:id/versions", async () => {
+  it("createArtifactVersion POSTs /v1/templates/:id/versions", async () => {
     const { c, seen } = capturingClient(
-      JSON.stringify({ artifact_id: "art_1", version: 2 }),
+      JSON.stringify({ template_id: "art_1", version: 2 }),
       201,
     );
     const out = await c.createArtifactVersion("pr-review", {
@@ -239,28 +239,28 @@ describe("PaneClient artifact operations", () => {
     expect(out.version).toBe(2);
     expect(seen().method).toBe("POST");
     expect(seen().url).toBe(
-      "https://relay.test/v1/artifacts/pr-review/versions",
+      "https://relay.test/v1/templates/pr-review/versions",
     );
   });
 
-  it("createArtifact omits event_schema for a view-only artifact", async () => {
+  it("createArtifact omits event_schema for a view-only template", async () => {
     const { c, seen } = capturingClient(
-      JSON.stringify({ artifact_id: "art_1", version: 1 }),
+      JSON.stringify({ template_id: "art_1", version: 1 }),
       201,
     );
     const out = await c.createArtifact({
       name: "Sales Dashboard",
       source: "<html>dashboard</html>",
       type: "html-inline",
-      // event_schema omitted — a view-only artifact.
+      // event_schema omitted — a view-only template.
     });
-    expect(out).toEqual({ artifact_id: "art_1", version: 1 });
+    expect(out).toEqual({ template_id: "art_1", version: 1 });
     expect(seen().method).toBe("POST");
     const body = seen().body as Record<string, unknown>;
     expect("event_schema" in body).toBe(false);
   });
 
-  it("updateArtifact PATCHes /v1/artifacts/:id and returns the summary", async () => {
+  it("updateArtifact PATCHes /v1/templates/:id and returns the summary", async () => {
     const { c, seen } = capturingClient(
       JSON.stringify({
         id: "art_1",
@@ -275,46 +275,46 @@ describe("PaneClient artifact operations", () => {
     const out = await c.updateArtifact("art_1", { name: "Renamed" });
     expect(out.name).toBe("Renamed");
     expect(seen().method).toBe("PATCH");
-    expect(seen().url).toBe("https://relay.test/v1/artifacts/art_1");
+    expect(seen().url).toBe("https://relay.test/v1/templates/art_1");
     expect(seen().body).toEqual({ name: "Renamed" });
   });
 
-  it("searchArtifacts unwraps the { artifacts: [] } envelope", async () => {
+  it("searchArtifacts unwraps the { templates: [] } envelope", async () => {
     const { c, seen } = capturingClient(
-      JSON.stringify({ artifacts: [{ id: "art_1", slug: "pr-review" }] }),
+      JSON.stringify({ templates: [{ id: "art_1", slug: "pr-review" }] }),
     );
     const out = await c.searchArtifacts("review");
     expect(out).toHaveLength(1);
     expect(out[0]!.slug).toBe("pr-review");
-    expect(seen().url).toBe("https://relay.test/v1/artifacts?q=review");
+    expect(seen().url).toBe("https://relay.test/v1/templates?q=review");
   });
 
   it("searchArtifacts omits the query string when no query is given", async () => {
-    const { c, seen } = capturingClient(JSON.stringify({ artifacts: [] }));
+    const { c, seen } = capturingClient(JSON.stringify({ templates: [] }));
     await c.searchArtifacts();
-    expect(seen().url).toBe("https://relay.test/v1/artifacts");
+    expect(seen().url).toBe("https://relay.test/v1/templates");
   });
 
-  it("getArtifact GETs /v1/artifacts/:id", async () => {
+  it("getArtifact GETs /v1/templates/:id", async () => {
     const { c, seen } = capturingClient(
       JSON.stringify({ id: "art_1", versions: [] }),
     );
     const out = await c.getArtifact("pr-review");
     expect(out.id).toBe("art_1");
     expect(seen().method).toBe("GET");
-    expect(seen().url).toBe("https://relay.test/v1/artifacts/pr-review");
+    expect(seen().url).toBe("https://relay.test/v1/templates/pr-review");
   });
 
-  it("getArtifactVersion GETs /v1/artifacts/:id/versions/:version", async () => {
+  it("getArtifactVersion GETs /v1/templates/:id/versions/:version", async () => {
     const { c, seen } = capturingClient(
       JSON.stringify({ id: "ver_1", version: 3 }),
     );
     const out = await c.getArtifactVersion("art_1", 3);
     expect(out.version).toBe(3);
-    expect(seen().url).toBe("https://relay.test/v1/artifacts/art_1/versions/3");
+    expect(seen().url).toBe("https://relay.test/v1/templates/art_1/versions/3");
   });
 
-  it("throws PaneApiError on a 404 from an artifact route", async () => {
+  it("throws PaneApiError on a 404 from an template route", async () => {
     const c = clientWith(async () =>
       res({
         status: 404,
@@ -347,51 +347,51 @@ describe("PaneClient.createSession", () => {
     return { c, seen: () => seen! };
   }
 
-  it("POSTs /v1/sessions with the title field on the body", async () => {
+  it("POSTs /v1/surfaces with the title field on the body", async () => {
     // Regression for the docker-smoke finding on PR #166: createSession built
-    // its POST body from an explicit allowlist (artifact, input_data,
+    // its POST body from an explicit allowlist (template, input_data,
     // participants, ttl, metadata, callback) and silently dropped `title`.
-    // Inline-form sessions then failed at the relay with "title is required"
-    // because the relay only falls back to Artifact.name on the reference
+    // Inline-form surfaces then failed at the relay with "title is required"
+    // because the relay only falls back to Template.name on the reference
     // form, and the inline form never has a name. Pin `title` into the body
-    // so `pane session create --artifact <inline> --title <t>` stops 4xx-ing.
+    // so `pane surface create --template <inline> --title <t>` stops 4xx-ing.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        session_id: "ses_1",
+        surface_id: "ses_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
       }),
     );
     await c.createSession({
-      artifact: { type: "html-inline", source: "<html></html>" },
+      template: { type: "html-inline", source: "<html></html>" },
       title: "Quick poll",
     });
     expect(seen().method).toBe("POST");
-    expect(seen().url).toBe("https://relay.test/v1/sessions");
+    expect(seen().url).toBe("https://relay.test/v1/surfaces");
     expect(seen().body).toMatchObject({ title: "Quick poll" });
   });
 
   it("omits title from the body when the caller didn't pass one", async () => {
-    // Reference-form sessions (--artifact-id) are allowed to omit title;
-    // the relay falls back to Artifact.name. We must not silently inject a
+    // Reference-form surfaces (--template-id) are allowed to omit title;
+    // the relay falls back to Template.name. We must not silently inject a
     // string here — undefined stays undefined on the wire.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        session_id: "ses_1",
+        surface_id: "ses_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
       }),
     );
     await c.createSession({
-      artifact: { id: "pr-review" },
+      template: { id: "pr-review" },
     });
     expect(seen().body).not.toHaveProperty("title");
   });
 });
 
-describe("PaneClient key + session-delete operations", () => {
+describe("PaneClient key + surface-delete operations", () => {
   /** Capture the request method/path of a single call. */
   function capturingClient(opts: { status: number; body?: string }) {
     let seen: { method: string; url: string } | undefined;
@@ -443,11 +443,11 @@ describe("PaneClient key + session-delete operations", () => {
     });
   });
 
-  it("deleteSession DELETEs /v1/sessions/:id and handles a 204 without throwing", async () => {
+  it("deleteSession DELETEs /v1/surfaces/:id and handles a 204 without throwing", async () => {
     const { c, seen } = capturingClient({ status: 204 });
     await expect(c.deleteSession("ses_1")).resolves.toBeUndefined();
     expect(seen().method).toBe("DELETE");
-    expect(seen().url).toBe("https://relay.test/v1/sessions/ses_1");
+    expect(seen().url).toBe("https://relay.test/v1/surfaces/ses_1");
   });
 
   it("deleteSession throws PaneApiError on a 404", async () => {
@@ -466,7 +466,7 @@ describe("PaneClient key + session-delete operations", () => {
   });
 });
 
-describe("PaneClient blob operations", () => {
+describe("PaneClient attachment operations", () => {
   /** Capture the request method/path/body of a single call. */
   function capturingClient(body: string, status = 200) {
     let seen: { method: string; url: string; body: unknown } | undefined;
@@ -481,14 +481,14 @@ describe("PaneClient blob operations", () => {
     return { c, seen: () => seen! };
   }
 
-  it("getBlob GETs /v1/blobs/:id/metadata and returns the full BlobRef", async () => {
+  it("getBlob GETs /v1/attachments/:id/metadata and returns the full AttachmentRef", async () => {
     // Regression: pre-fix `getBlob` issued a HEAD request and synthesised
-    // a BlobRef from response headers — `sha256` came back blank, `scope`
+    // a AttachmentRef from response headers — `sha256` came back blank, `scope`
     // was a placeholder, timestamps were missing. The metadata endpoint
-    // returns the same shape POST /v1/blobs returns; getBlob must
+    // returns the same shape POST /v1/attachments returns; getBlob must
     // forward it verbatim.
     const fullRef = {
-      blob_id: "ckxxx123",
+      attachment_id: "ckxxx123",
       scope: "agent",
       mime: "image/jpeg",
       size: 4321,
@@ -497,8 +497,8 @@ describe("PaneClient blob operations", () => {
       width: 640,
       height: 480,
       status: "ready",
-      session_id: null,
-      artifact_id: null,
+      surface_id: null,
+      template_id: null,
       created_at: "2026-05-21T10:00:00.000Z",
       confirmed_at: "2026-05-21T10:00:01.000Z",
       deleted_at: null,
@@ -510,21 +510,23 @@ describe("PaneClient blob operations", () => {
     expect(out.scope).toBe("agent");
     expect(out.filename).toBe("hero.jpg");
     expect(seen().method).toBe("GET");
-    expect(seen().url).toBe("https://relay.test/v1/blobs/ckxxx123/metadata");
+    expect(seen().url).toBe(
+      "https://relay.test/v1/attachments/ckxxx123/metadata",
+    );
   });
 
-  it("getBlob throws PaneApiError on a 404 (blob_not_found)", async () => {
+  it("getBlob throws PaneApiError on a 404 (attachment_not_found)", async () => {
     const c = clientWith(async () =>
       res({
         status: 404,
         ok: false,
-        body: JSON.stringify({ error: { code: "blob_not_found" } }),
+        body: JSON.stringify({ error: { code: "attachment_not_found" } }),
       }),
     );
     await expect(c.getBlob("ckmissing")).rejects.toMatchObject({
       name: "PaneApiError",
       status: 404,
-      code: "blob_not_found",
+      code: "attachment_not_found",
     });
   });
 });

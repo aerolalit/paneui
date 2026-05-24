@@ -49,7 +49,7 @@ describe("applyMigration (issue #118)", () => {
 
     // Sanity: schema is usable end-to-end. Use the Prisma client model
     // API so the assertion is portable across sqlite and postgres.
-    await expect(prisma.artifactVersion.count()).resolves.toBe(0);
+    await expect(prisma.templateVersion.count()).resolves.toBe(0);
   });
 
   it("is a no-op on a second call against the same database", async () => {
@@ -61,6 +61,6 @@ describe("applyMigration (issue #118)", () => {
     await expect(testDb.applyMigration(prisma)).resolves.toBeUndefined();
 
     // And the schema is still intact afterwards.
-    await expect(prisma.artifactVersion.count()).resolves.toBe(0);
+    await expect(prisma.templateVersion.count()).resolves.toBe(0);
   });
 });

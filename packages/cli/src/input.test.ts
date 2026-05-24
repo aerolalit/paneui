@@ -14,7 +14,7 @@ let textFile: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "pane-input-"));
   jsonFile = join(dir, "payload.json");
-  textFile = join(dir, "artifact.html");
+  textFile = join(dir, "template.html");
   writeFileSync(jsonFile, JSON.stringify({ from: "file" }));
   writeFileSync(textFile, "<h1>hi</h1>");
 });

@@ -2,10 +2,10 @@
 // The caller supplies the relay base URL + API key explicitly.
 
 import type {
-  ArtifactRecord,
-  ArtifactSummary,
-  ArtifactType,
-  ArtifactVersion,
+  TemplateRecord,
+  TemplateSummary,
+  TemplateType,
+  TemplateVersion,
   CreateArtifactResponse,
   CreateSessionRequest,
   CreateSessionResponse,
@@ -17,8 +17,8 @@ import type {
   MintParticipantResponse,
   PaneEvent,
   ParticipantsList,
-  SessionState,
-  SessionsPage,
+  SurfaceState,
+  SurfacesPage,
   TasteInfo,
 } from "./types.js";
 import type { ListSessionsQuery } from "./schemas.js";
@@ -50,7 +50,7 @@ export interface RelayResponse {
 }
 
 /**
- * Request body for POST /v1/artifacts — create a named, reusable artifact plus
+ * Request body for POST /v1/templates — create a named, reusable template plus
  * its v1 content. Mirrors `createArtifactSchema` from ./schemas.js.
  */
 export interface CreateArtifactRequest {
@@ -59,24 +59,24 @@ export interface CreateArtifactRequest {
   description?: string;
   tags?: string[];
   source: string;
-  type: ArtifactType;
+  type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
 }
 
 /**
- * Request body for POST /v1/artifacts/:id/versions — append a new immutable
+ * Request body for POST /v1/templates/:id/versions — append a new immutable
  * version (content only). Mirrors `createArtifactVersionSchema`.
  */
 export interface CreateArtifactVersionRequest {
   source: string;
-  type: ArtifactType;
+  type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
 }
 
 /**
- * Request body for PATCH /v1/artifacts/:id — head metadata only (never
+ * Request body for PATCH /v1/templates/:id — head metadata only (never
  * content). Mirrors `patchArtifactMetadataSchema`.
  */
 export interface PatchArtifactMetadataRequest {
@@ -248,12 +248,12 @@ export class PaneClient {
     );
   }
 
-  /** POST /v1/sessions — create a session. */
+  /** POST /v1/surfaces — create a surface. */
   async createSession(
     req: CreateSessionRequest,
   ): Promise<CreateSessionResponse> {
-    const r = await this.call("POST", "/v1/sessions", {
-      artifact: req.artifact,
+    const r = await this.call("POST", "/v1/surfaces", {
+      template: req.template,
       title: req.title,
       input_data: req.input_data,
       participants: req.participants,
@@ -265,23 +265,23 @@ export class PaneClient {
     return this.asObject<CreateSessionResponse>(r);
   }
 
-  /** GET /v1/sessions/:id — non-blocking session metadata. */
-  async getSession(sessionId: string): Promise<SessionState> {
+  /** GET /v1/surfaces/:id — non-blocking surface metadata. */
+  async getSession(surfaceId: string): Promise<SurfaceState> {
     const r = await this.call(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sessionId)}`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}`,
     );
     if (!r.ok) this.fail(r);
-    return this.asObject<SessionState>(r);
+    return this.asObject<SurfaceState>(r);
   }
 
   /**
-   * GET /v1/sessions/:id/events — fetch the event log.
+   * GET /v1/surfaces/:id/events — fetch the event log.
    * `since` is an opaque cursor; `waitSeconds` enables the relay long-poll
    * (0 = non-blocking, capped at 30 by the relay).
    */
   async getEvents(
-    sessionId: string,
+    surfaceId: string,
     opts: { since?: string | null; waitSeconds?: number } = {},
   ): Promise<EventsPage> {
     const q = new URLSearchParams();
@@ -292,15 +292,15 @@ export class PaneClient {
     const qs = q.toString();
     const r = await this.call(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/events${qs ? "?" + qs : ""}`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/events${qs ? "?" + qs : ""}`,
     );
     if (!r.ok) this.fail(r);
     return this.asObject<EventsPage>(r);
   }
 
-  /** POST /v1/sessions/:id/events — append an agent event. */
+  /** POST /v1/surfaces/:id/events — append an agent event. */
   async sendEvent(
-    sessionId: string,
+    surfaceId: string,
     ev: {
       type: string;
       data: unknown;
@@ -310,7 +310,7 @@ export class PaneClient {
   ): Promise<{ event: PaneEvent; deduped: boolean }> {
     const r = await this.call(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/events`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/events`,
       {
         type: ev.type,
         data: ev.data,
@@ -324,13 +324,13 @@ export class PaneClient {
   }
 
   /**
-   * POST /v1/artifacts — create a named, reusable artifact and its v1 content.
-   * Returns the new `artifact_id` and `version` (1).
+   * POST /v1/templates — create a named, reusable template and its v1 content.
+   * Returns the new `template_id` and `version` (1).
    */
   async createArtifact(
     req: CreateArtifactRequest,
   ): Promise<CreateArtifactResponse> {
-    const r = await this.call("POST", "/v1/artifacts", {
+    const r = await this.call("POST", "/v1/templates", {
       name: req.name,
       slug: req.slug,
       description: req.description,
@@ -345,8 +345,8 @@ export class PaneClient {
   }
 
   /**
-   * POST /v1/artifacts/:id/versions — append a new immutable version to an
-   * existing artifact. `idOrSlug` accepts the artifact id or its slug.
+   * POST /v1/templates/:id/versions — append a new immutable version to an
+   * existing template. `idOrSlug` accepts the template id or its slug.
    * Returns the new `version` number.
    */
   async createArtifactVersion(
@@ -355,7 +355,7 @@ export class PaneClient {
   ): Promise<CreateArtifactResponse> {
     const r = await this.call(
       "POST",
-      `/v1/artifacts/${encodeURIComponent(idOrSlug)}/versions`,
+      `/v1/templates/${encodeURIComponent(idOrSlug)}/versions`,
       {
         source: req.source,
         type: req.type,
@@ -368,16 +368,16 @@ export class PaneClient {
   }
 
   /**
-   * PATCH /v1/artifacts/:id — update head metadata (name / slug / description /
+   * PATCH /v1/templates/:id — update head metadata (name / slug / description /
    * tags); never the content. Returns the updated lean summary.
    */
   async updateArtifact(
     idOrSlug: string,
     metadata: PatchArtifactMetadataRequest,
-  ): Promise<ArtifactSummary> {
+  ): Promise<TemplateSummary> {
     const r = await this.call(
       "PATCH",
-      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+      `/v1/templates/${encodeURIComponent(idOrSlug)}`,
       {
         name: metadata.name,
         slug: metadata.slug,
@@ -386,49 +386,49 @@ export class PaneClient {
       },
     );
     if (!r.ok) this.fail(r);
-    return this.asObject<ArtifactSummary>(r);
+    return this.asObject<TemplateSummary>(r);
   }
 
   /**
-   * GET /v1/artifacts?q=... — search/list the agent's named artifacts. The
-   * response is lean (no `source` blob), ranked by `last_used_at`. Omit `query`
-   * to list every named artifact.
+   * GET /v1/templates?q=... — search/list the agent's named templates. The
+   * response is lean (no `source` attachment), ranked by `last_used_at`. Omit `query`
+   * to list every named template.
    */
-  async searchArtifacts(query?: string): Promise<ArtifactSummary[]> {
+  async searchArtifacts(query?: string): Promise<TemplateSummary[]> {
     const qs =
       query != null && query !== "" ? "?q=" + encodeURIComponent(query) : "";
-    const r = await this.call("GET", `/v1/artifacts${qs}`);
+    const r = await this.call("GET", `/v1/templates${qs}`);
     if (!r.ok) this.fail(r);
-    return this.asObject<{ artifacts: ArtifactSummary[] }>(r).artifacts;
+    return this.asObject<{ templates: TemplateSummary[] }>(r).templates;
   }
 
   /**
-   * GET /v1/artifacts/:id — fetch a full artifact (head metadata + version
-   * list). `idOrSlug` accepts the artifact id or its slug.
+   * GET /v1/templates/:id — fetch a full template (head metadata + version
+   * list). `idOrSlug` accepts the template id or its slug.
    */
-  async getArtifact(idOrSlug: string): Promise<ArtifactRecord> {
+  async getArtifact(idOrSlug: string): Promise<TemplateRecord> {
     const r = await this.call(
       "GET",
-      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+      `/v1/templates/${encodeURIComponent(idOrSlug)}`,
     );
     if (!r.ok) this.fail(r);
-    return this.asObject<ArtifactRecord>(r);
+    return this.asObject<TemplateRecord>(r);
   }
 
   /**
-   * GET /v1/artifacts/:id/versions/:version — fetch one version's full
+   * GET /v1/templates/:id/versions/:version — fetch one version's full
    * content (HTML, event schema, input schema).
    */
   async getArtifactVersion(
     idOrSlug: string,
     version: number,
-  ): Promise<ArtifactVersion> {
+  ): Promise<TemplateVersion> {
     const r = await this.call(
       "GET",
-      `/v1/artifacts/${encodeURIComponent(idOrSlug)}/versions/${encodeURIComponent(String(version))}`,
+      `/v1/templates/${encodeURIComponent(idOrSlug)}/versions/${encodeURIComponent(String(version))}`,
     );
     if (!r.ok) this.fail(r);
-    return this.asObject<ArtifactVersion>(r);
+    return this.asObject<TemplateVersion>(r);
   }
 
   /**
@@ -452,10 +452,10 @@ export class PaneClient {
   }
 
   /**
-   * GET /v1/taste — the calling agent's freeform "taste notes" markdown blob:
+   * GET /v1/taste — the calling agent's freeform "taste notes" markdown attachment:
    * presentation preferences the agent has picked up from human feedback over
    * time. Returns `{ taste: null, updated_at: null, bytes: 0 }` when the
-   * agent has never written notes. Read this before generating an artifact so
+   * agent has never written notes. Read this before generating an template so
    * the agent applies prior feedback.
    */
   async getTaste(): Promise<TasteInfo> {
@@ -465,7 +465,7 @@ export class PaneClient {
   }
 
   /**
-   * PUT /v1/taste — whole-blob replace of the calling agent's taste notes.
+   * PUT /v1/taste — whole-attachment replace of the calling agent's taste notes.
    * Empty/whitespace-only values are rejected by the relay; callers asking to
    * clear must use {@link clearTaste}. The relay caps the payload at the
    * server's `MAX_TASTE_BYTES` (utf8 bytes).
@@ -494,12 +494,12 @@ export class PaneClient {
   async submitFeedback(req: {
     type: FeedbackType;
     message: string;
-    sessionId?: string;
+    surfaceId?: string;
   }): Promise<FeedbackSubmission> {
     const r = await this.call("POST", "/v1/feedback", {
       type: req.type,
       message: req.message,
-      session_id: req.sessionId,
+      surface_id: req.surfaceId,
     });
     if (!r.ok) this.fail(r);
     return this.asObject<FeedbackSubmission>(r);
@@ -522,47 +522,47 @@ export class PaneClient {
   }
 
   /**
-   * GET /v1/sessions — list the calling agent's sessions. Default filter is
+   * GET /v1/surfaces — list the calling agent's surfaces. Default filter is
    * `status=open` (effective status — respects expiresAt). Response items
    * carry NO secrets: no participant token plaintext, no callback URL, no
    * metadata or input_data. Use `participant_id` from the list as the handle
    * for {@link revokeParticipant}; use {@link mintParticipant} to issue a
    * fresh URL when the original was lost.
    */
-  async listSessions(opts: ListSessionsQuery = {}): Promise<SessionsPage> {
+  async listSessions(opts: ListSessionsQuery = {}): Promise<SurfacesPage> {
     const q = new URLSearchParams();
     if (opts.status !== undefined) q.set("status", opts.status);
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
     if (opts.cursor !== undefined && opts.cursor !== "")
       q.set("cursor", opts.cursor);
-    if (opts.artifact_id !== undefined && opts.artifact_id !== "")
-      q.set("artifact_id", opts.artifact_id);
+    if (opts.template_id !== undefined && opts.template_id !== "")
+      q.set("template_id", opts.template_id);
     const qs = q.toString();
-    const r = await this.call("GET", `/v1/sessions${qs ? "?" + qs : ""}`);
+    const r = await this.call("GET", `/v1/surfaces${qs ? "?" + qs : ""}`);
     if (!r.ok) this.fail(r);
-    return this.asObject<SessionsPage>(r);
+    return this.asObject<SurfacesPage>(r);
   }
 
   /**
-   * GET /v1/sessions/:id/participants — list every participant on one
-   * session (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+   * GET /v1/surfaces/:id/participants — list every participant on one
+   * surface (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
    * on the relay, so the full list is returned with no pagination.
    * Use this to find the `participant_id` you need to pass to
    * {@link revokeParticipant}, or to audit revoked rows.
    */
-  async listParticipants(sessionId: string): Promise<ParticipantsList> {
+  async listParticipants(surfaceId: string): Promise<ParticipantsList> {
     const r = await this.call(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants`,
     );
     if (!r.ok) this.fail(r);
     return this.asObject<ParticipantsList>(r);
   }
 
   /**
-   * POST /v1/sessions/:id/participants — mint a fresh participant URL for an
-   * existing session. The one-shot recovery primitive when the original URL
-   * was dropped: the session keeps its event log, artifact pin, and created_at.
+   * POST /v1/surfaces/:id/participants — mint a fresh participant URL for an
+   * existing surface. The one-shot recovery primitive when the original URL
+   * was dropped: the surface keeps its event log, template pin, and created_at.
    * v1 supports `kind: "human"` only.
    *
    * The plaintext token is returned EXACTLY ONCE in the response — the relay
@@ -570,12 +570,12 @@ export class PaneClient {
    * delivering the URL to the human.
    */
   async mintParticipant(
-    sessionId: string,
+    surfaceId: string,
     opts: { kind?: "human" } = {},
   ): Promise<MintParticipantResponse> {
     const r = await this.call(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/participants`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants`,
       { kind: opts.kind ?? "human" },
     );
     if (!r.ok) this.fail(r);
@@ -583,8 +583,8 @@ export class PaneClient {
   }
 
   /**
-   * DELETE /v1/sessions/:id/participants/:participant_id — revoke a single
-   * participant URL. The session's other participants (and the agent's own
+   * DELETE /v1/surfaces/:id/participants/:participant_id — revoke a single
+   * participant URL. The surface's other participants (and the agent's own
    * WebSocket) are untouched. Idempotent: revoking an unknown or already-
    * revoked participant returns 204. The agent participant cannot be revoked
    * via this endpoint — use {@link deleteSession} instead.
@@ -593,39 +593,39 @@ export class PaneClient {
    * actively kicked in v1; new HTTP and WS connections are refused.
    */
   async revokeParticipant(
-    sessionId: string,
+    surfaceId: string,
     participantId: string,
   ): Promise<void> {
     const r = await this.call(
       "DELETE",
-      `/v1/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants/${encodeURIComponent(participantId)}`,
     );
     if (!r.ok) this.fail(r);
   }
 
   /**
-   * DELETE /v1/sessions/:id — close/delete a session. Idempotent on the relay
-   * side (an already-closed session still returns 204 with no body).
+   * DELETE /v1/surfaces/:id — close/delete a surface. Idempotent on the relay
+   * side (an already-closed surface still returns 204 with no body).
    */
   async deleteSession(id: string): Promise<void> {
     const r = await this.call(
       "DELETE",
-      `/v1/sessions/${encodeURIComponent(id)}`,
+      `/v1/surfaces/${encodeURIComponent(id)}`,
     );
     if (!r.ok) this.fail(r);
   }
 
   /**
-   * DELETE /v1/artifacts/:id — remove an artifact and (server-side) all its
+   * DELETE /v1/templates/:id — remove an template and (server-side) all its
    * versions. Strict cascade: the relay refuses with 409 conflict if any
-   * session in any state still references one of the artifact's versions —
+   * surface in any state still references one of the template's versions —
    * surface that as a typed PaneApiError so the CLI can render a hint
    * instead of swallowing it.
    */
   async deleteArtifact(idOrSlug: string): Promise<void> {
     const r = await this.call(
       "DELETE",
-      `/v1/artifacts/${encodeURIComponent(idOrSlug)}`,
+      `/v1/templates/${encodeURIComponent(idOrSlug)}`,
     );
     if (!r.ok) this.fail(r);
   }
@@ -636,19 +636,19 @@ export class PaneClient {
   // ------------------------------------------------------------------------
 
   /**
-   * Upload a blob to the relay. Returns a `BlobRef` that can be referenced
-   * in event payloads (the relay's `format: pane-blob-id` schema vocab
+   * Upload a attachment to the relay. Returns a `AttachmentRef` that can be referenced
+   * in event payloads (the relay's `format: pane-attachment-id` schema vocab
    * validates the id) or in `pane create --input-data`.
    *
-   * Scope defaults to "agent" (reusable across the agent's sessions). For
-   * `scope: "session"` pass `sessionId`; for `scope: "artifact"` pass
-   * `artifactId`. The agent must own the referenced session / artifact;
-   * cross-tenant attempts return blob_not_found.
+   * Scope defaults to "agent" (reusable across the agent's surfaces). For
+   * `scope: "surface"` pass `surfaceId`; for `scope: "template"` pass
+   * `templateId`. The agent must own the referenced surface / template;
+   * cross-tenant attempts return attachment_not_found.
    *
    * MIME is inferred from `mime` if supplied; otherwise the relay sniffs
    * leading bytes and may reject with mime_mismatch / mime_disallowed.
    *
-   * Backed by the relay's multipart `POST /v1/blobs` (the fallback path).
+   * Backed by the relay's multipart `POST /v1/attachments` (the fallback path).
    * For large uploads (>1 MB on hosted Azure) call `presignBlob()` +
    * `confirmBlob()` instead — those use SAS direct-to-storage and don't
    * stream bytes through the relay.
@@ -656,11 +656,11 @@ export class PaneClient {
   async uploadBlob(
     file: Blob | Buffer | Uint8Array,
     opts: UploadBlobOptions = {},
-  ): Promise<BlobRef> {
+  ): Promise<AttachmentRef> {
     const fd = new FormData();
-    let blob: Blob;
+    let attachment: Blob;
     if (file instanceof Blob) {
-      blob = file;
+      attachment = file;
     } else {
       // Buffer / Uint8Array path — wrap in a Blob with the declared MIME.
       // Copy into a freshly allocated Uint8Array so the buffer type
@@ -668,23 +668,23 @@ export class PaneClient {
       // to `ArrayBuffer` specifically — the Blob constructor accepts only
       // the latter under @types/node ≥25 + TS ≥5.7's generic narrowing of
       // Uint8Array<TArrayBuffer>. `new Uint8Array(length)` returns
-      // `Uint8Array<ArrayBuffer>` by construction, satisfying BlobPart
+      // `Uint8Array<ArrayBuffer>` by construction, satisfying AttachmentPart
       // without a type cast. The extra copy is one walk over the bytes —
       // negligible vs the network upload that follows.
       const src = file instanceof Uint8Array ? file : new Uint8Array(file);
       const u8 = new Uint8Array(src.byteLength);
       u8.set(src);
-      blob = new Blob([u8], {
+      attachment = new Blob([u8], {
         type: opts.mime ?? "application/octet-stream",
       });
     }
-    fd.set("file", blob, opts.filename ?? "blob");
+    fd.set("file", attachment, opts.filename ?? "attachment");
     if (opts.scope) fd.set("scope", opts.scope);
-    if (opts.sessionId) fd.set("session_id", opts.sessionId);
-    if (opts.artifactId) fd.set("artifact_id", opts.artifactId);
+    if (opts.surfaceId) fd.set("surface_id", opts.surfaceId);
+    if (opts.templateId) fd.set("template_id", opts.templateId);
     if (opts.filename) fd.set("filename", opts.filename);
 
-    const url = this.base + "/v1/blobs";
+    const url = this.base + "/v1/attachments";
     let res: Response;
     try {
       res = await this.fetchImpl(url, {
@@ -713,12 +713,13 @@ export class PaneClient {
     if (!res.ok) {
       this.fail({ ok: false, status: res.status, data });
     }
-    return data as BlobRef;
+    return data as AttachmentRef;
   }
 
-  /** GET /v1/blobs/:id — download bytes as an ArrayBuffer. */
-  async downloadBlob(blobId: string): Promise<ArrayBuffer> {
-    const url = this.base + "/v1/blobs/" + encodeURIComponent(blobId);
+  /** GET /v1/attachments/:id — download bytes as an ArrayBuffer. */
+  async downloadBlob(attachmentId: string): Promise<ArrayBuffer> {
+    const url =
+      this.base + "/v1/attachments/" + encodeURIComponent(attachmentId);
     const res = await this.fetchImpl(url, {
       method: "GET",
       headers: {
@@ -740,61 +741,61 @@ export class PaneClient {
   }
 
   /**
-   * GET a blob's metadata only — useful before downloading large blobs, or
-   * for `pane blob show <id>` which doesn't want the bytes. Returns the full
-   * BlobRef (the same shape POST /v1/blobs returns): id, scope, mime, size,
+   * GET a attachment's metadata only — useful before downloading large attachments, or
+   * for `pane attachment show <id>` which doesn't want the bytes. Returns the full
+   * AttachmentRef (the same shape POST /v1/attachments returns): id, scope, mime, size,
    * sha256, filename, width, height, status, scope FKs, timestamps.
    *
-   * Backed by GET /v1/blobs/:id/metadata which serves the JSON BlobRef
+   * Backed by GET /v1/attachments/:id/metadata which serves the JSON AttachmentRef
    * without streaming the bytes — cheap on the relay and avoids the
    * encrypt-at-rest decrypt cost when only the metadata is needed.
    */
-  async getBlob(blobId: string): Promise<BlobRef> {
+  async getBlob(attachmentId: string): Promise<AttachmentRef> {
     const r = await this.call(
       "GET",
-      "/v1/blobs/" + encodeURIComponent(blobId) + "/metadata",
+      "/v1/attachments/" + encodeURIComponent(attachmentId) + "/metadata",
     );
     if (!r.ok) this.fail(r);
-    return this.asObject<BlobRef>(r);
+    return this.asObject<AttachmentRef>(r);
   }
 
-  /** DELETE /v1/blobs/:id — soft-delete (idempotent). */
-  async deleteBlob(blobId: string): Promise<{ deleted: true }> {
+  /** DELETE /v1/attachments/:id — soft-delete (idempotent). */
+  async deleteBlob(attachmentId: string): Promise<{ deleted: true }> {
     const r = await this.call(
       "DELETE",
-      "/v1/blobs/" + encodeURIComponent(blobId),
+      "/v1/attachments/" + encodeURIComponent(attachmentId),
     );
     if (!r.ok) this.fail(r);
     return { deleted: true };
   }
 
   /**
-   * Mint a `/b/<token>` capability URL for `blobId`. Default TTL is set by
-   * the relay (24h agent, session-TTL session, 30d artifact). `once: true`
+   * Mint a `/b/<token>` capability URL for `attachmentId`. Default TTL is set by
+   * the relay (24h agent, surface-TTL surface, 30d template). `once: true`
    * tokens self-delete on first GET.
    */
   async mintBlobToken(
-    blobId: string,
+    attachmentId: string,
     opts: { ttlSeconds?: number; once?: boolean } = {},
-  ): Promise<BlobTokenMintResponse> {
+  ): Promise<AttachmentTokenMintResponse> {
     const r = await this.call(
       "POST",
-      "/v1/blobs/" + encodeURIComponent(blobId) + "/tokens",
+      "/v1/attachments/" + encodeURIComponent(attachmentId) + "/tokens",
       { ttl_seconds: opts.ttlSeconds, once: opts.once },
     );
     if (!r.ok) this.fail(r);
-    return r.data as BlobTokenMintResponse;
+    return r.data as AttachmentTokenMintResponse;
   }
 
   /** Revoke a previously-minted token. Idempotent. */
   async revokeBlobToken(
-    blobId: string,
+    attachmentId: string,
     tokenId: string,
   ): Promise<{ token_id: string; revoked: true }> {
     const r = await this.call(
       "DELETE",
-      "/v1/blobs/" +
-        encodeURIComponent(blobId) +
+      "/v1/attachments/" +
+        encodeURIComponent(attachmentId) +
         "/tokens/" +
         encodeURIComponent(tokenId),
     );
@@ -803,80 +804,84 @@ export class PaneClient {
   }
 
   /**
-   * GET /v1/blobs — list YOUR agent's non-deleted blobs (newest first).
+   * GET /v1/attachments — list YOUR agent's non-deleted attachments (newest first).
    * Paginated via opaque cursor: when `next_cursor` is non-null, pass it
    * back as `cursor` on the next call.
    */
   async listBlobs(
     opts: ListBlobsOptions = {},
-  ): Promise<{ items: BlobRef[]; next_cursor: string | null }> {
+  ): Promise<{ items: AttachmentRef[]; next_cursor: string | null }> {
     const params = new URLSearchParams();
     if (opts.cursor !== undefined) params.set("cursor", opts.cursor);
     if (opts.limit !== undefined) params.set("limit", String(opts.limit));
     const qs = params.toString();
-    const r = await this.call("GET", "/v1/blobs" + (qs ? "?" + qs : ""));
+    const r = await this.call("GET", "/v1/attachments" + (qs ? "?" + qs : ""));
     if (!r.ok) this.fail(r);
-    return r.data as { items: BlobRef[]; next_cursor: string | null };
+    return r.data as { items: AttachmentRef[]; next_cursor: string | null };
   }
 
   /**
-   * GET /v1/blobs/:id/tokens — enumerate the capability tokens minted
-   * against one blob, including revoked rows (for audit). The plaintext
+   * GET /v1/attachments/:id/tokens — enumerate the capability tokens minted
+   * against one attachment, including revoked rows (for audit). The plaintext
    * token is NEVER returned — it isn't stored, only its sha256 is.
    */
-  async listBlobTokens(blobId: string): Promise<BlobTokenListResponse> {
+  async listBlobTokens(
+    attachmentId: string,
+  ): Promise<AttachmentTokenListResponse> {
     const r = await this.call(
       "GET",
-      "/v1/blobs/" + encodeURIComponent(blobId) + "/tokens",
+      "/v1/attachments/" + encodeURIComponent(attachmentId) + "/tokens",
     );
     if (!r.ok) this.fail(r);
-    return r.data as BlobTokenListResponse;
+    return r.data as AttachmentTokenListResponse;
   }
 
   /**
    * Issue a presigned PUT URL for direct-to-storage upload. Returns the
-   * upload URL + the blob_id (already reserved in the relay's DB with
+   * upload URL + the attachment_id (already reserved in the relay's DB with
    * status=pending) + expiry. After PUTting the bytes to the URL, call
-   * `confirmBlob(blob_id)` to finalise.
+   * `confirmBlob(attachment_id)` to finalise.
    *
    * Filesystem backend returns 501 not_implemented — use uploadBlob()
    * (multipart fallback) instead. Azure backend returns a SAS URL.
    */
-  async presignBlob(
-    opts: PresignBlobOptions,
-  ): Promise<{ blob_id: string; upload_url: string; expires_at: string }> {
-    const r = await this.call("POST", "/v1/blobs/presign", {
+  async presignBlob(opts: PresignBlobOptions): Promise<{
+    attachment_id: string;
+    upload_url: string;
+    expires_at: string;
+  }> {
+    const r = await this.call("POST", "/v1/attachments/presign", {
       mime: opts.mime,
       size: opts.size,
       sha256: opts.sha256,
       scope: opts.scope,
-      session_id: opts.sessionId,
-      artifact_id: opts.artifactId,
+      surface_id: opts.surfaceId,
+      template_id: opts.templateId,
       filename: opts.filename,
     });
     if (!r.ok) this.fail(r);
     return r.data as {
-      blob_id: string;
+      attachment_id: string;
       upload_url: string;
       expires_at: string;
     };
   }
 
   /** Finalise a presigned upload — relay HEADs the bytes, verifies, flips ready. */
-  async confirmBlob(blobId: string): Promise<BlobRef> {
+  async confirmBlob(attachmentId: string): Promise<AttachmentRef> {
     const r = await this.call(
       "POST",
-      "/v1/blobs/" + encodeURIComponent(blobId) + "/confirm",
+      "/v1/attachments/" + encodeURIComponent(attachmentId) + "/confirm",
     );
     if (!r.ok) this.fail(r);
-    return r.data as BlobRef;
+    return r.data as AttachmentRef;
   }
 }
 
-/** Per-blob metadata as returned by `POST /v1/blobs` and friends. */
-export interface BlobRef {
-  blob_id: string;
-  scope: "agent" | "session" | "artifact";
+/** Per-attachment metadata as returned by `POST /v1/attachments` and friends. */
+export interface AttachmentRef {
+  attachment_id: string;
+  scope: "agent" | "surface" | "template";
   mime: string;
   size: number;
   sha256: string;
@@ -885,17 +890,17 @@ export interface BlobRef {
   height?: number | null;
   filename?: string | null;
   status?: string;
-  session_id?: string | null;
-  artifact_id?: string | null;
+  surface_id?: string | null;
+  template_id?: string | null;
   created_at?: string;
   confirmed_at?: string | null;
   deleted_at?: string | null;
 }
 
 export interface UploadBlobOptions {
-  scope?: "agent" | "session" | "artifact";
-  sessionId?: string;
-  artifactId?: string;
+  scope?: "agent" | "surface" | "template";
+  surfaceId?: string;
+  templateId?: string;
   /** Declared Content-Type. Defaults to `application/octet-stream`. The
    *  relay sniffs leading bytes and may reject with `mime_mismatch`. */
   mime?: string;
@@ -907,13 +912,13 @@ export interface PresignBlobOptions {
   mime: string;
   size: number;
   sha256: string;
-  scope?: "agent" | "session" | "artifact";
-  sessionId?: string;
-  artifactId?: string;
+  scope?: "agent" | "surface" | "template";
+  surfaceId?: string;
+  templateId?: string;
   filename?: string;
 }
 
-export interface BlobTokenMintResponse {
+export interface AttachmentTokenMintResponse {
   token_id: string;
   token: string;
   token_prefix: string;
@@ -931,7 +936,7 @@ export interface ListBlobsOptions {
 }
 
 /** One row in the response from `listBlobTokens()`. */
-export interface BlobTokenAuditEntry {
+export interface AttachmentTokenAuditEntry {
   token_id: string;
   token_prefix: string;
   expires_at: string;
@@ -946,7 +951,7 @@ export interface BlobTokenAuditEntry {
 }
 
 /** Shape returned by `listBlobTokens()`. */
-export interface BlobTokenListResponse {
-  blob_id: string;
-  items: BlobTokenAuditEntry[];
+export interface AttachmentTokenListResponse {
+  attachment_id: string;
+  items: AttachmentTokenAuditEntry[];
 }
