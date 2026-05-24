@@ -9,7 +9,56 @@ CREATE TABLE "agents" (
     "revoked_at" DATETIME,
     "rate_limit" INTEGER,
     "taste" TEXT,
-    "taste_updated_at" DATETIME
+    "taste_updated_at" DATETIME,
+    "owner_human_id" TEXT,
+    "claimed_at" DATETIME,
+    CONSTRAINT "agents_owner_human_id_fkey" FOREIGN KEY ("owner_human_id") REFERENCES "humans" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "humans" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "email" TEXT NOT NULL,
+    "verified_at" DATETIME,
+    "phone" TEXT,
+    "home_template_id" TEXT,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "humans_home_template_id_fkey" FOREIGN KEY ("home_template_id") REFERENCES "templates" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "logins" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "human_id" TEXT NOT NULL,
+    "cookie_hash" TEXT NOT NULL,
+    "expires_at" DATETIME NOT NULL,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "last_seen_at" DATETIME,
+    CONSTRAINT "logins_human_id_fkey" FOREIGN KEY ("human_id") REFERENCES "humans" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "claim_codes" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "human_id" TEXT NOT NULL,
+    "code_hash" TEXT NOT NULL,
+    "expires_at" DATETIME NOT NULL,
+    "consumed_at" DATETIME,
+    "consumed_by_agent_id" TEXT,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "claim_codes_human_id_fkey" FOREIGN KEY ("human_id") REFERENCES "humans" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "human_template_installs" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "human_id" TEXT NOT NULL,
+    "template_id" TEXT NOT NULL,
+    "installed_version" INTEGER NOT NULL,
+    "installed_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "uninstalled_at" DATETIME,
+    CONSTRAINT "human_template_installs_human_id_fkey" FOREIGN KEY ("human_id") REFERENCES "humans" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "human_template_installs_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "templates" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -37,6 +86,10 @@ CREATE TABLE "templates" (
     "last_used_at" DATETIME,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME NOT NULL,
+    "shape" TEXT NOT NULL DEFAULT 'interactive',
+    "published_at" DATETIME,
+    "scopes" JSONB,
+    "install_count" INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT "templates_owner_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "agents" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
@@ -57,6 +110,11 @@ CREATE TABLE "template_versions" (
 CREATE TABLE "surfaces" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "agent_id" TEXT NOT NULL,
+    "owner_human_id" TEXT,
+    "context_key" TEXT,
+    "creator_kind" TEXT,
+    "creator_id" TEXT,
+    "invite_policy" JSONB,
     "template_version_id" TEXT NOT NULL,
     "input_data" JSONB,
     "title" TEXT NOT NULL,
@@ -68,6 +126,7 @@ CREATE TABLE "surfaces" (
     "callback_secret_enc" TEXT,
     "callback_filter" JSONB,
     CONSTRAINT "surfaces_agent_id_fkey" FOREIGN KEY ("agent_id") REFERENCES "agents" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "surfaces_owner_human_id_fkey" FOREIGN KEY ("owner_human_id") REFERENCES "humans" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "surfaces_template_version_id_fkey" FOREIGN KEY ("template_version_id") REFERENCES "template_versions" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
@@ -77,11 +136,15 @@ CREATE TABLE "participants" (
     "surface_id" TEXT NOT NULL,
     "kind" TEXT NOT NULL,
     "identity_id" TEXT NOT NULL,
+    "human_id" TEXT,
+    "agent_id" TEXT,
     "token_hash" TEXT NOT NULL,
     "token_prefix" TEXT NOT NULL,
     "joined_at" DATETIME,
     "revoked_at" DATETIME,
-    CONSTRAINT "participants_surface_id_fkey" FOREIGN KEY ("surface_id") REFERENCES "surfaces" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "participants_surface_id_fkey" FOREIGN KEY ("surface_id") REFERENCES "surfaces" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "participants_human_id_fkey" FOREIGN KEY ("human_id") REFERENCES "humans" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "participants_agent_id_fkey" FOREIGN KEY ("agent_id") REFERENCES "agents" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -144,6 +207,42 @@ CREATE TABLE "attachment_tokens" (
 CREATE UNIQUE INDEX "agents_key_hash_key" ON "agents"("key_hash");
 
 -- CreateIndex
+CREATE INDEX "agents_owner_human_id_idx" ON "agents"("owner_human_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "humans_email_key" ON "humans"("email");
+
+-- CreateIndex
+CREATE INDEX "humans_email_idx" ON "humans"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "logins_cookie_hash_key" ON "logins"("cookie_hash");
+
+-- CreateIndex
+CREATE INDEX "logins_human_id_idx" ON "logins"("human_id");
+
+-- CreateIndex
+CREATE INDEX "logins_expires_at_idx" ON "logins"("expires_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "claim_codes_code_hash_key" ON "claim_codes"("code_hash");
+
+-- CreateIndex
+CREATE INDEX "claim_codes_human_id_idx" ON "claim_codes"("human_id");
+
+-- CreateIndex
+CREATE INDEX "claim_codes_expires_at_idx" ON "claim_codes"("expires_at");
+
+-- CreateIndex
+CREATE INDEX "human_template_installs_human_id_idx" ON "human_template_installs"("human_id");
+
+-- CreateIndex
+CREATE INDEX "human_template_installs_template_id_idx" ON "human_template_installs"("template_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "human_template_installs_human_id_template_id_key" ON "human_template_installs"("human_id", "template_id");
+
+-- CreateIndex
 CREATE INDEX "feedback_agent_id_created_at_idx" ON "feedback"("agent_id", "created_at");
 
 -- CreateIndex
@@ -151,6 +250,9 @@ CREATE INDEX "feedback_created_at_idx" ON "feedback"("created_at");
 
 -- CreateIndex
 CREATE INDEX "templates_owner_id_idx" ON "templates"("owner_id");
+
+-- CreateIndex
+CREATE INDEX "templates_published_at_idx" ON "templates"("published_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "templates_owner_id_slug_key" ON "templates"("owner_id", "slug");
@@ -169,6 +271,12 @@ CREATE INDEX "surfaces_expires_at_idx" ON "surfaces"("expires_at");
 
 -- CreateIndex
 CREATE INDEX "surfaces_template_version_id_idx" ON "surfaces"("template_version_id");
+
+-- CreateIndex
+CREATE INDEX "surfaces_owner_human_id_idx" ON "surfaces"("owner_human_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "surfaces_template_version_id_owner_human_id_context_key_key" ON "surfaces"("template_version_id", "owner_human_id", "context_key");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "participants_token_hash_key" ON "participants"("token_hash");
