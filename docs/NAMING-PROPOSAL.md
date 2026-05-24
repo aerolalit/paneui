@@ -32,7 +32,7 @@ not an essay.
 | rename | `Blob` → **`Attachment`** | `Blob` is SQL/storage vocabulary leaking to the API. "Attachment" reads naturally to engineers and non-engineers alike. "Blob" can stay internally for the binary-content concept; the user-facing noun is Attachment. |
 | rename | `BlobToken` → **`AttachmentToken`** | Follows. Keep `Token` as the suffix — it honestly says "single-use credential" in a way `Link` doesn't. |
 | keep | `Feedback` | Self-explanatory. No overload, no improvement available. |
-| rename (internal) | `Bridge` → **`Shell`** | "Bridge" was a metaphor; "Shell" is the literal thing — the outer HTML page wrapping the sandboxed iframe. Frees "bridge" for prose ("the relay bridges agents and humans"). No API impact. |
+| keep (was: rename) | `Bridge` | **Correction from initial draft.** Pane's codebase already uses `shell` for the outer HTML page (`packages/relay/src/bridge/client/shell.client.ts`) and `shim` for the injected runtime — distinct, correctly-named things. "Bridge" in the code is just the directory grouping / Hono sub-app for human-facing routes, not a metaphor for the shell. Renaming `bridge → shell` would collide with the existing `shell` concept. Keeping `bridge` as the routes container is honest. |
 | rename (internal) | `shim` → **`runtime`** | "Shim" implies "small compatibility layer," which it isn't. It's a runtime — injected code that exposes the host API inside the sandbox. Less mysterious to readers. No API impact. |
 | keep | `Taste` | Evocative and accurate — captures the soft, learned-preferences nature better than `Preferences` or `Style`. |
 | keep | `Skill` | Established Claude/MCP convention. Diverging would only confuse people coming from that ecosystem. |
@@ -48,11 +48,15 @@ Artifact           →  Template
 ArtifactVersion    →  TemplateVersion
 Blob               →  Attachment
 BlobToken          →  AttachmentToken
-Bridge             →  Shell             (internal)
 shim               →  runtime           (internal)
 +  Human                                 (new)
 +  Login                                 (new)
 ```
+
+(Earlier drafts of this doc proposed `Bridge → Shell` too. That rename
+was based on an incomplete reading — pane already uses `shell` and
+`shim` as distinct concepts and `bridge` is the routes container, not
+the page. Dropped.)
 
 ## What the API / CLI reads like after
 
@@ -137,8 +141,10 @@ state.
 
 Cheap. No CLI change, no API change, no migration. Pure readability.
 
-- `Bridge` → `Shell` in code and docs.
 - `shim` → `runtime` in code and docs.
+
+(`Bridge → Shell` was originally in this tier but has been dropped —
+see the naming table above for the correction.)
 
 ### Tier 2 — identity-bound auth, additive, no rename
 
