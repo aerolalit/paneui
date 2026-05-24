@@ -41,7 +41,7 @@ async function ensureStore(): Promise<AzureBlobStore | null> {
     `DefaultEndpointsProtocol=http;` +
       `AccountName=devstoreaccount1;` +
       `AccountKey=${AZURITE_ACCOUNT_KEY};` +
-      `AttachmentEndpoint=${azuriteUrl}/devstoreaccount1;`;
+      `BlobEndpoint=${azuriteUrl}/devstoreaccount1;`;
 
   const candidate = new AzureBlobStore({
     container: CONTAINER,

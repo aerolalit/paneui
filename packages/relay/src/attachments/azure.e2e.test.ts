@@ -45,7 +45,7 @@ beforeAll(async () => {
     `DefaultEndpointsProtocol=http;` +
     `AccountName=devstoreaccount1;` +
     `AccountKey=${AZURITE_ACCOUNT_KEY};` +
-    `AttachmentEndpoint=${azuriteUrl}/devstoreaccount1;`;
+    `BlobEndpoint=${azuriteUrl}/devstoreaccount1;`;
 
   try {
     store = new AzureBlobStore({
