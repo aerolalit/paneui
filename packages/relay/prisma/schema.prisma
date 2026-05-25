@@ -122,6 +122,32 @@ model ClaimCode {
   @@map("claim_codes")
 }
 
+// A magic-link email sent to (potentially) prove ownership of an email
+// address. The token in the link is hashed and stored here; on click the
+// relay validates + consumes the row and either creates the matching
+// Human (if not already present) or attaches the new Login to the
+// existing one. Bound to email, not humanId — the Human row may not
+// exist yet when the link is requested (signup-via-invite is implicit).
+model MagicLink {
+  id          String    @id @default(cuid())
+  // The email the link was sent to. The eventual Login is attached to
+  // the Human row matching this email (find-or-create at consume time).
+  email       String
+  // sha256(token) — the raw token is in the email link and never stored.
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  // Set when the token is redeemed. Once-only by construction.
+  consumedAt  DateTime? @map("consumed_at")
+  // Optional return URL captured at /login. The relay redirects here on
+  // successful verify so "log in to see this surface" deep links work.
+  returnUrl   String?   @map("return_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([expiresAt])
+  @@map("magic_links")
+}
+
 // Alice installs a public template into her catalog. Pins to the version
 // in effect at install time so a later publish doesn't silently change
 // behaviour or scopes (re-consent flow only fires on explicit upgrade).

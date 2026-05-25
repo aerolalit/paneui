@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
 import type { AttachmentStore, RevokeCache } from "../attachments/index.js";
 import type { SlidingWindowLimiter } from "./rate-limit.js";
+import type { EmailProvider } from "../auth/email-provider.js";
 
 // Shared Hono environment. `prisma`, `config`, `registerLimiter` and
 // `generalLimiter` are injected into the request context by buildApp()'s first
@@ -27,5 +28,9 @@ export type AppEnv = {
     // source of truth; a miss falls back to checking revokedAt there. Always
     // set when blobStore is set.
     blobRevokeCache?: RevokeCache;
+    // Email provider for the magic-link login flow (Phase B). Always set;
+    // `provider.available = false` when EMAIL_PROVIDER=none, in which case
+    // the /v1/auth/* routes return 503 auth_provider_unavailable.
+    emailProvider: EmailProvider;
   };
 };

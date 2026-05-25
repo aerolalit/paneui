@@ -244,6 +244,16 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.surface.deleteMany();
         await p.templateVersion.deleteMany();
         await p.template.deleteMany();
+        // Phase A + B: human-side child rows must go before humans (FKs to it).
+        // human_template_installs, claim_codes, logins, magic_links → humans.
+        // magic_links and claim_codes have no FK back to humans? claim_codes
+        // does (humanId). magic_links is bound to email string, not humanId,
+        // so its deletion is independent of human ordering.
+        await p.magicLink.deleteMany();
+        await p.claimCode.deleteMany();
+        await p.login.deleteMany();
+        await p.humanTemplateInstall.deleteMany();
+        await p.human.deleteMany();
         await p.agent.deleteMany();
       },
       cleanup: async () => {
@@ -276,7 +286,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "attachment_tokens", "attachments", "feedback", "events", "participants", "surfaces", "template_versions", "templates", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "surfaces", "template_versions", "templates", "agents" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

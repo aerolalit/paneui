@@ -5,6 +5,8 @@ import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
 import type { AttachmentStore, RevokeCache } from "../attachments/index.js";
 import { makeRevokeCache } from "../attachments/index.js";
+import type { EmailProvider } from "../auth/email-provider.js";
+import { makeNoneProvider } from "../auth/providers/none.js";
 import { ApiError, errors as apiErrors, serializeApiError } from "./errors.js";
 import type { AppEnv } from "./env.js";
 import { createRateLimiter, type SlidingWindowLimiter } from "./rate-limit.js";
@@ -14,6 +16,7 @@ import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
 import surfaces from "./routes/surfaces.js";
 import templates from "./routes/templates.js";
+import { auth } from "./routes/auth.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
@@ -42,6 +45,7 @@ export function buildApp(
   generalLimiter?: SlidingWindowLimiter,
   blobStore?: AttachmentStore,
   blobRevokeCache?: RevokeCache,
+  emailProvider?: EmailProvider,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -67,6 +71,11 @@ export function buildApp(
   const effectiveBlobRevokeCache =
     blobRevokeCache ?? (blobStore ? makeRevokeCache() : undefined);
 
+  // EmailProvider falls back to the `none` provider when the caller (HTTP-only
+  // tests / lightweight harnesses) doesn't inject one. The relay always injects
+  // its provider via makeEmailProvider().
+  const effectiveEmailProvider = emailProvider ?? makeNoneProvider();
+
   app.use("*", async (c, next) => {
     c.set("config", config);
     c.set("prisma", prisma);
@@ -75,6 +84,7 @@ export function buildApp(
     if (blobStore) c.set("blobStore", blobStore);
     if (effectiveBlobRevokeCache)
       c.set("blobRevokeCache", effectiveBlobRevokeCache);
+    c.set("emailProvider", effectiveEmailProvider);
     await next();
   });
 
@@ -229,6 +239,10 @@ export function buildApp(
   // `Authorization: Bearer <REGISTRATION_SECRET>` token; `open` is public.
   // In the secret and open modes a per-IP rate limit bounds abuse.
   app.route("/v1/register", register);
+  // /v1/auth/* — human-side magic-link login. The route module handles the
+  // EMAIL_PROVIDER=none case internally (returns 503 auth_provider_unavailable)
+  // so unconfigured self-hosters get a clear signal instead of a 404.
+  app.route("/v1", auth);
   app.route("/v1/surfaces", surfaces);
   // Event bodies carry at most MAX_EVENT_DATA_BYTES of `data`; a tighter cap
   // here (leaving headroom for the JSON envelope) rejects an oversized event
