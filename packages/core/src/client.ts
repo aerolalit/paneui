@@ -452,6 +452,25 @@ export class PaneClient {
   }
 
   /**
+   * POST /v1/agents/claim — bind this agent to a human via a one-shot
+   * claim code the human generated in their settings UI. After a
+   * successful claim the agent's existing API key continues to work,
+   * but the agent (and its surfaces/templates) now belong to the
+   * claiming human. One-way operation — there is no unclaim in v1.
+   */
+  async claimAgent(
+    code: string,
+  ): Promise<{ ok: true; owner_human_id: string; claimed_at: string }> {
+    const r = await this.call("POST", "/v1/agents/claim", { code });
+    if (!r.ok) this.fail(r);
+    return this.asObject<{
+      ok: true;
+      owner_human_id: string;
+      claimed_at: string;
+    }>(r);
+  }
+
+  /**
    * GET /v1/taste — the calling agent's freeform "taste notes" markdown attachment:
    * presentation preferences the agent has picked up from human feedback over
    * time. Returns `{ taste: null, updated_at: null, bytes: 0 }` when the

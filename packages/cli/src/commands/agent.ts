@@ -11,6 +11,7 @@
 import type { ParsedArgs } from "../argv.js";
 import { runRegister } from "./register.js";
 import { runLogout } from "./logout.js";
+import { runClaim } from "./claim.js";
 import { fail } from "../output.js";
 
 export const agentHelp = `pane agent — manage this agent's identity on the relay
@@ -21,6 +22,9 @@ Usage:
 Verbs:
   register          Provision an agent API key (POST /v1/register) and save it
                     to the CLI config file. Run this once before other commands.
+  claim <code>      Bind this agent to a human via a one-shot claim code the
+                    human generated in their Settings UI (POST /v1/agents/claim).
+                    One-way; no unclaim in v1.
   logout            Clear the locally-saved relay URL + API key. Does NOT
                     revoke the key on the relay — use 'pane key revoke' for
                     that.
@@ -28,23 +32,32 @@ Verbs:
 Run \`pane agent <verb> --help\` for verb-specific options.`;
 
 export async function runAgent(args: ParsedArgs): Promise<void> {
+  // Strip the first positional (the verb) so each verb runner sees its
+  // own arguments at positionals[0..n].
+  const verbArgs = {
+    ...args,
+    positionals: args.positionals.slice(1),
+  };
   const verb = args.positionals[0];
   switch (verb) {
     case "register":
-      await runRegister(args);
+      await runRegister(verbArgs);
+      break;
+    case "claim":
+      await runClaim(verbArgs);
       break;
     case "logout":
-      await runLogout(args);
+      await runLogout(verbArgs);
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane agent <register|logout> (run 'pane agent --help')",
+        "missing verb — usage: pane agent <register|claim|logout> (run 'pane agent --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown agent verb '${verb}' — expected register|logout (run 'pane agent --help')`,
+        `unknown agent verb '${verb}' — expected register|claim|logout (run 'pane agent --help')`,
         "invalid_args",
       );
   }
