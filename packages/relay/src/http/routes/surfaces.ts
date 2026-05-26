@@ -254,8 +254,16 @@ surfaces.post("/", requireAgent, async (c) => {
     );
   }
 
-  const { template, participants, ttl, metadata, callback, input_data, title } =
-    parsed.data;
+  const {
+    template,
+    participants,
+    ttl,
+    metadata,
+    callback,
+    input_data,
+    title,
+    context_key,
+  } = parsed.data;
 
   const requestedHumans = participants?.humans ?? 1;
   if (requestedHumans > config.MAX_PARTICIPANTS_PER_SESSION) {
@@ -458,6 +466,64 @@ surfaces.post("/", requireAgent, async (c) => {
     }
   }
 
+  // Phase G — contextKey dedup. When the caller supplies a context_key and
+  // the calling agent is claimed by a human, look up an existing surface
+  // owned by that human for the same (templateVersionId, ownerHumanId,
+  // contextKey). If found, return it instead of creating a new one. The
+  // unique index defined in Phase A's schema enforces this at the DB
+  // layer too (concurrent creates would lose the race to P2002 and we
+  // retry by re-reading).
+  //
+  // Standalone agents (no ownerHumanId) skip the dedup — they're the
+  // pre-Phase-A path where every create made a fresh row.
+  const dedupKey = context_key ?? null;
+  const ownerHumanId = agent.ownerHumanId;
+  if (dedupKey && ownerHumanId) {
+    const existing = await prisma.surface.findFirst({
+      where: {
+        templateVersionId,
+        ownerHumanId,
+        contextKey: dedupKey,
+      },
+      include: {
+        participants: {
+          where: { revokedAt: null },
+        },
+      },
+    });
+    if (existing) {
+      // Return the existing surface. Mint a participant slot if the
+      // existing surface has no live human token (e.g. revoked); else
+      // surface the existing tokens via /v1/surfaces/:id/participants
+      // (the caller can list them — we don't re-emit secret token values
+      // here).
+      const existingHumanCount = existing.participants.filter(
+        (p) => p.kind === "human",
+      ).length;
+      const wsBase = publicWsUrl(config);
+      return c.json(
+        {
+          surface_id: existing.id,
+          created: false,
+          // No token re-emit on dedup hit — tokens are stored hashed, so
+          // we cannot reveal them. The caller lists participants via
+          // /v1/surfaces/:id/participants and mints fresh ones via
+          // /v1/surfaces/:id/participants when needed.
+          tokens: { humans: [], agent: null },
+          urls: {
+            humans: [],
+            agent_stream: `${wsBase}/v1/surfaces/${existing.id}/stream`,
+          },
+          expires_at: existing.expiresAt.toISOString(),
+          title: existing.title,
+          context_key: existing.contextKey,
+          active_human_participants: existingHumanCount,
+        },
+        200,
+      );
+    }
+  }
+
   const surfaceId = generateSessionId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
     generateHumanParticipantToken(),
@@ -466,10 +532,16 @@ surfaces.post("/", requireAgent, async (c) => {
 
   // `input_data` was validated above against the pinned version's
   // `input_schema` (when the version declares one) — it is safe to store.
+  // For human-owned surfaces (claimed agent), set ownerHumanId so dedup
+  // and the human-side catalogs (my-surfaces, …) see this row.
   await prisma.surface.create({
     data: {
       id: surfaceId,
       agentId: agent.id,
+      ownerHumanId,
+      contextKey: dedupKey,
+      creatorKind: "agent",
+      creatorId: agent.id,
       templateVersionId,
       title: resolvedTitle,
       inputData: input_data
@@ -515,6 +587,7 @@ surfaces.post("/", requireAgent, async (c) => {
   return c.json(
     {
       surface_id: surfaceId,
+      created: true,
       tokens: {
         humans: humanTokens,
         agent: agentToken,
@@ -525,6 +598,7 @@ surfaces.post("/", requireAgent, async (c) => {
       },
       expires_at: expiresAt.toISOString(),
       title: resolvedTitle,
+      context_key: dedupKey,
     },
     201,
   );
