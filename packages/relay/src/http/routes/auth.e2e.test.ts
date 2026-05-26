@@ -273,7 +273,9 @@ describe("GET /v1/auth/verify", () => {
         redirect: "manual",
       }),
     );
-    expect(res.headers.get("location")).toBe("/");
+    // Open-redirect defence: a cross-origin returnUrl is dropped and the
+    // default landing (/home, per Phase D) is used instead.
+    expect(res.headers.get("location")).toBe("/home");
   });
 });
 

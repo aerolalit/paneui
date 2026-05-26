@@ -19,6 +19,7 @@ import templates from "./routes/templates.js";
 import { auth } from "./routes/auth.js";
 import self from "./routes/self.js";
 import agents from "./routes/agents.js";
+import systemPages from "./routes/system-pages.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
@@ -177,15 +178,21 @@ export function buildApp(
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-  // GET / — the relay is an API server with no page of its own. A human who
-  // pastes the bare relay URL is sent to the landing site; API clients always
-  // hit explicit paths (/v1/*, /s/*, /skills/*, /healthz) and never see this.
+  // GET / — bounce to the landing site for unauthenticated users (Phase D
+  // sends logged-in humans to /home via /v1/auth/verify's redirect).
   app.get("/", (c) => c.redirect("https://paneui.com", 302));
 
   // GET /skills/pane/SKILL.md — the pane agent skill, served verbatim so an
   // agent can fetch it from the relay it uses. Registered here, before the
   // rate-limit middleware, so it stays unmetered like /healthz.
   app.route("/skills", skill);
+
+  // System pages — /login + /home + /my-surfaces + /my-templates + /my-agents
+  // + /settings. These are pane-shipped HTML pages that read the human's
+  // Login cookie and render their data. Registered before the rate limiter
+  // (like /skills and /healthz) so a hostile bot can't lock a legitimate
+  // human out of the login page itself.
+  app.route("/", systemPages);
 
   // Global request-body size cap. Routes parse JSON bodies with c.req.json();
   // the per-payload caps (MAX_ARTIFACT_BYTES, MAX_EVENT_DATA_BYTES,
