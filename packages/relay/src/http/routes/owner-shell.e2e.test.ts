@@ -227,6 +227,85 @@ describe("GET /surfaces/:id/presence", () => {
   });
 });
 
+describe("GET /s/:token — logged-in-owner upgrade", () => {
+  it("302s to /surfaces/:id when the caller is logged in as the surface owner", async () => {
+    const { cookie, surfaceId } = await seedOwnedSurface();
+    // Mint a participant token directly so we have a /s/:token URL to hit.
+    const tok = "tok_h_" + randomBytes(32).toString("base64url");
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "human",
+        identityId: "h_shared",
+        tokenHash: hashKey(tok),
+        tokenPrefix: keyPrefix(tok),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/s/${tok}`, {
+        ...withCookie(cookie),
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`/surfaces/${surfaceId}`);
+  });
+
+  it("does NOT redirect when the caller is logged in as a different human", async () => {
+    const { surfaceId } = await seedOwnedSurface();
+    // A second logged-in human, NOT the owner.
+    const other = await prisma.human.create({
+      data: { email: "bob@example.com", verifiedAt: new Date() },
+    });
+    const otherCookie = generateLoginCookie();
+    await prisma.login.create({
+      data: {
+        humanId: other.id,
+        cookieHash: hashLoginCookie(otherCookie),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const tok = "tok_h_" + randomBytes(32).toString("base64url");
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "human",
+        identityId: "h_shared",
+        tokenHash: hashKey(tok),
+        tokenPrefix: keyPrefix(tok),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/s/${tok}`, {
+        ...withCookie(otherCookie),
+        redirect: "manual",
+      }),
+    );
+    // Plain shell render, not a redirect — the share link is still the
+    // intended entry for non-owners.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("does NOT redirect when there is no login cookie", async () => {
+    const { surfaceId } = await seedOwnedSurface();
+    const tok = "tok_h_" + randomBytes(32).toString("base64url");
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "human",
+        identityId: "h_shared",
+        tokenHash: hashKey(tok),
+        tokenPrefix: keyPrefix(tok),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/s/${tok}`, { redirect: "manual" }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("POST /surfaces/:id/ws-ticket", () => {
   it("mints a ticket for the owner and lazy-creates their Participant row", async () => {
     const { cookie, surfaceId, humanId } = await seedOwnedSurface();

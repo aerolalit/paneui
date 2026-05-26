@@ -184,6 +184,37 @@ bridge.get("/:token", async (c) => {
   }
   const { surface, participant } = loaded;
 
+  // Logged-in owner → upgrade to the clean session-authed URL. If the
+  // caller is signed in as the surface's owner, redirect them off the
+  // capability-token URL onto /surfaces/:id, where the pane_login cookie
+  // does the auth and the URL bar shows nothing sensitive. This makes the
+  // share link a graceful one-way ramp for the owner: they paste a /s/<tok>
+  // URL once (e.g. from an email they sent themselves), and from then on
+  // the address bar reflects the surface-id route.
+  //
+  // Done BEFORE the identity-bound participant gate below: an owner whose
+  // own agent created the surface generally won't be a participant on it,
+  // so the gate below wouldn't apply — but we still want to upgrade them.
+  // Done AFTER loadByToken so a bad/revoked token still 404s as before; we
+  // never leak surface state by redirecting on an invalid token.
+  if (surface.ownerHumanId) {
+    const { parseLoginCookie, hashLoginCookie } =
+      await import("../auth/cookie.js");
+    const cookieValue = parseLoginCookie(c.req.header("cookie") ?? null);
+    if (cookieValue) {
+      const login = await prisma.login.findUnique({
+        where: { cookieHash: hashLoginCookie(cookieValue) },
+      });
+      if (
+        login &&
+        login.expiresAt > new Date() &&
+        login.humanId === surface.ownerHumanId
+      ) {
+        return c.redirect(`/surfaces/${surface.id}`, 302);
+      }
+    }
+  }
+
   // Identity-bound participants (Phase E §7.3 A) require the caller to be
   // logged in as the bound human. Anonymous capability participants
   // (humanId null) pass through unchanged — that's the existing behaviour.

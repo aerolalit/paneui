@@ -13,7 +13,7 @@ describe("config", () => {
     expect(c.MAX_ARTIFACT_BYTES).toBe(2_000_000);
     expect(c.MAX_EVENT_DATA_BYTES).toBe(65_536);
     expect(c.MAX_PARTICIPANTS_PER_SESSION).toBe(32);
-    expect(c.DEFAULT_TTL_SECONDS).toBe(3600);
+    expect(c.DEFAULT_TTL_SECONDS).toBe(900);
     expect(c.MAX_TTL_SECONDS).toBe(86_400);
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
     expect(c.REGISTER_RATE_LIMIT).toBe(5);
