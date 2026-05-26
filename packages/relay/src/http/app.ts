@@ -25,6 +25,7 @@ import {
   templateMarketplace,
 } from "./routes/template-marketplace.js";
 import systemPages from "./routes/system-pages.js";
+import ownerShell from "./routes/owner-shell.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
@@ -240,6 +241,10 @@ export function buildApp(
   // stricter per-IP limiter applied inside the route module.
   app.use("/v1/*", generalRateLimit);
   app.use("/s/*", generalRateLimit);
+  // /surfaces/:id/* — the cookie-authed owner shell. Same per-IP + per-token
+  // limiter as /s/* so an attacker who steals a session cookie can't grind
+  // through endpoints any faster than they could with a participant token.
+  app.use("/surfaces/*", generalRateLimit);
 
   // CLI-version skew check on the agent-facing API. Runs after the rate
   // limiter so a hostile too-old CLI also pays the per-IP cost; runs before
@@ -247,6 +252,16 @@ export function buildApp(
   // (/s/*) are human-facing and have no CLI version to check; the skill +
   // health routes are mounted above and stay unmetered.
   app.use("/v1/*", cliVersionMiddleware(config));
+
+  // Owner-shell mount — /surfaces/:id + nested content/presence/ws-ticket.
+  // Cookie-authed, owner-only: renders the same shell + iframe runtime as the
+  // capability-token /s/:token mount but with surface-id-keyed callback URLs,
+  // so a logged-in human opens their own surfaces without a token in the URL.
+  // Registered AFTER the rate-limit + body-cap middleware (unlike systemPages,
+  // which deliberately stays unmetered so a bot can't lock a human out of
+  // /login) so an attacker hammering /surfaces/* hits the per-IP limiter
+  // just like they would on /s/*.
+  app.route("/surfaces", ownerShell);
 
   // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
   // the route module: `closed` (default) returns 404; `secret` requires an

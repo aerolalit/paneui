@@ -48,6 +48,10 @@ export function loadClient(name: string): string {
 }
 const RUNTIME_JS = loadClient("runtime.client.js");
 const SHELL_JS = loadClient("shell.client.js");
+// The shim is exported so the owner-shell `/surfaces/:id/content` route can
+// inline the same iframe runtime as the capability-token `/s/:token/content`
+// route — both serve the same template body under the same CSP.
+export { SHIM_JS, PERMISSIONS_POLICY };
 
 function publicWsBase(config: Config): string {
   const u = new URL(config.publicUrl);
@@ -127,13 +131,13 @@ async function loadByToken(prisma: PrismaClient, token: string) {
 // Shared by the `/:token` route (seeds the shell config once) and the
 // `/:token/presence` route (the shell polls this to keep the pill fresh) so
 // the two never diverge.
-interface AgentPresence {
+export interface AgentPresence {
   agentLive: boolean;
   agentLastEventAt: string | null;
   agentLastUsedAt: string | null;
 }
 
-async function computeAgentPresence(
+export async function computeAgentPresence(
   prisma: PrismaClient,
   surface: {
     id: string;
@@ -264,11 +268,22 @@ bridge.get("/:token", async (c) => {
   c.header("Cache-Control", "private, no-store");
   c.header("Content-Type", "text/html; charset=utf-8");
 
+  // Capability-token mount: every callback URL embeds the participant token,
+  // and the ws-ticket mint uses the token as Bearer auth. Mirror the legacy
+  // shape exactly so existing /s/<token> sessions behave unchanged.
+  const tokenSeg = `/s/${encodeURIComponent(token)}`;
   return c.body(
     renderShell({
       nonce,
-      token,
       surfaceId: surface.id,
+      iframeContentUrl: `${tokenSeg}/content`,
+      presenceUrl: `${tokenSeg}/presence`,
+      // ws-ticket mint stays under /v1 in token mode — that endpoint already
+      // accepts both an agent key and a participant token as dual auth.
+      wsTicketUrl: `/v1/surfaces/${encodeURIComponent(surface.id)}/ws-ticket`,
+      wsTicketAuthorization: `Bearer ${token}`,
+      attachmentsUploadUrl: `${tokenSeg}/attachments`,
+      attachmentsDownloadUrlBase: `${tokenSeg}/attachments`,
       schema,
       inputData: surface.inputData ?? null,
       wsUrl,
@@ -379,10 +394,24 @@ bridge.get("/:token/presence", async (c) => {
   return c.body(JSON.stringify(presence));
 });
 
-interface ShellArgs {
+export interface ShellArgs {
   nonce: string;
-  token: string;
   surfaceId: string;
+  // Path the iframe loads (e.g. `/s/<token>/content` or `/surfaces/<id>/content`).
+  // Carried as a separate field so renderShell stays auth-mode-agnostic.
+  iframeContentUrl: string;
+  // Same-origin endpoints the shell calls back into. Carrying these in the
+  // CFG (vs. constructing them in the client from a token) lets a single
+  // shell bundle drive both the capability-token mount and the session-authed
+  // mount; see ShellCfg in src/bridge/client/shell.client.ts.
+  presenceUrl: string;
+  wsTicketUrl: string;
+  // Authorization header value sent on the ws-ticket POST. Null in session
+  // mode (the pane_login cookie travels automatically); the participant
+  // `Bearer <token>` in capability-token mode.
+  wsTicketAuthorization: string | null;
+  attachmentsUploadUrl: string;
+  attachmentsDownloadUrlBase: string;
   schema: EventSchema;
   // The surface's per-instance input_data (validated against the template
   // version's input_schema at create time). Threaded through the shell config
@@ -401,12 +430,16 @@ interface ShellArgs {
   title: string;
 }
 
-function renderShell(args: ShellArgs): string {
+export function renderShell(args: ShellArgs): string {
   const cfg = {
     surfaceId: args.surfaceId,
     schema: args.schema,
     inputData: args.inputData,
-    token: args.token,
+    presenceUrl: args.presenceUrl,
+    wsTicketUrl: args.wsTicketUrl,
+    wsTicketAuthorization: args.wsTicketAuthorization,
+    attachmentsUploadUrl: args.attachmentsUploadUrl,
+    attachmentsDownloadUrlBase: args.attachmentsDownloadUrlBase,
     wsUrl: args.wsUrl,
     isClosed: args.isClosed,
     agentLive: args.agentLive,
@@ -523,7 +556,7 @@ ${
       // to save has no working code path — the file can be fetched via
       // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
       // is intentionally NOT included; only the in-tab download is enabled.
-      `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="/s/${args.token}/content"></iframe>`
+      `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
 }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>

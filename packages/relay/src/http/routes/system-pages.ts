@@ -271,10 +271,21 @@ systemPages.get("/my-surfaces", async (c) => {
       surfaces.length === 0
         ? `<p class="empty">No surfaces yet. Once one of your agents creates one, it'll show up here.</p>`
         : `<ul class="list">${surfaces
-            .map(
-              (s) =>
-                `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code> · ${s.status} · created ${escapeHtml(s.createdAt.toISOString().slice(0, 10))}</div></div>${s.status === "open" ? `<span class="pill good">Open</span>` : `<span class="pill muted">Closed</span>`}</li>`,
-            )
+            .map((s) => {
+              const isActive =
+                s.status === "open" && s.expiresAt.getTime() > Date.now();
+              const statusBadge = isActive
+                ? `<span class="pill good">Active</span>`
+                : `<span class="pill muted">Closed</span>`;
+              // Open is an actual link to the cookie-authed owner shell
+              // (/surfaces/:id) — distinct from the share-link path
+              // (/s/:token). No participant token in the URL; the pane_login
+              // cookie does the auth, so a stolen URL is inert.
+              const openAction = isActive
+                ? `<a class="btn ghost" href="/surfaces/${encodeURIComponent(s.id)}" style="padding:6px 12px;font-size:13px;">Open</a>`
+                : "";
+              return `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(s.createdAt.toISOString().slice(0, 10))}</div></div><div style="display:flex;gap:10px;align-items:center;">${statusBadge}${openAction}</div></li>`;
+            })
             .join("")}</ul>`
     }
   </div>`;

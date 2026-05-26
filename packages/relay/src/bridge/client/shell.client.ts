@@ -31,7 +31,20 @@ interface ShellCfg {
   // template version's input_schema at create time. Forwarded to the iframe in
   // the `init` frame; the runtime exposes it as `window.pane.inputData`.
   inputData: unknown;
-  token: string;
+  // Same-origin endpoints the shell calls back into. Injected (rather than
+  // constructed from a token) so the same shell bundle drives BOTH auth modes:
+  //   - capability-token mode (/s/<token>) — URLs include the token in the path
+  //   - session mode (/surfaces/<id>) — URLs are id-keyed; the pane_login
+  //     cookie authenticates each call.
+  presenceUrl: string;
+  wsTicketUrl: string;
+  // Authorization header value for the ws-ticket call. Null in session mode
+  // (the cookie travels automatically); the participant bearer in token mode.
+  wsTicketAuthorization: string | null;
+  attachmentsUploadUrl: string;
+  // Append `/<attachmentId>` to form a download URL. Carrying the prefix
+  // (rather than a template string) keeps the encoding boundary obvious.
+  attachmentsDownloadUrlBase: string;
   wsUrl: string;
   isClosed: boolean;
   // Live agent-presence facts, computed by the relay at request time. These
@@ -238,11 +251,7 @@ interface SerializedEvent {
 
   // Same-origin: the shell is served by the relay, so /presence sits under the
   // relay origin. connect-src 'self' in the shell-page CSP already covers it.
-  const presenceUrl =
-    window.location.origin +
-    "/s/" +
-    encodeURIComponent(CFG.token) +
-    "/presence";
+  const presenceUrl = window.location.origin + CFG.presenceUrl;
 
   async function pollPresence(): Promise<void> {
     if (CFG.isClosed) return;
@@ -365,16 +374,21 @@ interface SerializedEvent {
   // ticket (30s TTL, single-use) and puts the TICKET in the WS URL instead.
   // A fresh ticket is minted before EVERY connect (incl. reconnects) because a
   // ticket is single-use and expires after 30s. See relay issue #8.
-  const ticketUrl =
-    window.location.origin +
-    "/v1/surfaces/" +
-    encodeURIComponent(CFG.surfaceId) +
-    "/ws-ticket";
+  const ticketUrl = window.location.origin + CFG.wsTicketUrl;
 
   async function mintTicket(): Promise<string> {
+    const headers: Record<string, string> = {};
+    if (CFG.wsTicketAuthorization) {
+      headers["authorization"] = CFG.wsTicketAuthorization;
+    }
     const res = await fetch(ticketUrl, {
       method: "POST",
-      headers: { authorization: "Bearer " + CFG.token },
+      headers,
+      // Session mode authenticates via the pane_login cookie. The cookie is
+      // first-party + same-origin so this is a no-op for the token path; spell
+      // it out anyway so a future strict-cookie default never silently breaks
+      // the owner-shell call.
+      credentials: "same-origin",
       cache: "no-store",
     });
     if (!res.ok) {
@@ -593,11 +607,7 @@ interface SerializedEvent {
       fd.set("file", part, filename);
       if (typeof opts.filename === "string") fd.set("filename", opts.filename);
 
-      const uploadUrl =
-        window.location.origin +
-        "/s/" +
-        encodeURIComponent(CFG.token) +
-        "/attachments";
+      const uploadUrl = window.location.origin + CFG.attachmentsUploadUrl;
 
       // Fire the fetch in a sibling task — never await it on the message
       // listener thread, so a hung relay can't block other runtime frames.
@@ -718,9 +728,8 @@ interface SerializedEvent {
 
       const downloadUrl =
         window.location.origin +
-        "/s/" +
-        encodeURIComponent(CFG.token) +
-        "/attachments/" +
+        CFG.attachmentsDownloadUrlBase +
+        "/" +
         encodeURIComponent(attachmentId);
 
       // Fire the fetch in a sibling task — never await on the message
@@ -731,7 +740,10 @@ interface SerializedEvent {
           // `cache: 'no-store'` matches the route's `Cache-Control: private,
           // no-store` — participant-token-authed bytes must never be
           // cached by the browser.
-          res = await fetch(downloadUrl, { cache: "no-store" });
+          res = await fetch(downloadUrl, {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
         } catch (e) {
           if (frame && frame.contentWindow) {
             const reply: OutboundFrame = {
@@ -867,16 +879,18 @@ interface SerializedEvent {
 
       const downloadUrl =
         window.location.origin +
-        "/s/" +
-        encodeURIComponent(CFG.token) +
-        "/attachments/" +
+        CFG.attachmentsDownloadUrlBase +
+        "/" +
         encodeURIComponent(attachmentId);
 
       // Fire in a sibling task — never await on the message-listener thread.
       void (async () => {
         let res: Response;
         try {
-          res = await fetch(downloadUrl, { cache: "no-store" });
+          res = await fetch(downloadUrl, {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
         } catch (e) {
           if (frame && frame.contentWindow) {
             const reply: OutboundFrame = {
