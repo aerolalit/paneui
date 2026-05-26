@@ -79,12 +79,7 @@ const schema = z.object({
   MAX_SCHEMA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_SCHEMA_DEPTH: z.coerce.number().int().positive().default(32),
   MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
-  // 15 minutes. Surfaces are short-lived by design: the share URL embeds a
-  // long-lived capability token, so a shorter default narrows the window
-  // during which a leaked URL is usable. Agents that genuinely need a longer
-  // surface pass --ttl explicitly (or POST { ttl } on the create call);
-  // operators can raise the default for self-hosts that need it.
-  DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
 
