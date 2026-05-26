@@ -30,7 +30,7 @@ import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import {
   computeAgentPresence,
   renderShell,
-  SHIM_JS,
+  RUNTIME_JS,
   PERMISSIONS_POLICY,
 } from "../../bridge/routes.js";
 import {
@@ -79,57 +79,110 @@ async function loadOwnedSurface(
   return surface;
 }
 
+// Identity-id reserved for the surface owner's session-mode participant. A
+// fixed literal (not the monotonic `h_${N}` used elsewhere) so the existing
+// `@@unique([surfaceId, identityId])` constraint on Participant doubles as
+// the dedup gate for this row — only one owner participant ever exists per
+// surface, and two concurrent mints from the same owner collide on the
+// constraint instead of producing duplicate rows. Distinct from the
+// `h_${N}` namespace Phase E's invite-email and public-link routes mint
+// from, so an admin reading the audit log can tell "owner's own click" from
+// "human invited by email" at a glance.
+const OWNER_IDENTITY_ID = "h_owner";
+
 // Lazy-mint (or reuse) the owner's identity-bound participant. The raw token
 // is generated only because Participant.tokenHash is `@unique` and required;
 // it is NEVER returned to the caller and never persisted in any form besides
 // the SHA-256 hash, so the row is reachable only via cookie-authed surface-id
 // routes — never via /s/<token>.
+//
+// Concurrency: `findFirst` + `create` is a classic check-then-act race —
+// two concurrent ws-ticket calls (e.g. two tabs the owner opened at once,
+// or a rapid mobile/desktop overlap) could both see "no row" and both try
+// to create. The `(surfaceId, identityId)` unique constraint serialises the
+// write: the loser gets P2002, we re-`findFirst`, return the winner's row.
+// Phase E's invite-email route deliberately allows multiple Participants
+// for the same `(surfaceId, humanId)` (so the owner can mint several
+// revocable invite URLs for the same person), so we cannot add a
+// `(surfaceId, humanId)` unique constraint; this is why the
+// identity-id-based scheme is the right shape of fix here.
 async function getOrCreateOwnerParticipant(
   prisma: PrismaClient,
   surfaceId: string,
   humanId: string,
 ): Promise<{ identityId: string; id: string }> {
+  // Look up by (surfaceId, identityId) — the dedup key. We include `humanId`
+  // in the lookup as defence-in-depth: a row with our identity-id but a
+  // different humanId would be a data-integrity bug, and reusing it would
+  // mis-attribute events. In practice the constraint ensures one such row
+  // exists per surface and we wrote its humanId ourselves, so this is just
+  // a safety belt.
   const existing = await prisma.participant.findFirst({
-    where: { surfaceId, humanId, kind: "human", revokedAt: null },
+    where: {
+      surfaceId,
+      identityId: OWNER_IDENTITY_ID,
+      humanId,
+      kind: "human",
+      revokedAt: null,
+    },
     select: { id: true, identityId: true },
   });
   if (existing) return existing;
 
-  // Mirror the monotonic identity-id allocator from POST
-  // /v1/surfaces/:id/participants in routes/surfaces.ts: derive the next index
-  // from the ever-minted human count (including revoked rows so a revoke
-  // doesn't recycle labels), and retry on P2002 unique-constraint collisions
-  // against (surfaceId, identityId) caused by concurrent mints.
-  const MAX_ATTEMPTS = 8;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const everMintedHumans = await prisma.participant.count({
-      where: { surfaceId, kind: "human" },
+  const tok = generateHumanParticipantToken();
+  try {
+    const created = await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "human",
+        identityId: OWNER_IDENTITY_ID,
+        tokenHash: hashKey(tok),
+        tokenPrefix: keyPrefix(tok),
+        humanId,
+      },
+      select: { id: true, identityId: true },
     });
-    const tok = generateHumanParticipantToken();
-    try {
-      const created = await prisma.participant.create({
-        data: {
-          surfaceId,
-          kind: "human",
-          identityId: `h_${everMintedHumans}`,
-          tokenHash: hashKey(tok),
-          tokenPrefix: keyPrefix(tok),
-          humanId,
-        },
-        select: { id: true, identityId: true },
-      });
-      return created;
-    } catch (e) {
-      const code = (e as { code?: string } | null)?.code;
-      if (code !== "P2002" || attempt === MAX_ATTEMPTS - 1) throw e;
-      // A concurrent mint won this identity-id slot. The next loop iteration's
-      // count() will pick it up; no backoff needed.
+    return created;
+  } catch (e) {
+    // Narrow to the identity-id collision (the race we're handling). Other
+    // P2002s — most plausibly an astronomically unlikely tokenHash collision
+    // — would indicate a real bug, so we let them bubble. The collision
+    // fingerprint is engine-dependent (see surfaces.ts:854-873 for the same
+    // analysis); we match either Prisma 6's `target` array or Prisma 7's
+    // message-body form.
+    const code = (e as { code?: string } | null)?.code;
+    if (code !== "P2002") throw e;
+    const target = (e as { meta?: { target?: unknown } } | null)?.meta?.target;
+    const targetStr = Array.isArray(target)
+      ? target.join(",")
+      : String(target ?? "");
+    const message = (e as { message?: string } | null)?.message ?? "";
+    const isIdentityCollision =
+      targetStr.includes("identity_id") ||
+      targetStr.includes("participants_session_id_identity_id_key") ||
+      message.includes("identity_id");
+    if (!isIdentityCollision) throw e;
+
+    // Re-query — the racing call won the row; reuse it.
+    const winner = await prisma.participant.findFirst({
+      where: {
+        surfaceId,
+        identityId: OWNER_IDENTITY_ID,
+        humanId,
+        kind: "human",
+        revokedAt: null,
+      },
+      select: { id: true, identityId: true },
+    });
+    if (!winner) {
+      // The race resolved against us but the row isn't there on re-query.
+      // Either it was revoked between the P2002 and the re-query (acceptable
+      // — the next call will mint a new one) or there's a deeper consistency
+      // bug. Rethrow the original error so the operator notices.
+      throw e;
     }
+    return winner;
   }
-  // Reached only if `MAX_ATTEMPTS` consecutive concurrent mints stole the
-  // identity-id slot — extremely unlikely under realistic concurrency, but
-  // we surface a generic 500 rather than loop forever.
-  throw new Error("could not allocate owner participant identity-id");
 }
 
 // GET /surfaces/:id — shell HTML for the owner.
@@ -260,7 +313,7 @@ ownerShell.get("/:id/content", async (c) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script>${SHIM_JS}</script>
+<script>${RUNTIME_JS}</script>
 </head>
 <body>
 ${artifactBody}

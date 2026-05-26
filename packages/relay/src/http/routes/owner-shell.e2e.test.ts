@@ -184,7 +184,7 @@ describe("GET /surfaces/:id", () => {
 });
 
 describe("GET /surfaces/:id/content", () => {
-  it("returns the template body wrapped with the shim", async () => {
+  it("returns the template body wrapped with the runtime", async () => {
     const { cookie, surfaceId } = await seedOwnedSurface();
     const res = await app.fetch(
       new Request(`http://t/surfaces/${surfaceId}/content`, withCookie(cookie)),
@@ -192,7 +192,7 @@ describe("GET /surfaces/:id/content", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("hello from the test template");
-    // The shim is injected into the iframe document.
+    // The runtime is injected into the iframe document.
     expect(html).toContain("window.pane");
   });
 
@@ -304,6 +304,41 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
     );
     expect(res.status).toBe(200);
   });
+
+  // Regression test for the owner-upgrade × identity-bound-participant
+  // interaction. The redirect in bridge/routes.ts runs BEFORE the
+  // identity-bound participant gate, so if the owner clicks a token URL that
+  // happens to be bound to a *different* human, ownership wins: they get a
+  // 302 to /surfaces/<id> rather than a 403 wrong_account. Without this
+  // ordering the owner would be locked out of a URL they could legitimately
+  // open via the clean route.
+  it("redirects the owner even when the token's participant is bound to a different human", async () => {
+    const { cookie, surfaceId } = await seedOwnedSurface();
+    // A second human (bob), unrelated to the surface — token belongs to bob.
+    const bob = await prisma.human.create({
+      data: { email: "bob@example.com", verifiedAt: new Date() },
+    });
+    const tok = "tok_h_" + randomBytes(32).toString("base64url");
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "human",
+        identityId: "h_bob",
+        tokenHash: hashKey(tok),
+        tokenPrefix: keyPrefix(tok),
+        humanId: bob.id,
+      },
+    });
+    // Owner (alice) hits bob's token URL while signed in as the surface owner.
+    const res = await app.fetch(
+      new Request(`http://t/s/${tok}`, {
+        ...withCookie(cookie),
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`/surfaces/${surfaceId}`);
+  });
 });
 
 describe("POST /surfaces/:id/ws-ticket", () => {
@@ -335,7 +370,7 @@ describe("POST /surfaces/:id/ws-ticket", () => {
     expect(after[0]!).toMatchObject({
       kind: "human",
       humanId,
-      identityId: "h_0",
+      identityId: "h_owner",
     });
   });
 
@@ -360,6 +395,31 @@ describe("POST /surfaces/:id/ws-ticket", () => {
       where: { surfaceId },
     });
     expect(rows.length).toBe(1);
+  });
+
+  it("never mints duplicate owner participants under concurrent calls", async () => {
+    // Race fix regression: two concurrent ws-ticket calls (e.g. two tabs the
+    // owner opened at once) must collide on the (surfaceId, identityId)
+    // unique constraint and resolve to a single Participant row. Without
+    // that, the lazy-mint's findFirst+create can race into duplicates and
+    // the owner's identity-id flips between rows on subsequent reconnects.
+    const { cookie, surfaceId } = await seedOwnedSurface();
+    const results = await Promise.all(
+      [0, 1, 2, 3, 4].map(() =>
+        app.fetch(
+          new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+            method: "POST",
+            ...withCookie(cookie),
+          }),
+        ),
+      ),
+    );
+    for (const r of results) expect(r.status).toBe(201);
+    const rows = await prisma.participant.findMany({
+      where: { surfaceId, kind: "human" },
+    });
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.identityId).toBe("h_owner");
   });
 
   it("returns 410 for a closed surface", async () => {

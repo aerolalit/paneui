@@ -48,10 +48,10 @@ export function loadClient(name: string): string {
 }
 const RUNTIME_JS = loadClient("runtime.client.js");
 const SHELL_JS = loadClient("shell.client.js");
-// The shim is exported so the owner-shell `/surfaces/:id/content` route can
+// The runtime is exported so the owner-shell `/surfaces/:id/content` route can
 // inline the same iframe runtime as the capability-token `/s/:token/content`
 // route — both serve the same template body under the same CSP.
-export { SHIM_JS, PERMISSIONS_POLICY };
+export { RUNTIME_JS, PERMISSIONS_POLICY };
 
 function publicWsBase(config: Config): string {
   const u = new URL(config.publicUrl);

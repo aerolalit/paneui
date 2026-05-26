@@ -1,7 +1,19 @@
-// The shell IIFE: runs in the participant's browser at /s/:token. Holds the
-// WebSocket connection, owns the participant token (lives only in the shell,
-// never reaches the iframe), and proxies the postMessage protocol between the
-// sandboxed iframe (which runs the agent's template + the runtime) and the WS.
+// The shell IIFE: runs in the participant's browser. Holds the WebSocket
+// connection and proxies the postMessage protocol between the sandboxed
+// iframe (which runs the agent's template + the runtime) and the WS.
+//
+// Two mount points serve this bundle:
+//   - /s/<token>      capability-token mode: the URL embeds a participant
+//                     token. The shell's wsTicketAuthorization carries the
+//                     `Bearer <token>` it needs to mint a WS ticket; all
+//                     other callback URLs are /s/<token>/* paths.
+//   - /surfaces/<id>  session mode: the caller is signed in as the surface
+//                     owner. The pane_login cookie authenticates each
+//                     request (including the ws-ticket mint, which carries
+//                     no Authorization header); callback URLs are
+//                     /surfaces/<id>/* paths.
+// The shell does not need to know which mode it is in — both paths are
+// expressed through the injected URLs in ShellCfg below.
 //
 // Config is delivered via a sibling `<script type="application/json" id="pane-cfg">`
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
@@ -368,9 +380,14 @@ interface SerializedEvent {
     }
   }
 
-  // Mint a fresh single-use WebSocket ticket. The shell holds the real
-  // participant token, but a long-lived token in the WS URL leaks into proxy
-  // access logs — so the browser path exchanges the token for a short-lived
+  // Mint a fresh single-use WebSocket ticket. Browsers can't set an
+  // Authorization header on `new WebSocket()`, so the WS URL must carry a
+  // credential as a query parameter — and a long-lived token there leaks
+  // into upstream proxy access logs. The browser path therefore mints a
+  // short-lived single-use ticket over HTTP first (cookie auth in session
+  // mode; Bearer participant token in capability-token mode) and puts the
+  // TICKET in the WS URL instead — a 30s TTL value worth nothing if it
+  // leaks.
   // ticket (30s TTL, single-use) and puts the TICKET in the WS URL instead.
   // A fresh ticket is minted before EVERY connect (incl. reconnects) because a
   // ticket is single-use and expires after 30s. See relay issue #8.
@@ -688,9 +705,10 @@ interface SerializedEvent {
       return;
     }
     // download-attachment-request: the iframe is asking the shell to GET attachment
-    // bytes by id. The shell holds the participant token (it lives only in
-    // the shell, never reaches the iframe) so the iframe cannot make this
-    // request directly. We fetch, then post the resulting Blob back via
+    // bytes by id. The shell brokers this fetch — the iframe sandbox has
+    // `connect-src 'none'` and the cookie / participant token never reach
+    // the iframe, so it cannot make the request directly. We fetch, then
+    // post the resulting Blob back via
     // structured clone — the iframe receives a live Blob it can render
     // with `URL.createObjectURL` (the iframe CSP allows `attachment:` URLs in
     // `img-src`). ALWAYS post a reply, even on network failure — otherwise
