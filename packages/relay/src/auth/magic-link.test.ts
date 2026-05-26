@@ -27,12 +27,12 @@ describe("magic-link helpers", () => {
   });
 
   describe("buildMagicLinkUrl", () => {
-    it("appends /auth/verify and the token query param", () => {
+    it("appends /v1/auth/verify and the token query param", () => {
       const url = buildMagicLinkUrl({
         publicUrl: "https://relay.test",
         token: "ml_abc",
       });
-      expect(url).toBe("https://relay.test/auth/verify?token=ml_abc");
+      expect(url).toBe("https://relay.test/v1/auth/verify?token=ml_abc");
     });
 
     it("trims a trailing slash on the public URL", () => {
@@ -40,7 +40,7 @@ describe("magic-link helpers", () => {
         publicUrl: "https://relay.test/",
         token: "ml_abc",
       });
-      expect(url).toBe("https://relay.test/auth/verify?token=ml_abc");
+      expect(url).toBe("https://relay.test/v1/auth/verify?token=ml_abc");
     });
 
     it("URL-encodes special chars in the token", () => {

@@ -21,6 +21,9 @@ export function hashMagicLinkToken(token: string): string {
  * Build the absolute magic-link URL the recipient clicks. The token is in
  * the query string (not the path) so existing web-server access logs that
  * redact `?...` already protect it.
+ *
+ * Path matches the actual route mount: src/http/routes/auth.ts is mounted
+ * at /v1 in app.ts, with route `/auth/verify` → final path `/v1/auth/verify`.
  */
 export function buildMagicLinkUrl(args: {
   publicUrl: string;
@@ -28,7 +31,7 @@ export function buildMagicLinkUrl(args: {
 }): string {
   const base = args.publicUrl.replace(/\/$/, "");
   const t = encodeURIComponent(args.token);
-  return `${base}/auth/verify?token=${t}`;
+  return `${base}/v1/auth/verify?token=${t}`;
 }
 
 /**
