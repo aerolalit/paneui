@@ -22,12 +22,20 @@ const SHELL_JS = loadClient("shell.client.js");
 const TOKEN = "tok_h_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const SESSION_ID = "ses_test";
 
-// Minimal cfg that satisfies the shell IIFE.
+// Minimal cfg that satisfies the shell IIFE. The shell takes its callback URLs
+// from the cfg block rather than constructing them from a token (the same
+// bundle now drives the capability-token mount AND the cookie-authed
+// /surfaces/:id mount), so we mirror the same /s/:token paths the bridge
+// route emits — the existing assertions still check the same URLs.
 const CFG = {
   surfaceId: SESSION_ID,
   schema: {},
   inputData: null,
-  token: TOKEN,
+  presenceUrl: `/s/${TOKEN}/presence`,
+  wsTicketUrl: `/v1/surfaces/${SESSION_ID}/ws-ticket`,
+  wsTicketAuthorization: `Bearer ${TOKEN}`,
+  attachmentsUploadUrl: `/s/${TOKEN}/attachments`,
+  attachmentsDownloadUrlBase: `/s/${TOKEN}/attachments`,
   wsUrl: "ws://localhost/v1/surfaces/ses_test/stream",
   isClosed: false,
   agentLive: false,

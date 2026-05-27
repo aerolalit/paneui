@@ -15,6 +15,7 @@ import { createPrismaClient } from "./db.js";
 import { runBootstrap } from "./bootstrap.js";
 import { log } from "./log.js";
 import { buildApp } from "./http/app.js";
+import { makeEmailProvider } from "./auth/factory.js";
 import { createRateLimiter } from "./http/rate-limit.js";
 import { makeBlobStore, makeRevokeCache } from "./attachments/index.js";
 import { attachWs } from "./ws/handler.js";
@@ -151,12 +152,24 @@ async function main(): Promise<void> {
   // misses fall back to the row's revoked_at column.
   const blobRevokeCache = makeRevokeCache();
 
+  // Resolve the email provider from config. When EMAIL_PROVIDER=none (the
+  // default), the resulting provider has `available=false` and the
+  // /v1/auth/* routes return 503. The async path is because the azure /
+  // smtp providers dynamically `import()` their optional npm packages so
+  // a self-host that doesn't pick them never loads the SDK.
+  const emailProvider = await makeEmailProvider(config);
+  log.info("email provider ready", {
+    provider: emailProvider.kind,
+    available: emailProvider.available,
+  });
+
   const app = buildApp(
     config,
     prisma,
     generalLimiter,
     blobStore,
     blobRevokeCache,
+    emailProvider,
   );
 
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {

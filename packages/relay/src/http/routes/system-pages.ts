@@ -271,10 +271,21 @@ systemPages.get("/my-surfaces", async (c) => {
       surfaces.length === 0
         ? `<p class="empty">No surfaces yet. Once one of your agents creates one, it'll show up here.</p>`
         : `<ul class="list">${surfaces
-            .map(
-              (s) =>
-                `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code> · ${s.status} · created ${escapeHtml(s.createdAt.toISOString().slice(0, 10))}</div></div>${s.status === "open" ? `<span class="pill good">Open</span>` : `<span class="pill muted">Closed</span>`}</li>`,
-            )
+            .map((s) => {
+              const isActive =
+                s.status === "open" && s.expiresAt.getTime() > Date.now();
+              const statusBadge = isActive
+                ? `<span class="pill good">Active</span>`
+                : `<span class="pill muted">Closed</span>`;
+              // Open is an actual link to the cookie-authed owner shell
+              // (/surfaces/:id) — distinct from the share-link path
+              // (/s/:token). No participant token in the URL; the pane_login
+              // cookie does the auth, so a stolen URL is inert.
+              const openAction = isActive
+                ? `<a class="btn ghost" href="/surfaces/${encodeURIComponent(s.id)}" style="padding:6px 12px;font-size:13px;">Open</a>`
+                : "";
+              return `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(s.createdAt.toISOString().slice(0, 10))}</div></div><div style="display:flex;gap:10px;align-items:center;">${statusBadge}${openAction}</div></li>`;
+            })
             .join("")}</ul>`
     }
   </div>`;
@@ -371,7 +382,10 @@ systemPages.get("/my-agents", async (c) => {
     <p style="color:var(--muted);font-size:14px;margin:0 0 8px;">Generate a one-time code, then run <code>pane agent claim &lt;code&gt;</code> on the agent.</p>
     <div id="code-out" hidden style="background:var(--accent-soft);border:1px solid #f1d6bd;border-radius:8px;padding:14px 16px;">
       <div style="font-size:12px;color:var(--accent);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">Your code</div>
-      <code id="code-value" style="font-size:15px;background:#fff;padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid #f1d6bd;"></code>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <code id="code-value" style="font-size:15px;background:#fff;padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid #f1d6bd;user-select:all;"></code>
+        <button id="copy-code" type="button" class="btn ghost" style="padding:6px 12px;font-size:13px;">Copy</button>
+      </div>
       <div style="font-size:13px;color:#6b4d2a;margin-top:8px;">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
     </div>
   </div>
@@ -407,6 +421,36 @@ systemPages.get("/my-agents", async (c) => {
         btn.disabled = false;
         btn.textContent = "Generate claim code";
       }
+    });
+    document.getElementById("copy-code")?.addEventListener("click", async (ev) => {
+      const code = document.getElementById("code-value").textContent || "";
+      if (!code) return;
+      const btn = ev.target;
+      const original = btn.textContent;
+      let ok = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+          ok = true;
+        } else {
+          // Fallback for non-secure contexts (e.g. http on mobile).
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.top = "0";
+          ta.style.left = "0";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+      } catch {
+        ok = false;
+      }
+      btn.textContent = ok ? "Copied!" : "Copy failed";
+      setTimeout(() => { btn.textContent = original; }, 1500);
     });
   </script>`;
   return c.html(
