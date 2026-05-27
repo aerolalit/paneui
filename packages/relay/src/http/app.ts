@@ -17,6 +17,8 @@ import register from "./routes/register.js";
 import surfaces from "./routes/surfaces.js";
 import templates from "./routes/templates.js";
 import { auth } from "./routes/auth.js";
+import self from "./routes/self.js";
+import agents from "./routes/agents.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
@@ -259,6 +261,12 @@ export function buildApp(
   app.route("/v1/surfaces/:id/events", events);
   app.route("/v1/templates", templates);
   app.route("/v1/keys", keys);
+  // /v1/self/* — human-authenticated routes about the calling human's
+  // own account. Currently only the claim-code mint; Phase D extends it.
+  app.route("/v1/self", self);
+  // /v1/agents/* — agent-authenticated routes about the calling agent.
+  // Currently only the claim endpoint; Phase D will likely add more.
+  app.route("/v1/agents", agents);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
   app.route("/v1/attachments", attachments);
