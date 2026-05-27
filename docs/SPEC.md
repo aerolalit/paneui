@@ -133,7 +133,7 @@ The artifact is treated as hostile by default (LLM-generated). The relay enforce
 
 ## Bridge
 
-The shell page (outside the iframe) holds the WebSocket and the token. The bridge shim, served alongside the shell, exposes `pane` to the artifact via `postMessage`:
+The shell page (outside the iframe) holds the WebSocket and the token. The pane runtime, served alongside the shell, exposes `pane` to the artifact via `postMessage`:
 
 ```ts
 pane.emit(type, data, opts?): Promise<{ id }>
@@ -182,7 +182,7 @@ TTL bound to that (identity, session), then opens the WebSocket with
 broadcasts the event *before* sending the ack back to the emitter. The sender
 therefore receives its own event echoed on the same connection, and that echo
 arrives ahead of the ack for the emit. Clients that both send and receive on one
-connection — multiplexed agents, the page bridge shim — must dedupe by event id
+connection — multiplexed agents, the page runtime — must dedupe by event id
 (`event.id` vs the `id` returned in the ack).
 
 **Slow-client backpressure (v1 limitation).** The relay broadcasts synchronously

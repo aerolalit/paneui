@@ -1,9 +1,10 @@
 // Shared, type-level definition of the shell <-> iframe postMessage protocol.
 //
-// The shell (shell.client.ts) and the shim (shim.client.ts) are compiled into
-// two SEPARATE IIFE bundles and inlined into different HTML pages — they never
-// share a runtime module, and `loadClient()` strips module syntax so a runtime
-// `import` would be a SyntaxError in the classic <script> they're inlined as.
+// The shell (shell.client.ts) and the runtime (runtime.client.ts) are compiled
+// into two SEPARATE IIFE bundles and inlined into different HTML pages — they
+// never share a runtime module, and `loadClient()` strips module syntax so a
+// runtime `import` would be a SyntaxError in the classic <script> they're
+// inlined as.
 //
 // So this file is deliberately TYPE-ONLY: it declares no runtime values, only
 // interfaces and type aliases. Both bundles `import type` from it, which the
@@ -17,21 +18,21 @@ export type PaneFrameMarker = 1;
 
 /**
  * Protocol version literal. Bumped on any breaking change to the frame shape.
- * Both the shell and the shim must check an inbound frame's `v` against this
- * before acting on it — a mismatch means the two bundles disagree.
+ * Both the shell and the runtime must check an inbound frame's `v` against
+ * this before acting on it — a mismatch means the two bundles disagree.
  */
 export type PaneProtocolVersion = 1;
 
-/** Frame kinds the shim sends to the shell (iframe -> shell). */
-export type ShimToShellKind =
+/** Frame kinds the runtime sends to the shell (iframe -> shell). */
+export type RuntimeToShellKind =
   | "ready"
   | "emit"
   | "upload-blob-request"
   | "download-blob-request"
   | "save-blob-request";
 
-/** Frame kinds the shell sends to the shim (shell -> iframe). */
-export type ShellToShimKind =
+/** Frame kinds the shell sends to the runtime (shell -> iframe). */
+export type ShellToRuntimeKind =
   | "init"
   | "event"
   | "ack"
@@ -51,7 +52,7 @@ export interface PaneFrameEnvelope {
   /** Always `1` — receivers reject any other value before acting on the frame. */
   v: PaneProtocolVersion;
   /** Discriminates the frame; the remaining fields depend on it. */
-  kind: ShimToShellKind | ShellToShimKind;
+  kind: RuntimeToShellKind | ShellToRuntimeKind;
 }
 
 /**
@@ -79,7 +80,7 @@ export interface BlobRefLike {
 }
 
 /**
- * The shape of an `upload-blob-request` frame the shim posts to the shell.
+ * The shape of an `upload-blob-request` frame the runtime posts to the shell.
  * `file` is a browser `File` — postMessage's structured-clone algorithm
  * supports `File` (and the underlying `Blob` reference), so the shell
  * receives a live `File` it can hand to FormData without a roundtrip
@@ -89,7 +90,7 @@ export interface UploadBlobRequestFrame {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
   kind: "upload-blob-request";
-  /** RPC correlation id — the shim's resolver matches against this. */
+  /** RPC correlation id — the runtime's resolver matches against this. */
   id: string;
   /** The file the human picked, transferred via structured clone. */
   file: File;
@@ -119,7 +120,7 @@ export type UploadBlobResultFrame = {
 );
 
 /**
- * The shape of a `download-blob-request` frame the shim posts to the shell.
+ * The shape of a `download-blob-request` frame the runtime posts to the shell.
  * The shell brokers a `GET /s/:participantToken/blobs/:blob_id` fetch on
  * the iframe's behalf and posts the bytes back as a `Blob` (structured-
  * cloneable across postMessage, same as `File` in the upload direction).
@@ -130,7 +131,7 @@ export interface DownloadBlobRequestFrame {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
   kind: "download-blob-request";
-  /** RPC correlation id — the shim's resolver matches against this. */
+  /** RPC correlation id — the runtime's resolver matches against this. */
   id: string;
   /** The blob id to fetch. Must be referenced from this session. */
   blob_id: string;
@@ -195,14 +196,14 @@ export interface PaneInitPayload {
   session_id: string;
   /** The session's event schema (the event vocabulary). */
   schema: unknown;
-  /** Historical events to replay through the shim's ingest path. */
+  /** Historical events to replay through the runtime's ingest path. */
   replay: unknown[];
-  /** Origin of the shell page — outbound posts from the shim pin to it. */
+  /** Origin of the shell page — outbound posts from the runtime pin to it. */
   shell_origin: string;
   /**
    * The session's per-instance `input_data` — validated by the relay against
    * the artifact version's `input_schema` at session-create time. `null` when
-   * the session was created without `input_data`. The shim exposes it on the
+   * the session was created without `input_data`. The runtime exposes it on the
    * frozen `window.pane` as `pane.inputData`.
    */
   input_data: unknown;

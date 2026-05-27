@@ -3,7 +3,7 @@
 // Follow-up C of #156. The agent-side already has `POST /v1/blobs` (multipart)
 // and `POST /v1/blobs/presign` (direct-to-storage), but the human inside the
 // rendered pane had no way to upload a file BACK to the relay. This closes
-// the loop: the iframe shim exposes `window.pane.uploadBlob(file)`, the shell
+// the loop: the iframe runtime exposes `window.pane.uploadBlob(file)`, the shell
 // brokers a fetch to this route using the participant token it already has
 // (the same token it uses for `/s/:token/presence` and the WS ticket mint),
 // and the route returns a `BlobRef` that the artifact can then attach to a

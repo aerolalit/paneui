@@ -48,7 +48,7 @@ popups). The artifact is served from `/s/:token/content` under a tight CSP:
 requests of any kind — no `fetch`, no `XMLHttpRequest`, no WebSocket), a
 locked-down `Permissions-Policy` that denies every powerful browser API, and
 `Referrer-Policy: no-referrer` on the shell. The artifact talks to the relay
-**only** through the bridge shim's `postMessage` channel, which the shell
+**only** through the pane runtime's `postMessage` channel, which the shell
 mediates.
 
 What this buys you: a malicious or compromised artifact cannot exfiltrate the

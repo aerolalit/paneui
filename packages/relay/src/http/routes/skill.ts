@@ -19,7 +19,7 @@ const PACKAGE_ROOT = resolve(
   "..",
 );
 
-// Read once at startup (like the bridge's SHIM_JS/SHELL_JS) so a missing file
+// Read once at startup (like the bridge's RUNTIME_JS/SHELL_JS) so a missing file
 // fails the boot loudly instead of 500ing per request. The skill is a ~16 KB
 // static doc — editing it requires a relay restart, which is fine.
 function loadSkill(): string {

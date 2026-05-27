@@ -6,16 +6,16 @@ This is the part `docs/SPEC.md` flags as "the part you can't get wrong." Read th
 
 In:
 - `GET /s/:token`: the **shell** page (the trusted outer document the relay serves from its own origin).
-- `GET /s/:token/content`: the **agent's artifact**, served wrapped, with the `pane.*` shim injected, behind a strict CSP, to be loaded inside a sandboxed iframe.
+- `GET /s/:token/content`: the **agent's artifact**, served wrapped, with the `pane.*` runtime injected, behind a strict CSP, to be loaded inside a sandboxed iframe.
 - The shell's WebSocket connection to `WS /v1/sessions/:id/stream` (phase 2). Replay on connect; live event push.
-- The `pane.*` shim API (`pane.emit`, `pane.on`, `pane.state`, the `ready` / `init` handshake).
+- The `pane.*` runtime API (`pane.emit`, `pane.on`, `pane.state`, the `ready` / `init` handshake).
 - The postMessage protocol between the iframe and the shell (the wire format, the validation the shell does).
 - All the security headers (CSP, frame options, referrer policy, cache).
 
 Out:
 - The MCP server, deploy, dogfood (phase 4).
 - One-time links: v1 ships multi-open links (see Open decisions); `?once=1` is later.
-- Schema validation: lives in phase 2 (server-side). The shim is dumb and forwards; the relay validates.
+- Schema validation: lives in phase 2 (server-side). The runtime is dumb and forwards; the relay validates.
 
 ## Architecture: the two-document model
 
@@ -41,7 +41,7 @@ Its only outbound channel is `window.parent.postMessage`. The shell receives tho
 
 **Should `/s/:token/content` be served from a different origin than the shell** (e.g. `content.<domain>`, or a per-session subdomain), for defense in depth even against a sandbox escape? Ideal: yes. v1: **same origin is acceptable** because the sandbox already denies same-origin access (no "same origin" privilege for the inner doc to abuse). Ship same-origin in v1; document the separate-content-origin upgrade as a v1.1 / hosted hardening. **OPEN** (lean: same origin v1).
 
-## The `pane.*` shim
+## The `pane.*` runtime
 
 The relay injects a small script into the wrapped inner document that defines `window.pane` before any of the agent's markup or scripts run. **Inlined** (not an external `bridge.js`) so there's no extra round trip and the CSP can stay tight (allowed via a per-response nonce in `script-src`). **DECIDED**: inline + nonce.
 
@@ -66,20 +66,20 @@ pane.state: ReadonlyEventLog
 
 **There is NO `pane.submit(...)`.** "Submit" is just an event type the agent's schema declares (e.g. `review.submitted`, `form.completed`). The artifact emits it like any other event. The agent on the other end (phase 4's MCP server) calls `await_pane_result({ terminal_event_type: "review.submitted" })` to wait for it.
 
-The handshake: on `DOMContentLoaded`, the shim posts `{ __pane: 1, v: 1, kind: "ready" }` to the parent. The shell waits for its WS replay to complete, then replies `{ __pane: 1, v: 1, kind: "init", payload: { session_id, schema, replay: [...events...] } }`. The shim seeds `pane.state` from `replay`, then accepts further `{kind:"event"}` pushes from the parent for live updates.
+The handshake: on `DOMContentLoaded`, the runtime posts `{ __pane: 1, v: 1, kind: "ready" }` to the parent. The shell waits for its WS replay to complete, then replies `{ __pane: 1, v: 1, kind: "init", payload: { session_id, schema, replay: [...events...] } }`. The runtime seeds `pane.state` from `replay`, then accepts further `{kind:"event"}` pushes from the parent for live updates.
 
 ## The postMessage protocol (wire format), v1
 
 iframe → shell:
 
 - `{ __pane: 1, v: 1, kind: "ready" }`: sent once on `DOMContentLoaded`.
-- `{ __pane: 1, v: 1, kind: "emit", id: <emit-cookie>, type: string, data: object, causation_id?: string, idempotency_key?: string }`: every `pane.emit()`. `id` is a client-side correlation cookie so the shim can resolve the `Promise` when the shell relays the server's ack.
+- `{ __pane: 1, v: 1, kind: "emit", id: <emit-cookie>, type: string, data: object, causation_id?: string, idempotency_key?: string }`: every `pane.emit()`. `id` is a client-side correlation cookie so the runtime can resolve the `Promise` when the shell relays the server's ack.
 
 shell → iframe:
 
 - `{ __pane: 1, v: 1, kind: "init", payload: { session_id, schema, replay } }`: sent in reply to `ready`, once the WS replay completes.
 - `{ __pane: 1, v: 1, kind: "event", payload: <full event envelope> }`: every live event pushed by the WS (from any author). Includes the artifact's own events once the server has accepted them.
-- `{ __pane: 1, v: 1, kind: "ack", id: <emit-cookie>, event_id: string, deduped?: boolean }`: server accepted the event the shim emitted with this `id`.
+- `{ __pane: 1, v: 1, kind: "ack", id: <emit-cookie>, event_id: string, deduped?: boolean }`: server accepted the event the runtime emitted with this `id`.
 - `{ __pane: 1, v: 1, kind: "error", id: <emit-cookie>, error: { code, message, details } }`: server rejected (e.g. 422 schema_violation, 403 author_not_allowed, 410 gone).
 
 What the shell validates on **every** inbound `message` from the iframe before doing anything with it:
@@ -113,7 +113,7 @@ The shell, on load, after authing the human via the URL-path token:
 4. Forwards every subsequent live event to the iframe.
 5. Sends every iframe `emit` as a WS frame and forwards the server's ack / error back to the iframe.
 
-On WS disconnect: reconnect with exponential backoff (`1s, 2s, 5s, 10s, 30s` max). On reconnect, request a replay since the last seen event id (the WS endpoint supports `?since=` on connect). The shim's `pane.state` is preserved across reconnects; only new events arrive.
+On WS disconnect: reconnect with exponential backoff (`1s, 2s, 5s, 10s, 30s` max). On reconnect, request a replay since the last seen event id (the WS endpoint supports `?since=` on connect). The runtime's `pane.state` is preserved across reconnects; only new events arrive.
 
 On `system.artifact.updated`: the shell reloads the iframe's `src` (the `artifactVersion` bump triggers a fresh `/content` fetch). The event log is preserved across the reload.
 
@@ -121,7 +121,7 @@ On `system.session.expired`: the shell flips its chrome to "this session is clos
 
 ## The wrapping rule for `GET /s/:token/content`
 
-The relay never serves the agent's artifact raw; it always wraps, so it controls `<head>`, the CSP nonce, and the shim:
+The relay never serves the agent's artifact raw; it always wraps, so it controls `<head>`, the CSP nonce, and the runtime:
 
 ```html
 <!doctype html>
@@ -129,7 +129,7 @@ The relay never serves the agent's artifact raw; it always wraps, so it controls
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script nonce="{NONCE}">/* the pane.* shim, inlined */</script>
+  <script nonce="{NONCE}">/* the pane.* runtime, inlined */</script>
 </head>
 <body>
   {AGENT_ARTIFACT}
@@ -162,14 +162,14 @@ Content-Type: text/html; charset=utf-8
 Cache-Control: private, no-store
 ```
 
-Why `script-src 'unsafe-inline'`: the agent's artifact is hand-written HTML+JS. Inline `<script>` is the whole point; so we allow it. Safe because the frame is sandboxed (opaque origin, no same-origin privileges) AND `connect-src 'none'` means that inline script cannot `fetch` / `XHR` / `WebSocket` / `EventSource` anywhere. It can't exfiltrate, can't phone home, can't call the relay. The only thing it can do is `postMessage` to the parent (which `connect-src` doesn't govern), and the parent validates that. We do NOT allow `'unsafe-eval'`. The nonce `{N2}` is what the injected shim uses; the agent's own inline scripts run under `'unsafe-inline'`. `frame-ancestors 'self'`: the content page may only be framed by our own shell.
+Why `script-src 'unsafe-inline'`: the agent's artifact is hand-written HTML+JS. Inline `<script>` is the whole point; so we allow it. Safe because the frame is sandboxed (opaque origin, no same-origin privileges) AND `connect-src 'none'` means that inline script cannot `fetch` / `XHR` / `WebSocket` / `EventSource` anywhere. It can't exfiltrate, can't phone home, can't call the relay. The only thing it can do is `postMessage` to the parent (which `connect-src` doesn't govern), and the parent validates that. We do NOT allow `'unsafe-eval'`. The nonce `{N2}` is what the injected runtime uses; the agent's own inline scripts run under `'unsafe-inline'`. `frame-ancestors 'self'`: the content page may only be framed by our own shell.
 
 Token hygiene: the participant token lives in the URL **path** for `/s/:token` (paths are logged less aggressively than query strings, and `no-referrer` keeps it out of `Referer`). For the WS handshake the token rides as a query string (browser-API limitation; see Open decisions). It will still appear in browser history and the relay's access logs; accept that for v1. Don't log the full path at `info`; redact in access logs (`/s/<token>` → `/s/***`, `?token=...` → `?token=***`).
 
 ## Interfaces (what phase 3 must expose)
 
 - `GET /s/:token` → the shell HTML (above headers). If the token doesn't match a `Participant.tokenHash` → `404`. If the session is `closed` → still serve the shell, but it shows the terminal state instead of an interactive iframe (it can replay the historical event log read-only).
-- `GET /s/:token/content` → the wrapped agent artifact (above headers). `404` if no session / participant. If `status != "open"`, serve it read-only (the iframe renders the historical state via the replayed event log; emits get a `410 gone` from the WS and the shim surfaces it as `pane.emit` rejecting).
+- `GET /s/:token/content` → the wrapped agent artifact (above headers). `404` if no session / participant. If `status != "open"`, serve it read-only (the iframe renders the historical state via the replayed event log; emits get a `410 gone` from the WS and the runtime surfaces it as `pane.emit` rejecting).
 - The `pane` global available inside the iframe: `pane.emit(type, data, opts?)`, `pane.on(type, handler)`, `pane.state`, with the `ready` → `init` handshake automatic.
 - The postMessage wire format above (the `__pane` / `v` / `kind` envelope).
 - The WS connection lifecycle (open with query-string token, replay, live, reconnect-on-drop, artifact-reload-on-update).
@@ -192,8 +192,8 @@ Token hygiene: the participant token lives in the URL **path** for `/s/:token` (
 ## Open decisions
 
 - **Content origin**: same-origin-as-shell in v1 (lean, relying on the sandbox) vs a separate origin / per-session subdomain (defense in depth against a sandbox escape). Document the upgrade path either way. OPEN.
-- **`targetOrigin` from the iframe's `postMessage`**: `"*"` + shell-side `event.source` check (lean) vs threading the shell's exact origin into the shim. OPEN.
+- **`targetOrigin` from the iframe's `postMessage`**: `"*"` + shell-side `event.source` check (lean) vs threading the shell's exact origin into the runtime. OPEN.
 - **WS token transport**: query string (`?token=...`) on the WS endpoint (lean, simplest) vs a one-shot `POST /v1/sessions/:id/connect` returning a short-lived WS-only cookie. OPEN.
 - **Closed-session content**: read-only artifact (lean) vs `410 Gone` outright. Lean: read-only so the human can see what they answered. OPEN.
 - **One-time vs multi-open links** in v1: multi-open (lean; `?once=1` can be a fast-follow) vs single-use now. OPEN.
-- Inline-shim-with-nonce, route-events-through-the-shell, always-wrap-the-artifact, no-`pane.submit`-verb, WS-in-the-shell, artifact-reload-on-`system.artifact.updated`: all **DECIDED** above.
+- Inline-runtime-with-nonce, route-events-through-the-shell, always-wrap-the-artifact, no-`pane.submit`-verb, WS-in-the-shell, artifact-reload-on-`system.artifact.updated`: all **DECIDED** above.

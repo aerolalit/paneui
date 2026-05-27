@@ -13,7 +13,7 @@ This matters most for agents that live **outside a GUI host app**: cron agents, 
 1. Agent generates an HTML page (the UI it wants the human to act on).
 2. Agent → `POST /sessions` with `{html, schema, ttl}` → gets `{session_id, url}`.
 3. Agent sends `url` to the human over whatever channel it already has.
-4. Human opens `url`. The relay serves a small shell page that loads the agent's HTML in a **sandboxed iframe** (locked-down CSP), plus a tiny bridge shim exposing `pane.emit(type, data)` / `pane.submit(data)`.
+4. Human opens `url`. The relay serves a small shell page that loads the agent's HTML in a **sandboxed iframe** (locked-down CSP), plus a tiny pane runtime exposing `pane.emit(type, data)` / `pane.submit(data)`.
 5. Human interacts → each `emit`/`submit` is POSTed to `/sessions/{id}/events` → appended to that session's event log.
 6. Agent retrieves: poll `GET /sessions/{id}/events?since=<cursor>`, or webhook, or SSE. The agent's "ask the human" call blocks until the submit event or a timeout.
 7. Session expires after `ttl`.
@@ -120,6 +120,6 @@ expectations. Security vulnerabilities: please report them privately — see
 - [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md): run your own relay on SQLite, in one container
 - [`docs/DEPLOY.md`](docs/DEPLOY.md): operator deployment — Postgres, scaling, observability, Azure
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): v1 scope, later phases, strategy notes
-- [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the bridge shim, the CLI)
+- [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the pane runtime, the CLI)
 - Prior art / landscape: MCP Apps (`blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/`), mcp-ui (`github.com/MCP-UI-Org/mcp-ui`), AG-UI (`copilotkit.ai`), A2UI (Google), Thesys C1
 - Motivating read: Thariq, "Using Claude Code: The Unreasonable Effectiveness of HTML" (`simonwillison.net/2026/May/8/unreasonable-effectiveness-of-html/`)
