@@ -1,5 +1,5 @@
-// The `pane.*` shim. Compiled (with the client tsconfig) to
-// `dist/client/shim.client.js` and inlined verbatim into the wrapped template
+// The `pane.*` runtime. Compiled (with the client tsconfig) to
+// `dist/client/runtime.client.js` and inlined verbatim into the wrapped template
 // page by `src/bridge/routes.ts`.
 //
 // Wire format mirrors docs/architecture/phase-3-human-side.md and is defined
@@ -21,7 +21,7 @@ export {};
 import type {
   AttachmentRefLike,
   PaneFrameEnvelope,
-  ShimToShellKind,
+  RuntimeToShellKind,
 } from "./protocol.js";
 
 interface SerializedEvent {
@@ -31,9 +31,9 @@ interface SerializedEvent {
   [k: string]: unknown;
 }
 
-/** An outbound frame the shim posts to the shell. */
+/** An outbound frame the runtime posts to the shell. */
 type OutboundFrame = PaneFrameEnvelope & {
-  kind: ShimToShellKind;
+  kind: RuntimeToShellKind;
   [k: string]: unknown;
 };
 

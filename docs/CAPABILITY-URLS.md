@@ -208,7 +208,7 @@ file BACK to the agent (a selfie, a PDF, a CSV) — the relay also accepts
 multipart uploads on `POST /s/:participantToken/blobs` authenticated by
 the participant token alone.
 
-The iframe shim exposes this as `window.pane.uploadBlob(file, options?)`.
+The iframe runtime exposes this as `window.pane.uploadBlob(file, options?)`.
 The shell (the participant-facing page that holds the token) brokers the
 fetch and returns a `BlobRef` to the iframe via postMessage. The agent
 then receives the BlobRef as part of a normal `pane.emit(...)` event

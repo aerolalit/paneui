@@ -14,7 +14,7 @@ In:
 - Integration tests against a temp SQLite DB.
 
 Out:
-- `GET /s/:token` and `GET /s/:token/content` and everything about rendering / the iframe / CSP / the shim (phase 3). The WS connection from the shell is initiated in phase 3 against the endpoint defined here.
+- `GET /s/:token` and `GET /s/:token/content` and everything about rendering / the iframe / CSP / the runtime (phase 3). The WS connection from the shell is initiated in phase 3 against the endpoint defined here.
 - Durable webhook delivery (dead-letter, replay): `/ee/`.
 - SSE: `/ee/` / v2.
 

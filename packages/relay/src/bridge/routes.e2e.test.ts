@@ -199,8 +199,8 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain(token);
   });
 
-  // Phase C — the shell config carries the surface's input_data so the shim
-  // can expose it to the template as `window.pane.inputData`.
+  // Phase C — the shell config carries the surface's input_data so the
+  // runtime can expose it to the template as `window.pane.inputData`.
   it("inlines the surface's input_data into the pane-cfg block", async () => {
     const { token } = await seedSession({
       inputData: { prTitle: "Fix the bug", files: ["a.ts"] },
@@ -240,7 +240,7 @@ describe("bridge shell GET /s/:token", () => {
 
   it("sandboxes the template iframe with allow-scripts and allow-forms", async () => {
     // The template runs in a sandboxed iframe. `allow-scripts` is required so
-    // the inline <script> in the template (and the pane shim) can run.
+    // the inline <script> in the template (and the pane runtime) can run.
     // `allow-forms` lets natural `<form>` UIs dispatch their `submit` event to
     // JS — without it, Chrome blocks the submission *before* the handler runs,
     // so `pane.emit(...)` never fires. The iframe has no `allow-same-origin`,
@@ -342,12 +342,12 @@ describe("bridge content GET /s/:token/content", () => {
     expect(csp).toContain("frame-ancestors 'self'");
   });
 
-  it("embeds the template body and the pane shim", async () => {
+  it("embeds the template body and the pane runtime", async () => {
     const { token } = await seedSession({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const body = await res.text();
     expect(body).toContain(MARKER);
-    // Stable substrings from shim.client.ts: it assigns `window.pane`
+    // Stable substrings from runtime.client.ts: it assigns `window.pane`
     // and tags every frame with `__pane`.
     expect(body).toContain("window.pane");
     expect(body).toContain("__pane");

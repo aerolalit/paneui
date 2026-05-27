@@ -33,8 +33,9 @@ export function loadClient(name: string): string {
       `pane relay: client bundle missing at ${path} — run \`npm run build:client\` first`,
     );
   }
-  // The client TS files are modules (`export {}` for file scoping + the shim's
-  // `declare global`), but they're injected inline as a classic <script>, where
+  // The client TS files are modules (`export {}` for file scoping + the
+  // runtime's `declare global`), but they're injected inline as a classic
+  // <script>, where
   // any `import`/`export` is a SyntaxError that aborts the whole script. Each
   // file is self-contained (IIFE-wrapped), so the module markers carry no
   // runtime meaning — strip the `export {};` tsc emits.
@@ -45,7 +46,7 @@ export function loadClient(name: string): string {
   // ignored escape — but the HTML parser no longer sees a tag close.
   return js.replace(/<\/(script)/gi, "<\\/$1");
 }
-const SHIM_JS = loadClient("shim.client.js");
+const RUNTIME_JS = loadClient("runtime.client.js");
 const SHELL_JS = loadClient("shell.client.js");
 
 function publicWsBase(config: Config): string {
@@ -283,7 +284,7 @@ bridge.get("/:token/content", async (c) => {
       "default-src 'none'",
       // 'unsafe-inline' only — no nonce. CSP3 browsers ignore 'unsafe-inline'
       // when a nonce is present, which would block the agent's own inline
-      // <script> tags inside artifactBody. The shim is just another inline
+      // <script> tags inside artifactBody. The runtime is just another inline
       // script under the same sandbox; both are covered by 'unsafe-inline'.
       "script-src 'unsafe-inline'",
       "style-src 'unsafe-inline'",
@@ -310,7 +311,7 @@ bridge.get("/:token/content", async (c) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script>${SHIM_JS}</script>
+<script>${RUNTIME_JS}</script>
 </head>
 <body>
 ${artifactBody}

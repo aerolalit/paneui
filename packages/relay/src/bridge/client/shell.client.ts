@@ -1,7 +1,7 @@
 // The shell IIFE: runs in the participant's browser at /s/:token. Holds the
 // WebSocket connection, owns the participant token (lives only in the shell,
 // never reaches the iframe), and proxies the postMessage protocol between the
-// sandboxed iframe (which runs the agent's template + the shim) and the WS.
+// sandboxed iframe (which runs the agent's template + the runtime) and the WS.
 //
 // Config is delivered via a sibling `<script type="application/json" id="pane-cfg">`
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
@@ -14,13 +14,13 @@
 export {};
 
 // The shell <-> iframe frame envelope is defined ONCE in ./protocol.ts and
-// shared (as a type) with the shim bundle, so the two sides cannot drift.
+// shared (as a type) with the runtime bundle, so the two sides cannot drift.
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
-import type { PaneFrameEnvelope, ShellToShimKind } from "./protocol.js";
+import type { PaneFrameEnvelope, ShellToRuntimeKind } from "./protocol.js";
 
 /** An outbound frame the shell posts to the iframe. */
 type OutboundFrame = PaneFrameEnvelope & {
-  kind: ShellToShimKind;
+  kind: ShellToRuntimeKind;
   [k: string]: unknown;
 };
 
@@ -29,7 +29,7 @@ interface ShellCfg {
   schema: unknown;
   // The surface's per-instance input_data — the relay validated it against the
   // template version's input_schema at create time. Forwarded to the iframe in
-  // the `init` frame; the shim exposes it as `window.pane.inputData`.
+  // the `init` frame; the runtime exposes it as `window.pane.inputData`.
   inputData: unknown;
   token: string;
   wsUrl: string;
@@ -293,7 +293,7 @@ interface SerializedEvent {
   // fail anyway. The trust boundary is the sandbox + the contentWindow ref.
   const IFRAME_ORIGIN = "*";
 
-  // Cap correlation_id everywhere it crosses the shell. The shim generates
+  // Cap correlation_id everywhere it crosses the shell. The runtime generates
   // short strings ("c1", "c2", ...). The cap exists to stop a buggy or
   // hostile template from forcing the relay to materialise a huge string
   // into every ack/error response.
@@ -531,7 +531,7 @@ interface SerializedEvent {
     const m = e.data;
     // Reject anything that is not a current-version Pane frame: wrong marker
     // OR wrong protocol version `v`. The frame shape is defined in
-    // ./protocol.ts and shared with the shim bundle (issue #58).
+    // ./protocol.ts and shared with the runtime bundle (issue #58).
     if (!m || typeof m !== "object" || m.__pane !== 1 || m.v !== 1) return;
     if (m.kind === "ready") {
       iframeReady = true;
@@ -600,7 +600,7 @@ interface SerializedEvent {
         "/attachments";
 
       // Fire the fetch in a sibling task — never await it on the message
-      // listener thread, so a hung relay can't block other shim frames.
+      // listener thread, so a hung relay can't block other runtime frames.
       void (async () => {
         let res: Response;
         try {
@@ -724,7 +724,7 @@ interface SerializedEvent {
         encodeURIComponent(attachmentId);
 
       // Fire the fetch in a sibling task — never await on the message
-      // listener thread so a hung relay can't block other shim frames.
+      // listener thread so a hung relay can't block other runtime frames.
       void (async () => {
         let res: Response;
         try {
@@ -982,7 +982,7 @@ interface SerializedEvent {
       return;
     }
     if (m.kind === "emit") {
-      // The shim always attaches correlation_id, so any failure path here
+      // The runtime always attaches correlation_id, so any failure path here
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s
       // Promise sits hanging until the 30s timeout fires.
       const replyError = (code: string, message: string): void => {
