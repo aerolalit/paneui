@@ -235,7 +235,9 @@ auth.get("/auth/verify", async (c) => {
     link.returnUrl ?? null,
     config.publicUrl,
   );
-  return c.redirect(safeReturn ?? "/", 303);
+  // Default landing on successful login is /home (Phase D system pages);
+  // same-origin returnUrl is honored when present.
+  return c.redirect(safeReturn ?? "/home", 303);
 });
 
 // POST /v1/auth/logout
