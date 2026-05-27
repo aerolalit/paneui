@@ -28,12 +28,115 @@ model Agent {
   rateLimit  Int?      @map("rate_limit")
   taste           String?   @map("taste")
   tasteUpdatedAt  DateTime? @map("taste_updated_at")
-  surfaces   Surface[]
-  templates  Template[]
-  feedback   Feedback[]
-  attachments      Attachment[]
 
+  // Optional human owner (claim flow). NULL = standalone agent (today's
+  // model — CI bots, scratch scripts). Non-null = claimed by this human;
+  // surfaces and templates created by this agent flow into that human's
+  // "my-*" catalogs (see Human-side proposal §6).
+  ownerHumanId    String?   @map("owner_human_id")
+  ownerHuman      Human?    @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
+  claimedAt       DateTime? @map("claimed_at")
+
+  surfaces    Surface[]
+  templates   Template[]
+  feedback    Feedback[]
+  attachments Attachment[]
+  // Back-relation from Participant.agent (Phase A polymorphic participants).
+  // Named relation avoids the collision with Agent <- Surface.agentId above.
+  participantOf Participant[] @relation("ParticipantAgent")
+
+  @@index([ownerHumanId])
   @@map("agents")
+}
+
+// A first-class human identity. Created by:
+//   - First magic-link login (manual signup): row created, verifiedAt set.
+//   - Email invite (Alice invites bob@…): row created with verifiedAt NULL;
+//     verifiedAt set on bob's first successful login.
+model Human {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  // Non-null once first magic-link login succeeds (proof the human controls
+  // the email). Until then the row exists but the email isn't proven.
+  verifiedAt     DateTime? @map("verified_at")
+  phone          String?
+  // The human's pinned home template — overridable in settings. NULL means
+  // serve the pane-default `home` template. See §5.2 bootstrap.
+  homeTemplateId String?   @map("home_template_id")
+  homeTemplate   Template? @relation("HumanHomeTemplate", fields: [homeTemplateId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  logins         Login[]
+  claimedAgents  Agent[]
+  templateInstalls HumanTemplateInstall[]
+  claimCodes     ClaimCode[]
+  // Surfaces owned by this human (Phase A — Surface.ownerHumanId)
+  ownedSurfaces  Surface[]
+  // Participations where this human is identity-bound on a surface
+  participantOf  Participant[]
+
+  @@index([email])
+  @@map("humans")
+}
+
+// One logged-in state for one human. Backs an HTTP-only cookie on the
+// relay's bridge origin. Distinct from "Surface" (the data row formerly
+// called "Session" in pane), hence the name `Login` not `Session`.
+model Login {
+  id          String    @id @default(cuid())
+  humanId     String    @map("human_id")
+  human       Human     @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  // sha256(token) — never store the raw cookie value.
+  cookieHash  String    @unique @map("cookie_hash")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  lastSeenAt  DateTime? @map("last_seen_at")
+
+  @@index([humanId])
+  @@index([expiresAt])
+  @@map("logins")
+}
+
+// One-shot, short-TTL code Alice generates in Settings → "Claim an agent".
+// Alice copies it out-of-band to her agent; the agent calls
+// POST /v1/agents/claim with the code to bind itself to Alice (§6.1).
+model ClaimCode {
+  id          String    @id @default(cuid())
+  humanId     String    @map("human_id")
+  human       Human     @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  // sha256(code) — the code is shown to the human once at generate-time
+  // and never stored. The agent submits the raw code; the relay hashes
+  // and looks it up.
+  codeHash    String    @unique @map("code_hash")
+  expiresAt   DateTime  @map("expires_at")
+  // Set when the code is redeemed; the code is then invalid for further use.
+  consumedAt  DateTime? @map("consumed_at")
+  // Bookkeeping: which agent ultimately consumed it.
+  consumedByAgentId String? @map("consumed_by_agent_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([humanId])
+  @@index([expiresAt])
+  @@map("claim_codes")
+}
+
+// Alice installs a public template into her catalog. Pins to the version
+// in effect at install time so a later publish doesn't silently change
+// behaviour or scopes (re-consent flow only fires on explicit upgrade).
+model HumanTemplateInstall {
+  id               String    @id @default(cuid())
+  humanId          String    @map("human_id")
+  human            Human     @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  templateId       String    @map("template_id")
+  template         Template  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  installedVersion Int       @map("installed_version")
+  installedAt      DateTime  @default(now()) @map("installed_at")
+  uninstalledAt    DateTime? @map("uninstalled_at")
+
+  @@unique([humanId, templateId])
+  @@index([humanId])
+  @@index([templateId])
+  @@map("human_template_installs")
 }
 
 model Feedback {
@@ -71,14 +174,33 @@ model Template {
   updatedAt     DateTime          @updatedAt @map("updated_at")
   versions      TemplateVersion[]
 
-  attachments         Attachment[]
+  // "view" | "interactive". `view` templates have no event vocabulary and
+  // their surfaces skip event-log persistence (rendered against live relay
+  // state via the runtime API). `interactive` is today's default — events
+  // and event log fully apply. See Human-side proposal §3.2.
+  shape         String            @default("interactive")
+
+  // Publication state. NULL = unpublished (default; templates are private
+  // until explicit publish). Non-null = published to the public catalog.
+  publishedAt   DateTime?         @map("published_at")
+  // Declared scopes the template needs at install time (JSON array of
+  // strings). Frozen per version; a new version reopens scope consent.
+  scopes        Json?
+  // Denormalised count of HumanTemplateInstall rows pointing here. Updated
+  // on install/uninstall. Lets the public catalog rank/sort cheaply.
+  installCount  Int               @default(0) @map("install_count")
+
+  attachments   Attachment[]
+  installs      HumanTemplateInstall[]
+  humanHomes    Human[]           @relation("HumanHomeTemplate")
 
   @@unique([ownerId, slug])
   @@index([ownerId])
+  @@index([publishedAt])
   @@map("templates")
 }
 
-// One immutable version of an template's content. Editing an template appends
+// One immutable version of a template's content. Editing a template appends
 // a new row; existing rows are never mutated. A surface pins exactly one of
 // these.
 model TemplateVersion {
@@ -108,6 +230,26 @@ model Surface {
   agentId         String        @map("agent_id")
   agent           Agent         @relation(fields: [agentId], references: [id])
 
+  // Phase A additions — human-side ownership. NULL = today's behavior
+  // (agent-owned via agentId). Non-null = human-owned (claimed agent's
+  // surface, or human-instantiated via a template). Eventually
+  // (Phase D) agentId becomes redundant and the agent moves to being
+  // just a Participant, but for now both columns coexist.
+  ownerHumanId    String?       @map("owner_human_id")
+  ownerHuman      Human?        @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
+  // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
+  // NULL = ad-hoc surface, no dedup. Used by surface-create to dedupe
+  // (template, owner, contextKey) into a single row.
+  contextKey      String?       @map("context_key")
+  // Audit-only — who actually instantiated the surface. Not load-bearing
+  // (privilege flows from owner + participants).
+  creatorKind     String?       @map("creator_kind")
+  creatorId       String?       @map("creator_id")
+  // Per-surface invitation policy override (see Human-side proposal §7.2).
+  // JSON shape: { humansCanInviteHumans: bool, humansCanInviteAgents: bool }.
+  // NULL = permissive Google-Docs default.
+  invitePolicy    Json?         @map("invite_policy")
+
   // The pinned template version this surface instantiates.
   templateVersionId String          @map("template_version_id")
   templateVersion   TemplateVersion @relation(fields: [templateVersionId], references: [id])
@@ -134,11 +276,16 @@ model Surface {
   participants    Participant[]
   events          Event[]
   feedback        Feedback[]
-  attachments           Attachment[]
+  attachments     Attachment[]
 
   @@index([agentId])
   @@index([expiresAt])
   @@index([templateVersionId])
+  @@index([ownerHumanId])
+  // Dedup index — (templateVersionId, ownerHumanId, contextKey) is unique
+  // for human-owned surfaces with a contextKey. Surfaces without a
+  // contextKey are not deduped (ad-hoc).
+  @@unique([templateVersionId, ownerHumanId, contextKey], name: "Surface_owner_dedup")
   @@map("surfaces")
 }
 
@@ -146,8 +293,19 @@ model Participant {
   id           String    @id @default(cuid())
   surfaceId    String    @map("surface_id")
   surface      Surface   @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  // "human" | "agent". Polymorphic FKs:
+  //   kind = 'human' AND humanId NULL  → anonymous capability human (legacy + share-link)
+  //   kind = 'human' AND humanId set   → identity-bound human (email invite)
+  //   kind = 'agent' AND agentId set   → agent participant
   kind         String
   identityId   String    @map("identity_id")
+  // Phase A polymorphic FKs — exactly one of humanId/agentId is set when
+  // the participant is identity-bound; both NULL is allowed only for
+  // kind='human' (anonymous capability participants).
+  humanId      String?   @map("human_id")
+  human        Human?    @relation(fields: [humanId], references: [id], onDelete: SetNull)
+  agentId      String?   @map("agent_id")
+  agent        Agent?    @relation("ParticipantAgent", fields: [agentId], references: [id], onDelete: SetNull)
   tokenHash    String    @unique @map("token_hash")
   tokenPrefix  String    @map("token_prefix")
   joinedAt     DateTime? @map("joined_at")
@@ -171,14 +329,11 @@ model Participant {
 }
 
 model Event {
-  // The model field stays `Int` so the generated @prisma/client surface is
-  // identical on both engines (`number`, never `bigint`). The underlying
-  // Postgres column is widened to BIGINT by migration
-  // 20260518090000_event_id_bigint for hosted-scale headroom past int4's
-  // 2.1B-row limit. A JS `number` represents every integer up to 2^53 exactly,
-  // far beyond any realistic event count, so a BIGINT id reads back safely.
-  // Note: `prisma migrate dev` will report drift here (model says int4, DB is
-  // int8) — that is expected; `migrate deploy` applies migrations verbatim.
+  // SQLite quirk: only `INTEGER PRIMARY KEY` is a ROWID alias and auto-increments;
+  // `BIGINT PRIMARY KEY` does not. SQLite stores up to 64 bits in any
+  // integer-affinity column anyway, so declaring `Int` here is safe at the storage
+  // layer. The wire cursor is opaque (a string), so we can override to `@db.BigInt`
+  // on the Postgres build later without breaking clients.
   id              Int      @id @default(autoincrement())
   surfaceId       String   @map("surface_id")
   surface         Surface  @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
@@ -195,7 +350,7 @@ model Event {
   @@map("events")
 }
 
-// A binary attachment attached to an template, a surface, or an agent's reusable
+// A binary attachment scoped to a template, a surface, or an agent's reusable
 // asset library. The bytes themselves live in the configured AttachmentStore
 // (filesystem self-host or Azure Attachment hosted); this row is the metadata,
 // authz anchor, and lifecycle hook.
@@ -235,17 +390,17 @@ model Attachment {
 
   // Content metadata. mime comes from server-side magic-byte sniff, NOT the
   // client's Content-Type. sha256 is hex-encoded; size is bytes (capped at
-  // MAX_BLOB_BYTES at upload time, well within Int range for v0.1.0's 5 MB).
+  // MAX_ATTACHMENT_BYTES at upload time, well within Int range for v0.1.0's 5 MB).
   mime          String
   size          Int
   sha256        String
   width         Int?
   height        Int?
 
-  // Opaque key inside the AttachmentStore. Never user-supplied; never used as a
-  // filesystem path component directly. Storage backends derive their own
-  // path from this id (e.g. filesystem uses `<root>/attachment_<id>`, Azure uses
-  // `attachment_<id>` as the attachment name).
+  // Opaque key inside the AttachmentStore. Never user-supplied; never used as
+  // a filesystem path component directly. Storage backends derive their own
+  // path from this id (e.g. filesystem uses `<root>/att_<id>`, Azure uses
+  // `att_<id>` as the attachment name).
   storageKey    String    @unique @map("storage_key")
 
   // Lifecycle status:
@@ -262,7 +417,7 @@ model Attachment {
   // for legit photo-management use cases where DateTimeOriginal matters.
   stripMetadata Boolean   @default(true) @map("strip_metadata")
 
-  // Envelope encryption-at-rest. NULL when the relay's BLOB_ENCRYPT_AT_REST
+  // Envelope encryption-at-rest. NULL when the relay's ATTACHMENT_ENCRYPT_AT_REST
   // is off (the default). When set, the bytes in the AttachmentStore are
   // ciphertext; this column carries the wrapped DEK + data IV + data tag
   // needed to decrypt them. Stored as a base64 JSON envelope so future
@@ -283,15 +438,15 @@ model Attachment {
   tokens AttachmentToken[]
 }
 
-// Capability URL for a attachment. Each row mints one /b/<token> link that any
-// holder can use to fetch the bytes without an agent API key — this is the
-// participant-facing download path.
+// Capability URL for an attachment. Each row mints one /a/<token> link that
+// any holder can use to fetch the bytes without an agent API key — this is
+// the participant-facing download path.
 //
 // A token's lifetime is bound to its attachment's scope (see proposal #152):
 //
-//   - template-scope attachment: token TTL = BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
-//   - surface-scope attachment:  token TTL = the surface's TTL (cascades on surface delete)
-//   - agent-scope attachment:    token TTL = BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
+//   - template-scope: token TTL = ATTACHMENT_TOKEN_TTL_TEMPLATE_SECONDS (30d default)
+//   - surface-scope:  token TTL = the surface's TTL (cascades on surface delete)
+//   - agent-scope:    token TTL = ATTACHMENT_TOKEN_TTL_AGENT_SECONDS (24h default)
 //
 // `once = true` deletes the token on its first successful GET — for the
 // "share a private doc, expire after view" pattern.
@@ -302,8 +457,8 @@ model Attachment {
 // at write time — full IPs are never persisted.
 model AttachmentToken {
   id          String    @id @default(cuid())
-  attachmentId      String    @map("attachment_id")
-  attachment        Attachment      @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  attachmentId String   @map("attachment_id")
+  attachment  Attachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
 
   // sha256 hex of the token string. The token itself is never stored — only
   // its hash, mirroring how Agent keys and Participant tokens are stored.
