@@ -178,7 +178,45 @@ bridge.get("/:token", async (c) => {
     }
     throw err;
   }
-  const { surface } = loaded;
+  const { surface, participant } = loaded;
+
+  // Identity-bound participants (Phase E §7.3 A) require the caller to be
+  // logged in as the bound human. Anonymous capability participants
+  // (humanId null) pass through unchanged — that's the existing behaviour.
+  if (participant.humanId) {
+    const { parseLoginCookie, hashLoginCookie } =
+      await import("../auth/cookie.js");
+    const cookieValue = parseLoginCookie(c.req.header("cookie") ?? null);
+    let loggedInHumanId: string | null = null;
+    if (cookieValue) {
+      const login = await prisma.login.findUnique({
+        where: { cookieHash: hashLoginCookie(cookieValue) },
+      });
+      if (login && login.expiresAt > new Date()) {
+        loggedInHumanId = login.humanId;
+      }
+    }
+    if (loggedInHumanId === null) {
+      // Not logged in — bounce to /login carrying the return URL so the
+      // human lands back on this surface after magic-link verify.
+      const returnUrl = encodeURIComponent(`/s/${token}`);
+      return c.redirect(`/login?return=${returnUrl}`, 302);
+    }
+    if (loggedInHumanId !== participant.humanId) {
+      // Logged in as someone else — 403 with a "switch account" hint.
+      // Match the proposal §4.6 spec: "switch account" page; for now JSON.
+      return c.json(
+        {
+          error: {
+            code: "wrong_account",
+            message:
+              "this surface is invited to a different account; sign out and sign in as that human",
+          },
+        },
+        403,
+      );
+    }
+  }
 
   // Live agent-presence facts that SEED the shell's pill — see
   // computeAgentPresence. The shell then keeps them fresh by polling

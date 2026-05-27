@@ -19,6 +19,7 @@ import templates from "./routes/templates.js";
 import { auth } from "./routes/auth.js";
 import self from "./routes/self.js";
 import agents from "./routes/agents.js";
+import participantsHuman from "./routes/participants-human.js";
 import systemPages from "./routes/system-pages.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
@@ -274,6 +275,10 @@ export function buildApp(
   // /v1/agents/* — agent-authenticated routes about the calling agent.
   // Currently only the claim endpoint; Phase D will likely add more.
   app.route("/v1/agents", agents);
+  // /v1/surfaces/:id/invite-email + /v1/surfaces/:id/public-link — Phase E.
+  // Human-authenticated mints; the agent-authed POST /v1/surfaces/:id/participants
+  // is unchanged and lives in routes/surfaces.ts.
+  app.route("/v1/surfaces", participantsHuman);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
   app.route("/v1/attachments", attachments);
