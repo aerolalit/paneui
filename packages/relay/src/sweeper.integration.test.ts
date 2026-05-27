@@ -2,7 +2,7 @@
 // whatever engine DATABASE_URL points at (sqlite file or postgres).
 //
 // Regression coverage for #57: the sweeper must invalidate the compiled-
-// validator cache for every session it deletes, not just sessions removed via
+// validator cache for every surface it deletes, not just surfaces removed via
 // an explicit DELETE.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -60,19 +60,19 @@ async function seedSession(expiresInMs: number): Promise<string> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { sessionId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSessionRow(prisma, {
     agentId: agent.id,
     eventSchema: SCHEMA as unknown as object,
     status: "open",
     expiresAt: new Date(Date.now() + expiresInMs),
   });
-  return sessionId;
+  return surfaceId;
 }
 
-// Populate the compiled-validator cache for a session by validating an event.
-function warmCache(sessionId: string): void {
+// Populate the compiled-validator cache for a surface by validating an event.
+function warmCache(surfaceId: string): void {
   validateEvent({
-    sessionId,
+    surfaceId,
     schemaVersion: 1,
     schema: SCHEMA,
     type: "review.commentAdded",
@@ -87,7 +87,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     __schemaCacheInternals.clear();
   });
 
-  it("invalidates the validator cache for swept (expired) sessions", async () => {
+  it("invalidates the validator cache for swept (expired) surfaces", async () => {
     const expiredId = await seedSession(-1000);
     const liveId = await seedSession(3_600_000);
 
@@ -99,11 +99,11 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     const count = await sweepExpiredSessions(prisma);
     expect(count).toBe(1);
 
-    // The expired session's compiled validators are gone; the live one stays.
+    // The expired surface's compiled validators are gone; the live one stays.
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(false);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    expect(await prisma.session.findUnique({ where: { id: expiredId } })).toBe(
+    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
       null,
     );
   });

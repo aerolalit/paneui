@@ -16,7 +16,7 @@ const page = {
       id: "fb_abc123",
       type: "bug" as const,
       message: "x",
-      session_id: null,
+      surface_id: null,
       created_at: "2026-05-20T00:00:00.000Z",
     },
   ],
@@ -132,20 +132,20 @@ describe("feedback create", () => {
     expect(JSON.parse(stdout)).toEqual(submission);
   });
 
-  it("passes --session-id when provided", async () => {
+  it("passes --surface-id when provided", async () => {
     await run([
       "create",
       "--type",
       "feature",
       "--message",
       "x",
-      "--session-id",
+      "--surface-id",
       "sess_1",
     ]);
     expect(calls).toEqual([
       {
         method: "submitFeedback",
-        args: [{ type: "feature", message: "x", sessionId: "sess_1" }],
+        args: [{ type: "feature", message: "x", surfaceId: "sess_1" }],
       },
     ]);
   });

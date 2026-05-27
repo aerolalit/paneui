@@ -1,7 +1,7 @@
-// Tests for `pane session show` — dispatch + the --wait long-poll option.
+// Tests for `pane surface show` — dispatch + the --wait long-poll option.
 //
 // Pins the contract that #137's follow-up introduced: --wait <secs> is
-// passed through to the relay's GET /v1/sessions/:id/events?wait=<secs>
+// passed through to the relay's GET /v1/surfaces/:id/events?wait=<secs>
 // so headless polling agents (cron, FaaS, no-WS environments) can poll
 // efficiently without holding a WebSocket open.
 
@@ -64,7 +64,7 @@ async function run(tokens: string[]): Promise<void> {
   }
 }
 
-describe("pane session show", () => {
+describe("pane surface show", () => {
   it("fetches meta + events without --wait (non-blocking, default behaviour)", async () => {
     await run(["ses_abc"]);
     expect(exitCode).toBeUndefined();
@@ -105,10 +105,10 @@ describe("pane session show", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("missing session-id is invalid_args, no relay call", async () => {
+  it("missing surface-id is invalid_args, no relay call", async () => {
     await run([]);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("missing <session-id>");
+    expect(stderr).toContain("missing <surface-id>");
     expect(calls).toHaveLength(0);
   });
 });

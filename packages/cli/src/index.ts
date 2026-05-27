@@ -24,14 +24,14 @@ function failArgvError(e: ArgvError): never {
   process.stderr.write(JSON.stringify({ error }) + "\n");
   process.exit(1);
 }
-import { runSession, sessionHelp } from "./commands/session.js";
-import { runArtifact, artifactHelp } from "./commands/artifact.js";
+import { runSession, sessionHelp } from "./commands/surface.js";
+import { runArtifact, artifactHelp } from "./commands/template.js";
 import { runAgent, agentHelp } from "./commands/agent.js";
 import { runKey, keyHelp } from "./commands/key.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
 import { runFeedback, feedbackHelp } from "./commands/feedback.js";
 import { runConfig, configHelp } from "./commands/config.js";
-import { runBlob, blobHelp } from "./commands/blob.js";
+import { runBlob, blobHelp } from "./commands/attachment.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
@@ -43,23 +43,23 @@ Usage:
   pane <noun> <verb> [options]
 
 Nouns:
-  session           Open / observe / send to / close sessions
+  surface           Open / observe / send to / close surfaces
                     (create | list | show | send | watch | delete |
                      participant <list|new|revoke>).
-  artifact          Reusable, versioned UI templates
+  template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
   key               YOUR agent's API key (list | revoke).
   taste             YOUR agent's freeform UI taste notes
                     (get | set | clear) — presentation preferences the agent
                     has learned from human feedback and reads before
-                    generating a pane artifact.
+                    generating a pane template.
   feedback          One-shot feedback to the relay operator
                     (create | list) — bug reports, feature requests, notes.
-  blob              Binary attachments (upload | download | show | list |
+  attachment              Binary attachments (upload | download | show | list |
                     delete | token <mint|revoke|list>). Blobs are scoped to
-                    an agent, a session, or an artifact, and can be referenced
+                    an agent, a surface, or an template, and can be referenced
                     from event payloads + input_data via
-                    \`format: pane-blob-id\`.
+                    \`format: pane-attachment-id\`.
   agent             Agent identity on this machine (register | logout).
   config            CLI config inspection (show).
   skill             The relay's SKILL.md (show | version) — auto-updating;
@@ -88,8 +88,8 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 //
 // `version` is deliberately NOT here: the top-level `-v` / `--version` is
 // handled from rawArgv[0] before parseArgs runs, so it never needs to be a
-// boolean flag — and keeping it out lets `pane session create --version <n>` /
-// `pane artifact version` consume a value as a normal value-flag.
+// boolean flag — and keeping it out lets `pane surface create --version <n>` /
+// `pane template version` consume a value as a normal value-flag.
 const BOOLEAN_FLAGS = new Set([
   "json",
   "once",
@@ -132,12 +132,12 @@ async function main(): Promise<void> {
   }
 
   const helps: Record<string, string> = {
-    session: sessionHelp,
-    artifact: artifactHelp,
+    surface: sessionHelp,
+    template: artifactHelp,
     key: keyHelp,
     taste: tasteHelp,
     feedback: feedbackHelp,
-    blob: blobHelp,
+    attachment: blobHelp,
     agent: agentHelp,
     config: configHelp,
     skill: skillHelp,
@@ -165,10 +165,10 @@ async function main(): Promise<void> {
   }
 
   switch (noun) {
-    case "session":
+    case "surface":
       await runSession(args);
       break;
-    case "artifact":
+    case "template":
       await runArtifact(args);
       break;
     case "key":
@@ -180,7 +180,7 @@ async function main(): Promise<void> {
     case "feedback":
       await runFeedback(args);
       break;
-    case "blob":
+    case "attachment":
       await runBlob(args);
       break;
     case "agent":

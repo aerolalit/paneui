@@ -12,10 +12,10 @@
 //      churn. Asserted both from the browser side (one websocket, never
 //      closed) and the relay side (exactly one participant.joined for the
 //      human, zero participant.left). (Catches the current reconnect loop.)
-//   3. The artifact renders inside the sandboxed iframe as real DOM, not raw
+//   3. The template renders inside the sandboxed iframe as real DOM, not raw
 //      text. (Catches the `</script>` early-tag-close bug.)
-//   4. A `pane.emit` from inside the artifact round-trips: the relay records
-//      the event and the artifact receives the ack.
+//   4. A `pane.emit` from inside the template round-trips: the relay records
+//      the event and the template receives the ack.
 //
 // Run: npm run test:browser  (after `npx playwright install chromium`).
 
@@ -36,10 +36,10 @@ test.afterAll(async () => {
   if (relay) await relay.stop();
 });
 
-test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips emit", async ({
+test("phase-3 shell: loads, holds one stable WS, renders template, round-trips emit", async ({
   page,
 }) => {
-  const session = await createSession(relay.baseUrl);
+  const surface = await createSession(relay.baseUrl);
 
   // --- collect every console error and uncaught page error -----------------
   const consoleErrors: string[] = [];
@@ -60,17 +60,17 @@ test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips e
     });
   });
 
-  await page.goto(session.humanUrl);
+  await page.goto(surface.humanUrl);
 
   // (2a) The status pill flips to "connected" once the WS is OPEN.
   await expect(page.locator("#status")).toHaveText("connected", {
     timeout: 10_000,
   });
 
-  // (3) The artifact rendered as real DOM inside the sandboxed iframe — if the
+  // (3) The template rendered as real DOM inside the sandboxed iframe — if the
   // `</script>` bug were present the marker would leak as page text instead.
   const frame = page.frameLocator("#frame");
-  await expect(frame.locator("#artifact-marker")).toHaveText(
+  await expect(frame.locator("#template-marker")).toHaveText(
     "PANE ARTIFACT RENDERED",
     { timeout: 10_000 },
   );
@@ -88,22 +88,22 @@ test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips e
 
   // (2c) Relay-side proof of no churn: one human join, no human leave.
   const humanJoins = await relay.prisma.event.count({
-    where: { sessionId: session.sessionId, type: "system.participant.joined" },
+    where: { surfaceId: surface.surfaceId, type: "system.participant.joined" },
   });
   const humanLefts = await relay.prisma.event.count({
-    where: { sessionId: session.sessionId, type: "system.participant.left" },
+    where: { surfaceId: surface.surfaceId, type: "system.participant.left" },
   });
   expect(humanJoins, "exactly one participant.joined").toBe(1);
   expect(humanLefts, "no participant.left churn").toBe(0);
 
-  // (4) Emit round-trip: click the artifact button -> pane.emit -> relay
-  // records a `ping` event -> artifact receives the ack and renders the id.
+  // (4) Emit round-trip: click the template button -> pane.emit -> relay
+  // records a `ping` event -> template receives the ack and renders the id.
   await frame.locator("#emit-btn").click();
   await expect(frame.locator("#emit-result")).toContainText("EMIT_OK:", {
     timeout: 10_000,
   });
   const pings = await relay.prisma.event.count({
-    where: { sessionId: session.sessionId, type: "ping" },
+    where: { surfaceId: surface.surfaceId, type: "ping" },
   });
   expect(pings, "relay recorded the emitted event").toBe(1);
 
@@ -113,7 +113,7 @@ test("phase-3 shell: loads, holds one stable WS, renders artifact, round-trips e
 
   // (5) The /presence endpoint the shell polls returns JSON with the three
   // agent-presence facts. The token is the last path segment of the shell URL.
-  const token = new URL(session.humanUrl).pathname
+  const token = new URL(surface.humanUrl).pathname
     .split("/")
     .filter(Boolean)
     .pop()!;

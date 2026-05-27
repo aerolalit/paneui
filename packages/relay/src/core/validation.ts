@@ -18,7 +18,7 @@ const AjvCtor: new (opts?: object) => {
 } = require("ajv");
 
 // allErrors: true reports every failing JSON Schema path, not just the first.
-// Both schema_violation (event data) and input_schema_violation (session
+// Both schema_violation (event data) and input_schema_violation (surface
 // input_data) callers already pass the full `validate.errors` array through
 // to the error envelope's `details`, so flipping this flag is the only
 // change needed for callers to receive all errors at once. Reporter (#137)
@@ -31,16 +31,16 @@ const ajv = new AjvCtor({
   removeAdditional: false,
 });
 
-// `format: pane-blob-id` — schema vocabulary for blob references inside
+// `format: pane-attachment-id` — schema vocabulary for attachment references inside
 // event payloads + input_data. The format is purely SYNTACTIC: a cuid-
-// shaped string. The relay's authoritative access check (does this blob
+// shaped string. The relay's authoritative access check (does this attachment
 // exist? does the calling agent own it? is the scope compatible with this
-// session?) lives in the route layer because Ajv format validators are
+// surface?) lives in the route layer because Ajv format validators are
 // expected to be sync + DB-free.
 //
-// Schemas that want to declare a blob ref:
+// Schemas that want to declare a attachment ref:
 //
-//   { "type": "string", "format": "pane-blob-id" }
+//   { "type": "string", "format": "pane-attachment-id" }
 //
 // …or, more commonly, wrapped in a tagged object so the schema can also
 // carry expected mime / size constraints:
@@ -48,38 +48,38 @@ const ajv = new AjvCtor({
 //   {
 //     "type": "object",
 //     "properties": {
-//       "blob_id": { "type": "string", "format": "pane-blob-id" },
+//       "attachment_id": { "type": "string", "format": "pane-attachment-id" },
 //       "mime": { "type": "string", "pattern": "^image/" }
 //     },
-//     "required": ["blob_id"]
+//     "required": ["attachment_id"]
 //   }
 //
 // The format check rejects empty / wrong-shape strings up front so the
 // downstream batch-lookup can assume well-formed input.
-ajv.addFormat("pane-blob-id", {
+ajv.addFormat("pane-attachment-id", {
   type: "string",
   validate: (s: string): boolean =>
     typeof s === "string" && /^c[a-z0-9]{20,40}$/.test(s),
 });
 
-// Compiled-validator cache, keyed by `${sessionId}:${schemaVersion}`. Entries
-// are explicitly dropped via invalidateSchemaCache — on session DELETE and on
-// TTL expiry (the sweeper collects swept session ids and invalidates each).
+// Compiled-validator cache, keyed by `${surfaceId}:${schemaVersion}`. Entries
+// are explicitly dropped via invalidateSchemaCache — on surface DELETE and on
+// TTL expiry (the sweeper collects swept surface ids and invalidates each).
 // As a backstop against any path that fails to invalidate, the cache is also
 // bounded so it can't leak unboundedly: it is a simple LRU — a JS Map preserves
 // insertion order, so "least recently used" = the first key; on a hit we
 // delete + re-set to move the entry to the most-recent position.
 const CACHE_MAX = 10_000;
 const cache = new Map<string, Map<string, ValidateFunction>>();
-const cacheKey = (sessionId: string, schemaVersion: number): string =>
-  `${sessionId}:${schemaVersion}`;
+const cacheKey = (surfaceId: string, schemaVersion: number): string =>
+  `${surfaceId}:${schemaVersion}`;
 
 function getCompilers(
-  sessionId: string,
+  surfaceId: string,
   schemaVersion: number,
   schema: EventSchema,
 ): Map<string, ValidateFunction> {
-  const k = cacheKey(sessionId, schemaVersion);
+  const k = cacheKey(surfaceId, schemaVersion);
   const hit = cache.get(k);
   if (hit) {
     // Mark as most-recently-used.
@@ -100,9 +100,9 @@ function getCompilers(
   return m;
 }
 
-export function invalidateSchemaCache(sessionId: string): void {
+export function invalidateSchemaCache(surfaceId: string): void {
   for (const k of cache.keys()) {
-    if (k.startsWith(`${sessionId}:`)) cache.delete(k);
+    if (k.startsWith(`${surfaceId}:`)) cache.delete(k);
   }
 }
 
@@ -112,17 +112,17 @@ export function invalidateSchemaCache(sessionId: string): void {
 export const __schemaCacheInternals = {
   max: CACHE_MAX,
   size: (): number => cache.size,
-  has: (sessionId: string, schemaVersion: number): boolean =>
-    cache.has(cacheKey(sessionId, schemaVersion)),
+  has: (surfaceId: string, schemaVersion: number): boolean =>
+    cache.has(cacheKey(surfaceId, schemaVersion)),
   clear: (): void => cache.clear(),
 };
 
 export interface ValidateEventArgs {
-  sessionId: string;
+  surfaceId: string;
   schemaVersion: number;
-  // `null` = the pinned artifact version declares no event schema (a view-only
-  // artifact). validateEvent rejects every page/agent emit against such a
-  // session; only system events flow (they bypass validateEvent entirely).
+  // `null` = the pinned template version declares no event schema (a view-only
+  // template). validateEvent rejects every page/agent emit against such a
+  // surface; only system events flow (they bypass validateEvent entirely).
   schema: EventSchema | null;
   type: string;
   data: unknown;
@@ -134,7 +134,7 @@ export interface ValidateEventArgs {
 const TYPE_RX = /^[a-z][a-zA-Z0-9.]*[a-zA-Z0-9]$/;
 
 export function validateEvent(args: ValidateEventArgs): void {
-  // A schemaless session is view-only: it declares an empty event vocabulary,
+  // A schemaless surface is view-only: it declares an empty event vocabulary,
   // strictly enforced. Every page/agent emit is rejected — there is no type it
   // could possibly match. System events never reach here (appendSystemEvent
   // writes directly), so the `!== "system"` guard is belt-and-braces.
@@ -143,10 +143,10 @@ export function validateEvent(args: ValidateEventArgs): void {
       throw errors.schemaViolation(
         "unknown_event_type",
         { type: args.type },
-        "this session declares no event schema; it is view-only and accepts no page/agent events",
+        "this surface declares no event schema; it is view-only and accepts no page/agent events",
       );
     }
-    // A system author against a schemaless session: nothing to validate
+    // A system author against a schemaless surface: nothing to validate
     // against, and system events bypass schema rules anyway — accept it.
     return;
   }
@@ -157,7 +157,7 @@ export function validateEvent(args: ValidateEventArgs): void {
     throw errors.schemaViolation(
       "unknown_event_type",
       { type: args.type },
-      `event type '${args.type}' is not declared in the session schema; emit a declared type or PATCH the schema to add it`,
+      `event type '${args.type}' is not declared in the surface schema; emit a declared type or PATCH the schema to add it`,
     );
   }
 
@@ -172,7 +172,7 @@ export function validateEvent(args: ValidateEventArgs): void {
     }
   }
 
-  const compilers = getCompilers(args.sessionId, args.schemaVersion, schema);
+  const compilers = getCompilers(args.surfaceId, args.schemaVersion, schema);
   const validate = compilers.get(args.type)!;
   if (!validate(args.data)) {
     throw errors.schemaViolation(
@@ -183,7 +183,7 @@ export function validateEvent(args: ValidateEventArgs): void {
   }
 }
 
-// Validate an agent-supplied session title. Trust boundary: this value is
+// Validate an agent-supplied surface title. Trust boundary: this value is
 // untrusted agent input that the bridge shell renders into <title> (HTML-
 // escaped at render time). We enforce shape only — printable, single-line,
 // length-bounded — and return the trimmed value. Callers feed the returned
@@ -281,7 +281,7 @@ export function assertSchemaWithinLimits(
   }
 }
 
-// Validate the *shape* of an event schema at session-create / schema-patch time.
+// Validate the *shape* of an event schema at surface-create / schema-patch time.
 // (Each type's payload must be a valid JSON Schema; types must be namespaced;
 // emittedBy must be a non-empty subset of {page, agent}.)
 export function validateSchemaShape(raw: unknown): EventSchema {
@@ -340,11 +340,11 @@ export function validateSchemaShape(raw: unknown): EventSchema {
   return out;
 }
 
-// Compile an artifact's `input_schema` to confirm it is a valid JSON Schema.
-// Used by the /v1/artifacts routes at create/version time so a malformed
-// input_schema is rejected up front rather than at session-create time. The
+// Compile an template's `input_schema` to confirm it is a valid JSON Schema.
+// Used by the /v1/templates routes at create/version time so a malformed
+// input_schema is rejected up front rather than at surface-create time. The
 // schema itself is not retained — only its validity is asserted here. Phase C
-// will use the compiled validator to check session.input_data.
+// will use the compiled validator to check surface.input_data.
 export function assertValidInputSchema(raw: unknown): void {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw errors.invalidRequest("input_schema must be an object");
@@ -358,12 +358,12 @@ export function assertValidInputSchema(raw: unknown): void {
   }
 }
 
-// Validate a session's `input_data` against the pinned artifact version's
-// `input_schema` (a JSON Schema object). Called at POST /v1/sessions time so a
+// Validate a surface's `input_data` against the pinned template version's
+// `input_schema` (a JSON Schema object). Called at POST /v1/surfaces time so a
 // bad request fails fast — with a clear 422, exactly like a rejected event —
-// before any session row is created. `inputSchema` must already be a valid
-// JSON Schema (the /v1/artifacts routes enforce that via assertValidInputSchema
-// at artifact-write time). `data` is validated as-is; a caller that supplied no
+// before any surface row is created. `inputSchema` must already be a valid
+// JSON Schema (the /v1/templates routes enforce that via assertValidInputSchema
+// at template-write time). `data` is validated as-is; a caller that supplied no
 // `input_data` should pass `{}` so the schema's `required` fields fail
 // naturally rather than this throwing on undefined. Reuses the single shared
 // `ajv` instance — no second instance is created.
@@ -372,7 +372,7 @@ export function validateInputData(inputSchema: object, data: unknown): void {
   try {
     validate = ajv.compile(inputSchema);
   } catch (err) {
-    // Should not happen — input_schema is validated at artifact-write time —
+    // Should not happen — input_schema is validated at template-write time —
     // but if a malformed schema ever reaches here, surface it as a 400 rather
     // than letting Ajv throw an unhandled error.
     throw errors.invalidRequest(
@@ -383,7 +383,7 @@ export function validateInputData(inputSchema: object, data: unknown): void {
     throw errors.schemaViolation(
       "input_schema_violation",
       validate.errors,
-      "input_data does not validate against the artifact version's input_schema; see details for the failing JSON Schema paths, and check the schema for required fields",
+      "input_data does not validate against the template version's input_schema; see details for the failing JSON Schema paths, and check the schema for required fields",
     );
   }
 }
@@ -395,8 +395,8 @@ export function validateInputData(inputSchema: object, data: unknown): void {
 //
 // Note: `prev` is typed `EventSchema` (non-null). A schemaless (view-only)
 // `prev` is not currently reachable — there is no schema-PATCH route, and a
-// view-only session has no event vocabulary to extend. A future PATCH route
-// that wants to let a view-only artifact gain a schema must decide the
+// view-only surface has no event vocabulary to extend. A future PATCH route
+// that wants to let a view-only template gain a schema must decide the
 // semantics (a first PATCH could *establish* a schema rather than merge).
 export function mergeSchemaAdditive(
   prev: EventSchema,

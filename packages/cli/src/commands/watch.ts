@@ -1,4 +1,4 @@
-// `pane session watch <id>` — long-lived: hold a WebSocket and stream events as
+// `pane surface watch <id>` — long-lived: hold a WebSocket and stream events as
 // JSON-lines on stdout. This harness-agnostic stdout is the core contract:
 // one compact JSON object per line, flushed after every event, so any
 // pipe-reader (Claude Code's Monitor tool, `while read line`, jq -c, ...)
@@ -15,14 +15,14 @@ import { VERSION } from "../version.js";
 const KNOWN_FLAGS = ["since", "type", "filter-type", "timeout"];
 const KNOWN_BOOLS = ["once"];
 
-export const watchHelp = `pane session watch — stream a session's events as JSON-lines
+export const watchHelp = `pane surface watch — stream a surface's events as JSON-lines
 
 Usage:
-  pane session watch <session-id> [options]
+  pane surface watch <surface-id> [options]
 
-Holds a WebSocket to WS /v1/sessions/:id/stream. Prints ONE compact JSON
+Holds a WebSocket to WS /v1/surfaces/:id/stream. Prints ONE compact JSON
 object per line to stdout, flushing after each — designed to be piped into a
-line-reader. On session close, prints a final {"type":"_closed"} line and
+line-reader. On surface close, prints a final {"type":"_closed"} line and
 exits 0.
 
 Modes:
@@ -38,7 +38,7 @@ Options:
   --filter-type <t[,t2,…]>
                       Print only events whose type is in this set.
                       system.* events (lifecycle: participant.joined,
-                      session.expired, …) and the terminal {"type":
+                      surface.expired, …) and the terminal {"type":
                       "_closed"} line always pass through, so the
                       harness still sees them. Combine with --type X
                       --filter-type X for "stream only X events and
@@ -46,7 +46,7 @@ Options:
                       --type alone that agents often expect.
   --since <cursor>    Replay only events after this opaque cursor.
   --timeout <secs>    Wall-clock max wait. Fail with code ws_timeout if
-                      the natural exit condition (--once, --type, session
+                      the natural exit condition (--once, --type, surface
                       close) doesn't happen within this many seconds.
                       Frames arriving DO NOT reset the timer — this is
                       the budget for "give up on the human", not an idle
@@ -56,17 +56,17 @@ Options:
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
   -h, --help          Show this help.
 
-Each line is one event envelope: { id, session_id, author, ts, type, data,
+Each line is one event envelope: { id, surface_id, author, ts, type, data,
 causation_id, idempotency_key }. The terminal line is {"type":"_closed"}.
 
-Pattern — Claude Code Monitor tool: run \`pane session watch <id> --type form.submitted\`
+Pattern — Claude Code Monitor tool: run \`pane surface watch <id> --type form.submitted\`
 as a monitored process; the harness re-invokes the model when the line lands.
 
 Wait for any of several events:
-  pane session watch <id> --type form.submitted,form.cancelled --timeout 60
+  pane surface watch <id> --type form.submitted,form.cancelled --timeout 60
 
 Stream only matching events to stdout, exit on the first:
-  pane session watch <id> --type form.submitted --filter-type form.submitted`;
+  pane surface watch <id> --type form.submitted --filter-type form.submitted`;
 
 // Parse a comma-separated event-type list (e.g. "form.submitted,form.cancelled")
 // into a Set. Empty/whitespace entries are dropped. Returns null when the flag
@@ -98,10 +98,10 @@ export function shouldPrintEvent(
 }
 
 export async function runWatch(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session watch");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface watch");
 
-  const sessionId = args.positionals[0];
-  if (!sessionId) fail("missing <session-id>", "invalid_args");
+  const surfaceId = args.positionals[0];
+  if (!surfaceId) fail("missing <surface-id>", "invalid_args");
 
   const cfg = resolveConfig(args);
   const since = args.flags.get("since") ?? null;
@@ -146,7 +146,7 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
     finish(0);
   };
 
-  // Track whether the relay told us the session expired before the socket
+  // Track whether the relay told us the surface expired before the socket
   // closed — a 1006/1008/1011 close after that is still a clean shutdown.
   let sawSessionExpired = false;
 
@@ -157,7 +157,7 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   // useless once any frame arrived, even a system.participant.joined
   // emitted the moment a human connected. Frames now DO NOT reset the
   // timer; the only ways `--timeout` doesn't fire are the natural exit
-  // conditions (--once, --type match, session close) finishing first.
+  // conditions (--once, --type match, surface close) finishing first.
   let timer: NodeJS.Timeout | undefined;
   if (timeoutSec !== null) {
     timer = setTimeout(() => {
@@ -168,7 +168,7 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
   const handle = openStream(
     {
       wsBaseUrl: client.wsBaseUrl,
-      sessionId: sessionId!,
+      surfaceId: surfaceId!,
       token: cfg.apiKey,
       since,
     },
@@ -182,8 +182,8 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
         if (shouldPrintEvent(event.type, filterTypes)) {
           printJsonLine(event);
         }
-        // A system.session.expired event means the session is closing.
-        if (event.type === "system.session.expired") {
+        // A system.surface.expired event means the surface is closing.
+        if (event.type === "system.surface.expired") {
           sawSessionExpired = true;
           emitClosed();
           return;
@@ -199,8 +199,8 @@ export async function runWatch(args: ParsedArgs): Promise<void> {
       onClose: ({ code, reason }) => {
         // A clean close is 1000 (normal) or 1001 (going away). Any other code
         // — 1006 abnormal, 1008 policy/auth, 1011 server error — is a failure
-        // UNLESS we already saw system.session.expired, which means the relay
-        // closed us on purpose after a clean session end.
+        // UNLESS we already saw system.surface.expired, which means the relay
+        // closed us on purpose after a clean surface end.
         if (code === 1000 || code === 1001 || sawSessionExpired) {
           emitClosed();
           return;

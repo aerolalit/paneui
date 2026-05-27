@@ -35,10 +35,10 @@ describe("ws ticket store", () => {
     expect(redeemTicket("nope", "ses_a")).toBeNull();
   });
 
-  it("rejects a ticket redeemed against the wrong session", () => {
+  it("rejects a ticket redeemed against the wrong surface", () => {
     const t = issueTicket(author, "ses_a");
     expect(redeemTicket(t, "ses_b")).toBeNull();
-    // A wrong-session redeem still burns the ticket (single-use).
+    // A wrong-surface redeem still burns the ticket (single-use).
     expect(redeemTicket(t, "ses_a")).toBeNull();
   });
 

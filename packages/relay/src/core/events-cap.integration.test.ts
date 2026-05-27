@@ -1,4 +1,4 @@
-// Integration test for the per-session event cap (abuse control B3).
+// Integration test for the per-surface event cap (abuse control B3).
 //
 // MAX_EVENTS_PER_SESSION is supplied via the config injected into writeEvent()'s
 // deps, so the small cap is just passed straight to loadConfig() — no
@@ -15,7 +15,7 @@ import { createPrismaClient } from "../db.js";
 import { loadConfig, type Config } from "../config.js";
 import {
   writeEvent,
-  type SessionWithArtifactVersion,
+  type SurfaceWithArtifactVersion,
   type WriteEventInput,
 } from "./events.js";
 
@@ -27,11 +27,11 @@ const CAP = 5;
 
 // Thin wrapper binding writeEvent to the injected { prisma, config } deps.
 function we(
-  session: SessionWithArtifactVersion,
+  surface: SurfaceWithArtifactVersion,
   author: Author,
   input: WriteEventInput,
 ) {
-  return writeEvent({ prisma, config }, session, author, input);
+  return writeEvent({ prisma, config }, surface, author, input);
 }
 
 beforeAll(async () => {
@@ -52,7 +52,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSession(): Promise<SessionWithArtifactVersion> {
+async function seedSession(): Promise<SurfaceWithArtifactVersion> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -60,7 +60,7 @@ async function seedSession(): Promise<SessionWithArtifactVersion> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { sessionId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSessionRow(prisma, {
     agentId: agent.id,
     eventSchema: {
       events: {
@@ -68,31 +68,31 @@ async function seedSession(): Promise<SessionWithArtifactVersion> {
       },
     },
   });
-  const session = await prisma.session.findUniqueOrThrow({
-    where: { id: sessionId },
-    include: { artifactVersion: true },
+  const surface = await prisma.surface.findUniqueOrThrow({
+    where: { id: surfaceId },
+    include: { templateVersion: true },
   });
-  return session;
+  return surface;
 }
 
 const author: Author = { kind: "agent", id: "a1" };
 
-describe("per-session event cap", () => {
+describe("per-surface event cap", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("rejects events once the session reaches MAX_EVENTS_PER_SESSION", async () => {
-    const session = await seedSession();
+  it("rejects events once the surface reaches MAX_EVENTS_PER_SESSION", async () => {
+    const surface = await seedSession();
     for (let i = 0; i < CAP; i++) {
-      await we(session, author, { type: "ping", data: {} });
+      await we(surface, author, { type: "ping", data: {} });
     }
     await expect(
-      we(session, author, { type: "ping", data: {} }),
+      we(surface, author, { type: "ping", data: {} }),
     ).rejects.toMatchObject({ status: 429, code: "rate_limited" });
   });
 
-  it("caps are per-session — a second session is unaffected", async () => {
+  it("caps are per-surface — a second surface is unaffected", async () => {
     const a = await seedSession();
     const b = await seedSession();
     for (let i = 0; i < CAP; i++) {
@@ -101,7 +101,7 @@ describe("per-session event cap", () => {
     await expect(
       we(a, author, { type: "ping", data: {} }),
     ).rejects.toBeInstanceOf(ApiError);
-    // Session b has its own independent count.
+    // Surface b has its own independent count.
     const { event } = await we(b, author, { type: "ping", data: {} });
     expect(event.id).toBeTruthy();
   });

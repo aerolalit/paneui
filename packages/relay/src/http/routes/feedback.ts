@@ -24,7 +24,7 @@ interface FeedbackRow {
   id: string;
   type: string;
   message: string;
-  sessionId: string | null;
+  surfaceId: string | null;
   createdAt: Date;
 }
 
@@ -33,7 +33,7 @@ function serialize(row: FeedbackRow) {
     id: row.id,
     type: row.type,
     message: row.message,
-    session_id: row.sessionId,
+    surface_id: row.surfaceId,
     created_at: row.createdAt.toISOString(),
   };
 }
@@ -51,14 +51,14 @@ feedback.post("/", async (c) => {
       "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
     );
   }
-  const { type, message, session_id } = parsed.data;
+  const { type, message, surface_id } = parsed.data;
 
-  if (session_id !== undefined) {
-    const session = await prisma.session.findUnique({
-      where: { id: session_id },
+  if (surface_id !== undefined) {
+    const surface = await prisma.surface.findUnique({
+      where: { id: surface_id },
       select: { agentId: true },
     });
-    if (!session || session.agentId !== me.id) throw errors.notFound();
+    if (!surface || surface.agentId !== me.id) throw errors.notFound();
   }
 
   const row = await prisma.feedback.create({
@@ -66,7 +66,7 @@ feedback.post("/", async (c) => {
       agentId: me.id,
       type,
       message,
-      sessionId: session_id ?? null,
+      surfaceId: surface_id ?? null,
     },
     select: { id: true, type: true, createdAt: true },
   });

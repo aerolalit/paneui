@@ -44,7 +44,7 @@ describe("fire (per-attempt timeout)", () => {
 
   const event: SerializedEvent = {
     id: "evt_1",
-    session_id: "sess_1",
+    surface_id: "sess_1",
     author: { kind: "agent", id: "agent_1" },
     ts: "2026-01-01T00:00:00.000Z",
     type: "review.commentAdded",
@@ -116,7 +116,7 @@ describe("fire (SSRF: redirects are not followed)", () => {
 
   const event: SerializedEvent = {
     id: "evt_1",
-    session_id: "sess_1",
+    surface_id: "sess_1",
     author: { kind: "agent", id: "agent_1" },
     ts: "2026-01-01T00:00:00.000Z",
     type: "review.commentAdded",

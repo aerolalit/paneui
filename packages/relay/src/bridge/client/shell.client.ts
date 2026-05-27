@@ -1,7 +1,7 @@
 // The shell IIFE: runs in the participant's browser at /s/:token. Holds the
 // WebSocket connection, owns the participant token (lives only in the shell,
 // never reaches the iframe), and proxies the postMessage protocol between the
-// sandboxed iframe (which runs the agent's artifact + the runtime) and the WS.
+// sandboxed iframe (which runs the agent's template + the runtime) and the WS.
 //
 // Config is delivered via a sibling `<script type="application/json" id="pane-cfg">`
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
@@ -25,10 +25,10 @@ type OutboundFrame = PaneFrameEnvelope & {
 };
 
 interface ShellCfg {
-  sessionId: string;
+  surfaceId: string;
   schema: unknown;
-  // The session's per-instance input_data — the relay validated it against the
-  // artifact version's input_schema at create time. Forwarded to the iframe in
+  // The surface's per-instance input_data — the relay validated it against the
+  // template version's input_schema at create time. Forwarded to the iframe in
   // the `init` frame; the runtime exposes it as `window.pane.inputData`.
   inputData: unknown;
   token: string;
@@ -37,7 +37,7 @@ interface ShellCfg {
   // Live agent-presence facts, computed by the relay at request time. These
   // SEED the agent-presence pill; the shell then keeps it live from events
   // received after `system.replay.complete` (see the presence section below).
-  //  - agentLive: an agent WebSocket was open on this session at request time.
+  //  - agentLive: an agent WebSocket was open on this surface at request time.
   //  - agentLastEventAt: ISO ts of the most recent agent-authored event.
   //  - agentLastUsedAt: ISO ts of the owning agent's last authenticated request.
   agentLive: boolean;
@@ -104,18 +104,18 @@ interface SerializedEvent {
   //  1) agentLiveCount — number of agent sockets open right now. Seeded from
   //     CFG.agentLive, then kept exact from post-replay `agentCountLive`.
   //  2) lastAgentActiveMs — the most recent moment an agent touched the
-  //     session (sent an event or pulled events). Seeded from the max of
+  //     surface (sent an event or pulled events). Seeded from the max of
   //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
   //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
-  // Green-from-recent-activity window. An agent that MONITORS a session by
-  // polling `pane session show` (HTTP GET .../events?since=... every few seconds)
+  // Green-from-recent-activity window. An agent that MONITORS a surface by
+  // polling `pane surface show` (HTTP GET .../events?since=... every few seconds)
   // never opens a WebSocket, yet is just as present as one holding a stream.
   // Every authenticated agent request stamps `Agent.lastUsedAt` server-side,
   // so an agent polling on a few-second cadence keeps `lastUsedAt` well within
   // this window. The shell learns the fresh value by polling /presence.
   const ACTIVE_WINDOW_MS = 30 * 1000;
-  // Grace window: an agent monitor often reconnects in short `pane session watch`
+  // Grace window: an agent monitor often reconnects in short `pane surface watch`
   // cycles (connect -> get event -> exit -> harness re-runs). The live socket
   // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
   // would flap green -> amber -> green. So once a live agent socket has been
@@ -149,7 +149,7 @@ interface SerializedEvent {
 
   function renderAgentPresence(): void {
     if (CFG.isClosed) {
-      agentStatusEl.textContent = "session closed";
+      agentStatusEl.textContent = "surface closed";
       agentDot.className = "dot";
       return;
     }
@@ -158,7 +158,7 @@ interface SerializedEvent {
     //     closed (short reconnection gaps in a monitor loop don't flap), OR
     //  2) the owning agent made an authenticated request — or an
     //     agent-authored event arrived — within ACTIVE_WINDOW_MS (30s). This
-    //     covers a monitor that polls `pane session show` and never opens a socket;
+    //     covers a monitor that polls `pane surface show` and never opens a socket;
     //     the shell keeps lastAgentActiveMs fresh by polling /presence.
     if (
       agentLiveCount > 0 ||
@@ -224,7 +224,7 @@ interface SerializedEvent {
   }
 
   // Poll the relay's /presence endpoint to keep the pill fresh for a polling
-  // agent. Such an agent monitors via `pane session show` HTTP polls and never opens
+  // agent. Such an agent monitors via `pane surface show` HTTP polls and never opens
   // a WebSocket, so the live-socket count and post-replay events never see it
   // — but every authenticated request stamps `Agent.lastUsedAt` server-side.
   // The page-load config seed captures `lastUsedAt` once and then goes stale;
@@ -295,7 +295,7 @@ interface SerializedEvent {
 
   // Cap correlation_id everywhere it crosses the shell. The runtime generates
   // short strings ("c1", "c2", ...). The cap exists to stop a buggy or
-  // hostile artifact from forcing the relay to materialise a huge string
+  // hostile template from forcing the relay to materialise a huge string
   // into every ack/error response.
   function validCid(v: unknown): v is string {
     return typeof v === "string" && v.length > 0 && v.length <= 128;
@@ -308,7 +308,7 @@ interface SerializedEvent {
       v: 1,
       kind: "init",
       payload: {
-        session_id: CFG.sessionId,
+        surface_id: CFG.surfaceId,
         schema: CFG.schema,
         replay: replayBuffer.slice(),
         shell_origin: window.location.origin,
@@ -367,8 +367,8 @@ interface SerializedEvent {
   // ticket is single-use and expires after 30s. See relay issue #8.
   const ticketUrl =
     window.location.origin +
-    "/v1/sessions/" +
-    encodeURIComponent(CFG.sessionId) +
+    "/v1/surfaces/" +
+    encodeURIComponent(CFG.surfaceId) +
     "/ws-ticket";
 
   async function mintTicket(): Promise<string> {
@@ -411,7 +411,7 @@ interface SerializedEvent {
 
   // Mint a ticket, then open the socket with `?ticket=`. Kept separate from
   // connect() so connect() stays a synchronous guard. A mint failure (network
-  // blip, expired session) is treated like a connection failure: clear the
+  // blip, expired surface) is treated like a connection failure: clear the
   // in-flight flag and schedule a backed-off reconnect.
   async function openWithTicket(): Promise<void> {
     let ticket: string;
@@ -422,7 +422,7 @@ interface SerializedEvent {
       scheduleReconnect();
       return;
     }
-    // The session may have closed, or a newer connect superseded us, while the
+    // The surface may have closed, or a newer connect superseded us, while the
     // mint was in flight — bail rather than open a doomed socket.
     if (CFG.isClosed) {
       connecting = false;
@@ -538,14 +538,14 @@ interface SerializedEvent {
       sendIframeInit();
       return;
     }
-    // upload-blob-request: the iframe is asking the shell to POST a file to
-    // the participant-side blob upload route on its behalf. The shell owns
+    // upload-attachment-request: the iframe is asking the shell to POST a file to
+    // the participant-side attachment upload route on its behalf. The shell owns
     // the participant token (it lives only in the shell, never reaches the
     // iframe) so the iframe cannot make this request directly. We fetch,
     // then post the result back. ALWAYS post a reply, even on network
     // failure — otherwise the iframe's promise sits hanging until its
     // 2-minute timeout. Follow-up C of #156.
-    if (m.kind === "upload-blob-request") {
+    if (m.kind === "upload-attachment-request") {
       const uploadId =
         typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
           ? m.id
@@ -559,12 +559,12 @@ interface SerializedEvent {
           const errFrame: OutboundFrame = {
             __pane: 1,
             v: 1,
-            kind: "upload-blob-result",
+            kind: "upload-attachment-result",
             id: uploadId,
             ok: false,
             error: {
               code: "invalid_request",
-              message: "upload-blob-request requires { id, file }",
+              message: "upload-attachment-request requires { id, file }",
             },
           };
           frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
@@ -597,7 +597,7 @@ interface SerializedEvent {
         window.location.origin +
         "/s/" +
         encodeURIComponent(CFG.token) +
-        "/blobs";
+        "/attachments";
 
       // Fire the fetch in a sibling task — never await it on the message
       // listener thread, so a hung relay can't block other runtime frames.
@@ -610,7 +610,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "upload-blob-result",
+              kind: "upload-attachment-result",
               id: uploadId,
               ok: false,
               error: {
@@ -625,21 +625,21 @@ interface SerializedEvent {
         }
 
         if (res.ok) {
-          // 2xx — parse the BlobRef and resolve.
-          let blob: unknown;
+          // 2xx — parse the AttachmentRef and resolve.
+          let attachment: unknown;
           try {
-            blob = await res.json();
+            attachment = await res.json();
           } catch {
-            blob = null;
+            attachment = null;
           }
           if (frame && frame.contentWindow) {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "upload-blob-result",
+              kind: "upload-attachment-result",
               id: uploadId,
               ok: true,
-              blob,
+              attachment,
             };
             frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
           }
@@ -647,7 +647,7 @@ interface SerializedEvent {
         }
 
         // Non-2xx — parse the standard {error: {code, message, hint, ...}}
-        // envelope and forward it so the artifact's catch handler can
+        // envelope and forward it so the template's catch handler can
         // branch on the relay's error code.
         let code = "upload_failed";
         let message = "upload failed with status " + res.status;
@@ -667,7 +667,7 @@ interface SerializedEvent {
           const reply: OutboundFrame = {
             __pane: 1,
             v: 1,
-            kind: "upload-blob-result",
+            kind: "upload-attachment-result",
             id: uploadId,
             ok: false,
             error: { code, message },
@@ -677,37 +677,38 @@ interface SerializedEvent {
       })();
       return;
     }
-    // download-blob-request: the iframe is asking the shell to GET blob
+    // download-attachment-request: the iframe is asking the shell to GET attachment
     // bytes by id. The shell holds the participant token (it lives only in
     // the shell, never reaches the iframe) so the iframe cannot make this
     // request directly. We fetch, then post the resulting Blob back via
     // structured clone — the iframe receives a live Blob it can render
-    // with `URL.createObjectURL` (the iframe CSP allows `blob:` URLs in
+    // with `URL.createObjectURL` (the iframe CSP allows `attachment:` URLs in
     // `img-src`). ALWAYS post a reply, even on network failure — otherwise
     // the iframe's promise sits hanging until its 2-minute timeout.
-    // Follow-up D of #156. Symmetric to upload-blob-request.
-    if (m.kind === "download-blob-request") {
+    // Follow-up D of #156. Symmetric to upload-attachment-request.
+    if (m.kind === "download-attachment-request") {
       const downloadId =
         typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
           ? m.id
           : null;
-      const blobId =
-        typeof m.blob_id === "string" &&
-        m.blob_id.length > 0 &&
-        m.blob_id.length <= 64
-          ? m.blob_id
+      const attachmentId =
+        typeof m.attachment_id === "string" &&
+        m.attachment_id.length > 0 &&
+        m.attachment_id.length <= 64
+          ? m.attachment_id
           : null;
-      if (!downloadId || !blobId) {
+      if (!downloadId || !attachmentId) {
         if (downloadId && frame && frame.contentWindow) {
           const errFrame: OutboundFrame = {
             __pane: 1,
             v: 1,
-            kind: "download-blob-result",
+            kind: "download-attachment-result",
             id: downloadId,
             ok: false,
             error: {
               code: "invalid_request",
-              message: "download-blob-request requires { id, blob_id }",
+              message:
+                "download-attachment-request requires { id, attachment_id }",
             },
           };
           frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
@@ -719,8 +720,8 @@ interface SerializedEvent {
         window.location.origin +
         "/s/" +
         encodeURIComponent(CFG.token) +
-        "/blobs/" +
-        encodeURIComponent(blobId);
+        "/attachments/" +
+        encodeURIComponent(attachmentId);
 
       // Fire the fetch in a sibling task — never await on the message
       // listener thread so a hung relay can't block other runtime frames.
@@ -736,7 +737,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "download-blob-result",
+              kind: "download-attachment-result",
               id: downloadId,
               ok: false,
               error: {
@@ -759,7 +760,7 @@ interface SerializedEvent {
               const reply: OutboundFrame = {
                 __pane: 1,
                 v: 1,
-                kind: "download-blob-result",
+                kind: "download-attachment-result",
                 id: downloadId,
                 ok: false,
                 error: {
@@ -776,10 +777,10 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "download-blob-result",
+              kind: "download-attachment-result",
               id: downloadId,
               ok: true,
-              blob: blobBody,
+              attachment: blobBody,
               mime: blobBody.type,
               size: blobBody.size,
             };
@@ -789,7 +790,7 @@ interface SerializedEvent {
         }
 
         // Non-2xx — parse the standard {error: {code, message, ...}}
-        // envelope and forward so the artifact can branch on the code.
+        // envelope and forward so the template can branch on the code.
         let code = "download_failed";
         let message = "download failed with status " + res.status;
         try {
@@ -808,7 +809,7 @@ interface SerializedEvent {
           const reply: OutboundFrame = {
             __pane: 1,
             v: 1,
-            kind: "download-blob-result",
+            kind: "download-attachment-result",
             id: downloadId,
             ok: false,
             error: { code, message },
@@ -818,23 +819,23 @@ interface SerializedEvent {
       })();
       return;
     }
-    // save-blob-request: iframe asks the shell to trigger a browser save of
-    // a blob. Distinct from download-blob-request — no bytes flow back to
+    // save-attachment-request: iframe asks the shell to trigger a browser save of
+    // a attachment. Distinct from download-attachment-request — no bytes flow back to
     // the iframe. The shell performs the `<a download>` click in its OWN
     // (non-sandboxed) document, which is the only way iOS WebKit reliably
     // saves files; sandboxed-iframe downloads are silently dropped on iOS
     // even with `allow-downloads`. Always replies with ok | error so the
     // iframe's promise resolves.
-    if (m.kind === "save-blob-request") {
+    if (m.kind === "save-attachment-request") {
       const saveId =
         typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
           ? m.id
           : null;
-      const blobId =
-        typeof m.blob_id === "string" &&
-        m.blob_id.length > 0 &&
-        m.blob_id.length <= 64
-          ? m.blob_id
+      const attachmentId =
+        typeof m.attachment_id === "string" &&
+        m.attachment_id.length > 0 &&
+        m.attachment_id.length <= 64
+          ? m.attachment_id
           : null;
       // Sanitise filename — strip path separators and control chars, cap len.
       let fname: string | null = null;
@@ -846,17 +847,17 @@ interface SerializedEvent {
         if (cleaned.length > 0) fname = cleaned;
       }
 
-      if (!saveId || !blobId) {
+      if (!saveId || !attachmentId) {
         if (saveId && frame && frame.contentWindow) {
           const errFrame: OutboundFrame = {
             __pane: 1,
             v: 1,
-            kind: "save-blob-result",
+            kind: "save-attachment-result",
             id: saveId,
             ok: false,
             error: {
               code: "invalid_request",
-              message: "save-blob-request requires { id, blob_id }",
+              message: "save-attachment-request requires { id, attachment_id }",
             },
           };
           frame.contentWindow.postMessage(errFrame, IFRAME_ORIGIN);
@@ -868,8 +869,8 @@ interface SerializedEvent {
         window.location.origin +
         "/s/" +
         encodeURIComponent(CFG.token) +
-        "/blobs/" +
-        encodeURIComponent(blobId);
+        "/attachments/" +
+        encodeURIComponent(attachmentId);
 
       // Fire in a sibling task — never await on the message-listener thread.
       void (async () => {
@@ -881,7 +882,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "save-blob-result",
+              kind: "save-attachment-result",
               id: saveId,
               ok: false,
               error: {
@@ -914,7 +915,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "save-blob-result",
+              kind: "save-attachment-result",
               id: saveId,
               ok: false,
               error: { code, message },
@@ -933,7 +934,7 @@ interface SerializedEvent {
           const objectUrl = URL.createObjectURL(blobBody);
           const a = document.createElement("a");
           a.href = objectUrl;
-          a.download = fname || blobId;
+          a.download = fname || attachmentId;
           // Some browsers need the anchor to be in the DOM before .click()
           a.style.display = "none";
           document.body.appendChild(a);
@@ -954,7 +955,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "save-blob-result",
+              kind: "save-attachment-result",
               id: saveId,
               ok: true,
             };
@@ -965,7 +966,7 @@ interface SerializedEvent {
             const reply: OutboundFrame = {
               __pane: 1,
               v: 1,
-              kind: "save-blob-result",
+              kind: "save-attachment-result",
               id: saveId,
               ok: false,
               error: {

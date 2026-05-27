@@ -1,21 +1,21 @@
 // `pane taste` — read / write / clear the calling agent's freeform "taste
-// notes" markdown blob.
+// notes" markdown attachment.
 //
 // Taste notes are presentation preferences the agent has learned from human
 // feedback ("denser layout", "no rounded corners", "use a dark header") — the
-// kind of guidance that should outlive a single session. The intended loop:
+// kind of guidance that should outlive a single surface. The intended loop:
 //
-//   1. Before generating a pane artifact, run `pane taste get` and feed the
+//   1. Before generating a pane template, run `pane taste get` and feed the
 //      `taste` field into the prompt so prior preferences shape the output.
 //   2. When the human gives new presentation feedback, run `pane taste get`,
 //      merge the feedback into the existing notes IN THE PROMPT, then call
-//      `pane taste set` with the WHOLE new blob (the relay does whole-blob
+//      `pane taste set` with the WHOLE new attachment (the relay does whole-attachment
 //      replace, not append — that's deliberate, so the notes can't grow
 //      unbounded into noise).
 //
 // Keep taste notes about *presentation/UI taste only* — colours, density,
-// component preferences. Project context, todos, and per-session state belong
-// somewhere else. Today the blob is keyed by the agent's API key (per-agent);
+// component preferences. Project context, todos, and per-surface state belong
+// somewhere else. Today the attachment is keyed by the agent's API key (per-agent);
 // when pane gains first-class humans, this may move to per-human.
 
 import { readFileSync } from "node:fs";
@@ -31,25 +31,25 @@ const CLEAR_BOOLS = ["yes"];
 
 export const tasteHelp = `pane taste — read / write / clear YOUR agent's UI taste notes
 
-Taste notes are a small markdown blob storing presentation preferences your
+Taste notes are a small markdown attachment storing presentation preferences your
 agent has picked up from human feedback ("denser table", "no rounded corners",
-"use a dark header"). Read them before generating a pane artifact so prior
+"use a dark header"). Read them before generating a pane template so prior
 feedback shapes the output; rewrite them whenever the human gives new
 presentation feedback. Keep entries about UI/presentation taste only — not
-project context, todos, or session state.
+project context, todos, or surface state.
 
 Usage:
   pane taste <subcommand> [options]
 
 Subcommands:
-  get        Print the current notes blob:
+  get        Print the current notes attachment:
              { taste: string|null, updated_at: string|null, bytes: number }.
              taste is null and bytes is 0 when notes have never been written.
 
-  set        Whole-blob replace. Source the markdown via --file <path>,
+  set        Whole-attachment replace. Source the markdown via --file <path>,
              --file - (read stdin), or by piping into 'pane taste set' with
              no flag. The relay rejects empty/whitespace-only payloads and
-             caps the blob at MAX_TASTE_BYTES (utf8). To clear the notes,
+             caps the attachment at MAX_TASTE_BYTES (utf8). To clear the notes,
              use 'pane taste clear', not 'set' with an empty body.
 
   clear      Delete the notes. Requires --yes (it is destructive). Prints
@@ -101,7 +101,7 @@ async function runTasteSet(args: ParsedArgs): Promise<void> {
 
   const filePath = args.flags.get("file");
 
-  // Source the blob deterministically — no isTTY-flag fusing, because
+  // Source the attachment deterministically — no isTTY-flag fusing, because
   // `!process.stdin.isTTY` is true under every non-interactive caller
   // (pipes, redirects, closed fd, CI, agent harnesses) and would wrongly
   // reject `--file` for the entire target audience. See issue #148.
@@ -132,7 +132,7 @@ async function runTasteSet(args: ParsedArgs): Promise<void> {
 
   if (taste.trim().length === 0) {
     fail(
-      "'pane taste set' refuses an empty or whitespace-only blob — use 'pane taste clear --yes' to delete the notes",
+      "'pane taste set' refuses an empty or whitespace-only attachment — use 'pane taste clear --yes' to delete the notes",
       "invalid_args",
     );
   }

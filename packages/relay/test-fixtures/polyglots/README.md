@@ -1,7 +1,7 @@
 # Polyglot test corpus
 
-Tracked attack corpus for the blob-attachment polyglot defense
-(`packages/relay/src/blobs/normalize.ts`).
+Tracked attack corpus for the attachment-attachment polyglot defense
+(`packages/relay/src/attachments/normalize.ts`).
 
 Tracking issue: [pane#153](https://github.com/aerolalit/paneui/issues/153) —
 verifies the polyglot strip claim of [pane#152](https://github.com/aerolalit/paneui/issues/152).
@@ -22,7 +22,7 @@ Every fixture has two paired files:
 
 - A **builder** in [`builders.ts`](./builders.ts) keyed by `<name>` —
   pure TypeScript that emits the polyglot bytes deterministically. No
-  binary blobs checked in.
+  binary attachments checked in.
 - A **sidecar** at [`meta/<name>.meta.json`](./meta) documenting the
   fixture's `mime`, `threatClass`, `source`, `description`,
   `expectedNormalisation`, and `assertions`.
@@ -63,12 +63,12 @@ satisfy the spirit with **tracked builders**:
 
 - **Reviewable.** A new fixture is a TypeScript function in a PR
   diff. Reviewers can see exactly what bytes are produced, not a
-  base64 blob.
+  base64 attachment.
 - **Reproducible.** The same `(node, sharp, zlib)` versions produce
   the same bytes on every CI run. No drift between developer machines
   and CI.
 - **Diff-friendly.** When sharp ships a behaviour change, the diff
-  shows up in the test assertions — not as a binary blob mystery.
+  shows up in the test assertions — not as a binary attachment mystery.
 - **No licensing ambiguity.** Hand-authored bytes only; no copied
   fixtures from third-party corpora that would carry their own
   attribution / license requirements.
@@ -98,7 +98,7 @@ if a future fixture lands as a direct adaptation.
 
 If you can construct a file that:
 
-1. Passes our MIME sniffer (`packages/relay/src/blobs/mime-sniff.ts`)
+1. Passes our MIME sniffer (`packages/relay/src/attachments/mime-sniff.ts`)
 2. Survives `normaliseImage()` with malicious payload intact
 
 …please **don't** open a public issue. Email the maintainer (see

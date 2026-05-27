@@ -1,6 +1,6 @@
 // End-to-end test for the WebSocket transport. Boots the real HTTP server
 // with attachWs(), connects with the `ws` client, exercises:
-//   - auth (good token, missing token, wrong session)
+//   - auth (good token, missing token, wrong surface)
 //   - replay on connect
 //   - frame -> ack happy path
 //   - schema-violating frame -> error frame (no ack)
@@ -115,55 +115,55 @@ const minimalSchema = {
 };
 
 async function createSession(apiKey: string): Promise<{
-  sessionId: string;
+  surfaceId: string;
   agentToken: string;
   humanToken: string;
 }> {
-  const res = await fetch(`http://localhost:${port}/v1/sessions`, {
+  const res = await fetch(`http://localhost:${port}/v1/surfaces`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      artifact: {
+      template: {
         type: "html-inline",
         source: "<html></html>",
         event_schema: minimalSchema,
       },
       participants: { humans: 1 },
-      title: "Test session",
+      title: "Test surface",
     }),
   });
   const body = (await res.json()) as {
-    session_id: string;
+    surface_id: string;
     tokens: { humans: string[]; agent: string };
   };
   return {
-    sessionId: body.session_id,
+    surfaceId: body.surface_id,
     agentToken: body.tokens.agent,
     humanToken: body.tokens.humans[0]!,
   };
 }
 
-function connect(sessionId: string, token: string): WebSocket {
+function connect(surfaceId: string, token: string): WebSocket {
   return new WebSocket(
-    `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${token}`,
+    `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream?token=${token}`,
   );
 }
 
-function connectWithTicket(sessionId: string, ticket: string): WebSocket {
+function connectWithTicket(surfaceId: string, ticket: string): WebSocket {
   return new WebSocket(
-    `ws://localhost:${port}/v1/sessions/${sessionId}/stream?ticket=${ticket}`,
+    `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream?ticket=${ticket}`,
   );
 }
 
 async function mintTicket(
-  sessionId: string,
+  surfaceId: string,
   token: string,
 ): Promise<{ status: number; ticket?: string; expires_at?: string }> {
   const res = await fetch(
-    `http://localhost:${port}/v1/sessions/${sessionId}/ws-ticket`,
+    `http://localhost:${port}/v1/surfaces/${surfaceId}/ws-ticket`,
     { method: "POST", headers: { authorization: `Bearer ${token}` } },
   );
   const body = (await res.json().catch(() => ({}))) as {
@@ -228,25 +228,25 @@ describe("WS e2e", () => {
 
   it("rejects upgrade with no token (401)", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId } = await createSession(apiKey);
+    const { surfaceId } = await createSession(apiKey);
     const ws = new WebSocket(
-      `ws://localhost:${port}/v1/sessions/${sessionId}/stream`,
+      `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream`,
     );
     await expect(waitOpen(ws)).rejects.toThrow(/401/);
   });
 
-  it("rejects participant token used against a different session (404)", async () => {
+  it("rejects participant token used against a different surface (404)", async () => {
     const { apiKey } = await seedAgent();
     const a = await createSession(apiKey);
     const b = await createSession(apiKey);
-    const ws = connect(a.sessionId, b.humanToken);
+    const ws = connect(a.surfaceId, b.humanToken);
     await expect(waitOpen(ws)).rejects.toThrow(/404/);
   });
 
   it("agent connects, sends a frame, receives an ack", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const ws = connect(sessionId, agentToken);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const ws = connect(surfaceId, agentToken);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
 
@@ -276,7 +276,7 @@ describe("WS e2e", () => {
     expect(ack.deduped).toBe(false);
 
     const rows = await prisma.event.findMany({
-      where: { sessionId, type: "review.commentAdded" },
+      where: { surfaceId, type: "review.commentAdded" },
     });
     expect(rows).toHaveLength(1);
     ws.close();
@@ -284,8 +284,8 @@ describe("WS e2e", () => {
 
   it("schema violation produces an error frame, no ack, no row", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const ws = connect(sessionId, agentToken);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const ws = connect(surfaceId, agentToken);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     await q.take(2); // burn join + replay.complete
@@ -308,7 +308,7 @@ describe("WS e2e", () => {
     expect(frame.error?.docs_url).toContain("docs/SPEC.md#");
 
     const rows = await prisma.event.findMany({
-      where: { sessionId, type: "review.commentAdded" },
+      where: { surfaceId, type: "review.commentAdded" },
     });
     expect(rows).toHaveLength(0);
     ws.close();
@@ -316,8 +316,8 @@ describe("WS e2e", () => {
 
   it("idempotency_key replay on WS returns deduped: true", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const ws = connect(sessionId, agentToken);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const ws = connect(surfaceId, agentToken);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     await q.take(2);
@@ -348,7 +348,7 @@ describe("WS e2e", () => {
     expect(b.ack).toBe(a.ack);
 
     const rows = await prisma.event.findMany({
-      where: { sessionId, idempotencyKey: key },
+      where: { surfaceId, idempotencyKey: key },
     });
     expect(rows).toHaveLength(1);
     ws.close();
@@ -356,10 +356,10 @@ describe("WS e2e", () => {
 
   it("replays past events to a late-connecting subscriber", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
+    const { surfaceId, agentToken } = await createSession(apiKey);
 
     for (const body of ["one", "two"]) {
-      await fetch(`http://localhost:${port}/v1/sessions/${sessionId}/events`, {
+      await fetch(`http://localhost:${port}/v1/surfaces/${surfaceId}/events`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${agentToken}`,
@@ -369,7 +369,7 @@ describe("WS e2e", () => {
       });
     }
 
-    const ws = connect(sessionId, agentToken);
+    const ws = connect(surfaceId, agentToken);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     const frames = await q.take(4); // joined + 2 replayed + replay.complete
@@ -387,23 +387,23 @@ describe("WS e2e", () => {
 
   it("mints a ws-ticket for an agent and a participant", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken, humanToken } = await createSession(apiKey);
+    const { surfaceId, agentToken, humanToken } = await createSession(apiKey);
 
-    const agentT = await mintTicket(sessionId, agentToken);
+    const agentT = await mintTicket(surfaceId, agentToken);
     expect(agentT.status).toBe(201);
     expect(typeof agentT.ticket).toBe("string");
     expect(typeof agentT.expires_at).toBe("string");
 
-    const humanT = await mintTicket(sessionId, humanToken);
+    const humanT = await mintTicket(surfaceId, humanToken);
     expect(humanT.status).toBe(201);
     expect(typeof humanT.ticket).toBe("string");
   });
 
   it("upgrades with a valid ?ticket= (participant) and replays", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, humanToken } = await createSession(apiKey);
-    const { ticket } = await mintTicket(sessionId, humanToken);
-    const ws = connectWithTicket(sessionId, ticket!);
+    const { surfaceId, humanToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(surfaceId, humanToken);
+    const ws = connectWithTicket(surfaceId, ticket!);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     const initial = await q.take(2);
@@ -417,9 +417,9 @@ describe("WS e2e", () => {
 
   it("upgrades with a valid ?ticket= (agent) and can send a frame", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const { ticket } = await mintTicket(sessionId, agentToken);
-    const ws = connectWithTicket(sessionId, ticket!);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(surfaceId, agentToken);
+    const ws = connectWithTicket(surfaceId, ticket!);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     await q.take(2);
@@ -433,35 +433,35 @@ describe("WS e2e", () => {
 
   it("rejects an unknown ticket (401)", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId } = await createSession(apiKey);
-    const ws = connectWithTicket(sessionId, "not-a-real-ticket");
+    const { surfaceId } = await createSession(apiKey);
+    const ws = connectWithTicket(surfaceId, "not-a-real-ticket");
     await expect(waitOpen(ws)).rejects.toThrow(/401/);
   });
 
   it("rejects a reused ticket — single-use (401 on second upgrade)", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const { ticket } = await mintTicket(sessionId, agentToken);
-    const ws1 = connectWithTicket(sessionId, ticket!);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const { ticket } = await mintTicket(surfaceId, agentToken);
+    const ws1 = connectWithTicket(surfaceId, ticket!);
     await waitOpen(ws1);
-    const ws2 = connectWithTicket(sessionId, ticket!);
+    const ws2 = connectWithTicket(surfaceId, ticket!);
     await expect(waitOpen(ws2)).rejects.toThrow(/401/);
     ws1.close();
   });
 
-  it("rejects a ticket minted for a different session (401)", async () => {
+  it("rejects a ticket minted for a different surface (401)", async () => {
     const { apiKey } = await seedAgent();
     const a = await createSession(apiKey);
     const b = await createSession(apiKey);
-    const { ticket } = await mintTicket(a.sessionId, a.agentToken);
-    const ws = connectWithTicket(b.sessionId, ticket!);
+    const { ticket } = await mintTicket(a.surfaceId, a.agentToken);
+    const ws = connectWithTicket(b.surfaceId, ticket!);
     await expect(waitOpen(ws)).rejects.toThrow(/401/);
   });
 
   it("still accepts the legacy ?token= upgrade path (regression)", async () => {
     const { apiKey } = await seedAgent();
-    const { sessionId, agentToken } = await createSession(apiKey);
-    const ws = connect(sessionId, agentToken);
+    const { surfaceId, agentToken } = await createSession(apiKey);
+    const ws = connect(surfaceId, agentToken);
     const q = new FrameQueue(ws);
     await waitOpen(ws);
     const initial = await q.take(2);
@@ -474,12 +474,12 @@ describe("WS e2e", () => {
   });
 
   // Issue #15: `participant.joined_at` is stamped on the first WebSocket
-  // connect only. HTTP polling of GET /v1/sessions/:id/events must NOT count
+  // connect only. HTTP polling of GET /v1/surfaces/:id/events must NOT count
   // as joining — a poll-only human is reachable but has not "joined".
   describe("joined_at stamping (#15)", () => {
-    async function humanParticipant(sessionId: string) {
+    async function humanParticipant(surfaceId: string) {
       const p = await prisma.participant.findFirst({
-        where: { sessionId, kind: "human" },
+        where: { surfaceId, kind: "human" },
       });
       if (!p) throw new Error("human participant not found");
       return p;
@@ -487,23 +487,23 @@ describe("WS e2e", () => {
 
     it("HTTP polling does NOT stamp joined_at", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, humanToken } = await createSession(apiKey);
+      const { surfaceId, humanToken } = await createSession(apiKey);
 
       const res = await fetch(
-        `http://localhost:${port}/v1/sessions/${sessionId}/events`,
+        `http://localhost:${port}/v1/surfaces/${surfaceId}/events`,
         { headers: { authorization: `Bearer ${humanToken}` } },
       );
       expect(res.status).toBe(200);
 
-      const p = await humanParticipant(sessionId);
+      const p = await humanParticipant(surfaceId);
       expect(p.joinedAt).toBeNull();
     });
 
     it("WebSocket connect stamps joined_at", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, humanToken } = await createSession(apiKey);
+      const { surfaceId, humanToken } = await createSession(apiKey);
 
-      const ws = connect(sessionId, humanToken);
+      const ws = connect(surfaceId, humanToken);
       const q = new FrameQueue(ws);
       await waitOpen(ws);
       // Drain the join broadcast + replay.complete so handleConnection's
@@ -511,7 +511,7 @@ describe("WS e2e", () => {
       await q.take(2);
       ws.close();
 
-      const p = await humanParticipant(sessionId);
+      const p = await humanParticipant(surfaceId);
       expect(p.joinedAt).not.toBeNull();
     });
   });
@@ -523,9 +523,9 @@ describe("WS e2e", () => {
   describe("Origin check (CSWSH guard)", () => {
     it("rejects an upgrade from a foreign Origin (403)", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createSession(apiKey);
+      const { surfaceId, agentToken } = await createSession(apiKey);
       const ws = new WebSocket(
-        `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${agentToken}`,
+        `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream?token=${agentToken}`,
         { headers: { Origin: "https://attacker.example" } },
       );
       await expect(waitOpen(ws)).rejects.toThrow(/403/);
@@ -533,9 +533,9 @@ describe("WS e2e", () => {
 
     it("allows an upgrade with the matching public Origin", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createSession(apiKey);
+      const { surfaceId, agentToken } = await createSession(apiKey);
       const ws = new WebSocket(
-        `ws://localhost:${port}/v1/sessions/${sessionId}/stream?token=${agentToken}`,
+        `ws://localhost:${port}/v1/surfaces/${surfaceId}/stream?token=${agentToken}`,
         { headers: { Origin: "http://localhost:3000" } },
       );
       await waitOpen(ws);
@@ -544,14 +544,14 @@ describe("WS e2e", () => {
 
     it("allows an upgrade with no Origin header (non-browser agent client)", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createSession(apiKey);
+      const { surfaceId, agentToken } = await createSession(apiKey);
       // connect() sends no Origin header — the agent/CLI path.
-      const ws = connect(sessionId, agentToken);
+      const ws = connect(surfaceId, agentToken);
       const q = new FrameQueue(ws);
       await waitOpen(ws);
       // Drain the join broadcast + replay.complete so handleConnection's
       // appendSystemEvent has finished before we close and the suite tears
-      // down — otherwise the system-event write races the session delete.
+      // down — otherwise the system-event write races the surface delete.
       await q.take(2);
       ws.close();
     });

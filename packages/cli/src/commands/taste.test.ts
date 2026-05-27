@@ -98,7 +98,7 @@ describe("runTaste dispatch", () => {
 });
 
 describe("taste get", () => {
-  it("prints the current notes blob as JSON", async () => {
+  it("prints the current notes attachment as JSON", async () => {
     await run(["get"]);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.method).toBe("getTaste");
@@ -152,7 +152,7 @@ describe("taste set", () => {
     }
   });
 
-  it("refuses an empty --file blob", async () => {
+  it("refuses an empty --file attachment", async () => {
     const dir = mkdtempSync(join(tmpdir(), "taste-test-"));
     const file = join(dir, "empty.md");
     writeFileSync(file, "   \n\t  \n", "utf8");

@@ -25,7 +25,7 @@ import { loadConfig, type Config } from "../config.js";
 import { encryptSecret, _resetKeyCacheForTests } from "../crypto.js";
 import {
   writeEvent,
-  type SessionWithArtifactVersion,
+  type SurfaceWithArtifactVersion,
   type WriteEventInput,
   type WriteEventResult,
 } from "./events.js";
@@ -35,36 +35,36 @@ let prisma: PrismaClient;
 let config: Config;
 
 // Thin wrapper that binds writeEvent to the injected { prisma, config } deps so
-// the individual test bodies stay focused on session/author/input.
+// the individual test bodies stay focused on surface/author/input.
 function we(
-  session: SessionWithArtifactVersion,
+  surface: SurfaceWithArtifactVersion,
   author: Author,
   input: WriteEventInput,
 ): Promise<WriteEventResult> {
-  return writeEvent({ prisma, config }, session, author, input);
+  return writeEvent({ prisma, config }, surface, author, input);
 }
 
-// Re-read a session with its artifact version eagerly included — used after a
-// raw update to hand writeEvent a fresh SessionWithArtifactVersion.
-function reloadSession(id: string): Promise<SessionWithArtifactVersion> {
-  return prisma.session.findUniqueOrThrow({
+// Re-read a surface with its template version eagerly included — used after a
+// raw update to hand writeEvent a fresh SurfaceWithArtifactVersion.
+function reloadSession(id: string): Promise<SurfaceWithArtifactVersion> {
+  return prisma.surface.findUniqueOrThrow({
     where: { id },
-    include: { artifactVersion: true },
+    include: { templateVersion: true },
   });
 }
 
-// Replace the pinned artifact version's event schema in place. The relay never
+// Replace the pinned template version's event schema in place. The relay never
 // mutates a version's content, but a test that needs a different vocabulary
 // can do so directly against the row.
 async function overrideEventSchema(
-  session: SessionWithArtifactVersion,
+  surface: SurfaceWithArtifactVersion,
   eventSchema: object,
-): Promise<SessionWithArtifactVersion> {
-  await prisma.artifactVersion.update({
-    where: { id: session.artifactVersionId },
+): Promise<SurfaceWithArtifactVersion> {
+  await prisma.templateVersion.update({
+    where: { id: surface.templateVersionId },
     data: { eventSchema },
   });
-  return reloadSession(session.id);
+  return reloadSession(surface.id);
 }
 
 beforeAll(async () => {
@@ -95,7 +95,7 @@ interface SeedOptions {
 
 async function seedSession(
   opts: SeedOptions = {},
-): Promise<{ session: SessionWithArtifactVersion; agentId: string }> {
+): Promise<{ surface: SurfaceWithArtifactVersion; agentId: string }> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -103,7 +103,7 @@ async function seedSession(
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { sessionId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSessionRow(prisma, {
     agentId: agent.id,
     eventSchema: {
       events: {
@@ -132,8 +132,8 @@ async function seedSession(
       ? (opts.callbackFilter ?? ["review.*"])
       : null,
   });
-  const session = await reloadSession(sessionId);
-  return { session, agentId: agent.id };
+  const surface = await reloadSession(surfaceId);
+  return { surface, agentId: agent.id };
 }
 
 const agentAuthor = (id: string): Author => ({ kind: "agent", id });
@@ -145,8 +145,8 @@ describe("writeEvent (integration, real SQLite)", () => {
   });
 
   it("happy path: persists, returns serialized event, not deduped", async () => {
-    const { session, agentId } = await seedSession();
-    const { event, deduped } = await we(session, agentAuthor(agentId), {
+    const { surface, agentId } = await seedSession();
+    const { event, deduped } = await we(surface, agentAuthor(agentId), {
       type: "review.commentAdded",
       data: { body: "looks good" },
     });
@@ -155,26 +155,26 @@ describe("writeEvent (integration, real SQLite)", () => {
     expect(event.data).toEqual({ body: "looks good" });
 
     const persisted = await prisma.event.findMany({
-      where: { sessionId: session.id },
+      where: { surfaceId: surface.id },
     });
     expect(persisted).toHaveLength(1);
     expect(persisted[0]!.idempotencyKey).toBeNull();
   });
 
-  it("rejects an event on a closed session as gone", async () => {
-    const { session, agentId } = await seedSession({ status: "closed" });
+  it("rejects an event on a closed surface as gone", async () => {
+    const { surface, agentId } = await seedSession({ status: "closed" });
     await expect(
-      we(session, agentAuthor(agentId), {
+      we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },
       }),
     ).rejects.toMatchObject({ code: "gone" });
   });
 
-  it("rejects an event on an expired session as gone", async () => {
-    const { session, agentId } = await seedSession({ expiresInMs: -1000 });
+  it("rejects an event on an expired surface as gone", async () => {
+    const { surface, agentId } = await seedSession({ expiresInMs: -1000 });
     await expect(
-      we(session, agentAuthor(agentId), {
+      we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },
       }),
@@ -182,9 +182,9 @@ describe("writeEvent (integration, real SQLite)", () => {
   });
 
   it("rejects an unknown event type via the schema validator", async () => {
-    const { session, agentId } = await seedSession();
+    const { surface, agentId } = await seedSession();
     await expect(
-      we(session, agentAuthor(agentId), {
+      we(surface, agentAuthor(agentId), {
         type: "totally.unknown",
         data: {},
       }),
@@ -192,9 +192,9 @@ describe("writeEvent (integration, real SQLite)", () => {
   });
 
   it("rejects a payload that fails the JSON Schema", async () => {
-    const { session, agentId } = await seedSession();
+    const { surface, agentId } = await seedSession();
     await expect(
-      we(session, agentAuthor(agentId), {
+      we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { wrongField: 1 },
       }),
@@ -202,10 +202,10 @@ describe("writeEvent (integration, real SQLite)", () => {
   });
 
   it("rejects when the author kind is not in emittedBy", async () => {
-    const { session } = await seedSession();
+    const { surface } = await seedSession();
     // Force-override the schema to make review.commentAdded page-only,
     // then prove an agent cannot emit it.
-    const updated = await overrideEventSchema(session, {
+    const updated = await overrideEventSchema(surface, {
       events: {
         "review.commentAdded": {
           payload: {
@@ -226,10 +226,10 @@ describe("writeEvent (integration, real SQLite)", () => {
   });
 
   it("rejects payloads over MAX_EVENT_DATA_BYTES", async () => {
-    const { session, agentId } = await seedSession();
+    const { surface, agentId } = await seedSession();
     // Override the schema to accept a large free-form payload so we hit the
     // size cap before the JSON Schema check.
-    const updated = await overrideEventSchema(session, {
+    const updated = await overrideEventSchema(surface, {
       events: {
         "big.payload": {
           payload: { type: "object", additionalProperties: true },
@@ -237,7 +237,7 @@ describe("writeEvent (integration, real SQLite)", () => {
         },
       },
     });
-    const huge = { blob: "x".repeat(70_000) };
+    const huge = { attachment: "x".repeat(70_000) };
     await expect(
       we(updated, agentAuthor(agentId), {
         type: "big.payload",
@@ -248,14 +248,14 @@ describe("writeEvent (integration, real SQLite)", () => {
 
   describe("idempotency", () => {
     it("returns deduped=true when the same key is replayed sequentially", async () => {
-      const { session, agentId } = await seedSession();
+      const { surface, agentId } = await seedSession();
       const key = "idem-" + randomBytes(8).toString("hex");
-      const first = await we(session, agentAuthor(agentId), {
+      const first = await we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "v1" },
         idempotencyKey: key,
       });
-      const second = await we(session, agentAuthor(agentId), {
+      const second = await we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "v1" },
         idempotencyKey: key,
@@ -264,7 +264,7 @@ describe("writeEvent (integration, real SQLite)", () => {
       expect(second.deduped).toBe(true);
       expect(second.event.id).toBe(first.event.id);
       const rows = await prisma.event.findMany({
-        where: { sessionId: session.id },
+        where: { surfaceId: surface.id },
       });
       expect(rows).toHaveLength(1);
     });
@@ -274,11 +274,11 @@ describe("writeEvent (integration, real SQLite)", () => {
       // writers both saw findUnique=null and both attempted create; the loser
       // bubbled P2002 as a 500. Post-fix, the loser catches P2002 and returns
       // deduped=true.
-      const { session, agentId } = await seedSession();
+      const { surface, agentId } = await seedSession();
       const key = "race-" + randomBytes(8).toString("hex");
       const results = await Promise.all(
         Array.from({ length: 5 }).map(() =>
-          we(session, agentAuthor(agentId), {
+          we(surface, agentAuthor(agentId), {
             type: "review.commentAdded",
             data: { body: "x" },
             idempotencyKey: key,
@@ -294,16 +294,16 @@ describe("writeEvent (integration, real SQLite)", () => {
       expect(ids.size).toBe(1);
       // And the DB really only has one row.
       const rows = await prisma.event.findMany({
-        where: { sessionId: session.id },
+        where: { surfaceId: surface.id },
       });
       expect(rows).toHaveLength(1);
     });
 
     it("treats different authors with the same key as distinct events", async () => {
-      const { session, agentId } = await seedSession();
+      const { surface, agentId } = await seedSession();
       await prisma.participant.create({
         data: {
-          sessionId: session.id,
+          surfaceId: surface.id,
           kind: "human",
           identityId: "h_0",
           tokenHash: randomBytes(32).toString("hex"),
@@ -311,12 +311,12 @@ describe("writeEvent (integration, real SQLite)", () => {
         },
       });
       const key = "shared-key";
-      const a = await we(session, agentAuthor(agentId), {
+      const a = await we(surface, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "from agent" },
         idempotencyKey: key,
       });
-      const b = await we(session, humanAuthor("h_0"), {
+      const b = await we(surface, humanAuthor("h_0"), {
         type: "review.commentAdded",
         data: { body: "from human" },
         idempotencyKey: key,
@@ -329,19 +329,19 @@ describe("writeEvent (integration, real SQLite)", () => {
 
   describe("webhook side-effect", () => {
     it("does not block or fail the write when the secret cannot be decrypted", async () => {
-      // Seed a session whose callbackSecretEnc is garbage. The event should
+      // Seed a surface whose callbackSecretEnc is garbage. The event should
       // still commit and the function should return normally — the webhook
       // failure path must not leak into the caller's success path.
-      const { session, agentId } = await seedSession();
-      await prisma.session.update({
-        where: { id: session.id },
+      const { surface, agentId } = await seedSession();
+      await prisma.surface.update({
+        where: { id: surface.id },
         data: {
           callbackUrl: "https://example.invalid/hook",
           callbackSecretEnc: "v1.bad.bad.bad",
           callbackFilter: ["review.*"],
         },
       });
-      const broken = await reloadSession(session.id);
+      const broken = await reloadSession(surface.id);
       const { event, deduped } = await we(broken, agentAuthor(agentId), {
         type: "review.commentAdded",
         data: { body: "x" },
@@ -357,7 +357,7 @@ describe("writeEvent (integration, real SQLite)", () => {
     it("does not attempt the webhook on a deduped result", async () => {
       // Stub global fetch and verify it's only called once across two identical
       // writes (the second write hits the dedupe path).
-      const { session, agentId } = await seedSession({
+      const { surface, agentId } = await seedSession({
         withCallback: true,
         callbackUrl: "https://example.invalid/hook",
         callbackFilter: ["review.*"],
@@ -367,12 +367,12 @@ describe("writeEvent (integration, real SQLite)", () => {
         .mockResolvedValue(new Response(null, { status: 200 }));
       try {
         const key = "dedupe-no-webhook";
-        await we(session, agentAuthor(agentId), {
+        await we(surface, agentAuthor(agentId), {
           type: "review.commentAdded",
           data: { body: "x" },
           idempotencyKey: key,
         });
-        await we(session, agentAuthor(agentId), {
+        await we(surface, agentAuthor(agentId), {
           type: "review.commentAdded",
           data: { body: "x" },
           idempotencyKey: key,

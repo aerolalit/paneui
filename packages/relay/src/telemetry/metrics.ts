@@ -102,7 +102,7 @@ export async function initTelemetry(
   const meter: Meter = provider.getMeter("pane-relay");
 
   sessionsCreated = meter.createCounter("pane_sessions_created_total", {
-    description: "Total UI sessions created via POST /v1/sessions.",
+    description: "Total UI surfaces created via POST /v1/surfaces.",
   });
   eventsWritten = meter.createCounter("pane_events_written_total", {
     description: "Total events persisted, labelled by author kind.",
@@ -137,7 +137,7 @@ export async function initTelemetry(
       }
     });
 
-  // pane_sessions_open — ObservableGauge that counts currently-open sessions on
+  // pane_sessions_open — ObservableGauge that counts currently-open surfaces on
   // each collection. The exporter reads it periodically, so one count query per
   // collection is acceptable. The callback is resilient: a DB error is logged
   // and the observation is simply skipped, never thrown out of the callback.
@@ -147,7 +147,7 @@ export async function initTelemetry(
     })
     .addCallback(async (result) => {
       try {
-        const count = await prisma.session.count({
+        const count = await prisma.surface.count({
           where: { status: "open", expiresAt: { gt: new Date() } },
         });
         result.observe(count);
@@ -167,7 +167,7 @@ export async function initTelemetry(
 // --- instrument helpers ------------------------------------------------------
 // All helpers are cheap no-ops when metrics are disabled.
 
-/** Increment after a session is successfully created. */
+/** Increment after a surface is successfully created. */
 export function recordSessionCreated(): void {
   sessionsCreated?.add(1);
 }

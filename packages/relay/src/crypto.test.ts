@@ -18,10 +18,10 @@ describe("crypto envelope", () => {
 
   it("round-trips a secret through encrypt/decrypt", () => {
     const plain = "whsec_" + randomBytes(16).toString("hex");
-    const blob = encryptSecret(plain);
-    expect(blob.split(".")[0]).toBe("v1");
-    expect(blob).not.toContain(plain);
-    expect(decryptSecret(blob)).toBe(plain);
+    const attachment = encryptSecret(plain);
+    expect(attachment.split(".")[0]).toBe("v1");
+    expect(attachment).not.toContain(plain);
+    expect(decryptSecret(attachment)).toBe(plain);
   });
 
   it("produces different ciphertext for the same plaintext (random IV)", () => {
@@ -34,16 +34,18 @@ describe("crypto envelope", () => {
   });
 
   it("fails to decrypt a tampered ciphertext", () => {
-    const blob = encryptSecret("topsecret");
-    const parts = blob.split(".");
+    const attachment = encryptSecret("topsecret");
+    const parts = attachment.split(".");
     const ctBuf = Buffer.from(parts[2]!, "base64");
     ctBuf[0]! ^= 0x01;
     parts[2] = ctBuf.toString("base64");
     expect(() => decryptSecret(parts.join("."))).toThrow();
   });
 
-  it("rejects a malformed blob", () => {
-    expect(() => decryptSecret("not.a.valid.blob.too.many.parts")).toThrow();
+  it("rejects a malformed attachment", () => {
+    expect(() =>
+      decryptSecret("not.a.valid.attachment.too.many.parts"),
+    ).toThrow();
     expect(() => decryptSecret("v0.aa.bb.cc")).toThrow();
   });
 
@@ -54,10 +56,10 @@ describe("crypto envelope", () => {
   });
 
   it("fingerprint is deterministic and non-reversible", () => {
-    const blob = encryptSecret("abc");
-    const fp = secretFingerprint(blob);
+    const attachment = encryptSecret("abc");
+    const fp = secretFingerprint(attachment);
     expect(fp).toHaveLength(12);
-    expect(secretFingerprint(blob)).toBe(fp);
+    expect(secretFingerprint(attachment)).toBe(fp);
   });
 });
 

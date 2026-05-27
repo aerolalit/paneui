@@ -1,4 +1,4 @@
-// `pane session send <id>` — append an agent event to a session.
+// `pane surface send <id>` — append an agent event to a surface.
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -8,29 +8,35 @@ import { makeClient } from "../config.js";
 import { resolveJson } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-const KNOWN_FLAGS = ["type", "data", "blob", "causation-id", "idempotency-key"];
+const KNOWN_FLAGS = [
+  "type",
+  "data",
+  "attachment",
+  "causation-id",
+  "idempotency-key",
+];
 const KNOWN_BOOLS: string[] = [];
 
-export const sendHelp = `pane session send — emit an agent event into a session
+export const sendHelp = `pane surface send — emit an agent event into a surface
 
 Usage:
-  pane session send <session-id> --type <event-type> --data <path|json> [options]
-  pane session send <session-id> --type <event-type> --blob <file-path> [options]
+  pane surface send <surface-id> --type <event-type> --data <path|json> [options]
+  pane surface send <surface-id> --type <event-type> --attachment <file-path> [options]
 
-POSTs an event to /v1/sessions/:id/events. The event is stamped as authored by
+POSTs an event to /v1/surfaces/:id/events. The event is stamped as authored by
 the agent (the relay derives identity from the API key — it cannot be spoofed).
 
 Required:
-  --type <t>          Event type. Must exist in the session's event schema
+  --type <t>          Event type. Must exist in the surface's event schema
                       with the agent in its emittedBy list.
   --data <v>          Event payload: a file path to a .json file, or inline
                       JSON. Use --data 'null' or --data '{}' for no payload.
 
   ALTERNATIVE to --data:
-  --blob <path>       One-shot: upload <path> as a session-scope blob, then
-                      send an event whose payload is the BlobRef. The event
-                      data is { blob: <BlobRef> }; declare it in your event
-                      schema with \`format: pane-blob-id\` on \`blob.blob_id\`.
+  --attachment <path>       One-shot: upload <path> as a surface-scope attachment, then
+                      send an event whose payload is the AttachmentRef. The event
+                      data is { attachment: <AttachmentRef> }; declare it in your event
+                      schema with \`format: pane-attachment-id\` on \`attachment.attachment_id\`.
 
 Options:
   --causation-id <id> Opaque causation id stored verbatim on the event.
@@ -43,48 +49,48 @@ Output (stdout, JSON):
   { event, deduped }`;
 
 export async function runSend(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session send");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface send");
 
-  const sessionId = args.positionals[0];
-  if (!sessionId) fail("missing <session-id>", "invalid_args");
+  const surfaceId = args.positionals[0];
+  if (!surfaceId) fail("missing <surface-id>", "invalid_args");
 
   const type = args.flags.get("type");
   if (!type) fail("missing --type", "invalid_args");
 
   const dataRaw = args.flags.get("data");
-  const blobPath = args.flags.get("blob");
+  const blobPath = args.flags.get("attachment");
 
   if (dataRaw !== undefined && blobPath !== undefined) {
-    fail("--data and --blob are mutually exclusive", "invalid_args");
+    fail("--data and --attachment are mutually exclusive", "invalid_args");
   }
   if (dataRaw === undefined && blobPath === undefined) {
-    fail("missing --data or --blob", "invalid_args");
+    fail("missing --data or --attachment", "invalid_args");
   }
 
   const client = makeClient(args);
 
-  // --blob path: upload the file as a session-scope blob, then send an
-  // event whose data is { blob: <BlobRef> }. The session's event schema
-  // is expected to declare a blob field with format: pane-blob-id.
+  // --attachment path: upload the file as a surface-scope attachment, then send an
+  // event whose data is { attachment: <AttachmentRef> }. The surface's event schema
+  // is expected to declare a attachment field with format: pane-attachment-id.
   if (blobPath !== undefined) {
     let bytes: Buffer;
     try {
       bytes = readFileSync(blobPath);
     } catch (e) {
       fail(
-        `failed to read --blob '${blobPath}': ${e instanceof Error ? e.message : String(e)}`,
+        `failed to read --attachment '${blobPath}': ${e instanceof Error ? e.message : String(e)}`,
         "invalid_args",
       );
     }
     try {
       const ref = await client.uploadBlob(bytes, {
-        scope: "session",
-        sessionId: sessionId!,
+        scope: "surface",
+        surfaceId: surfaceId!,
         filename: basename(blobPath),
       });
-      const res = await client.sendEvent(sessionId!, {
+      const res = await client.sendEvent(surfaceId!, {
         type: type!,
-        data: { blob: ref },
+        data: { attachment: ref },
         causationId: args.flags.get("causation-id"),
         idempotencyKey: args.flags.get("idempotency-key"),
       });
@@ -103,7 +109,7 @@ export async function runSend(args: ParsedArgs): Promise<void> {
   }
 
   try {
-    const res = await client.sendEvent(sessionId!, {
+    const res = await client.sendEvent(surfaceId!, {
       type: type!,
       data,
       causationId: args.flags.get("causation-id"),

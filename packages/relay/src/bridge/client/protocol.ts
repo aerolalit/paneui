@@ -27,9 +27,9 @@ export type PaneProtocolVersion = 1;
 export type RuntimeToShellKind =
   | "ready"
   | "emit"
-  | "upload-blob-request"
-  | "download-blob-request"
-  | "save-blob-request";
+  | "upload-attachment-request"
+  | "download-attachment-request"
+  | "save-attachment-request";
 
 /** Frame kinds the shell sends to the runtime (shell -> iframe). */
 export type ShellToRuntimeKind =
@@ -37,9 +37,9 @@ export type ShellToRuntimeKind =
   | "event"
   | "ack"
   | "error"
-  | "upload-blob-result"
-  | "download-blob-result"
-  | "save-blob-result";
+  | "upload-attachment-result"
+  | "download-attachment-result"
+  | "save-attachment-result";
 
 /**
  * The envelope every Pane protocol frame carries. Concrete frame types in each
@@ -56,15 +56,15 @@ export interface PaneFrameEnvelope {
 }
 
 /**
- * A blob reference returned by the participant-side upload route
- * (`POST /s/:participantToken/blobs`) and surfaced to the iframe by the
- * shell. Mirrors the wire shape `POST /v1/blobs` already returns — kept
+ * A attachment reference returned by the participant-side upload route
+ * (`POST /s/:participantToken/attachments`) and surfaced to the iframe by the
+ * shell. Mirrors the wire shape `POST /v1/attachments` already returns — kept
  * here as a structural type so the iframe bundle doesn't need to pull in
  * `@paneui/core`.
  */
-export interface BlobRefLike {
-  blob_id: string;
-  scope: "agent" | "session" | "artifact";
+export interface AttachmentRefLike {
+  attachment_id: string;
+  scope: "agent" | "surface" | "template";
   mime: string;
   size: number;
   sha256: string;
@@ -72,15 +72,15 @@ export interface BlobRefLike {
   width: number | null;
   height: number | null;
   status: string;
-  session_id: string | null;
-  artifact_id: string | null;
+  surface_id: string | null;
+  template_id: string | null;
   created_at: string;
   confirmed_at: string | null;
   deleted_at: string | null;
 }
 
 /**
- * The shape of an `upload-blob-request` frame the runtime posts to the shell.
+ * The shape of an `upload-attachment-request` frame the runtime posts to the shell.
  * `file` is a browser `File` — postMessage's structured-clone algorithm
  * supports `File` (and the underlying `Blob` reference), so the shell
  * receives a live `File` it can hand to FormData without a roundtrip
@@ -89,7 +89,7 @@ export interface BlobRefLike {
 export interface UploadBlobRequestFrame {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "upload-blob-request";
+  kind: "upload-attachment-request";
   /** RPC correlation id — the runtime's resolver matches against this. */
   id: string;
   /** The file the human picked, transferred via structured clone. */
@@ -105,23 +105,23 @@ export interface UploadBlobRequestFrame {
 /**
  * The shape of the shell's reply. Discriminated by `ok` — matching the way
  * existing frames discriminate inside an `error` field would have made the
- * success path's BlobRef carry an awkward optional field. The new frame
+ * success path's AttachmentRef carry an awkward optional field. The new frame
  * uses an explicit boolean for clarity at the call site.
  */
 export type UploadBlobResultFrame = {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "upload-blob-result";
+  kind: "upload-attachment-result";
   /** Matches the request's `id`. */
   id: string;
 } & (
-  | { ok: true; blob: BlobRefLike }
+  | { ok: true; attachment: AttachmentRefLike }
   | { ok: false; error: { code: string; message: string } }
 );
 
 /**
- * The shape of a `download-blob-request` frame the runtime posts to the shell.
- * The shell brokers a `GET /s/:participantToken/blobs/:blob_id` fetch on
+ * The shape of a `download-attachment-request` frame the runtime posts to the shell.
+ * The shell brokers a `GET /s/:participantToken/attachments/:attachment_id` fetch on
  * the iframe's behalf and posts the bytes back as a `Blob` (structured-
  * cloneable across postMessage, same as `File` in the upload direction).
  *
@@ -130,59 +130,59 @@ export type UploadBlobResultFrame = {
 export interface DownloadBlobRequestFrame {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "download-blob-request";
+  kind: "download-attachment-request";
   /** RPC correlation id — the runtime's resolver matches against this. */
   id: string;
-  /** The blob id to fetch. Must be referenced from this session. */
-  blob_id: string;
+  /** The attachment id to fetch. Must be referenced from this surface. */
+  attachment_id: string;
 }
 
 /**
  * The shape of the shell's reply. Discriminated by `ok` (matches the
- * upload-blob-result frame's pattern). On success, the iframe receives a
+ * upload-attachment-result frame's pattern). On success, the iframe receives a
  * live `Blob` it can hand to `URL.createObjectURL()` and set as `img.src`
- * — the iframe's CSP allows `blob:` URLs in `img-src`.
+ * — the iframe's CSP allows `attachment:` URLs in `img-src`.
  */
 export type DownloadBlobResultFrame = {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "download-blob-result";
+  kind: "download-attachment-result";
   /** Matches the request's `id`. */
   id: string;
 } & (
-  | { ok: true; blob: Blob; mime: string; size: number }
+  | { ok: true; attachment: Blob; mime: string; size: number }
   | { ok: false; error: { code: string; message: string } }
 );
 
 /**
- * `save-blob-request` — iframe asks the shell to trigger a browser download
+ * `save-attachment-request` — iframe asks the shell to trigger a browser download
  * (save to disk / Files / Photos). The shell does it from the OUTER, non-
- * sandboxed document — so `<a download href="blob:...">` works reliably,
+ * sandboxed document — so `<a download href="attachment:...">` works reliably,
  * including on iOS Safari (WebKit, where iOS Chrome lives) which silently
  * drops download attempts from inside a sandboxed iframe even with
  * `allow-downloads`.
  *
- * Distinct from `download-blob-request` (which returns the bytes as a Blob
- * for in-iframe rendering) — `save-blob-request` returns no payload, only
+ * Distinct from `download-attachment-request` (which returns the bytes as a Blob
+ * for in-iframe rendering) — `save-attachment-request` returns no payload, only
  * an ok / error ack once the download has been kicked off.
  */
 export interface SaveBlobRequestFrame {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "save-blob-request";
+  kind: "save-attachment-request";
   /** RPC correlation id. */
   id: string;
-  /** The blob id to save. Must be referenced from this session. */
-  blob_id: string;
+  /** The attachment id to save. Must be referenced from this surface. */
+  attachment_id: string;
   /** Suggested filename; the shell uses it on the `<a download>` attribute. */
   filename?: string;
 }
 
-/** The shell's ack for a save-blob-request. Discriminated by `ok`. */
+/** The shell's ack for a save-attachment-request. Discriminated by `ok`. */
 export type SaveBlobResultFrame = {
   __pane: PaneFrameMarker;
   v: PaneProtocolVersion;
-  kind: "save-blob-result";
+  kind: "save-attachment-result";
   id: string;
 } & ({ ok: true } | { ok: false; error: { code: string; message: string } });
 
@@ -192,18 +192,18 @@ export type SaveBlobResultFrame = {
  * has completed.
  */
 export interface PaneInitPayload {
-  /** The session id. */
-  session_id: string;
-  /** The session's event schema (the event vocabulary). */
+  /** The surface id. */
+  surface_id: string;
+  /** The surface's event schema (the event vocabulary). */
   schema: unknown;
   /** Historical events to replay through the runtime's ingest path. */
   replay: unknown[];
   /** Origin of the shell page — outbound posts from the runtime pin to it. */
   shell_origin: string;
   /**
-   * The session's per-instance `input_data` — validated by the relay against
-   * the artifact version's `input_schema` at session-create time. `null` when
-   * the session was created without `input_data`. The runtime exposes it on the
+   * The surface's per-instance `input_data` — validated by the relay against
+   * the template version's `input_schema` at surface-create time. `null` when
+   * the surface was created without `input_data`. The runtime exposes it on the
    * frozen `window.pane` as `pane.inputData`.
    */
   input_data: unknown;

@@ -1,5 +1,5 @@
 // End-to-end tests for the /v1/taste routes — per-agent freeform "taste
-// notes" markdown blob. Covers auth, GET-when-null, PUT round-trip, empty
+// notes" markdown attachment. Covers auth, GET-when-null, PUT round-trip, empty
 // rejection, oversize → 413, DELETE clears, and PUT-replaces-not-appends.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -98,25 +98,25 @@ describe("/v1/taste", () => {
     expect(body).toEqual({ taste: null, updated_at: null, bytes: 0 });
   });
 
-  it("PUT then GET round-trips the blob with the correct utf8 byte count", async () => {
+  it("PUT then GET round-trips the attachment with the correct utf8 byte count", async () => {
     const apiKey = await seedAgent();
-    const blob = "- denser layout\n- no rounded corners\n- emoji ✨";
-    const put = await req("PUT", apiKey, { taste: blob });
+    const attachment = "- denser layout\n- no rounded corners\n- emoji ✨";
+    const put = await req("PUT", apiKey, { taste: attachment });
     expect(put.status).toBe(200);
     const putBody = (await put.json()) as {
       taste: string;
       updated_at: string;
       bytes: number;
     };
-    expect(putBody.taste).toBe(blob);
-    expect(putBody.bytes).toBe(Buffer.byteLength(blob, "utf8"));
+    expect(putBody.taste).toBe(attachment);
+    expect(putBody.bytes).toBe(Buffer.byteLength(attachment, "utf8"));
     expect(putBody.updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     const get = await req("GET", apiKey);
     expect(get.status).toBe(200);
     const getBody = (await get.json()) as { taste: string; bytes: number };
-    expect(getBody.taste).toBe(blob);
-    expect(getBody.bytes).toBe(Buffer.byteLength(blob, "utf8"));
+    expect(getBody.taste).toBe(attachment);
+    expect(getBody.bytes).toBe(Buffer.byteLength(attachment, "utf8"));
   });
 
   it("rejects an empty PUT with 400 invalid_request and a clear hint", async () => {
@@ -132,14 +132,14 @@ describe("/v1/taste", () => {
 
   it("rejects oversize PUT (> MAX_TASTE_BYTES) with 413", async () => {
     const apiKey = await seedAgent();
-    const blob = "x".repeat(TASTE_CAP + 1);
-    const res = await req("PUT", apiKey, { taste: blob });
+    const attachment = "x".repeat(TASTE_CAP + 1);
+    const res = await req("PUT", apiKey, { taste: attachment });
     expect(res.status).toBe(413);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("payload_too_large");
   });
 
-  it("DELETE clears the blob (subsequent GET sees null)", async () => {
+  it("DELETE clears the attachment (subsequent GET sees null)", async () => {
     const apiKey = await seedAgent();
     await req("PUT", apiKey, { taste: "some notes" });
     const del = await req("DELETE", apiKey);
@@ -153,7 +153,7 @@ describe("/v1/taste", () => {
     expect(body).toEqual({ taste: null, updated_at: null, bytes: 0 });
   });
 
-  it("PUT REPLACES the blob (does not append to the previous value)", async () => {
+  it("PUT REPLACES the attachment (does not append to the previous value)", async () => {
     const apiKey = await seedAgent();
     await req("PUT", apiKey, { taste: "first" });
     const second = await req("PUT", apiKey, { taste: "second" });

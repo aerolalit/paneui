@@ -1,4 +1,4 @@
-// `pane session create` — create a session via POST /v1/sessions.
+// `pane surface create` — create a surface via POST /v1/surfaces.
 
 import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
@@ -8,9 +8,9 @@ import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
 
 const KNOWN_FLAGS = [
-  "artifact",
-  "artifact-id",
-  "artifact-type",
+  "template",
+  "template-id",
+  "template-type",
   "version",
   "event-schema",
   "input-schema",
@@ -30,9 +30,9 @@ const KNOWN_BOOLS: string[] = [];
 //
 // Match strategy: longest prefix wins. Schema paths whose top segment isn't
 // in the table fall back to dotted notation so we degrade gracefully on
-// fields that don't have a single corresponding flag (e.g. `artifact.source`
-// — there's no single --artifact-source flag for the inline form, just
-// --artifact pointing at the whole blob).
+// fields that don't have a single corresponding flag (e.g. `template.source`
+// — there's no single --template-source flag for the inline form, just
+// --template pointing at the whole attachment).
 const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   participants: "--participants",
   "participants.humans": "--participants",
@@ -41,12 +41,12 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   callback: "--callback",
   input_data: "--input-data",
   title: "--title",
-  "artifact.id": "--artifact-id",
-  "artifact.version": "--version",
-  "artifact.type": "--artifact-type",
-  "artifact.source": "--artifact",
-  "artifact.event_schema": "--event-schema",
-  "artifact.input_schema": "--input-schema",
+  "template.id": "--template-id",
+  "template.version": "--version",
+  "template.type": "--template-type",
+  "template.source": "--template",
+  "template.event_schema": "--event-schema",
+  "template.input_schema": "--input-schema",
 };
 
 function schemaPathToFlag(path: PropertyKey[]): string {
@@ -62,32 +62,32 @@ function schemaPathToFlag(path: PropertyKey[]): string {
   return dotted;
 }
 
-export const createHelp = `pane session create — create a Pane session
+export const createHelp = `pane surface create — create a Pane surface
 
-A session is one use of an artifact. Supply the artifact in ONE of two ways:
+A surface is one use of an template. Supply the template in ONE of two ways:
 
-  Reference form — instance an existing reusable artifact (the cheap path,
+  Reference form — instance an existing reusable template (the cheap path,
   no HTML re-sent):
-    pane session create --artifact-id <id|slug> [--version <n>] [--input-data <v>]
+    pane surface create --template-id <id|slug> [--version <n>] [--input-data <v>]
 
-  Inline form — a one-off artifact, defined on this call:
-    pane session create --artifact <path|inline> [--event-schema <path|json>] [options]
+  Inline form — a one-off template, defined on this call:
+    pane surface create --template <path|inline> [--event-schema <path|json>] [options]
 
-Exactly one of --artifact-id / --artifact must be given.
+Exactly one of --template-id / --template must be given.
 
-Artifact (choose one):
-  --artifact-id <v>   Reference an existing named artifact by id or slug.
-                      Tip: run 'pane artifact search <keywords>' first — a
-                      suitable artifact may already exist; reuse it instead of
+Template (choose one):
+  --template-id <v>   Reference an existing named template by id or slug.
+                      Tip: run 'pane template search <keywords>' first — a
+                      suitable template may already exist; reuse it instead of
                       regenerating HTML.
-  --version <n>       With --artifact-id: pin a specific version. Defaults to
-                      the artifact's latest version.
-  --artifact <v>      Inline HTML artifact. Either a file path / URL, or inline
-                      HTML. Combine with --artifact-type to control reading.
+  --version <n>       With --template-id: pin a specific version. Defaults to
+                      the template's latest version.
+  --template <v>      Inline HTML template. Either a file path / URL, or inline
+                      HTML. Combine with --template-type to control reading.
   --event-schema <v>  Inline-form event schema. A .json file, or inline JSON.
-                      Optional with --artifact. Omit for a view-only artifact
+                      Optional with --template. Omit for a view-only template
                       (a report/dashboard the human only views — no page/agent
-                      events). Ignored with --artifact-id.
+                      events). Ignored with --template-id.
 
                       Shape — an object with an "events" map, keyed by event
                       type. Each entry declares who may emit it and the JSON
@@ -108,30 +108,30 @@ Artifact (choose one):
                       payload is a JSON Schema; the relay validates every
                       emit against it. See docs/SPEC.md for the full grammar.
   --input-schema <v>  Inline-form input schema. A .json file, or inline JSON.
-                      Optional with --artifact, rejected with --artifact-id
-                      (the schema comes from the pinned artifact version
-                      there). When present, the session's --input-data is
-                      validated against it AND any blob ids declared at a
-                      "format": "pane-blob-id" site become reachable from the
-                      page via window.pane.downloadBlob. Without it, blob
+                      Optional with --template, rejected with --template-id
+                      (the schema comes from the pinned template version
+                      there). When present, the surface's --input-data is
+                      validated against it AND any attachment ids declared at a
+                      "format": "pane-attachment-id" site become reachable from the
+                      page via window.pane.downloadBlob. Without it, attachment
                       refs in --input-data are silently unreachable. See
                       docs/SPEC.md and #208.
 
 Options:
   --title <text>      Tab title shown to the human (max 80 chars, single
                       line). Required, with one ergonomic exception: when
-                      --artifact-id references a named artifact, the relay
-                      falls back to Artifact.name. Inline (--artifact …) form
+                      --template-id references a named template, the relay
+                      falls back to Template.name. Inline (--template …) form
                       always needs --title.
   --input-data <v>    This instance's seed data — a JSON object (file path or
-                      inline JSON), validated by the relay against the artifact
+                      inline JSON), validated by the relay against the template
                       version's input_schema. The page reads it as
                       window.pane.inputData.
-  --artifact-type <t> "html-inline" (default) or "html-ref". With "html-ref"
-                      the --artifact value is treated as a URL. Note: the relay
-                      does not serve "html-ref" artifacts in this release and
-                      will reject the session — use "html-inline".
-  --ttl <seconds>     Session time-to-live in seconds. The relay clamps this
+  --template-type <t> "html-inline" (default) or "html-ref". With "html-ref"
+                      the --template value is treated as a URL. Note: the relay
+                      does not serve "html-ref" templates in this release and
+                      will reject the surface — use "html-inline".
+  --ttl <seconds>     Surface time-to-live in seconds. The relay clamps this
                       to its configured MAX_TTL_SECONDS (defaults: 1 h
                       requested, 24 h max for self-host; hosted may differ).
                       The returned \`expires_at\` is the authoritative value.
@@ -143,26 +143,26 @@ Options:
   -h, --help          Show this help.
 
 Output (stdout, JSON):
-  { session_id, urls, tokens, expires_at }
+  { surface_id, urls, tokens, expires_at }
 
 Deliver urls.humans to the human(s); keep tokens.agent for the WS stream.`;
 
 export async function runCreate(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane session create");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface create");
 
-  const artifactIdVal = args.flags.get("artifact-id");
-  const artifactVal = args.flags.get("artifact");
+  const artifactIdVal = args.flags.get("template-id");
+  const artifactVal = args.flags.get("template");
 
-  // Exactly one of the two artifact forms must be present.
+  // Exactly one of the two template forms must be present.
   if (artifactIdVal !== undefined && artifactVal !== undefined) {
     fail(
-      "pass only one of --artifact-id (reference an existing artifact) or --artifact (inline a one-off)",
+      "pass only one of --template-id (reference an existing template) or --template (inline a one-off)",
       "invalid_args",
     );
   }
   if (artifactIdVal === undefined && artifactVal === undefined) {
     fail(
-      "missing artifact — pass --artifact-id <id|slug> to reference an existing artifact, or --artifact <path|inline> to inline one",
+      "missing template — pass --template-id <id|slug> to reference an existing template, or --template <path|inline> to inline one",
       "invalid_args",
     );
   }
@@ -174,12 +174,12 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const candidate: Record<string, unknown> = {};
 
   if (artifactIdVal !== undefined) {
-    // Reference form — instance an existing named artifact. --artifact /
-    // --event-schema / --input-schema are not used here: the artifact's
+    // Reference form — instance an existing named template. --template /
+    // --event-schema / --input-schema are not used here: the template's
     // pinned version carries them already.
     if (args.flags.get("input-schema") !== undefined) {
       fail(
-        "--input-schema is incompatible with --artifact-id — the input schema comes from the pinned artifact version. Author the schema on the artifact (`pane artifact create --input-schema …`) instead.",
+        "--input-schema is incompatible with --template-id — the input schema comes from the pinned template version. Author the schema on the template (`pane template create --input-schema …`) instead.",
         "invalid_args",
       );
     }
@@ -192,27 +192,27 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       }
       ref["version"] = version;
     }
-    candidate["artifact"] = ref;
+    candidate["template"] = ref;
   } else {
-    // Inline form — the event + input schemas ride inside the `artifact`
-    // object; the relay transparently creates an anonymous artifact behind
+    // Inline form — the event + input schemas ride inside the `template`
+    // object; the relay transparently creates an anonymous template behind
     // it. Both schemas are optional:
     //  - --event-schema absent → view-only one-off (no page/agent emits)
     //  - --input-schema absent → no input contract; --input-data passes
-    //    through unvalidated AND any blob ids in it are unreachable from
-    //    the page (the participant blob-download bridge walks input_data
-    //    against the artifact version's inputSchema). Pass --input-schema
-    //    when --input-data carries blob refs the page needs to render.
+    //    through unvalidated AND any attachment ids in it are unreachable from
+    //    the page (the participant attachment-download bridge walks input_data
+    //    against the template version's inputSchema). Pass --input-schema
+    //    when --input-data carries attachment refs the page needs to render.
     //    See #208.
     const schemaVal = args.flags.get("event-schema");
     const inputSchemaVal = args.flags.get("input-schema");
 
-    const artifactType = (args.flags.get("artifact-type") ?? "html-inline") as
+    const templateType = (args.flags.get("template-type") ?? "html-inline") as
       | "html-inline"
       | "html-ref";
-    if (artifactType !== "html-inline" && artifactType !== "html-ref") {
+    if (templateType !== "html-inline" && templateType !== "html-ref") {
       fail(
-        "--artifact-type must be 'html-inline' or 'html-ref'",
+        "--template-type must be 'html-inline' or 'html-ref'",
         "invalid_args",
       );
     }
@@ -221,17 +221,17 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     let source: string;
     try {
       source =
-        artifactType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
+        templateType === "html-ref" ? artifactVal! : resolveText(artifactVal!);
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e), "invalid_args");
     }
 
-    // Build the inline artifact object. event_schema / input_schema are
+    // Build the inline template object. event_schema / input_schema are
     // OMITTED entirely (not set to undefined) when their flags are absent —
-    // omission is meaningful at the relay (view-only artifact / no input
+    // omission is meaningful at the relay (view-only template / no input
     // contract).
     const inlineArtifact: Record<string, unknown> = {
-      type: artifactType,
+      type: templateType,
       source,
     };
     if (schemaVal !== undefined) {
@@ -255,12 +255,12 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
         fail(e instanceof Error ? e.message : String(e), "invalid_args");
       }
     }
-    candidate["artifact"] = inlineArtifact;
+    candidate["template"] = inlineArtifact;
   }
 
   // --title — passthrough, no client-side requiredness. The relay is the
-  // single source of truth: it enforces "required, with --artifact-id +
-  // Artifact.name as the only fallback" and the shape rules (length, control
+  // single source of truth: it enforces "required, with --template-id +
+  // Template.name as the only fallback" and the shape rules (length, control
   // chars). Keeping all that server-side avoids drift between the CLI's
   // pre-checks and the relay's actual rules.
   const titleRaw = args.flags.get("title");

@@ -16,7 +16,7 @@ export function printJson(value: unknown): void {
 }
 
 /**
- * Print a single compact JSON line to stdout and flush. Used by `pane session watch`
+ * Print a single compact JSON line to stdout and flush. Used by `pane surface watch`
  * so a pipe-reader (e.g. Claude Code's Monitor tool) sees each event
  * immediately, one event per line.
  */

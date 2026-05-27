@@ -34,12 +34,12 @@ Uniform `pane <noun> <verb> [options]`:
 ```
 pane agent register            Provision an agent API key and save it locally
 pane agent logout              Clear the locally-saved URL + API key
-pane session create            Create a session — returns session_id, urls, tokens
-pane session show <id>         Non-blocking snapshot: metadata + event log
-pane session send <id>         Emit an agent event into a session
-pane session watch <id>        Stream a session's events as JSON-lines on stdout
-pane session delete <id>       Close / delete a session
-pane artifact <verb>           Manage reusable, versioned artifacts
+pane surface create            Create a surface — returns surface_id, urls, tokens
+pane surface show <id>         Non-blocking snapshot: metadata + event log
+pane surface send <id>         Emit an agent event into a surface
+pane surface watch <id>        Stream a surface's events as JSON-lines on stdout
+pane surface delete <id>       Close / delete a surface
+pane template <verb>           Manage reusable, versioned templates
 pane key list | revoke         Inspect or revoke your agent's API key
 pane taste get | set | clear   Read / write / clear UI-taste notes
 pane feedback create | list    Submit / list one-shot feedback to the operator
@@ -56,12 +56,12 @@ stdout is machine-readable JSON. Errors go to stderr as
 `{"error":{"code","message"}}` with a non-zero exit.
 
 ```sh
-SESSION=$(pane session create --template form --schema ./q.json | jq -r .session_id)
-pane session watch "$SESSION" | jq 'select(.type == "human_response")'
+SESSION=$(pane surface create --template form --schema ./q.json | jq -r .surface_id)
+pane surface watch "$SESSION" | jq 'select(.type == "human_response")'
 ```
 
 ## Links
 
 - Repo: <https://github.com/aerolalit/paneui>
-- Spec: <https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md>
+- Spec: <https://github.com/aerolalit/paneui/attachment/main/docs/SPEC.md>
 - License: MIT

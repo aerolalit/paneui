@@ -3,7 +3,7 @@ import type { Agent, Participant, PrismaClient } from "@prisma/client";
 import { hashKey } from "../keys.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
-import type { SessionWithArtifactVersion } from "../core/events.js";
+import type { SurfaceWithArtifactVersion } from "../core/events.js";
 import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
 
@@ -11,9 +11,9 @@ export type AuthEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
     agent: Agent;
     author: Author;
-    // The session is always loaded with its pinned artifact version eagerly
+    // The surface is always loaded with its pinned template version eagerly
     // included — writeEvent + the bridge need the version's event schema.
-    session: SessionWithArtifactVersion;
+    surface: SurfaceWithArtifactVersion;
     participant: Participant;
   };
 };
@@ -29,7 +29,7 @@ function parseBearer(c: Context): string {
 // "agent" so resolveBearer can skip the always-miss participant lookup.
 type ResolveKind = "agent" | "both";
 
-// Resolve a raw token to either an agent or a (participant, session) pair.
+// Resolve a raw token to either an agent or a (participant, surface) pair.
 // Used by both the HTTP middlewares and the WebSocket upgrade.
 //
 // `kind` lets an agent-only caller (requireAgent) skip the participant
@@ -45,7 +45,7 @@ export async function resolveBearer(
   | {
       kind: "participant";
       participant: Participant;
-      session: SessionWithArtifactVersion;
+      surface: SurfaceWithArtifactVersion;
     }
   | null
 > {
@@ -57,12 +57,12 @@ export async function resolveBearer(
     });
     if (participant) {
       if (participant.revokedAt) return null;
-      const session = await prisma.session.findUnique({
-        where: { id: participant.sessionId },
-        include: { artifactVersion: true },
+      const surface = await prisma.surface.findUnique({
+        where: { id: participant.surfaceId },
+        include: { templateVersion: true },
       });
-      if (!session) return null;
-      return { kind: "participant", participant, session };
+      if (!surface) return null;
+      return { kind: "participant", participant, surface };
     }
   }
 
@@ -92,8 +92,8 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
 };
 
 // Dual auth for the events endpoints + WS upgrade.
-// Accepts either the agent's bearer (when it matches session.agentId) OR a
-// participant token (when it matches a Participant row for this session).
+// Accepts either the agent's bearer (when it matches surface.agentId) OR a
+// participant token (when it matches a Participant row for this surface).
 //
 // Agent resolution is tried FIRST: a hit there skips the participant lookup
 // entirely (one fewer DB round trip per agent-authenticated call). Only on an
@@ -101,18 +101,18 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
 export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const prisma = c.get("prisma");
   const token = parseBearer(c);
-  const sessionId = c.req.param("id");
-  if (!sessionId) throw errors.notFound();
+  const surfaceId = c.req.param("id");
+  if (!surfaceId) throw errors.notFound();
   const hash = hashKey(token);
 
-  // Agent path: must own the session.
+  // Agent path: must own the surface.
   const agent = await prisma.agent.findUnique({ where: { keyHash: hash } });
   if (agent && !agent.revokedAt) {
-    const session = await prisma.session.findUnique({
-      where: { id: sessionId },
-      include: { artifactVersion: true },
+    const surface = await prisma.surface.findUnique({
+      where: { id: surfaceId },
+      include: { templateVersion: true },
     });
-    if (!session || session.agentId !== agent.id) throw errors.notFound();
+    if (!surface || surface.agentId !== agent.id) throw errors.notFound();
     prisma.agent
       .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
       .catch((err: unknown) =>
@@ -122,7 +122,7 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
         }),
       );
     c.set("agent", agent);
-    c.set("session", session);
+    c.set("surface", surface);
     c.set("author", { kind: "agent", id: agent.id });
     return next();
   }
@@ -132,19 +132,19 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
     where: { tokenHash: hash },
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
-  if (participant.sessionId !== sessionId) throw errors.notFound();
-  const session = await prisma.session.findUnique({
-    where: { id: participant.sessionId },
-    include: { artifactVersion: true },
+  if (participant.surfaceId !== surfaceId) throw errors.notFound();
+  const surface = await prisma.surface.findUnique({
+    where: { id: participant.surfaceId },
+    include: { templateVersion: true },
   });
-  if (!session) throw errors.notFound();
+  if (!surface) throw errors.notFound();
   // Note: `participant.joinedAt` is intentionally NOT stamped here. The SPEC
   // defines it as stamped "on first connect", and a connect is a WebSocket
-  // upgrade — not an HTTP poll of GET /v1/sessions/:id/events. A human who
+  // upgrade — not an HTTP poll of GET /v1/surfaces/:id/events. A human who
   // only ever polls (the no-WS fallback) is reachable but has not "joined";
   // counting polls would inflate the "human joined" analytics. The stamp
   // lives solely in the WS upgrade path (src/ws/handler.ts). See issue #15.
-  c.set("session", session);
+  c.set("surface", surface);
   c.set("participant", participant);
   c.set("author", {
     kind: participant.kind === "agent" ? "agent" : "human",

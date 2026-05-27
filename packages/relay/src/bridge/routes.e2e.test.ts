@@ -48,19 +48,19 @@ const minimalSchema = {
   },
 };
 
-// Seed an agent + session + one human participant, returning the
+// Seed an agent + surface + one human participant, returning the
 // participant token (the bridge URL credential) and the agent id.
 async function seedSession(opts?: {
   agentLastUsedAt?: Date;
   closed?: boolean;
   expired?: boolean;
-  artifactSource?: string;
+  templateSource?: string;
   inputData?: object | null;
   title?: string;
 }): Promise<{
   token: string;
   agentId: string;
-  sessionId: string;
+  surfaceId: string;
 }> {
   const apiKey = "pane_" + randomBytes(16).toString("hex");
   const agent = await prisma.agent.create({
@@ -71,9 +71,9 @@ async function seedSession(opts?: {
       lastUsedAt: opts?.agentLastUsedAt ?? null,
     },
   });
-  const { sessionId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSessionRow(prisma, {
     agentId: agent.id,
-    artifactSource: opts?.artifactSource ?? "<html></html>",
+    templateSource: opts?.templateSource ?? "<html></html>",
     eventSchema: minimalSchema,
     inputData: opts?.inputData ?? null,
     status: opts?.closed ? "closed" : "open",
@@ -85,14 +85,14 @@ async function seedSession(opts?: {
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
     data: {
-      sessionId,
+      surfaceId,
       kind: "human",
       identityId: "human-1",
       tokenHash: hashKey(token),
       tokenPrefix: keyPrefix(token),
     },
   });
-  return { token, agentId: agent.id, sessionId };
+  return { token, agentId: agent.id, surfaceId };
 }
 
 describe("bridge /presence", () => {
@@ -120,10 +120,10 @@ describe("bridge /presence", () => {
   });
 
   it("reports agentLastEventAt from the most recent agent-authored event", async () => {
-    const { token, sessionId } = await seedSession();
+    const { token, surfaceId } = await seedSession();
     await prisma.event.create({
       data: {
-        sessionId,
+        surfaceId,
         authorKind: "agent",
         authorId: "agent-x",
         type: "review.commentAdded",
@@ -158,7 +158,7 @@ describe("bridge shell GET /s/:token", () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("returns 200 text/html for a valid open session", async () => {
+  it("returns 200 text/html for a valid open surface", async () => {
     const { token } = await seedSession();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     expect(res.status).toBe(200);
@@ -199,9 +199,9 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain(token);
   });
 
-  // Phase C — the shell config carries the session's input_data so the
-  // runtime can expose it to the artifact as `window.pane.inputData`.
-  it("inlines the session's input_data into the pane-cfg block", async () => {
+  // Phase C — the shell config carries the surface's input_data so the
+  // runtime can expose it to the template as `window.pane.inputData`.
+  it("inlines the surface's input_data into the pane-cfg block", async () => {
     const { token } = await seedSession({
       inputData: { prTitle: "Fix the bug", files: ["a.ts"] },
     });
@@ -217,7 +217,7 @@ describe("bridge shell GET /s/:token", () => {
     expect(cfg.inputData).toEqual({ prTitle: "Fix the bug", files: ["a.ts"] });
   });
 
-  it("sets pane-cfg inputData to null when the session has no input_data", async () => {
+  it("sets pane-cfg inputData to null when the surface has no input_data", async () => {
     const { token } = await seedSession();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
@@ -238,9 +238,9 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain(`src="/s/${token}/content"`);
   });
 
-  it("sandboxes the artifact iframe with allow-scripts and allow-forms", async () => {
-    // The artifact runs in a sandboxed iframe. `allow-scripts` is required so
-    // the inline <script> in the artifact (and the pane runtime) can run.
+  it("sandboxes the template iframe with allow-scripts and allow-forms", async () => {
+    // The template runs in a sandboxed iframe. `allow-scripts` is required so
+    // the inline <script> in the template (and the pane runtime) can run.
     // `allow-forms` lets natural `<form>` UIs dispatch their `submit` event to
     // JS — without it, Chrome blocks the submission *before* the handler runs,
     // so `pane.emit(...)` never fires. The iframe has no `allow-same-origin`,
@@ -256,28 +256,28 @@ describe("bridge shell GET /s/:token", () => {
     expect(tokens).not.toContain("allow-same-origin");
   });
 
-  it("renders the closed banner and no iframe for a closed session", async () => {
+  it("renders the closed banner and no iframe for a closed surface", async () => {
     const { token } = await seedSession({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('class="closed"');
-    expect(body).toContain("This session is closed");
+    expect(body).toContain("This surface is closed");
     expect(body).not.toContain("<iframe");
   });
 
-  it("renders the session title into the tab <title>", async () => {
+  it("renders the surface title into the tab <title>", async () => {
     const { token } = await seedSession({ title: "Quarterly Review · Pane" });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toContain("<title>Quarterly Review · Pane</title>");
     // The old hardcoded text must not leak back in.
-    expect(body).not.toContain("<title>Pane Session</title>");
-    expect(body).not.toContain("<title>Pane — Session</title>");
+    expect(body).not.toContain("<title>Pane Surface</title>");
+    expect(body).not.toContain("<title>Pane — Surface</title>");
   });
 
   it("HTML-escapes the title so an agent-supplied <script> cannot break out", async () => {
-    // The title field is filtered for control chars at session create, but
+    // The title field is filtered for control chars at surface create, but
     // `<script>alert(1)</script>` is otherwise valid text. It must never reach
     // the HTML stream unescaped.
     const { token } = await seedSession({ title: "<script>alert(1)</script>" });
@@ -298,7 +298,7 @@ describe("bridge shell GET /s/:token", () => {
     );
   });
 
-  it("includes the same favicon link in the closed-session shell", async () => {
+  it("includes the same favicon link in the closed-surface shell", async () => {
     const { token } = await seedSession({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
@@ -326,15 +326,15 @@ describe("bridge content GET /s/:token/content", () => {
 
   const MARKER = '<div id="art">MARKER</div>';
 
-  it("returns 200 text/html for a valid open session", async () => {
-    const { token } = await seedSession({ artifactSource: MARKER });
+  it("returns 200 text/html for a valid open surface", async () => {
+    const { token } = await seedSession({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
   });
 
-  it("sets a sandboxed CSP for the artifact frame", async () => {
-    const { token } = await seedSession({ artifactSource: MARKER });
+  it("sets a sandboxed CSP for the template frame", async () => {
+    const { token } = await seedSession({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("default-src 'none'");
@@ -342,8 +342,8 @@ describe("bridge content GET /s/:token/content", () => {
     expect(csp).toContain("frame-ancestors 'self'");
   });
 
-  it("embeds the artifact body and the pane runtime", async () => {
-    const { token } = await seedSession({ artifactSource: MARKER });
+  it("embeds the template body and the pane runtime", async () => {
+    const { token } = await seedSession({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const body = await res.text();
     expect(body).toContain(MARKER);
@@ -354,18 +354,18 @@ describe("bridge content GET /s/:token/content", () => {
   });
 
   it("does not set X-Frame-Options (unlike the shell route)", async () => {
-    const { token } = await seedSession({ artifactSource: MARKER });
+    const { token } = await seedSession({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.headers.get("x-frame-options")).toBeNull();
   });
 
-  it("returns 410 for a closed session", async () => {
+  it("returns 410 for a closed surface", async () => {
     const { token } = await seedSession({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(410);
   });
 
-  it("returns 410 for an expired session", async () => {
+  it("returns 410 for an expired surface", async () => {
     const { token } = await seedSession({ expired: true });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(410);
@@ -486,8 +486,8 @@ describe("bridge human-facing error pages", () => {
       expect(csp).toContain("default-src 'none'");
     });
 
-    it("renders the shell with its inline closed banner for an expired session (200, not 410)", async () => {
-      // For the /:token shell route an expired/closed session doesn't throw —
+    it("renders the shell with its inline closed banner for an expired surface (200, not 410)", async () => {
+      // For the /:token shell route an expired/closed surface doesn't throw —
       // loadByToken succeeds, isClosed is computed, and the shell renders a
       // banner instead of the iframe. The /content route below is where the
       // gone() path lives; the issue's acceptance criterion notes this
@@ -500,12 +500,12 @@ describe("bridge human-facing error pages", () => {
       );
       expect(res.status).toBe(200);
       const body = await res.text();
-      expect(body).toContain("This session is closed");
+      expect(body).toContain("This surface is closed");
     });
   });
 
   describe("GET /s/:token/content", () => {
-    it("returns an HTML 410 page for a closed session when Accept prefers HTML", async () => {
+    it("returns an HTML 410 page for a closed surface when Accept prefers HTML", async () => {
       const { token } = await seedSession({ closed: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {
@@ -519,7 +519,7 @@ describe("bridge human-facing error pages", () => {
       expect(body).not.toContain(token);
     });
 
-    it("returns an HTML 410 page for an expired session when Accept prefers HTML", async () => {
+    it("returns an HTML 410 page for an expired surface when Accept prefers HTML", async () => {
       const { token } = await seedSession({ expired: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {
@@ -543,7 +543,7 @@ describe("bridge human-facing error pages", () => {
       expect(await res.text()).toContain("This pane link");
     });
 
-    it("returns the JSON envelope for a closed session when Accept is application/json", async () => {
+    it("returns the JSON envelope for a closed surface when Accept is application/json", async () => {
       const { token } = await seedSession({ closed: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {

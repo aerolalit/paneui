@@ -207,8 +207,8 @@ describe("pane runtime", () => {
 
 // ===========================================================================
 // window.pane.uploadBlob — postMessage RPC to the shell. Tests the iframe
-// side in isolation: a real File goes out as an `upload-blob-request` frame,
-// a synthetic `upload-blob-result` frame resolves or rejects the promise.
+// side in isolation: a real File goes out as an `upload-attachment-request` frame,
+// a synthetic `upload-attachment-result` frame resolves or rejects the promise.
 // Follow-up C of #156.
 // ===========================================================================
 
@@ -229,8 +229,8 @@ describe("pane.uploadBlob", () => {
   }
 
   const fakeBlobRef = {
-    blob_id: "blob_abc",
-    scope: "session" as const,
+    attachment_id: "attachment_abc",
+    scope: "surface" as const,
     mime: "image/jpeg",
     size: 1234,
     sha256: "f".repeat(64),
@@ -238,32 +238,32 @@ describe("pane.uploadBlob", () => {
     width: 64,
     height: 64,
     status: "ready",
-    session_id: "ses_x",
-    artifact_id: null,
+    surface_id: "ses_x",
+    template_id: null,
     created_at: "2026-05-21T00:00:00.000Z",
     confirmed_at: "2026-05-21T00:00:00.000Z",
     deleted_at: null,
   };
 
-  it("posts an upload-blob-request frame carrying the File and an id", () => {
+  it("posts an upload-attachment-request frame carrying the File and an id", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "selfie.jpg", {
       type: "image/jpeg",
     });
     const p = window.pane.uploadBlob(file);
     void p;
-    // Most recent post is the upload-blob-request.
+    // Most recent post is the upload-attachment-request.
     const last = postSpy.mock.calls.at(-1)?.[0] as {
       kind: string;
       id: string;
       file: File;
     };
-    expect(last.kind).toBe("upload-blob-request");
+    expect(last.kind).toBe("upload-attachment-request");
     expect(typeof last.id).toBe("string");
     expect(last.id.length).toBeGreaterThan(0);
     expect(last.file).toBe(file);
   });
 
-  it("resolves with the blob on an ok:true result", async () => {
+  it("resolves with the attachment on an ok:true result", async () => {
     const file = new File([new Uint8Array([1])], "x.jpg", {
       type: "image/jpeg",
     });
@@ -273,15 +273,15 @@ describe("pane.uploadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: req.id,
       ok: true,
-      blob: fakeBlobRef,
+      attachment: fakeBlobRef,
     });
 
     await expect(p).resolves.toMatchObject({
-      blob_id: "blob_abc",
-      scope: "session",
+      attachment_id: "attachment_abc",
+      scope: "surface",
     });
   });
 
@@ -295,15 +295,15 @@ describe("pane.uploadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: req.id,
       ok: false,
-      error: { code: "blob_size_exceeded", message: "too big" },
+      error: { code: "attachment_size_exceeded", message: "too big" },
     });
 
     await expect(p).rejects.toThrowError("too big");
     await p.catch((err: { code?: string }) => {
-      expect(err.code).toBe("blob_size_exceeded");
+      expect(err.code).toBe("attachment_size_exceeded");
     });
   });
 
@@ -315,7 +315,7 @@ describe("pane.uploadBlob", () => {
 
     // The most recent two posts are the two requests, in order.
     const calls = postSpy.mock.calls.filter(
-      (c) => (c[0] as { kind: string }).kind === "upload-blob-request",
+      (c) => (c[0] as { kind: string }).kind === "upload-attachment-request",
     );
     const req1 = calls.at(-2)?.[0] as { id: string };
     const req2 = calls.at(-1)?.[0] as { id: string };
@@ -325,10 +325,10 @@ describe("pane.uploadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: req2.id,
       ok: true,
-      blob: fakeBlobRef,
+      attachment: fakeBlobRef,
     });
 
     // p2 resolves; p1 still pending (proxied through a Promise.race-with-
@@ -339,19 +339,23 @@ describe("pane.uploadBlob", () => {
       new Promise((resolve) => setTimeout(() => resolve(sentinel), 0)),
     ]);
     expect(result).toBe(sentinel);
-    await expect(p2).resolves.toMatchObject({ blob_id: "blob_abc" });
+    await expect(p2).resolves.toMatchObject({
+      attachment_id: "attachment_abc",
+    });
 
-    // Now reply to request 1 with a different blob_id — must resolve p1
+    // Now reply to request 1 with a different attachment_id — must resolve p1
     // distinctly (no cross-correlation).
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "upload-blob-result",
+      kind: "upload-attachment-result",
       id: req1.id,
       ok: true,
-      blob: { ...fakeBlobRef, blob_id: "blob_other" },
+      attachment: { ...fakeBlobRef, attachment_id: "attachment_other" },
     });
-    await expect(p1).resolves.toMatchObject({ blob_id: "blob_other" });
+    await expect(p1).resolves.toMatchObject({
+      attachment_id: "attachment_other",
+    });
   });
 
   it("rejects synchronously when given a non-File argument", async () => {
@@ -376,7 +380,7 @@ describe("pane.uploadBlob", () => {
       kind: string;
       options: { filename?: string; mime?: string };
     };
-    expect(last.kind).toBe("upload-blob-request");
+    expect(last.kind).toBe("upload-attachment-request");
     expect(last.options).toEqual({
       filename: "override.jpg",
       mime: "image/png",
@@ -386,8 +390,8 @@ describe("pane.uploadBlob", () => {
 
 // ===========================================================================
 // window.pane.downloadBlob — postMessage RPC to the shell. Tests the iframe
-// side in isolation: a blob_id goes out as a `download-blob-request` frame,
-// a synthetic `download-blob-result` carrying a real Blob resolves or
+// side in isolation: a attachment_id goes out as a `download-attachment-request` frame,
+// a synthetic `download-attachment-result` carrying a real Blob resolves or
 // rejects the promise. Follow-up D of #156 (symmetric to uploadBlob).
 // ===========================================================================
 
@@ -407,22 +411,22 @@ describe("pane.downloadBlob", () => {
     window.dispatchEvent(new MessageEvent("message", { data, source: window }));
   }
 
-  it("posts a download-blob-request frame carrying the blob_id and a correlation id", () => {
-    const p = window.pane.downloadBlob("blob_abc");
+  it("posts a download-attachment-request frame carrying the attachment_id and a correlation id", () => {
+    const p = window.pane.downloadBlob("attachment_abc");
     void p;
     const last = postSpy.mock.calls.at(-1)?.[0] as {
       kind: string;
       id: string;
-      blob_id: string;
+      attachment_id: string;
     };
-    expect(last.kind).toBe("download-blob-request");
+    expect(last.kind).toBe("download-attachment-request");
     expect(typeof last.id).toBe("string");
     expect(last.id.length).toBeGreaterThan(0);
-    expect(last.blob_id).toBe("blob_abc");
+    expect(last.attachment_id).toBe("attachment_abc");
   });
 
   it("resolves with the Blob on an ok:true result", async () => {
-    const p = window.pane.downloadBlob("blob_abc");
+    const p = window.pane.downloadBlob("attachment_abc");
 
     const req = postSpy.mock.calls.at(-1)?.[0] as { id: string };
     const fakeBlob = new Blob([new Uint8Array([1, 2, 3])], {
@@ -431,10 +435,10 @@ describe("pane.downloadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: req.id,
       ok: true,
-      blob: fakeBlob,
+      attachment: fakeBlob,
       mime: "image/jpeg",
       size: 3,
     });
@@ -446,30 +450,30 @@ describe("pane.downloadBlob", () => {
   });
 
   it("rejects with an Error carrying .code on an ok:false result", async () => {
-    const p = window.pane.downloadBlob("blob_abc");
+    const p = window.pane.downloadBlob("attachment_abc");
 
     const req = postSpy.mock.calls.at(-1)?.[0] as { id: string };
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: req.id,
       ok: false,
-      error: { code: "blob_ref_not_accessible", message: "not yours" },
+      error: { code: "attachment_ref_not_accessible", message: "not yours" },
     });
 
     await expect(p).rejects.toThrowError("not yours");
     await p.catch((err: { code?: string }) => {
-      expect(err.code).toBe("blob_ref_not_accessible");
+      expect(err.code).toBe("attachment_ref_not_accessible");
     });
   });
 
   it("does not resolve request 1 when request 2's result arrives", async () => {
-    const p1 = window.pane.downloadBlob("blob_one");
-    const p2 = window.pane.downloadBlob("blob_two");
+    const p1 = window.pane.downloadBlob("attachment_one");
+    const p2 = window.pane.downloadBlob("attachment_two");
 
     const calls = postSpy.mock.calls.filter(
-      (c) => (c[0] as { kind: string }).kind === "download-blob-request",
+      (c) => (c[0] as { kind: string }).kind === "download-attachment-request",
     );
     const req1 = calls.at(-2)?.[0] as { id: string };
     const req2 = calls.at(-1)?.[0] as { id: string };
@@ -480,10 +484,10 @@ describe("pane.downloadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: req2.id,
       ok: true,
-      blob: blob2,
+      attachment: blob2,
       mime: "image/jpeg",
       size: 1,
     });
@@ -500,10 +504,10 @@ describe("pane.downloadBlob", () => {
     dispatch({
       __pane: 1,
       v: 1,
-      kind: "download-blob-result",
+      kind: "download-attachment-result",
       id: req1.id,
       ok: true,
-      blob: blob1,
+      attachment: blob1,
       mime: "image/png",
       size: 1,
     });
@@ -511,7 +515,7 @@ describe("pane.downloadBlob", () => {
     expect(got1.type).toBe("image/png");
   });
 
-  it("rejects synchronously without posting on a non-string blob_id", async () => {
+  it("rejects synchronously without posting on a non-string attachment_id", async () => {
     const callsBefore = postSpy.mock.calls.length;
     const p = window.pane.downloadBlob(123 as unknown as string);
     await expect(p).rejects.toThrowError(/non-empty string/);
@@ -521,7 +525,7 @@ describe("pane.downloadBlob", () => {
     expect(postSpy.mock.calls.length).toBe(callsBefore);
   });
 
-  it("rejects synchronously without posting on an empty blob_id", async () => {
+  it("rejects synchronously without posting on an empty attachment_id", async () => {
     const callsBefore = postSpy.mock.calls.length;
     const p = window.pane.downloadBlob("");
     await expect(p).rejects.toThrowError(/non-empty string/);

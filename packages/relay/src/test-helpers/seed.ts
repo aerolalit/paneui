@@ -1,7 +1,7 @@
-// Shared seed helpers for tests. Since the reusable-artifacts change, a session
-// is FK'd to an `artifact_version` rather than carrying inline artifact columns
-// — so a raw `prisma.session.create` must first create an Artifact + an
-// ArtifactVersion. These helpers encapsulate that two-step setup.
+// Shared seed helpers for tests. Since the reusable-templates change, a surface
+// is FK'd to an `template_version` rather than carrying inline template columns
+// — so a raw `prisma.surface.create` must first create an Template + an
+// TemplateVersion. These helpers encapsulate that two-step setup.
 
 import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
@@ -22,22 +22,22 @@ export interface SeedArtifactOptions {
   slug?: string | null;
   description?: string | null;
   tags?: string[] | null;
-  artifactType?: string;
-  artifactSource?: string;
+  templateType?: string;
+  templateSource?: string;
   eventSchema?: object;
   inputSchema?: object | null;
 }
 
 /**
- * Create an Artifact head + one ArtifactVersion (v1). Returns both ids.
- * Used by tests that need a concrete `artifact_version_id` to attach a session
+ * Create an Template head + one TemplateVersion (v1). Returns both ids.
+ * Used by tests that need a concrete `template_version_id` to attach a surface
  * to.
  */
 export async function seedArtifact(
   prisma: PrismaClient,
   opts: SeedArtifactOptions,
-): Promise<{ artifactId: string; artifactVersionId: string }> {
-  const artifact = await prisma.artifact.create({
+): Promise<{ templateId: string; templateVersionId: string }> {
+  const template = await prisma.template.create({
     data: {
       ownerId: opts.ownerId,
       name: opts.name ?? null,
@@ -47,17 +47,17 @@ export async function seedArtifact(
       latestVersion: 1,
     },
   });
-  const version = await prisma.artifactVersion.create({
+  const version = await prisma.templateVersion.create({
     data: {
-      artifactId: artifact.id,
+      templateId: template.id,
       version: 1,
-      artifactType: opts.artifactType ?? "html-inline",
-      artifactSource: opts.artifactSource ?? "<html></html>",
+      templateType: opts.templateType ?? "html-inline",
+      templateSource: opts.templateSource ?? "<html></html>",
       eventSchema: (opts.eventSchema ?? minimalEventSchema) as object,
       inputSchema: opts.inputSchema ?? undefined,
     },
   });
-  return { artifactId: artifact.id, artifactVersionId: version.id };
+  return { templateId: template.id, templateVersionId: version.id };
 }
 
 export interface SeedSessionOptions {
@@ -70,44 +70,44 @@ export interface SeedSessionOptions {
   callbackUrl?: string | null;
   callbackSecretEnc?: string | null;
   callbackFilter?: string[] | null;
-  artifactType?: string;
-  artifactSource?: string;
+  templateType?: string;
+  templateSource?: string;
   eventSchema?: object;
   inputSchema?: object | null;
-  /** Per-session tab title. Defaults to a benign placeholder; tests exercising
+  /** Per-surface tab title. Defaults to a benign placeholder; tests exercising
    * the bridge shell's <title> rendering pass their own value. */
   title?: string;
-  /** Reuse an existing artifact version instead of creating a fresh one. */
-  artifactVersionId?: string;
+  /** Reuse an existing template version instead of creating a fresh one. */
+  templateVersionId?: string;
 }
 
 /**
- * Create a session row, transparently seeding an Artifact + ArtifactVersion
- * first (unless `artifactVersionId` is supplied). Returns the session id and
- * the artifact-version id it was pinned to.
+ * Create a surface row, transparently seeding an Template + TemplateVersion
+ * first (unless `templateVersionId` is supplied). Returns the surface id and
+ * the template-version id it was pinned to.
  */
 export async function seedSessionRow(
   prisma: PrismaClient,
   opts: SeedSessionOptions,
-): Promise<{ sessionId: string; artifactVersionId: string }> {
-  let artifactVersionId = opts.artifactVersionId;
-  if (!artifactVersionId) {
+): Promise<{ surfaceId: string; templateVersionId: string }> {
+  let templateVersionId = opts.templateVersionId;
+  if (!templateVersionId) {
     const seeded = await seedArtifact(prisma, {
       ownerId: opts.agentId,
-      artifactType: opts.artifactType,
-      artifactSource: opts.artifactSource,
+      templateType: opts.templateType,
+      templateSource: opts.templateSource,
       eventSchema: opts.eventSchema,
       inputSchema: opts.inputSchema,
     });
-    artifactVersionId = seeded.artifactVersionId;
+    templateVersionId = seeded.templateVersionId;
   }
-  const sessionId = opts.id ?? `ses_${randomBytes(8).toString("hex")}`;
-  await prisma.session.create({
+  const surfaceId = opts.id ?? `ses_${randomBytes(8).toString("hex")}`;
+  await prisma.surface.create({
     data: {
-      id: sessionId,
+      id: surfaceId,
       agentId: opts.agentId,
-      artifactVersionId,
-      title: opts.title ?? "Pane Session",
+      templateVersionId,
+      title: opts.title ?? "Pane Surface",
       status: opts.status ?? "open",
       expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
       metadata: opts.metadata ?? undefined,
@@ -117,5 +117,5 @@ export async function seedSessionRow(
       callbackFilter: opts.callbackFilter ?? undefined,
     },
   });
-  return { sessionId, artifactVersionId };
+  return { surfaceId, templateVersionId };
 }

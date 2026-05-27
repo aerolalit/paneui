@@ -29,7 +29,7 @@ import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
 import type { Participant, PrismaClient } from "@prisma/client";
-import type { SessionWithArtifactVersion } from "../core/events.js";
+import type { SurfaceWithArtifactVersion } from "../core/events.js";
 
 // Injected dependencies for the WebSocket transport. The WS upgrade path runs
 // outside the Hono request lifecycle, so config + the Prisma client are passed
@@ -45,7 +45,7 @@ export interface WsDeps {
   generalLimiter: SlidingWindowLimiter;
 }
 
-const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
+const STREAM_RX = /^\/v1\/surfaces\/([^/]+)\/stream(\?.*)?$/;
 
 // Heartbeat interval. The relay pings every open socket on this cadence; any
 // socket that has not answered a ping with a pong since the previous tick is
@@ -59,8 +59,8 @@ const STREAM_RX = /^\/v1\/sessions\/([^/]+)\/stream(\?.*)?$/;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 // `ws` does not surface "did this socket pong recently" — we track it ourselves
-// on the socket object via this property. We also stash the socket's sessionId
-// so the heartbeat can refresh that session's Redis presence-hash TTL (the
+// on the socket object via this property. We also stash the socket's surfaceId
+// so the heartbeat can refresh that surface's Redis presence-hash TTL (the
 // ghost-cleanup mechanism — see ws/presence.ts).
 interface AliveWs extends WebSocket {
   isAlive?: boolean;
@@ -89,8 +89,8 @@ export function attachWs(
   // browser connections warm and detects dead peers.
   const heartbeat = setInterval(() => {
     // Sessions with at least one live socket on this replica — their Redis
-    // presence-hash TTL gets refreshed below so an active session never
-    // expires while a dead replica's sessions are left to lapse.
+    // presence-hash TTL gets refreshed below so an active surface never
+    // expires while a dead replica's surfaces are left to lapse.
     const liveSessions = new Set<string>();
     for (const client of wss.clients) {
       const ws = client as AliveWs;
@@ -107,10 +107,10 @@ export function attachWs(
         /* socket already closing — next tick's terminate() handles it */
       }
     }
-    // Refresh presence TTLs for every still-live session. No-op when Redis is
+    // Refresh presence TTLs for every still-live surface. No-op when Redis is
     // off (the in-process Map has no TTL).
-    for (const sessionId of liveSessions) {
-      void refreshSession(sessionId);
+    for (const surfaceId of liveSessions) {
+      void refreshSession(surfaceId);
     }
   }, HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();
@@ -134,7 +134,7 @@ async function handleUpgrade(
       socket.destroy();
       return;
     }
-    const sessionId = m[1]!;
+    const surfaceId = m[1]!;
 
     // Cross-site WebSocket hijacking guard. Browsers always send an `Origin`
     // header on a WS handshake; a `?token=`/`?ticket=` in the query string is
@@ -186,35 +186,35 @@ async function handleUpgrade(
     }
 
     let author: Author;
-    let session: SessionWithArtifactVersion;
+    let surface: SurfaceWithArtifactVersion;
     let participant: Participant | null = null;
 
     if (cred.kind === "ticket") {
       // The ticket replaces the AUTHENTICATION step only: redeeming it yields
       // the bound Author directly (no resolveBearer DB call). The handler
-      // still needs the Session row (open/expiry check, passed downstream)
+      // still needs the Surface row (open/expiry check, passed downstream)
       // and, for a participant, the participant row for the joinedAt update —
       // so we load those below exactly as the token path does.
-      const redeemed = redeemTicket(cred.value, sessionId);
+      const redeemed = redeemTicket(cred.value, surfaceId);
       if (!redeemed) {
         sendUpgradeError(socket, 401);
         return;
       }
       author = redeemed;
-      const s = await prisma.session.findUnique({
-        where: { id: sessionId },
-        include: { artifactVersion: true },
+      const s = await prisma.surface.findUnique({
+        where: { id: surfaceId },
+        include: { templateVersion: true },
       });
       if (!s) {
         sendUpgradeError(socket, 404);
         return;
       }
-      session = s;
+      surface = s;
       if (author.kind !== "agent" || author.id !== s.agentId) {
-        // A non-agent author, or an agent author that is not the session
+        // A non-agent author, or an agent author that is not the surface
         // owner, is a participant — load its row for the joinedAt update.
         participant = await prisma.participant.findFirst({
-          where: { sessionId, identityId: author.id },
+          where: { surfaceId, identityId: author.id },
         });
       }
     } else {
@@ -224,41 +224,41 @@ async function handleUpgrade(
         return;
       }
       if (resolved.kind === "participant") {
-        if (resolved.participant.sessionId !== sessionId) {
+        if (resolved.participant.surfaceId !== surfaceId) {
           sendUpgradeError(socket, 404);
           return;
         }
         participant = resolved.participant;
-        session = resolved.session;
+        surface = resolved.surface;
         author = {
           kind: participant.kind === "agent" ? "agent" : "human",
           id: participant.identityId,
         };
       } else {
-        const s = await prisma.session.findUnique({
-          where: { id: sessionId },
-          include: { artifactVersion: true },
+        const s = await prisma.surface.findUnique({
+          where: { id: surfaceId },
+          include: { templateVersion: true },
         });
         if (!s || s.agentId !== resolved.agent.id) {
           sendUpgradeError(socket, 404);
           return;
         }
-        session = s;
+        surface = s;
         author = { kind: "agent", id: resolved.agent.id };
       }
     }
 
-    if (session.status !== "open" || session.expiresAt.getTime() < Date.now()) {
+    if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
       sendUpgradeError(socket, 410);
       return;
     }
 
-    // Per-session WebSocket connection cap. Bounds how many concurrent sockets
-    // a single session/token can hold open, so an abusive client cannot
+    // Per-surface WebSocket connection cap. Bounds how many concurrent sockets
+    // a single surface/token can hold open, so an abusive client cannot
     // exhaust file descriptors / memory by opening connections in a loop.
     if (
       config.MAX_WS_CONNECTIONS_PER_SESSION > 0 &&
-      (await connectionCount(sessionId)) >=
+      (await connectionCount(surfaceId)) >=
         config.MAX_WS_CONNECTIONS_PER_SESSION
     ) {
       sendUpgradeError(socket, 429);
@@ -280,7 +280,7 @@ async function handleUpgrade(
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleConnection(ws, deps, sessionId, author, since);
+      void handleConnection(ws, deps, surfaceId, author, since);
     });
   } catch (err) {
     log.error("ws upgrade failed", {
@@ -355,20 +355,20 @@ function sendUpgradeError(socket: Duplex, status: number): void {
 // it for events seen during replay.
 async function withLiveCount(
   e: SerializedEvent,
-  sessionId: string,
+  surfaceId: string,
 ): Promise<SerializedEvent> {
   const data =
     e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
   return {
     ...e,
-    data: { ...data, agentCountLive: await agentCount(sessionId) },
+    data: { ...data, agentCountLive: await agentCount(surfaceId) },
   };
 }
 
 async function handleConnection(
   ws: WebSocket,
   deps: WsDeps,
-  sessionId: string,
+  surfaceId: string,
   author: Author,
   sinceCursor: number | null,
 ): Promise<void> {
@@ -380,22 +380,22 @@ async function handleConnection(
   // terminates the socket if it's still false on the next tick.
   const alive = ws as AliveWs;
   alive.isAlive = true;
-  // Stash the sessionId so the heartbeat can refresh this session's Redis
+  // Stash the surfaceId so the heartbeat can refresh this surface's Redis
   // presence-hash TTL (ghost cleanup — see ws/presence.ts).
-  alive.paneSessionId = sessionId;
+  alive.paneSessionId = surfaceId;
   ws.on("pong", () => {
     alive.isAlive = true;
   });
 
   log.info("ws connected", {
-    sessionId,
+    surfaceId,
     authorKind: author.kind,
     authorId: author.id,
   });
 
   ws.on("error", (err: Error) => {
     log.warn("ws error", {
-      sessionId,
+      surfaceId,
       authorKind: author.kind,
       error: err.message,
     });
@@ -405,7 +405,7 @@ async function handleConnection(
   // joined event's agentCountLive, so the count reflects this connection too.
   const connId = randomUUID();
   await addConnection(
-    sessionId,
+    surfaceId,
     connId,
     author.kind === "agent" ? "agent" : "human",
   );
@@ -415,14 +415,14 @@ async function handleConnection(
   //    the broadcast copy with the live agent count.
   await appendSystemEvent(
     prisma,
-    sessionId,
+    surfaceId,
     "system.participant.joined",
     { author: { kind: author.kind, id: author.id } },
-    (e) => withLiveCount(e, sessionId),
+    (e) => withLiveCount(e, surfaceId),
   );
 
   // 2) Replay every event since `sinceCursor` (or from the start).
-  const replayWhere: { sessionId: string; id?: { gt: number } } = { sessionId };
+  const replayWhere: { surfaceId: string; id?: { gt: number } } = { surfaceId };
   if (sinceCursor !== null) replayWhere.id = { gt: sinceCursor };
   const replay = await prisma.event.findMany({
     where: replayWhere,
@@ -437,7 +437,7 @@ async function handleConnection(
   //    strictly newer than the last replayed id.
   const lastReplayId =
     replay.length > 0 ? replay[replay.length - 1]!.id : (sinceCursor ?? 0);
-  const unsub = subscribe(sessionId, (e) => {
+  const unsub = subscribe(surfaceId, (e) => {
     const n = Number(e.id);
     if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, e);
   });
@@ -452,12 +452,12 @@ async function handleConnection(
       });
       return;
     }
-    await handleFrame(ws, deps, sessionId, author, msg);
+    await handleFrame(ws, deps, surfaceId, author, msg);
   });
 
   ws.on("close", (code: number, reason: Buffer) => {
     log.info("ws closed", {
-      sessionId,
+      surfaceId,
       authorKind: author.kind,
       authorId: author.id,
       code,
@@ -473,19 +473,19 @@ async function handleConnection(
     // close-event callback's perspective.
     void (async () => {
       try {
-        await removeConnection(sessionId, connId);
-        // appendSystemEvent persists + broadcasts, and tolerates the session
+        await removeConnection(surfaceId, connId);
+        // appendSystemEvent persists + broadcasts, and tolerates the surface
         // having been deleted while this socket was draining (returns null).
         await appendSystemEvent(
           prisma,
-          sessionId,
+          surfaceId,
           "system.participant.left",
           { author: { kind: author.kind, id: author.id } },
-          (e) => withLiveCount(e, sessionId),
+          (e) => withLiveCount(e, surfaceId),
         );
       } catch (err) {
         log.warn("participant.left event insert failed", {
-          sessionId,
+          surfaceId,
           error: String(err),
         });
       }
@@ -507,7 +507,7 @@ function sendJson(ws: WebSocket, obj: unknown): void {
 async function handleFrame(
   ws: WebSocket,
   deps: WsDeps,
-  sessionId: string,
+  surfaceId: string,
   author: Author,
   msg: unknown,
 ): Promise<void> {
@@ -554,7 +554,7 @@ async function handleFrame(
     return;
   }
 
-  // Quick byte-cap check before we re-read the session — saves a round-trip on
+  // Quick byte-cap check before we re-read the surface — saves a round-trip on
   // obviously oversize frames. writeEvent enforces the same cap authoritatively.
   if (
     Buffer.byteLength(JSON.stringify(f.data ?? null), "utf8") >
@@ -567,14 +567,14 @@ async function handleFrame(
     return;
   }
 
-  // Re-read the session so writeEvent sees the latest schema/status.
-  // (writeEvent itself throws errors.gone() if the session is closed/expired,
+  // Re-read the surface so writeEvent sees the latest schema/status.
+  // (writeEvent itself throws errors.gone() if the surface is closed/expired,
   // so we don't double-check that here.)
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: { artifactVersion: true },
+  const surface = await prisma.surface.findUnique({
+    where: { id: surfaceId },
+    include: { templateVersion: true },
   });
-  if (!session) {
+  if (!surface) {
     sendJson(ws, {
       error: serializeApiError(errors.notFound()),
       ...(cid ? { correlation_id: cid } : {}),
@@ -585,7 +585,7 @@ async function handleFrame(
   try {
     const { event, deduped } = await writeEvent(
       { prisma, config },
-      session,
+      surface,
       author,
       {
         type: f.type,
@@ -609,7 +609,7 @@ async function handleFrame(
       return;
     }
     log.error("ws writeEvent failed", {
-      sessionId,
+      surfaceId,
       error: err instanceof Error ? err.message : String(err),
     });
     sendJson(ws, {

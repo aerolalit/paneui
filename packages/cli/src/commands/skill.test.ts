@@ -175,7 +175,7 @@ describe("runSkill — version subcommand", () => {
   });
 
   it("with --plain prints just the version string + newline", async () => {
-    // The shell-pipeline form. An agent's session-start hook does:
+    // The shell-pipeline form. An agent's surface-start hook does:
     //   if [ "$(pane skill version --plain)" != "$LOCAL" ]; then ...
     // — so --plain MUST emit a bare line, no JSON braces, no trailing
     // whitespace beyond the newline.

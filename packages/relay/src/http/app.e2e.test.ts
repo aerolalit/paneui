@@ -73,51 +73,51 @@ describe("HTTP e2e", () => {
     await testDb.truncateAll(prisma);
   });
 
-  describe("session lifecycle", () => {
-    it("POST /v1/sessions creates a session, returns 201 + tokens + urls", async () => {
+  describe("surface lifecycle", () => {
+    it("POST /v1/surfaces creates a surface, returns 201 + tokens + urls", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             participants: { humans: 2 },
           }),
         }),
       );
       expect(res.status).toBe(201);
       const body = (await res.json()) as {
-        session_id: string;
+        surface_id: string;
         tokens: { humans: string[]; agent: string };
         urls: { humans: string[]; agent_stream: string };
         expires_at: string;
       };
-      expect(body.session_id).toMatch(/^ses_/);
+      expect(body.surface_id).toMatch(/^ses_/);
       expect(body.tokens.humans).toHaveLength(2);
       expect(body.tokens.agent).toBeTruthy();
       expect(body.urls.humans[0]).toContain("/s/");
       expect(body.urls.agent_stream).toContain("ws");
     });
 
-    it("rejects artifact.type 'html-ref' with 400 invalid_request", async () => {
+    it("rejects template.type 'html-ref' with 400 invalid_request", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-ref",
               source: "https://example.com/page",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
@@ -134,20 +134,20 @@ describe("HTTP e2e", () => {
       // Previously this was silently clamped to MAX_TTL_SECONDS and the
       // caller had to read `expires_at` to notice. Now the relay returns
       // 400 with the cap surfaced in details, so an automated agent gets
-      // an immediate signal instead of a session that quietly expires
+      // an immediate signal instead of a surface that quietly expires
       // earlier than requested.
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             ttl: 999_999_999,
           }),
         }),
@@ -167,16 +167,16 @@ describe("HTTP e2e", () => {
 
     it("rejects an unauthenticated request with 401", async () => {
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
@@ -186,16 +186,16 @@ describe("HTTP e2e", () => {
     it("rejects an SSRF-style callback URL with 400 before any DB write", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             callback: {
               url: "http://169.254.169.254/latest/meta-data/",
               events: ["review.*"],
@@ -205,23 +205,23 @@ describe("HTTP e2e", () => {
         }),
       );
       expect(res.status).toBe(400);
-      const sessions = await prisma.session.findMany();
-      expect(sessions).toHaveLength(0);
+      const surfaces = await prisma.surface.findMany();
+      expect(surfaces).toHaveLength(0);
     });
 
     it("encrypts the callback secret at rest", async () => {
       const { apiKey } = await seedAgent();
       const create = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             callback: {
               url: "https://example.com/hook",
               events: ["review.*"],
@@ -231,34 +231,34 @@ describe("HTTP e2e", () => {
         }),
       );
       expect(create.status).toBe(201);
-      const row = await prisma.session.findFirst();
+      const row = await prisma.surface.findFirst();
       expect(row?.callbackSecretEnc).not.toBeNull();
       expect(row?.callbackSecretEnc).not.toContain("topsecret");
       expect(row?.callbackSecretEnc!.startsWith("v1.")).toBe(true);
     });
 
-    it("DELETE /v1/sessions/:id closes a session and a follow-up event fails as gone", async () => {
+    it("DELETE /v1/surfaces/:id closes a surface and a follow-up event fails as gone", async () => {
       const { apiKey } = await seedAgent();
       const create = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
-      const { session_id, tokens } = (await create.json()) as {
-        session_id: string;
+      const { surface_id, tokens } = (await create.json()) as {
+        surface_id: string;
         tokens: { agent: string };
       };
       const del = await app.fetch(
-        new Request(`http://t/v1/sessions/${session_id}`, {
+        new Request(`http://t/v1/surfaces/${surface_id}`, {
           method: "DELETE",
           headers: bearer(apiKey),
         }),
@@ -266,7 +266,7 @@ describe("HTTP e2e", () => {
       expect(del.status).toBe(204);
 
       const emit = await app.fetch(
-        new Request(`http://t/v1/sessions/${session_id}/events`, {
+        new Request(`http://t/v1/surfaces/${surface_id}/events`, {
           method: "POST",
           headers: bearer(tokens.agent),
           body: JSON.stringify({
@@ -281,31 +281,31 @@ describe("HTTP e2e", () => {
 
   describe("events POST / GET round trip", () => {
     async function createOpenSession(apiKey: string): Promise<{
-      sessionId: string;
+      surfaceId: string;
       agentToken: string;
       humanToken: string;
     }> {
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             participants: { humans: 1 },
           }),
         }),
       );
       const body = (await res.json()) as {
-        session_id: string;
+        surface_id: string;
         tokens: { humans: string[]; agent: string };
       };
       return {
-        sessionId: body.session_id,
+        surfaceId: body.surface_id,
         agentToken: body.tokens.agent,
         humanToken: body.tokens.humans[0]!,
       };
@@ -313,10 +313,10 @@ describe("HTTP e2e", () => {
 
     it("agent posts an event, GET ?since= returns it", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createOpenSession(apiKey);
+      const { surfaceId, agentToken } = await createOpenSession(apiKey);
 
       const post = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
           body: JSON.stringify({
@@ -332,7 +332,7 @@ describe("HTTP e2e", () => {
       expect(postBody.event.type).toBe("review.commentAdded");
 
       const get = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events?since=0`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events?since=0`, {
           headers: bearer(agentToken),
         }),
       );
@@ -348,11 +348,11 @@ describe("HTTP e2e", () => {
 
     it("human can post via participant token; agent can read it back", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken, humanToken } =
+      const { surfaceId, agentToken, humanToken } =
         await createOpenSession(apiKey);
 
       const post = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(humanToken),
           body: JSON.stringify({
@@ -364,7 +364,7 @@ describe("HTTP e2e", () => {
       expect(post.status).toBe(201);
 
       const get = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events?since=0`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events?since=0`, {
           headers: bearer(agentToken),
         }),
       );
@@ -378,11 +378,11 @@ describe("HTTP e2e", () => {
 
     it("idempotency_key replay returns 200 + deduped:true", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createOpenSession(apiKey);
+      const { surfaceId, agentToken } = await createOpenSession(apiKey);
       const key = "idem-" + randomBytes(6).toString("hex");
       const send = () =>
         app.fetch(
-          new Request(`http://t/v1/sessions/${sessionId}/events`, {
+          new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
             method: "POST",
             headers: bearer(agentToken),
             body: JSON.stringify({
@@ -402,9 +402,9 @@ describe("HTTP e2e", () => {
 
     it("schema-violating payload returns 422", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await createOpenSession(apiKey);
+      const { surfaceId, agentToken } = await createOpenSession(apiKey);
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
           body: JSON.stringify({
@@ -418,21 +418,21 @@ describe("HTTP e2e", () => {
 
     it("long-poll delivers an event posted concurrently with the query window (#49)", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken, humanToken } =
+      const { surfaceId, agentToken, humanToken } =
         await createOpenSession(apiKey);
 
       // Start a long-poll GET with an empty event log. The handler subscribes
       // to the broadcast bus before its first query, so an event published
       // while the request is in flight must still land in the same response.
       const get = app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events?since=0&wait=5`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events?since=0&wait=5`, {
           headers: bearer(agentToken),
         }),
       );
 
       // Race the publish against the query window: post immediately, no delay.
       const post = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(humanToken),
           body: JSON.stringify({
@@ -455,13 +455,13 @@ describe("HTTP e2e", () => {
       expect(body.events[0]!.data.body).toBe("raced");
     });
 
-    it("wrong-session participant token returns 404", async () => {
+    it("wrong-surface participant token returns 404", async () => {
       const { apiKey } = await seedAgent();
       const a = await createOpenSession(apiKey);
       const b = await createOpenSession(apiKey);
-      // Use b's human token against a's session.
+      // Use b's human token against a's surface.
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${a.sessionId}/events?since=0`, {
+        new Request(`http://t/v1/surfaces/${a.surfaceId}/events?since=0`, {
           headers: bearer(b.humanToken),
         }),
       );
@@ -482,43 +482,43 @@ describe("HTTP e2e", () => {
     }
 
     async function openSession(apiKey: string): Promise<{
-      sessionId: string;
+      surfaceId: string;
       agentToken: string;
     }> {
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
             participants: { humans: 1 },
           }),
         }),
       );
       const body = (await res.json()) as {
-        session_id: string;
+        surface_id: string;
         tokens: { agent: string };
       };
-      return { sessionId: body.session_id, agentToken: body.tokens.agent };
+      return { surfaceId: body.surface_id, agentToken: body.tokens.agent };
     }
 
     it("401 is not retryable and carries a hint + docs_url", async () => {
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
@@ -530,16 +530,16 @@ describe("HTTP e2e", () => {
       expect(body.error.docs_url).toContain("docs/SPEC.md#");
     });
 
-    it("404 on a missing session uses session_not_found", async () => {
+    it("404 on a missing surface uses session_not_found", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions/ses_does_not_exist", {
+        new Request("http://t/v1/surfaces/ses_does_not_exist", {
           headers: bearer(apiKey),
         }),
       );
       expect(res.status).toBe(404);
       const body = (await res.json()) as ErrBody;
-      // session_not_found (#137) distinguishes "the session id is wrong /
+      // session_not_found (#137) distinguishes "the surface id is wrong /
       // expired" from "this resource type was wrong" so agents can branch.
       // Auth-leak safe: both "doesn't exist" and "not yours" return the
       // same code, so the caller learns nothing they didn't already know.
@@ -550,9 +550,9 @@ describe("HTTP e2e", () => {
 
     it("422 schema violation carries a specific hint", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await openSession(apiKey);
+      const { surfaceId, agentToken } = await openSession(apiKey);
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
           body: JSON.stringify({
@@ -571,9 +571,9 @@ describe("HTTP e2e", () => {
 
     it("422 unknown event type names the offending type in the hint", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await openSession(apiKey);
+      const { surfaceId, agentToken } = await openSession(apiKey);
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
           body: JSON.stringify({ type: "not.declared", data: {} }),
@@ -585,17 +585,17 @@ describe("HTTP e2e", () => {
       expect(body.error.hint).toMatch(/not\.declared/);
     });
 
-    it("410 gone explains the session is closed and not retryable", async () => {
+    it("410 gone explains the surface is closed and not retryable", async () => {
       const { apiKey } = await seedAgent();
-      const { sessionId, agentToken } = await openSession(apiKey);
+      const { surfaceId, agentToken } = await openSession(apiKey);
       await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}`, {
           method: "DELETE",
           headers: bearer(apiKey),
         }),
       );
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${sessionId}/events`, {
+        new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
           method: "POST",
           headers: bearer(agentToken),
           body: JSON.stringify({
@@ -614,10 +614,10 @@ describe("HTTP e2e", () => {
     it("400 invalid body keeps Zod details and gains a hint", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
-          body: JSON.stringify({ artifact: { type: "bogus" } }),
+          body: JSON.stringify({ template: { type: "bogus" } }),
         }),
       );
       expect(res.status).toBe(400);
@@ -631,23 +631,23 @@ describe("HTTP e2e", () => {
 
   describe("request body size limit", () => {
     // The global /v1/* bodyLimit ceiling is MAX_ARTIFACT_BYTES + 256 KiB
-    // (config default: 2 MB artifact cap). A body past that ceiling must be
+    // (config default: 2 MB template cap). A body past that ceiling must be
     // rejected with 413 BEFORE the route buffers and JSON.parses it.
-    it("rejects an oversized POST /v1/sessions body with 413 payload_too_large", async () => {
+    it("rejects an oversized POST /v1/surfaces body with 413 payload_too_large", async () => {
       const { apiKey } = await seedAgent();
-      // 5 MB of artifact source — well past the ~2.25 MB global ceiling.
+      // 5 MB of template source — well past the ~2.25 MB global ceiling.
       const huge = "A".repeat(5_000_000);
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: huge,
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
@@ -659,28 +659,28 @@ describe("HTTP e2e", () => {
     it("rejects an oversized POST /events body with 413 payload_too_large", async () => {
       const { apiKey } = await seedAgent();
       const create = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );
-      const { session_id, tokens } = (await create.json()) as {
-        session_id: string;
+      const { surface_id, tokens } = (await create.json()) as {
+        surface_id: string;
         tokens: { agent: string };
       };
       // The events route has a tighter cap (MAX_EVENT_DATA_BYTES + 64 KiB,
       // config default 64 KB data cap); 1 MB of data is well past it.
       const huge = "B".repeat(1_000_000);
       const res = await app.fetch(
-        new Request(`http://t/v1/sessions/${session_id}/events`, {
+        new Request(`http://t/v1/surfaces/${surface_id}/events`, {
           method: "POST",
           headers: bearer(tokens.agent),
           body: JSON.stringify({
@@ -697,16 +697,16 @@ describe("HTTP e2e", () => {
     it("accepts a normal-sized body (limit does not reject legitimate payloads)", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/sessions", {
+        new Request("http://t/v1/surfaces", {
           method: "POST",
           headers: bearer(apiKey),
           body: JSON.stringify({
-            artifact: {
+            template: {
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
             },
-            title: "Test session",
+            title: "Test surface",
           }),
         }),
       );

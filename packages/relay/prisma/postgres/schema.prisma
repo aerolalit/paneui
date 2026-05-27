@@ -28,10 +28,10 @@ model Agent {
   rateLimit  Int?      @map("rate_limit")
   taste           String?   @map("taste")
   tasteUpdatedAt  DateTime? @map("taste_updated_at")
-  sessions   Session[]
-  artifacts  Artifact[]
+  surfaces   Surface[]
+  templates  Template[]
   feedback   Feedback[]
-  blobs      Blob[]
+  attachments      Attachment[]
 
   @@map("agents")
 }
@@ -41,23 +41,23 @@ model Feedback {
   agentId        String?  @map("agent_id")
   type           String
   message        String
-  sessionId      String?  @map("session_id")
+  surfaceId      String?  @map("surface_id")
   githubIssueUrl String?  @map("github_issue_url")
   createdAt      DateTime @default(now()) @map("created_at")
 
   agent   Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  surface Surface? @relation(fields: [surfaceId], references: [id], onDelete: SetNull)
 
   @@index([agentId, createdAt])
   @@index([createdAt])
   @@map("feedback")
 }
 
-// A reusable, versioned artifact owned by an agent. The head row carries the
+// A reusable, versioned template owned by an agent. The head row carries the
 // mutable identity (name, slug, description, tags); the per-version content
-// lives in ArtifactVersion. An anonymous artifact (name/slug null) is created
-// transparently for an inline one-off session.
-model Artifact {
+// lives in TemplateVersion. An anonymous template (name/slug null) is created
+// transparently for an inline one-off surface.
+model Template {
   id            String            @id @default(cuid())
   ownerId       String            @map("owner_id")
   owner         Agent             @relation(fields: [ownerId], references: [id])
@@ -69,59 +69,59 @@ model Artifact {
   lastUsedAt    DateTime?         @map("last_used_at")
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
-  versions      ArtifactVersion[]
+  versions      TemplateVersion[]
 
-  blobs         Blob[]
+  attachments         Attachment[]
 
   @@unique([ownerId, slug])
   @@index([ownerId])
-  @@map("artifacts")
+  @@map("templates")
 }
 
-// One immutable version of an artifact's content. Editing an artifact appends
-// a new row; existing rows are never mutated. A session pins exactly one of
+// One immutable version of an template's content. Editing an template appends
+// a new row; existing rows are never mutated. A surface pins exactly one of
 // these.
-model ArtifactVersion {
+model TemplateVersion {
   id             String    @id @default(cuid())
-  artifactId     String    @map("artifact_id")
-  artifact       Artifact  @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  templateId     String    @map("template_id")
+  template       Template  @relation(fields: [templateId], references: [id], onDelete: Cascade)
   version        Int
-  artifactType   String    @map("artifact_type")
-  artifactSource String    @map("artifact_source")
+  templateType   String    @map("template_type")
+  templateSource String    @map("template_source")
   eventSchema    Json?     @map("event_schema")
   inputSchema    Json?     @map("input_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
-  sessions       Session[]
+  surfaces       Surface[]
 
-  @@unique([artifactId, version])
-  @@index([artifactId])
-  @@map("artifact_versions")
+  @@unique([templateId, version])
+  @@index([templateId])
+  @@map("template_versions")
 }
 
-enum SessionStatus {
+enum SurfaceStatus {
   open
   closed
 }
 
-model Session {
+model Surface {
   id              String        @id
   agentId         String        @map("agent_id")
   agent           Agent         @relation(fields: [agentId], references: [id])
 
-  // The pinned artifact version this session instantiates.
-  artifactVersionId String          @map("artifact_version_id")
-  artifactVersion   ArtifactVersion @relation(fields: [artifactVersionId], references: [id])
+  // The pinned template version this surface instantiates.
+  templateVersionId String          @map("template_version_id")
+  templateVersion   TemplateVersion @relation(fields: [templateVersionId], references: [id])
 
   // This instance's render data — validated against the version's input_schema.
   inputData         Json?         @map("input_data")
 
-  // Per-session tab title shown in the browser's <title>. Required for every
-  // session; supplied by the agent (or resolved server-side from the named
-  // artifact's `name`). Trust boundary: untrusted agent input — rendered
+  // Per-surface tab title shown in the browser's <title>. Required for every
+  // surface; supplied by the agent (or resolved server-side from the named
+  // template's `name`). Trust boundary: untrusted agent input — rendered
   // (HTML-escaped) into the bridge shell's <title>.
   title           String
 
-  status          SessionStatus @default(open)
+  status          SurfaceStatus @default(open)
   createdAt       DateTime      @default(now()) @map("created_at")
   expiresAt       DateTime      @map("expires_at")
   metadata        Json?
@@ -134,18 +134,18 @@ model Session {
   participants    Participant[]
   events          Event[]
   feedback        Feedback[]
-  blobs           Blob[]
+  attachments           Attachment[]
 
   @@index([agentId])
   @@index([expiresAt])
-  @@index([artifactVersionId])
-  @@map("sessions")
+  @@index([templateVersionId])
+  @@map("surfaces")
 }
 
 model Participant {
   id           String    @id @default(cuid())
-  sessionId    String    @map("session_id")
-  session      Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  surfaceId    String    @map("surface_id")
+  surface      Surface   @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
   kind         String
   identityId   String    @map("identity_id")
   tokenHash    String    @unique @map("token_hash")
@@ -153,19 +153,19 @@ model Participant {
   joinedAt     DateTime? @map("joined_at")
   revokedAt    DateTime? @map("revoked_at")
 
-  // The (sessionId, identityId) pair must be unique even across revoked
+  // The (surfaceId, identityId) pair must be unique even across revoked
   // rows. The mint route derives identityId monotonically from the
   // ever-minted human count (#206 / #201), but two concurrent POSTs to
-  // `/v1/sessions/:id/participants` can both read the same count and
+  // `/v1/surfaces/:id/participants` can both read the same count and
   // both attempt `h_${N}`. The constraint serialises the write at the
   // DB layer (P2002 on the loser); the route catches the error and
   // retries against the new count. Without the constraint, the race
   // surfaces as silently aliased identityIds — the WS handler's
-  // `findFirst({ where: { sessionId, identityId } })` would then
+  // `findFirst({ where: { surfaceId, identityId } })` would then
   // non-deterministically resolve events to whichever row sorted first.
   // See #215.
-  @@unique([sessionId, identityId])
-  @@index([sessionId])
+  @@unique([surfaceId, identityId])
+  @@index([surfaceId])
   @@index([tokenHash])
   @@map("participants")
 }
@@ -180,8 +180,8 @@ model Event {
   // Note: `prisma migrate dev` will report drift here (model says int4, DB is
   // int8) — that is expected; `migrate deploy` applies migrations verbatim.
   id              Int      @id @default(autoincrement())
-  sessionId       String   @map("session_id")
-  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  surfaceId       String   @map("surface_id")
+  surface         Surface  @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
   authorKind      String   @map("author_kind")
   authorId        String   @map("author_id")
   type            String
@@ -190,48 +190,48 @@ model Event {
   idempotencyKey  String?  @map("idempotency_key")
   ts              DateTime @default(now())
 
-  @@index([sessionId, id])
-  @@unique([sessionId, authorId, idempotencyKey])
+  @@index([surfaceId, id])
+  @@unique([surfaceId, authorId, idempotencyKey])
   @@map("events")
 }
 
-// A binary blob attached to an artifact, a session, or an agent's reusable
-// asset library. The bytes themselves live in the configured BlobStore
-// (filesystem self-host or Azure Blob hosted); this row is the metadata,
+// A binary attachment attached to an template, a surface, or an agent's reusable
+// asset library. The bytes themselves live in the configured AttachmentStore
+// (filesystem self-host or Azure Attachment hosted); this row is the metadata,
 // authz anchor, and lifecycle hook.
 //
 // Scopes:
-//   - "agent"    — reusable across the agent's sessions. artifactId + sessionId
+//   - "agent"    — reusable across the agent's surfaces. templateId + surfaceId
 //                  both null. Lives until explicit delete or LRU eviction.
-//   - "session"  — bound to one session. sessionId set, artifactId null. Dies
-//                  with the session (cascade).
-//   - "artifact" — bound to one reusable artifact (the head, not a specific
-//                  version). artifactId set, sessionId null. Dies with the
-//                  artifact.
+//   - "surface"  — bound to one surface. surfaceId set, templateId null. Dies
+//                  with the surface (cascade).
+//   - "template" — bound to one reusable template (the head, not a specific
+//                  version). templateId set, surfaceId null. Dies with the
+//                  template.
 //
-// Exactly one of (artifactId set, sessionId set, neither set) is true; the
+// Exactly one of (templateId set, surfaceId set, neither set) is true; the
 // scope column is the source of truth and the application layer enforces this.
 // Cross-tenant access is denied at the route layer — ownerId is the authz
 // anchor, never the storageKey or the FK columns.
-model Blob {
+model Attachment {
   id            String    @id @default(cuid())
 
   // Ownership. Pane has no human-identity concept yet, so the agent IS the
-  // owner. Participant uploads are credited to the session's owning agent
+  // owner. Participant uploads are credited to the surface's owning agent
   // (the participant token authorises the action, not ownership).
   ownerId       String    @map("owner_id")
   owner         Agent     @relation(fields: [ownerId], references: [id])
 
-  // Scope: "agent" | "session" | "artifact". See model-level comment.
+  // Scope: "agent" | "surface" | "template". See model-level comment.
   scope         String
 
-  // Set when scope = "session". Cascades on session delete/expire.
-  sessionId     String?   @map("session_id")
-  session       Session?  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  // Set when scope = "surface". Cascades on surface delete/expire.
+  surfaceId     String?   @map("surface_id")
+  surface       Surface?  @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
 
-  // Set when scope = "artifact". Cascades on artifact delete.
-  artifactId    String?   @map("artifact_id")
-  artifact      Artifact? @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  // Set when scope = "template". Cascades on template delete.
+  templateId    String?   @map("template_id")
+  template      Template? @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   // Content metadata. mime comes from server-side magic-byte sniff, NOT the
   // client's Content-Type. sha256 is hex-encoded; size is bytes (capped at
@@ -242,28 +242,28 @@ model Blob {
   width         Int?
   height        Int?
 
-  // Opaque key inside the BlobStore. Never user-supplied; never used as a
+  // Opaque key inside the AttachmentStore. Never user-supplied; never used as a
   // filesystem path component directly. Storage backends derive their own
-  // path from this id (e.g. filesystem uses `<root>/blob_<id>`, Azure uses
-  // `blob_<id>` as the blob name).
+  // path from this id (e.g. filesystem uses `<root>/attachment_<id>`, Azure uses
+  // `attachment_<id>` as the attachment name).
   storageKey    String    @unique @map("storage_key")
 
   // Lifecycle status:
   //   "pending"   — upload presigned but not confirmed
   //   "ready"     — confirmed + HEAD-verified + scanned (if scan hook on)
   //   "failed"    — upload or scan failed; metadata kept for audit
-  //   "deleted"   — soft-deleted; bytes already removed from BlobStore
+  //   "deleted"   — soft-deleted; bytes already removed from AttachmentStore
   status        String    @default("pending")
 
   // Optional human-supplied display name (for UX). Never a path component.
   filename      String?
 
-  // EXIF + thumbnail strip toggle. Default true; agents can opt out per-blob
+  // EXIF + thumbnail strip toggle. Default true; agents can opt out per-attachment
   // for legit photo-management use cases where DateTimeOriginal matters.
   stripMetadata Boolean   @default(true) @map("strip_metadata")
 
   // Envelope encryption-at-rest. NULL when the relay's BLOB_ENCRYPT_AT_REST
-  // is off (the default). When set, the bytes in the BlobStore are
+  // is off (the default). When set, the bytes in the AttachmentStore are
   // ciphertext; this column carries the wrapped DEK + data IV + data tag
   // needed to decrypt them. Stored as a base64 JSON envelope so future
   // versions (e.g. customer-managed keys, key rotation) can extend the
@@ -276,22 +276,22 @@ model Blob {
 
   @@index([ownerId])
   @@index([scope, ownerId])
-  @@index([sessionId])
-  @@index([artifactId])
-  @@map("blobs")
+  @@index([surfaceId])
+  @@index([templateId])
+  @@map("attachments")
 
-  tokens BlobToken[]
+  tokens AttachmentToken[]
 }
 
-// Capability URL for a blob. Each row mints one /b/<token> link that any
+// Capability URL for a attachment. Each row mints one /b/<token> link that any
 // holder can use to fetch the bytes without an agent API key — this is the
 // participant-facing download path.
 //
-// A token's lifetime is bound to its blob's scope (see proposal #152):
+// A token's lifetime is bound to its attachment's scope (see proposal #152):
 //
-//   - artifact-scope blob: token TTL = BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
-//   - session-scope blob:  token TTL = the session's TTL (cascades on session delete)
-//   - agent-scope blob:    token TTL = BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
+//   - template-scope attachment: token TTL = BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
+//   - surface-scope attachment:  token TTL = the surface's TTL (cascades on surface delete)
+//   - agent-scope attachment:    token TTL = BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
 //
 // `once = true` deletes the token on its first successful GET — for the
 // "share a private doc, expire after view" pattern.
@@ -300,10 +300,10 @@ model Blob {
 // without storing exact requester IPs: `first_seen_ip_net` / `last_seen_ip_net`
 // are /24-truncated IPv4 (or /48-truncated IPv6) ranges. Truncation happens
 // at write time — full IPs are never persisted.
-model BlobToken {
+model AttachmentToken {
   id          String    @id @default(cuid())
-  blobId      String    @map("blob_id")
-  blob        Blob      @relation(fields: [blobId], references: [id], onDelete: Cascade)
+  attachmentId      String    @map("attachment_id")
+  attachment        Attachment      @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
 
   // sha256 hex of the token string. The token itself is never stored — only
   // its hash, mirroring how Agent keys and Participant tokens are stored.
@@ -326,7 +326,7 @@ model BlobToken {
 
   createdAt   DateTime  @default(now()) @map("created_at")
 
-  @@index([blobId])
+  @@index([attachmentId])
   @@index([expiresAt])
-  @@map("blob_tokens")
+  @@map("attachment_tokens")
 }
