@@ -272,6 +272,70 @@ const schema = z.object({
   // Azure Monitor tooling — kept verbatim so portal/CLI conventions line up.
   // REQUIRED when METRICS_EXPORTER=azure (validated below); ignored otherwise.
   APPLICATIONINSIGHTS_CONNECTION_STRING: z.string().optional(),
+
+  // ------------------------------------------------------------------
+  // Human-side auth (Phase B): magic-link email provider
+  // ------------------------------------------------------------------
+  // The email provider used to deliver magic-link login emails. `none` (the
+  // default) disables human-side login entirely — the relay still serves the
+  // agent API and capability-URL surfaces, but POST /v1/auth/* returns 503.
+  // Self-hosters who only need the agent surface leave this unset.
+  // See docs/HUMAN-SIDE-PROPOSAL.md §4.3.
+  EMAIL_PROVIDER: z
+    .enum(["none", "dev", "azure", "smtp", "resend"])
+    .default("none"),
+  // The From: address used for magic-link emails. Required for every provider
+  // except `none` and `dev`. Validated below.
+  EMAIL_FROM: z.string().optional(),
+
+  // ---- Azure Communication Services Email (EMAIL_PROVIDER=azure) ----
+  //
+  // Azure's transactional email service. Same Azure subscription as the
+  // hosted relay; generous free tier (25K emails/month). Configure with a
+  // connection string from the Communication Service resource in the portal.
+  AZURE_COMMUNICATION_CONNECTION_STRING: z.string().optional(),
+
+  // ---- SMTP (EMAIL_PROVIDER=smtp) ----
+  //
+  // Generic SMTP for self-hosters using Gmail / Mailgun / Postmark / etc.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  // Whether to use TLS on connect (port 465). Otherwise STARTTLS is used
+  // when the server advertises it (port 587 / 25).
+  SMTP_SECURE: z
+    .union([z.boolean(), z.string()])
+    .default(false)
+    .transform((v) => v === true || v === "true"),
+
+  // ---- Resend (EMAIL_PROVIDER=resend) ----
+  //
+  // Modern transactional email service with a generous free tier (3K/month).
+  // Fetch-based HTTP API; no SDK dependency.
+  RESEND_API_KEY: z.string().optional(),
+
+  // ---- Magic-link token TTL ----
+  //
+  // How long a magic-link token is valid after request. 15 min is enough for
+  // a human to switch apps and click, short enough that a leaked link
+  // expires before exploitation. See §6.1 (claim code uses the same default).
+  MAGIC_LINK_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(15 * 60),
+
+  // ---- Login (cookie) TTL ----
+  //
+  // How long a successful login cookie remains valid. 30 days is the
+  // industry default for "remember me" style flows. The cookie is HTTP-only,
+  // SameSite=Lax, Secure in production.
+  LOGIN_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
 });
 
 export type RawConfig = z.infer<typeof schema>;
@@ -337,6 +401,40 @@ export function loadConfig(
         "REGISTRATION_MODE=secret (the shared bearer secret callers must present)",
     );
   }
+  // Fail fast: every email provider except `none` and `dev` needs an
+  // EMAIL_FROM address. Each provider also has its own provider-specific
+  // requirement (connection string, API key, SMTP host).
+  if (parsed.EMAIL_PROVIDER !== "none" && parsed.EMAIL_PROVIDER !== "dev") {
+    if (!parsed.EMAIL_FROM || parsed.EMAIL_FROM.trim().length === 0) {
+      throw new ConfigError(
+        "invalid relay configuration:\n" +
+          `  - EMAIL_FROM: required when EMAIL_PROVIDER=${parsed.EMAIL_PROVIDER} ` +
+          "(the From: address on magic-link emails, e.g. noreply@example.com)",
+      );
+    }
+  }
+  if (
+    parsed.EMAIL_PROVIDER === "azure" &&
+    !parsed.AZURE_COMMUNICATION_CONNECTION_STRING
+  ) {
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        "  - AZURE_COMMUNICATION_CONNECTION_STRING: required when " +
+        "EMAIL_PROVIDER=azure (from the Azure Communication Service resource)",
+    );
+  }
+  if (parsed.EMAIL_PROVIDER === "smtp" && !parsed.SMTP_HOST) {
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        "  - SMTP_HOST: required when EMAIL_PROVIDER=smtp",
+    );
+  }
+  if (parsed.EMAIL_PROVIDER === "resend" && !parsed.RESEND_API_KEY) {
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        "  - RESEND_API_KEY: required when EMAIL_PROVIDER=resend",
+    );
+  }
   const publicUrl = (
     parsed.PUBLIC_URL ?? `http://localhost:${parsed.PORT}`
   ).replace(/\/$/, "");
@@ -394,6 +492,11 @@ export function redactConfig(c: Config): Record<string, unknown> {
     // Connection string embeds an InstrumentationKey — never log it.
     r.APPLICATIONINSIGHTS_CONNECTION_STRING = "<set>";
   }
+  if (r.AZURE_COMMUNICATION_CONNECTION_STRING) {
+    r.AZURE_COMMUNICATION_CONNECTION_STRING = "<set>";
+  }
+  if (r.SMTP_PASS) r.SMTP_PASS = "<set>";
+  if (r.RESEND_API_KEY) r.RESEND_API_KEY = "<set>";
   if (typeof r.DATABASE_URL === "string") {
     // Mask userinfo (scheme://user:pass@host) ...
     let url = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
