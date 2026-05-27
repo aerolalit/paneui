@@ -20,6 +20,10 @@ import { auth } from "./routes/auth.js";
 import self from "./routes/self.js";
 import agents from "./routes/agents.js";
 import participantsHuman from "./routes/participants-human.js";
+import {
+  templatePublish,
+  templateMarketplace,
+} from "./routes/template-marketplace.js";
 import systemPages from "./routes/system-pages.js";
 import events from "./routes/events.js";
 import keys from "./routes/keys.js";
@@ -267,6 +271,12 @@ export function buildApp(
     }),
   );
   app.route("/v1/surfaces/:id/events", events);
+  // Phase F — public catalog + install flow. MUST mount the human-side
+  // marketplace BEFORE the agent-CRUD `templates` router: the latter has
+  // a `/:id` route that would otherwise capture `/public` (`id=public`)
+  // and apply requireAgent middleware, 401-ing the human caller.
+  app.route("/v1/templates", templateMarketplace);
+  app.route("/v1/templates", templatePublish);
   app.route("/v1/templates", templates);
   app.route("/v1/keys", keys);
   // /v1/self/* — human-authenticated routes about the calling human's

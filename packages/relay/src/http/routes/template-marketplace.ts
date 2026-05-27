@@ -1,0 +1,254 @@
+// Template publish + install — Phase F (§8 template distribution).
+//
+//   Agent-authenticated:
+//     POST   /v1/templates/:id/publish      enter the public catalog
+//     POST   /v1/templates/:id/unpublish    leave the public catalog
+//
+//   Human-authenticated:
+//     GET    /v1/templates/public           browse the public catalog
+//     POST   /v1/templates/:id/install      pin to installedVersion in the
+//                                           caller's HumanTemplateInstall row
+//     POST   /v1/templates/:id/uninstall    soft-delete (set uninstalledAt)
+//
+// The scopes a template declares at publish-time are stored on Template.scopes
+// (Phase A schema column). Enforcement against runtime API calls is deferred
+// until templates have a runtime API to call (§4.5).
+
+import { Hono } from "hono";
+import { z } from "zod";
+import { requireAgent, type AuthEnv } from "../auth.js";
+import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
+import { errors } from "../errors.js";
+
+// ----------------------------------------------------------------------
+// Agent-authenticated publish/unpublish
+// ----------------------------------------------------------------------
+export const templatePublish = new Hono<AuthEnv>();
+
+// Validate scope names. The vocabulary §4.5 is a living list; we accept any
+// `verb:noun` form here and let Phase G/H tighten if needed.
+const SCOPE_RX = /^(read|write|delete):[a-z][a-z0-9_]*$/;
+
+const publishBody = z.object({
+  // JSON array of scope strings, declared at publish-time. Frozen per
+  // version: a new version reopens scope consent for installed humans.
+  scopes: z.array(z.string().regex(SCOPE_RX)).max(64).optional(),
+});
+
+templatePublish.post("/:id/publish", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  let body: z.infer<typeof publishBody>;
+  try {
+    body = publishBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    throw errors.invalidRequest("invalid body", err);
+  }
+
+  const template = await prisma.template.findUnique({ where: { id } });
+  // Same not-found shape whether the template is missing or owned by a
+  // different agent — no enumeration oracle.
+  if (!template || template.ownerId !== me.id) {
+    throw errors.notFound();
+  }
+
+  const updated = await prisma.template.update({
+    where: { id },
+    data: {
+      publishedAt: template.publishedAt ?? new Date(),
+      scopes: body.scopes ?? template.scopes ?? [],
+    },
+  });
+
+  return c.json({
+    id: updated.id,
+    slug: updated.slug,
+    name: updated.name,
+    published_at: updated.publishedAt?.toISOString() ?? null,
+    scopes: (updated.scopes as string[] | null) ?? [],
+    install_count: updated.installCount,
+  });
+});
+
+templatePublish.post("/:id/unpublish", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const me = c.get("agent");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const template = await prisma.template.findUnique({ where: { id } });
+  if (!template || template.ownerId !== me.id) throw errors.notFound();
+
+  await prisma.template.update({
+    where: { id },
+    data: { publishedAt: null },
+  });
+
+  return c.json({ id, published_at: null });
+});
+
+// ----------------------------------------------------------------------
+// Human-authenticated browse/install/uninstall
+// ----------------------------------------------------------------------
+export const templateMarketplace = new Hono<HumanAuthEnv>();
+
+// GET /v1/templates/public — browse the published catalog. Lightweight:
+// no HTML, no versions, just headline metadata so the picker UI can rank
+// without paying the version-fetch cost.
+templateMarketplace.get("/public", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  // Pagination: simple offset for v1 (issue tracker has a cursor follow-up).
+  const limit = Math.min(50, Number(c.req.query("limit") ?? 25));
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
+
+  const [items, total] = await Promise.all([
+    prisma.template.findMany({
+      where: { publishedAt: { not: null } },
+      orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
+      take: limit,
+      skip: offset,
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        tags: true,
+        shape: true,
+        publishedAt: true,
+        installCount: true,
+        latestVersion: true,
+        scopes: true,
+      },
+    }),
+    prisma.template.count({ where: { publishedAt: { not: null } } }),
+  ]);
+
+  // Mark which the caller has already installed so the UI can render a
+  // "Installed" pill without a second round-trip.
+  const installs = await prisma.humanTemplateInstall.findMany({
+    where: {
+      humanId: human.id,
+      templateId: { in: items.map((t) => t.id) },
+      uninstalledAt: null,
+    },
+    select: { templateId: true, installedVersion: true },
+  });
+  const installed = new Map(installs.map((i) => [i.templateId, i]));
+
+  return c.json({
+    items: items.map((t) => ({
+      id: t.id,
+      slug: t.slug,
+      name: t.name,
+      description: t.description,
+      tags: t.tags,
+      shape: t.shape,
+      scopes: (t.scopes as string[] | null) ?? [],
+      published_at: t.publishedAt?.toISOString() ?? null,
+      install_count: t.installCount,
+      latest_version: t.latestVersion,
+      installed: installed.has(t.id),
+      installed_version: installed.get(t.id)?.installedVersion ?? null,
+    })),
+    total,
+    offset,
+    limit,
+  });
+});
+
+// POST /v1/templates/:id/install
+// Body: {}  (the caller has reviewed Template.scopes via /public)
+// Response: 201 { template_id, installed_version, installed_at }
+//
+// Pins the install to the template's current latestVersion. A later
+// publish that bumps latestVersion does NOT silently upgrade — humans
+// see a "new version available" prompt and must re-install (re-consent
+// to any new scopes).
+templateMarketplace.post("/:id/install", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const template = await prisma.template.findUnique({ where: { id } });
+  if (!template || !template.publishedAt) {
+    // Unknown OR unpublished — same shape either way.
+    throw errors.notFound();
+  }
+
+  const now = new Date();
+  // Upsert: re-installing an uninstalled row reactivates it; new row otherwise.
+  const install = await prisma.humanTemplateInstall.upsert({
+    where: {
+      humanId_templateId: { humanId: human.id, templateId: id },
+    },
+    create: {
+      humanId: human.id,
+      templateId: id,
+      installedVersion: template.latestVersion,
+      installedAt: now,
+    },
+    update: {
+      installedVersion: template.latestVersion,
+      installedAt: now,
+      uninstalledAt: null,
+    },
+  });
+
+  // Bump the denormalised counter for the catalog ranking. Increment ONLY
+  // on the first-time install (not on re-install / re-consent) so the
+  // count reflects unique humans.
+  if (
+    !install.uninstalledAt &&
+    install.installedAt.getTime() === now.getTime()
+  ) {
+    await prisma.template.update({
+      where: { id },
+      data: { installCount: { increment: 1 } },
+    });
+  }
+
+  return c.json(
+    {
+      template_id: id,
+      installed_version: install.installedVersion,
+      installed_at: install.installedAt.toISOString(),
+    },
+    201,
+  );
+});
+
+// POST /v1/templates/:id/uninstall
+// Sets uninstalledAt; doesn't delete the row, so re-install preserves
+// the prior install's history. Decrement install_count.
+templateMarketplace.post("/:id/uninstall", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const install = await prisma.humanTemplateInstall.findUnique({
+    where: { humanId_templateId: { humanId: human.id, templateId: id } },
+  });
+  if (!install || install.uninstalledAt) {
+    // Not installed — idempotent no-op.
+    return c.body(null, 204);
+  }
+
+  await prisma.humanTemplateInstall.update({
+    where: { id: install.id },
+    data: { uninstalledAt: new Date() },
+  });
+
+  // Decrement the catalog counter (floor at 0 for safety).
+  await prisma.template.updateMany({
+    where: { id, installCount: { gt: 0 } },
+    data: { installCount: { decrement: 1 } },
+  });
+
+  return c.body(null, 204);
+});
