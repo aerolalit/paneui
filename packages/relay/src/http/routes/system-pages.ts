@@ -26,8 +26,26 @@ const systemPages = new Hono<OptionalHumanAuthEnv>();
 
 systemPages.use("*", resolveHumanOptional);
 
+// The Pane brand mark — same shape as the surface shell's header logo
+// (src/bridge/routes.ts) so the system pages and the live surface read as one
+// product. Inlined as an SVG element (not a data URI) so it inherits crisp
+// rendering at the header size.
+const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+  <rect width="100" height="100" rx="22" fill="#0f172a"/>
+  <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
+  <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
+  <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
+  <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
+  <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
+</svg>`;
+
 // Shared layout primitives — every system page wraps its body in this
 // shell so the visual identity is uniform.
+//
+// Mobile: the page is mobile-first. The header splits into two rows — a brand
+// bar and a horizontally scrollable tab strip — so the nav never overflows or
+// wraps awkwardly on a phone. A `prefers-color-scheme: dark` block maps the
+// palette onto the same navy the surface shell uses.
 function layout(args: {
   title: string;
   email: string | null;
@@ -36,75 +54,158 @@ function layout(args: {
   active?: string;
 }): string {
   const nav = (slug: string, label: string, href: string) => {
-    const isActive = args.active === slug;
-    const style = isActive
-      ? "color:var(--accent);font-weight:600;"
-      : "color:var(--muted);";
-    return `<a href="${href}" style="${style}text-decoration:none;font-size:14px;padding:6px 10px;border-radius:6px;">${escapeHtml(label)}</a>`;
+    const cls = args.active === slug ? "tab active" : "tab";
+    return `<a class="${cls}" href="${href}"${args.active === slug ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
   };
   const accountBlock = args.email
-    ? `<span style="font-size:13px;color:var(--muted);">${escapeHtml(args.email)}</span>
-       <button id="pane-logout" style="background:none;border:1px solid var(--rule);color:var(--muted);font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;cursor:pointer;">Sign out</button>`
-    : `<a href="/login" style="color:var(--accent);font-size:14px;text-decoration:none;">Sign in</a>`;
+    ? `<span class="acct-email" title="${escapeHtml(args.email)}">${escapeHtml(args.email)}</span>
+       <button id="pane-logout" class="acct-signout" type="button">Sign out</button>`
+    : `<a class="acct-signin" href="/login">Sign in</a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
 <title>${escapeHtml(args.title)} · pane</title>
 <style>
   :root {
-    --bg: #fafaf9;
-    --panel: #fff;
-    --fg: #1a1a1a;
-    --muted: #6b6b6b;
-    --rule: #e6e3df;
-    --accent: #b34700;
-    --accent-soft: #fff4ec;
-    --code-bg: #f3f0eb;
-    --good: #2a6f3f;
-    --good-soft: #e9f1ec;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --fg: #101522;
+    --muted: #5d6577;
+    --rule: #e7e9ef;
+    --accent: #6d5ef0;
+    --accent-hover: #5b4bd8;
+    --accent-soft: #efedfd;
+    --accent-border: #d9d4f7;
+    --accent-ink: #4b3fb0;
+    --code-bg: #f1f2f6;
+    --good: #1f8a4c;
+    --good-soft: #e6f4ec;
+    --shadow: 0 1px 2px rgba(16,21,34,.04), 0 1px 3px rgba(16,21,34,.06);
+    --shadow-lg: 0 6px 24px rgba(16,21,34,.10);
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e14;
+      --panel: #11151e;
+      --fg: #e7ecf3;
+      --muted: #8a93a6;
+      --rule: #1f2633;
+      --accent: #a78bfa;
+      --accent-hover: #b9a4ff;
+      --accent-soft: #1a1b30;
+      --accent-border: #2f2c52;
+      --accent-ink: #cdbcff;
+      --code-bg: #141a26;
+      --good: #7CE3B1;
+      --good-soft: #11261b;
+      --shadow: none;
+      --shadow-lg: 0 8px 28px rgba(0,0,0,.45);
+    }
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
-  header.pane-nav { border-bottom: 1px solid var(--rule); padding: 14px 28px; display: flex; align-items: center; gap: 22px; background: #fff; }
-  header.pane-nav .brand { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; margin-right: 8px; }
-  header.pane-nav .links { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
-  header.pane-nav .account { display: flex; align-items: center; gap: 10px; }
-  main { max-width: 860px; margin: 0 auto; padding: 32px 28px 80px; }
-  h1 { font-size: 26px; letter-spacing: -0.012em; margin: 0 0 18px; }
-  h2 { font-size: 18px; margin: 28px 0 10px; }
+
+  header.pane-nav {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--rule);
+    padding-top: env(safe-area-inset-top);
+  }
+  header.pane-nav .bar {
+    max-width: 920px; margin: 0 auto;
+    padding: 12px max(16px, env(safe-area-inset-left)) 12px max(16px, env(safe-area-inset-right));
+    display: flex; align-items: center; gap: 12px;
+  }
+  header.pane-nav .brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; color: var(--fg); flex: none; }
+  header.pane-nav .brand svg { display: block; border-radius: 7px; }
+  header.pane-nav .brand .wordmark { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; }
+  header.pane-nav .account { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 0; }
+  .acct-email { font-size: 13px; color: var(--muted); max-width: 36vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-signout { background: transparent; border: 1px solid var(--rule); color: var(--muted); font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 8px; cursor: pointer; flex: none; }
+  .acct-signout:hover { border-color: var(--accent); color: var(--accent); }
+  .acct-signin { color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: none; }
+
+  header.pane-nav .tabs {
+    max-width: 920px; margin: 0 auto;
+    padding: 0 max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right));
+    display: flex; gap: 2px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  header.pane-nav .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex: none; text-decoration: none; color: var(--muted);
+    font-size: 14px; font-weight: 500; line-height: 1;
+    padding: 11px 12px; border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px calc(80px + env(safe-area-inset-bottom)); }
+  @media (min-width: 640px) { main { padding: 36px 28px 96px; } }
+
+  h1 { font-size: 22px; letter-spacing: -0.015em; margin: 0 0 8px; }
+  @media (min-width: 640px) { h1 { font-size: 27px; } }
+  h2 { font-size: 17px; margin: 26px 0 10px; letter-spacing: -0.01em; }
   p { margin: 0 0 14px; }
-  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; margin-bottom: 14px; }
+  a { color: var(--accent); }
+
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; box-shadow: var(--shadow); }
+  @media (min-width: 640px) { .card { padding: 22px 24px; } }
+
   .list { list-style: none; padding: 0; margin: 0; }
-  .list li { padding: 12px 0; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  .list li:last-child { border-bottom: none; }
-  .list li .title { font-weight: 600; }
-  .list li .meta { font-size: 13px; color: var(--muted); }
-  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
-  button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; border: none; background: var(--fg); color: #fff; text-decoration: none; display: inline-block; }
-  button.btn:hover, a.btn:hover { background: #000; }
-  button.btn.ghost, a.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--rule); }
-  input[type=email], input[type=text] { font: inherit; font-size: 15px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: #fff; color: var(--fg); width: 100%; outline: none; }
+  .list li { padding: 14px 0; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .list li:first-child { padding-top: 4px; }
+  .list li:last-child { border-bottom: none; padding-bottom: 4px; }
+  .list li > div:first-child { min-width: 0; flex: 1 1 auto; }
+  .list li .title { font-weight: 600; overflow-wrap: anywhere; }
+  .list li .meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
+
+  .empty { color: var(--muted); padding: 28px 12px; text-align: center; }
+
+  button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
+  button.btn:hover, a.btn:hover { background: var(--accent-hover); }
+  button.btn:active, a.btn:active { transform: translateY(1px); }
+  button.btn:disabled { opacity: .6; cursor: default; }
+  button.btn.ghost, a.btn.ghost { background: var(--panel); color: var(--fg); border-color: var(--rule); }
+  button.btn.ghost:hover, a.btn.ghost:hover { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+  label { display: block; }
+  input[type=email], input[type=text] { font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); color: var(--fg); width: 100%; outline: none; min-height: 44px; }
   input[type=email]:focus, input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  code { font-family: "SF Mono",Menlo,Consolas,monospace; font-size: 13.5px; background: var(--code-bg); padding: 1px 6px; border-radius: 3px; }
-  pre { font-family: "SF Mono",Menlo,Consolas,monospace; background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 0 0 14px; }
-  .row { display: flex; align-items: center; gap: 10px; }
-  .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+
+  code { font-family: "SF Mono",Menlo,Consolas,monospace; font-size: 13.5px; background: var(--code-bg); padding: 2px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+  pre { font-family: "SF Mono",Menlo,Consolas,monospace; background: var(--code-bg); padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 0 0 14px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; flex: none; }
   .pill.good { background: var(--good-soft); color: var(--good); }
   .pill.muted { background: var(--code-bg); color: var(--muted); }
 </style>
 </head>
 <body>
 <header class="pane-nav">
-  <div class="brand">pane</div>
-  <nav class="links">
+  <div class="bar">
+    <a class="brand" href="/home">${BRAND_LOGO}<span class="wordmark">pane</span></a>
+    <div class="account">${accountBlock}</div>
+  </div>
+  <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
     ${nav("surfaces", "My surfaces", "/my-surfaces")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
     ${nav("settings", "Settings", "/settings")}
   </nav>
-  <div class="account">${accountBlock}</div>
 </header>
 <main>
   ${args.body}
@@ -156,7 +257,7 @@ systemPages.get("/login", (c) => {
         <h1>Sign in to pane</h1>
         <p style="color:var(--muted);font-size:14.5px;">We'll email you a one-time sign-in link. No password.</p>
         <form id="login-form" autocomplete="on">
-          <label for="email" style="font-size:13px;color:var(--muted);">Email</label>
+          <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;">Email</label>
           <input id="email" name="email" type="email" required autofocus autocomplete="email" />
           <button class="btn" type="submit" style="width:100%;margin-top:14px;">Email me a link</button>
         </form>
@@ -380,13 +481,13 @@ systemPages.get("/my-agents", async (c) => {
       <button id="gen-code" class="btn">Generate claim code</button>
     </div>
     <p style="color:var(--muted);font-size:14px;margin:0 0 8px;">Generate a one-time code, then run <code>pane agent claim &lt;code&gt;</code> on the agent.</p>
-    <div id="code-out" hidden style="background:var(--accent-soft);border:1px solid #f1d6bd;border-radius:8px;padding:14px 16px;">
+    <div id="code-out" hidden style="background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;">
       <div style="font-size:12px;color:var(--accent);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">Your code</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <code id="code-value" style="font-size:15px;background:#fff;padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid #f1d6bd;user-select:all;"></code>
-        <button id="copy-code" type="button" class="btn ghost" style="padding:6px 12px;font-size:13px;">Copy</button>
+        <code id="code-value" style="font-size:15px;background:var(--panel);padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid var(--accent-border);user-select:all;"></code>
+        <button id="copy-code" type="button" class="btn ghost" style="padding:6px 12px;font-size:13px;min-height:36px;">Copy</button>
       </div>
-      <div style="font-size:13px;color:#6b4d2a;margin-top:8px;">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
+      <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
     </div>
   </div>
   <div class="card">
