@@ -5,10 +5,10 @@ description: >-
   from any agent — cron job, chat bot, CI, headless server. Use when a question
   is too rich for a text reply (a form, a picker, a doc-review view, a
   dashboard) and you need the human's answer as structured data. Drives the
-  `pane` CLI: create a session, deliver the URL, watch for the result.
+  `pane` CLI: create a surface, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v2.3.0 -->
+<!-- pane skill v2.4.0 -->
 
 # pane
 
@@ -46,7 +46,7 @@ This skill carries its version in an HTML comment near the top of the file:
 ```
 
 The relay you talk to publishes its own version of this skill at
-`GET /skills/pane/SKILL.md/version`. **At session start, check whether your
+`GET /skills/pane/SKILL.md/version`. **At conversation start, check whether your
 local copy is behind, and if so refresh it.**
 
 The check is a short shell snippet:
@@ -91,8 +91,8 @@ Rules:
 - If the network is unreachable or `pane skill version` fails, **do not
   update** — proceed with the local skill you have. Skipping a check is
   always safer than half-writing the file.
-- Don't loop. Check once at session start; if you've already refreshed in
-  this session and it's still mismatched, stop and surface the error to
+- Don't loop. Check once at conversation start; if you've already refreshed in
+  this run and it's still mismatched, stop and surface the error to
   the human.
 - If you've hand-edited the local skill (added your own notes), save your
   changes first — `pane skill show > <path>` is a clobbering write.
@@ -105,7 +105,7 @@ argument, and default:
 
 - `pane --help` — the command list and global options.
 - `pane <command> --help` — every flag and option for that command, e.g.
-  `pane session create --help`, `pane session watch --help`, `pane session send --help`,
+  `pane surface create --help`, `pane surface watch --help`, `pane surface send --help`,
   `pane agent register --help`.
 
 If a command errors or you are unsure of an option name, **run `--help`
@@ -129,7 +129,7 @@ What to do, in this order:
 2. **Re-run your original `pane` command once.** If it succeeds, continue.
 3. **If it still fails with exit 75 after one upgrade + retry**, stop and
    surface the error to the human. Do not loop — repeated upgrade attempts
-   in the same session are a bug, not a recovery strategy.
+   in the same run are a bug, not a recovery strategy.
 
 ## Registering
 
@@ -167,198 +167,198 @@ vars needed.
 - The relay rate-limits `/v1/register` per IP; if you hit it, `pane agent register`
   fails with `rate_limited` — wait and retry.
 
-## Artifacts and sessions — the model
+## Templates and surfaces — the model
 
-An **artifact** is a reusable UI template: the HTML, an optional event schema,
-and an optional input schema. A **session** is one _use_ of an artifact — one
-context, one human, one event log, one TTL. Many sessions per artifact.
+A **template** is a reusable UI template: the HTML, an optional event schema,
+and an optional input schema. A **surface** is one _use_ of a template — one
+context, one human, one event log, one TTL. Many surfaces per template.
 
-The reusable artifact is the unit you should think in. **Start every task with
-`pane artifact list`** (or `pane artifact search <keywords>`) to see what
+The reusable template is the unit you should think in. **Start every task with
+`pane template list`** (or `pane template search <keywords>`) to see what
 already exists — a previous run may have authored exactly the UI you need. The
-intended flow is: author an artifact **once** with `pane artifact create`, then
-instance it **many times** with `pane session create --artifact-id <slug>` — no HTML
+intended flow is: author a template **once** with `pane template create`, then
+instance it **many times** with `pane surface create --template-id <slug>` — no HTML
 re-sent, no regeneration. Per-instance data (the "PR metadata" that makes the
 same PR-review page show _this_ PR) rides in `--input-data`; the page reads it
 as `window.pane.inputData`.
 
-There are two ways to give `pane session create` an artifact:
+There are two ways to give `pane surface create` a template:
 
-- **By reference** — `--artifact-id <id|slug>` — instance an existing reusable
-  artifact. The reuse path, and the one you should reach for first.
-- **Inline** — `--artifact <path|inline>` — a one-off UI, defined on the call.
-  The relay creates an anonymous artifact behind it; you never manage it. Use
+- **By reference** — `--template-id <id|slug>` — instance an existing reusable
+  template. The reuse path, and the one you should reach for first.
+- **Inline** — `--template <path|inline>` — a one-off UI, defined on the call.
+  The relay creates an anonymous template behind it; you never manage it. Use
   the inline form only for a **genuine one-off** — a UI you are sure you will
-  never want again. Anything reusable belongs in `pane artifact create`.
+  never want again. Anything reusable belongs in `pane template create`.
 
 ## Search before you generate — the load-bearing rule
 
-**Before you generate any artifact HTML, search for one that already exists.**
+**Before you generate any template HTML, search for one that already exists.**
 
 ```sh
-pane artifact search <keywords>     # e.g. pane artifact search "pr review"
-pane artifact list                  # all your artifacts, recent first
+pane template search <keywords>     # e.g. pane template search "pr review"
+pane template list                  # all your artifacts, recent first
 ```
 
-You are ephemeral; the relay is durable. A previous session of yours (or this
-agent on another run) may have already authored exactly the artifact you are
+You are ephemeral; the relay is durable. A previous run of yours (or this
+agent on another run) may have already authored exactly the template you are
 about to build — a PR-review page, an approval form, a survey. Regenerating it
 from scratch wastes tokens and causes drift: ten separately-generated copies of
-"the same" page will not stay the same. The artifact on the relay is the one
+"the same" page will not stay the same. The template on the relay is the one
 source of truth.
 
 So the workflow is:
 
-1. `pane artifact search <keywords>` — does a suitable artifact already exist?
-2. **If yes** — use it: `pane session create --artifact-id <id|slug>` (optionally
+1. `pane template search <keywords>` — does a suitable template already exist?
+2. **If yes** — use it: `pane surface create --template-id <id|slug>` (optionally
    `--input-data` for this instance's data). Inspect it first with
-   `pane artifact show <id|slug>` — the `description` and each version's
+   `pane template show <id|slug>` — the `description` and each version's
    `input_schema` tell you what it does and what data it needs. Done — no HTML
    written.
 3. **If nothing fits** — only then author. If the UI is genuinely a one-off,
-   use the inline `pane session create --artifact ...` form. If it is something you (or
-   the operator) will want again, register it: `pane artifact create` — so the
-   next session can find and reuse it.
+   use the inline `pane surface create --template ...` form. If it is something you (or
+   the operator) will want again, register it: `pane template create` — so the
+   next run can find and reuse it.
 
-A reusable artifact is only reusable if you look for it. Skipping the search
+A reusable template is only reusable if you look for it. Skipping the search
 makes the whole feature dead weight.
 
 ### …and name what you author
 
 The flip side: search only works on metadata **you populate when you author**.
-When you call `pane artifact create`, every metadata field is optional, but
+When you call `pane template create`, every metadata field is optional, but
 each one you skip is a future search query that comes back empty.
 
 Populate, even briefly:
 
 - **`--name`** — human-readable label. "PR Review", not "Form 1".
 - **`--slug`** — a short, durable kebab-case handle. Record it; you (or any
-  future session) can later use `pane session create --artifact-id <slug>` with no
+  future run) can later use `pane surface create --template-id <slug>` with no
   search at all. Without a slug, the only handle is the relay-assigned id —
   which is not memorable and not stable in your prompt context.
 - **`--description`** — what a future you reads to decide "is this the one I
-  want?" *before* fetching the HTML. Cover three things: what the artifact
+  want?" *before* fetching the HTML. Cover three things: what the template
   is for, what the human can do on it (which events it emits), and what
   `input_data` shape it expects. As long as that fits, length doesn't
   matter — overly terse here costs every future reader, overly long here
   costs nothing.
 - **`--tags`** — a few short keywords. `--tags pr,review,code` makes
-  `pane artifact search "review"` and `… "code"` both find it.
+  `pane template search "review"` and `… "code"` both find it.
 - **`--input-schema`** — optional JSON Schema for the `input_data` the
-  artifact expects. Doubles as documentation: a future you reads it to know
-  exactly what shape of data to pass at `pane session create` time.
+  template expects. Doubles as documentation: a future you reads it to know
+  exactly what shape of data to pass at `pane surface create` time.
 
 None of these are required by the relay. All of them are required if you
-want this artifact to be findable later. Treat them as a one-time author's
+want this template to be findable later. Treat them as a one-time author's
 tax that pays back every reuse.
 
 Heuristic for when to bother:
 
 - **One-off shape** (a custom approval for *this specific* deploy, a survey
-  you're handing out once) → use the inline `pane session create --artifact …` form,
+  you're handing out once) → use the inline `pane surface create --template …` form,
   skip the metadata.
 - **Reusable shape** (a PR review page, a deploy approval, a generic survey
-  template) → `pane artifact create` with `--name`, `--slug`, `--description`,
-  `--tags` populated. The tokens you save are your next session's.
+  template) → `pane template create` with `--name`, `--slug`, `--description`,
+  `--tags` populated. The tokens you save are your next surface's.
 
 ## The commands
 
-### `pane session create` — start a session
+### `pane surface create` — start a surface
 
-Reference an existing artifact (the reuse path — see "Search before you
+Reference an existing template (the reuse path — see "Search before you
 generate" above):
 
 ```sh
-pane session create --artifact-id pr-review --input-data ./pr-42.json --ttl 600
+pane surface create --template-id pr-review --input-data ./pr-42.json --ttl 600
 ```
 
-Or inline a one-off artifact:
+Or inline a one-off template:
 
 ```sh
-pane session create --artifact ./form.html --event-schema ./schema.json \
+pane surface create --template ./form.html --event-schema ./schema.json \
   --title "Quick poll" --ttl 600
 ```
 
-- `--title <text>` — the human's browser tab title for this session (max 80
-  chars, single line). Set a descriptive, per-session value so a human with
+- `--title <text>` — the human's browser tab title for this surface (max 80
+  chars, single line). Set a descriptive, per-surface value so a human with
   several panes open can tell tabs apart. **Required, with one exception:**
-  reference-form sessions (`--artifact-id`) against a named artifact fall back
-  to the artifact's `name`. So `pane artifact create --name "PR Review"` +
-  `pane session create --artifact-id pr-review` is fine; `pane session create --artifact …`
+  reference-form surfaces (`--template-id`) against a named template fall back
+  to the template's `name`. So `pane template create --name "PR Review"` +
+  `pane surface create --template-id pr-review` is fine; `pane surface create --template …`
   (inline) always needs `--title`.
-- `--artifact-id <v>` — reference an existing artifact by id or slug. Pair with
+- `--template-id <v>` — reference an existing template by id or slug. Pair with
   `--version <n>` to pin a specific version (defaults to the latest).
-- `--artifact <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
+- `--template <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
   type, `html-ref`, exists in the schema but the relay does not serve it in
   this release — pass the HTML inline.)
 - `--event-schema <v>` — the event vocabulary (see **The schema** below). A `.json`
-  file or inline JSON. Used with `--artifact`; not needed with `--artifact-id`.
-  **Optional** — omit it for a view-only artifact (see **View-only artifacts**
-  below); the session then accepts no `page`/`agent` events.
+  file or inline JSON. Used with `--template`; not needed with `--template-id`.
+  **Optional** — omit it for a view-only template (see **View-only artifacts**
+  below); the surface then accepts no `page`/`agent` events.
 - `--input-schema <v>` — inline-form input schema. JSON Schema for `--input-data`,
-  as a `.json` file or inline JSON. Used with `--artifact`; **rejected with
-  `--artifact-id`** (the schema comes from the pinned artifact version there).
-  Optional. **Pass it whenever `--input-data` carries `blob_id`s the page needs
-  to render** — the participant blob-download bridge walks `input_data` against
-  the artifact version's `inputSchema` for `"format": "pane-blob-id"` sites, and
-  a blob without a walkable site is unreachable from the page even when the
+  as a `.json` file or inline JSON. Used with `--template`; **rejected with
+  `--template-id`** (the schema comes from the pinned template version there).
+  Optional. **Pass it whenever `--input-data` carries `attachment_id`s the page needs
+  to render** — the participant attachment-download bridge walks `input_data` against
+  the template version's `inputSchema` for `"format": "pane-attachment-id"` sites, and
+  an attachment without a walkable site is unreachable from the page even when the
   agent owns it.
 - `--input-data <v>` — this instance's seed data, a JSON object (file or inline
-  JSON). The relay validates it against the artifact version's `input_schema`;
+  JSON). The relay validates it against the template version's `input_schema`;
   the page reads it as `window.pane.inputData`. Works with either form.
-- Exactly one of `--artifact-id` / `--artifact` must be given.
+- Exactly one of `--template-id` / `--template` must be given.
 - Optional: `--ttl <seconds>`, `--participants <n>`, `--metadata <path|json>`,
   `--callback <path|json>`.
 
-Prints `{ session_id, urls, tokens, expires_at }`. **Deliver `urls.humans[0]`
+Prints `{ surface_id, urls, tokens, expires_at }`. **Deliver `urls.humans[0]`
 to the human** over whatever channel you already have (Telegram, Slack, email).
-Keep `session_id`. `tokens` are per-participant auth already baked into the
+Keep `surface_id`. `tokens` are per-participant auth already baked into the
 `urls` — you don't normally use them directly; the CLI authenticates with
 `PANE_API_KEY`.
 
-### `pane artifact` — manage reusable artifacts
+### `pane template` — manage reusable templates
 
-`pane artifact <subcommand>` — one command, several subcommands:
+`pane template <subcommand>` — one command, several subcommands:
 
 ```sh
-# search / list — find an existing artifact before generating one
-pane artifact search "pr review"
-pane artifact list
+# search / list — find an existing template before generating one
+pane template search "pr review"
+pane template list
 
-# show — full artifact: head metadata + every version (HTML, schemas)
-pane artifact show pr-review
+# show — full template: head metadata + every version (HTML, schemas)
+pane template show pr-review
 
-# create — register a named, reusable artifact (its v1)
-pane artifact create --name "PR Review" --slug pr-review \
+# create — register a named, reusable template (its v1)
+pane template create --name "PR Review" --slug pr-review \
   --description "PR review page: diff + approve/request-changes" \
   --tags pr,review,code \
-  --artifact ./pr-review.html --event-schema ./pr-review-schema.json \
+  --template ./pr-review.html --event-schema ./pr-review-schema.json \
   --input-schema ./pr-review-input.json
-#   -> prints { artifact_id, slug, version }
+#   -> prints { template_id, slug, version }
 
 # version — append a new immutable version (existing versions never change)
-pane artifact version pr-review --artifact ./pr-review-v2.html \
+pane template version pr-review --template ./pr-review-v2.html \
   --event-schema ./pr-review-schema.json
 
 # update — change head metadata only (never the content)
-pane artifact update pr-review --description "..." --tags pr,review
+pane template update pr-review --description "..." --tags pr,review
 ```
 
 - `search`/`list` return a **lean** list — `id, slug, name, description, tags,
 latest_version, last_used_at` — no HTML. Fetch the HTML with `show` once you
   have chosen one.
 - The `slug` is the durable handle: record it (`pr-review`) and later
-  `pane session create --artifact-id pr-review` with no search at all.
+  `pane surface create --template-id pr-review` with no search at all.
 - `--input-schema` is optional JSON Schema describing the `input_data` the
-  artifact needs. It doubles as documentation — it tells a future you exactly
+  template needs. It doubles as documentation — it tells a future you exactly
   what data to pass.
-- Editing an artifact **appends a version**; it never mutates an existing one.
-  Sessions pin the version they were created with, so old sessions are
+- Editing a template **appends a version**; it never mutates an existing one.
+  Surfaces pin the version they were created with, so old surfaces are
   unaffected by a new version.
 
 ## The schema
 
-The schema is the contract for _every_ event on the session. The relay
+The schema is the contract for _every_ event on the surface. The relay
 **rejects any event that violates it** — a wrong `data` shape, or the wrong
 author. Get this right or the round trip silently fails.
 
@@ -366,9 +366,9 @@ Each entry under `events` declares:
 
 - `payload` — a **JSON Schema** for the event's `data`. `{}` means "any
   object". Be as strict as you can: the relay validates `pane.emit(...)` /
-  `pane session send` data against it and rejects mismatches.
+  `pane surface send` data against it and rejects mismatches.
 - `emittedBy` — who may emit this type: `"page"` (the human's UI, via the
-  `pane.emit` bridge) and/or `"agent"` (you, via `pane session send`). Emitting a
+  `pane.emit` bridge) and/or `"agent"` (you, via `pane surface send`). Emitting a
   type your side isn't listed in fails with `author_not_allowed`.
 
 ```json
@@ -400,46 +400,55 @@ Each entry under `events` declares:
 }
 ```
 
-## View-only artifacts (reports, dashboards, charts)
+## View-only templates (reports, dashboards, charts)
 
-The event schema is **optional**. An artifact created with no `--event-schema` is
+The event schema is **optional**. A template created with no `--event-schema` is
 **view-only**: a report, dashboard, or chart the human only _reads_ — there is
 nothing to submit back.
 
-- Omit `--event-schema` on `pane session create --artifact ...` or `pane artifact create` to
-  make a view-only artifact. The CLI sends no event schema.
-- A view-only session declares an **empty event vocabulary, strictly enforced**.
+- Omit `--event-schema` on `pane surface create --template ...` or `pane template create` to
+  make a view-only template. The CLI sends no event schema.
+- A view-only surface declares an **empty event vocabulary, strictly enforced**.
   Every `page`/`agent` emit is rejected `422 unknown_event_type` — `pane.emit`
-  in the page and `pane session send` from the agent both fail. There is no event type
-  the session will accept.
-- A view-only artifact can still carry an `--input-schema` and be seeded per
-  session with `--input-data` — that is how one report template renders many
+  in the page and `pane surface send` from the agent both fail. There is no event type
+  the surface will accept.
+- A view-only template can still carry an `--input-schema` and be seeded per
+  surface with `--input-data` — that is how one report template renders many
   different reports. The input contract is independent of the event schema.
 - Use this for anything the human only consumes: a status dashboard, a metrics
-  chart, a generated report. If you need an answer back, give the artifact an
+  chart, a generated report. If you need an answer back, give the template an
   event schema instead.
 
-## Writing the artifact
+## Writing the template
 
-The artifact is the HTML page the human sees. **It does not run like a normal
+The template is the HTML page the human sees. **It does not run like a normal
 web page** — the relay serves it inside a locked-down sandboxed iframe with no
 network access. Ordinary `<form action>`, `fetch()`, or `XMLHttpRequest` will
 **not** work and the human's answer will never reach you.
 
-Instead, the relay injects a global `window.pane` bridge. The artifact talks to
-the session _only_ through it:
+Instead, the relay injects a global `window.pane` bridge. The template talks to
+the surface _only_ through it:
 
 - `pane.emit(type, data?, opts?)` → `Promise<{ id, deduped }>` — send an event.
   `type` must exist in the schema with `"page"` in `emittedBy`; `data` must
   satisfy its `payload`. This is how the human's answer reaches you.
 - `pane.on(type, handler)` → `unsubscribe` — react to events (e.g. an
-  `assistant.reply` you sent via `pane session send`).
+  `assistant.reply` you sent via `pane surface send`).
 - `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
-- `pane.inputData` — this session's per-instance seed data: the `input_data`
-  passed to `POST /v1/sessions`, validated by the relay against the artifact
-  version's `input_schema`. `null` when the session was created without
-  `input_data`. Read it to render this instance — e.g. a PR-review artifact
+- `pane.inputData` — this surface's per-instance seed data: the `input_data`
+  passed to `POST /v1/surfaces`, validated by the relay against the template
+  version's `input_schema`. `null` when the surface was created without
+  `input_data`. Read it to render this instance — e.g. a PR-review template
   does `window.pane.inputData.prTitle`.
+- `pane.uploadBlob(file, opts?)` / `pane.downloadBlob(attachment_id)` /
+  `pane.saveBlob(attachment_id, filename?)` — attachment plumbing. Method
+  names still carry the legacy "Blob" suffix from before the
+  Session→Surface, Artifact→Template, Blob→Attachment rename — every other
+  surface (CLI nouns, JSON fields, schema format) uses "attachment", but
+  these three methods kept their old names for runtime compatibility.
+  They return / accept `AttachmentRef` objects with `attachment_id`,
+  `mime`, `size`, etc. See the "Human file uploads" and "Lazy image
+  fetch" sections below.
 
 ### What a handler receives — the event envelope
 
@@ -448,13 +457,13 @@ envelope**, _not_ the bare payload. The envelope shape is:
 
 ```js
 {
-  (id, session_id, author, ts, type, data, causation_id, idempotency_key);
+  (id, surface_id, author, ts, type, data, causation_id, idempotency_key);
 }
 ```
 
 The payload — the object you passed to `pane.emit(...)` or to
-`pane session send --data` — is in **`ev.data`**. So an event sent with
-`pane session send --type assistant.reply --data '{"title":"...","message":"..."}'`
+`pane surface send --data` — is in **`ev.data`**. So an event sent with
+`pane surface send --type assistant.reply --data '{"title":"...","message":"..."}'`
 arrives at the handler as `ev`, and the content is `ev.data.title` /
 `ev.data.message`.
 
@@ -462,14 +471,14 @@ Two things to know:
 
 - **Handlers also fire for replayed history.** When the iframe connects, every
   prior event is replayed through your `pane.on` handlers — including events
-  sent _before_ the artifact loaded. A handler registered in an inline
+  sent _before_ the template loaded. A handler registered in an inline
   `<script>` still receives an `assistant.reply` that was sent earlier, so you
   don't need to race the agent.
 - `pane.state.last(type)` returns the most recent envelope of that type (or the
   most recent of any type if you omit `type`) — use it to render "whatever the
   latest reply is" without wiring a handler.
 
-A minimal working artifact for the schema above:
+A minimal working template for the schema above:
 
 ```html
 <!doctype html>
@@ -480,7 +489,7 @@ A minimal working artifact for the schema above:
   }
 </style>
 <!--
-  Note: the artifact runs in a sandboxed iframe. The relay grants `allow-forms`
+  Note: the template runs in a sandboxed iframe. The relay grants `allow-forms`
   alongside `allow-scripts` so a real <form> + Enter-to-submit works, but the
   iframe has no `allow-same-origin`, so a form's *native* submission can't
   reach any origin anyway. Either pattern is fine — we use a plain
@@ -502,7 +511,7 @@ A minimal working artifact for the schema above:
 
 <script>
   // The agent pushes a rich reply with
-  //   pane session send --type assistant.reply --data '{"title":"…","message":"…"}'
+  //   pane surface send --type assistant.reply --data '{"title":"…","message":"…"}'
   // `ev` is the envelope; the payload is `ev.data`.
   pane.on("assistant.reply", (ev) => {
     const { title, message } = ev.data;
@@ -519,7 +528,7 @@ A minimal working artifact for the schema above:
     // Basic validation — the sandbox doesn't give us native form validation
     // here because we're not using <form>'s submit pipeline.
     if (!name || !(rating >= 1 && rating <= 5)) return;
-    // Emit the terminal event — this is what `pane session watch --type` waits for.
+    // Emit the terminal event — this is what `pane surface watch --type` waits for.
     // Await it: pane.emit resolves only once the relay has accepted the
     // event, and rejects if delivery fails. Only show "Sent" after that.
     await pane.emit("form.submitted", { name, rating });
@@ -534,26 +543,26 @@ isn't sure what to do. If a handler doesn't recognize an event, ignore it — th
 page should only ever show specific `ev.data` fields it understands, rendered
 into real DOM. The whole point of Pane is a proper UI; a JSON dump is a bug.
 
-Rules of thumb when authoring the artifact:
+Rules of thumb when authoring the template:
 
 - The event type you `pane.emit` for the human's final action **must match**
-  the `--type` you later `pane session watch` for. Above: `form.submitted`.
+  the `--type` you later `pane surface watch` for. Above: `form.submitted`.
 - A handler's argument is the **envelope** — read the payload from `ev.data`,
   and render its individual fields with `.textContent` into real elements.
 - `pane` is ready by the time inline `<script>` runs — no need to wait for an
   init event.
 - No external assets that need the network (CDN scripts, remote fonts/images):
   the sandbox CSP blocks them. Inline everything, or use data URIs.
-- Keep the artifact self-contained — it's one HTML document.
+- Keep the template self-contained — it's one HTML document.
 
-### `pane session watch <id>` — wait for the answer
+### `pane surface watch <id>` — wait for the answer
 
-`pane session watch` holds a WebSocket and prints **one compact JSON object per line**
+`pane surface watch` holds a WebSocket and prints **one compact JSON object per line**
 to stdout, flushing after each. This is the key command — it's how you wait for
 the human.
 
 ```sh
-pane session watch ses_xxxx --type form.submitted
+pane surface watch ses_xxxx --type form.submitted
 ```
 
 - `--type <t[,t2,…]>` — exit 0 after the first event whose type is in this
@@ -561,7 +570,7 @@ pane session watch ses_xxxx --type form.submitted
   Pass multiple types when you want to exit on any of several outcomes
   (e.g. `--type form.submitted,form.cancelled`).
 - `--filter-type <t[,t2,…]>` — restrict the STDOUT stream to events whose
-  type is in this set. `system.*` events (participant joined, session
+  type is in this set. `system.*` events (participant joined, surface
   expired) and the terminal `_closed` line always pass through so the
   harness still sees lifecycle signals. `--type` controls the EXIT
   condition; `--filter-type` controls the OUTPUT. Combine them
@@ -569,7 +578,7 @@ pane session watch ses_xxxx --type form.submitted
   the first one".
 - `--once` — exit 0 after the very first event.
 - `--timeout <seconds>` — wall-clock max wait. Exits with code `ws_timeout`
-  if the awaited terminal condition (`--once`, `--type`, session close)
+  if the awaited terminal condition (`--once`, `--type`, surface close)
   hasn't happened by then. Frames arriving do NOT reset the timer — this
   is the budget for "give up on the human", not an idle detector. Use it
   so you don't wait forever for a human who never acts.
@@ -579,7 +588,7 @@ pane session watch ses_xxxx --type form.submitted
 
 - An event of your `--type` lands → its JSON line is printed, exit 0. The
   human answered; act on the event's `data`.
-- The session expires or closes first → a final `{"type":"_closed"}` line is
+- The surface expires or closes first → a final `{"type":"_closed"}` line is
   printed, exit 0. The human did **not** answer (TTL elapsed). Do not treat a
   `_closed` line as the answer — handle it as "no response".
 - `--timeout` elapses → `{"error":{"code":"ws_timeout"}}` on stderr, non-zero
@@ -587,33 +596,33 @@ pane session watch ses_xxxx --type form.submitted
 - The relay drops the connection abnormally → `ws_closed_abnormally` on
   stderr, non-zero exit (distinct from a clean `_closed`).
 
-### `pane session show <id>` — snapshot, optionally long-polled
+### `pane surface show <id>` — snapshot, optionally long-polled
 
 ```sh
-pane session show ses_xxxx                          # snapshot, returns immediately
-pane session show ses_xxxx --since <next_cursor>    # only events past the cursor
-pane session show ses_xxxx --since <next_cursor> --wait 30
+pane surface show ses_xxxx                          # snapshot, returns immediately
+pane surface show ses_xxxx --since <next_cursor>    # only events past the cursor
+pane surface show ses_xxxx --since <next_cursor> --wait 30
 ```
 
 Prints `{ meta, events, next_cursor }` without holding a WebSocket. Two
 modes:
 
 - **Default (non-blocking).** Returns whatever exists right now. Use for
-  a one-off "is the session still alive?" check.
+  a one-off "is the surface still alive?" check.
 - **`--wait <secs>` (long-poll).** The relay holds the request open for
   up to that many seconds — capped server-side at 30 — and returns as
   soon as a new event arrives. Use this for **headless polling agents
   that can't keep a WebSocket open** (cron, FaaS, slow links): call,
   re-call with the previous `next_cursor` as `--since`, repeat. Higher
-  latency per round-trip than `pane session watch` but no long-lived connection.
+  latency per round-trip than `pane surface watch` but no long-lived connection.
 
 Choose `watch` (streaming) when you can hold a process; choose
 `state --wait` (polling) when you can't.
 
-### `pane session send <id>` — emit your own event
+### `pane surface send <id>` — emit your own event
 
 ```sh
-pane session send ses_xxxx --type assistant.reply \
+pane surface send ses_xxxx --type assistant.reply \
   --data '{"title":"Got it","message":"Thanks — your rating is recorded."}'
 ```
 
@@ -621,71 +630,71 @@ pane session send ses_xxxx --type assistant.reply \
 with `agent` in its `emittedBy`. Use this to update the UI live while the human
 works.
 
-### `pane session delete <id>` — close a session
+### `pane surface delete <id>` — close a surface
 
 ```sh
-pane session delete ses_xxxx
+pane surface delete ses_xxxx
 ```
 
-Closes the session and tears it down (`DELETE /v1/sessions/:id`). Idempotent —
-re-deleting an already-closed session is a no-op. Use it to clean up a session
+Closes the surface and tears it down (`DELETE /v1/surfaces/:id`). Idempotent —
+re-deleting an already-closed surface is a no-op. Use it to clean up a surface
 you are done with rather than waiting for its TTL to expire.
 
-### `pane session list` — enumerate your sessions
+### `pane surface list` — enumerate your surfaces
 
 ```sh
-pane session list                                  # default --status=open
-pane session list --status all
-pane session list --status closed --limit 100
-pane session list --artifact-id pane-pitch-deck    # filter by named artifact
-pane session list --cursor <opaque>                # next page
+pane surface list                                  # default --status=open
+pane surface list --status all
+pane surface list --status closed --limit 100
+pane surface list --template-id pane-pitch-deck    # filter by named template
+pane surface list --cursor <opaque>                # next page
 ```
 
-Lists your agent's sessions, newest first. The response is intentionally
+Lists your agent's surfaces, newest first. The response is intentionally
 LEAN: each row carries `active_human_participants` (a count of non-revoked
-human URLs on that session) but NOT the full participant array — agents
-with many sessions × many humans should not pay that bandwidth on every
+human URLs on that surface) but NOT the full participant array — agents
+with many surfaces × many humans should not pay that bandwidth on every
 list call. To see the participants themselves (including revoked rows),
-call `pane session participant list <session-id>`.
+call `pane surface participant list <surface-id>`.
 
 The response also carries NO secrets: no participant tokens, no callback
 URL, no metadata or input_data.
 
 **Load-bearing caveat — participant tokens are unrecoverable.** The relay
 stores only the hash of each participant token; the plaintext URL is returned
-exactly once in the `pane session create` response and **cannot be retrieved
-later**. If you lost a URL, neither `pane session list` nor `pane session
-participant list` will return it; instead, use `pane session participant new`
-to mint a fresh URL on the still-alive session.
+exactly once in the `pane surface create` response and **cannot be retrieved
+later**. If you lost a URL, neither `pane surface list` nor `pane surface
+participant list` will return it; instead, use `pane surface participant new`
+to mint a fresh URL on the still-alive surface.
 
-### `pane session participant list|new|revoke` — manage URLs on a live session
+### `pane surface participant list|new|revoke` — manage URLs on a live surface
 
 ```sh
-# Find the participant ids on one session.
-pane session participant list ses_abc123
+# Find the participant ids on one surface.
+pane surface participant list ses_abc123
 
-# Lost the URL but the session is still alive — mint a new entry door.
-pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+# Lost the URL but the surface is still alive — mint a new entry door.
+pane surface participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
 
 # Invalidate a URL you no longer want usable.
-pane session participant revoke ses_abc123 p_xyz
+pane surface participant revoke ses_abc123 p_xyz
 ```
 
-Three primitives that together replace `pane session delete + pane session
-create` for the lost-URL case (which would destroy the session's event log,
-artifact pin, and created_at — `participant new` preserves all of that).
+Three primitives that together replace `pane surface delete + pane surface
+create` for the lost-URL case (which would destroy the surface's event log,
+template pin, and created_at — `participant new` preserves all of that).
 
-- `pane session participant list <session-id>` — returns the full
-  participant array for one session (active AND revoked rows). Each row has
+- `pane surface participant list <surface-id>` — returns the full
+  participant array for one surface (active AND revoked rows). Each row has
   `participant_id` (the revoke handle), `kind`, `token_prefix` (non-secret
   correlator like `tok_h_BUcx`), `joined_at`, and `revoked_at`. This is the
   step you use to find a participant_id to pass to `revoke`.
-- `pane session participant new <session-id>` — mints a fresh human URL on
-  an existing session. Returns `{ participant_id, kind, token, url,
+- `pane surface participant new <surface-id>` — mints a fresh human URL on
+  an existing surface. Returns `{ participant_id, kind, token, url,
   created_at }` exactly ONCE. Save the response (pipe to a JSONL log) before
   delivering the URL.
-- `pane session participant revoke <session-id> <participant-id>` —
-  invalidates one URL. The session's other URLs (and your own websocket)
+- `pane surface participant revoke <surface-id> <participant-id>` —
+  invalidates one URL. The surface's other URLs (and your own websocket)
   are untouched. Idempotent: running revoke twice still returns success.
   **Caveat:** in this version, existing WebSocket connections held under
   the revoked token are NOT actively kicked; only new HTTP and WS
@@ -694,13 +703,13 @@ artifact pin, and created_at — `participant new` preserves all of that).
 **Recovery recipe** when you dropped the create response:
 
 ```sh
-pane session list                                          # find session_id
-pane session participant list ses_abc123                   # find participant
+pane surface list                                          # find surface_id
+pane surface participant list ses_abc123                   # find participant
                                                            #   ids on that
-                                                           #   session
-pane session participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+                                                           #   surface
+pane surface participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
 # use the new url; the old one is still valid until you revoke
-pane session participant revoke ses_abc123 p_xyz           # optional —
+pane surface participant revoke ses_abc123 p_xyz           # optional —
                                                            #   invalidate
                                                            #   the old URL
 ```
@@ -738,7 +747,7 @@ A pane agent has exactly one API key. `keys list` shows its metadata
 **permanently revokes your own key**; it stops working immediately and you
 would have to `pane agent register` again. It refuses to run without `--yes`.
 
-### `pane taste` — remembering UI preferences across sessions
+### `pane taste` — remembering UI preferences across runs
 
 ```sh
 pane taste get                              # read current notes (JSON)
@@ -751,17 +760,17 @@ pane taste clear --yes                      # forget everything
 taste*: how the human you serve likes pane artifacts to look. The intended
 loop is:
 
-1. **Before generating an artifact**, run `pane taste get` and fold the
+1. **Before generating a template**, run `pane taste get` and fold the
    `taste` field into the prompt that authors the HTML. Past feedback ("dark
-   header", "no emoji", "tighter spacing") shapes the new artifact.
+   header", "no emoji", "tighter spacing") shapes the new template.
 2. **When the human gives presentation feedback**, run `pane taste get`,
    merge the new guidance into the existing notes *in your prompt*, then
    write the WHOLE updated blob back with `pane taste set`. Don't append
    blindly — taste set is whole-blob replace on purpose, so the notes stay
    curated and don't rot into a transcript.
 3. **Keep entries about presentation only** — colours, density, component
-   choices, layout. Project context, todos, and per-session state belong
-   somewhere else (your own memory, the session's events, etc.).
+   choices, layout. Project context, todos, and per-run state belong
+   somewhere else (your own memory, the surface's events, etc.).
 
 Keyed today by the calling agent's API key — per-agent, not per-human (pane
 v1 has no first-class human identity yet). Expect this to move to per-human
@@ -784,54 +793,54 @@ only when you can't reach GitHub in this run (no `gh`, no auth, headless).
 Notes are fine to send directly.
 
 `--type` ∈ {`bug`, `feature`, `note`}. `--message -` reads stdin.
-`--session-id` is optional. No reply channel — don't use this for anything
-you need an answer to, or for the human's answer to a session question
+`--surface-id` is optional. No reply channel — don't use this for anything
+you need an answer to, or for the human's answer to a surface question
 (use events). UI preferences belong in `pane taste`, not here.
 
-### `pane blob` — binary attachments (images, PDFs, audio, video)
+### `pane attachment` — binary attachments (images, PDFs, audio, video)
 
 ```sh
-# Upload a file. Default scope is "agent" (reusable across the agent's sessions).
-pane blob upload --file ./chart.png
+# Upload a file. Default scope is "agent" (reusable across the agent's surfaces).
+pane attachment upload --file ./chart.png
 
-# Session-scope (dies with the session; cheaper to GC):
-pane blob upload --file ./hero.jpg --scope session --session-id ses_xxx
+# Surface-scope (dies with the surface; cheaper to GC):
+pane attachment upload --file ./hero.jpg --scope surface --surface-id ses_xxx
 
-# Artifact-scope (reusable across every session using the artifact):
-pane blob upload --file ./icon.svg --scope artifact --artifact-id <id>
+# Template-scope (reusable across every surface using the template):
+pane attachment upload --file ./icon.svg --scope template --template-id <id>
 
 # List your blobs (newest first; paginated via --cursor):
-pane blob list                              # first 50
-pane blob list --limit 25 --cursor <opaque> # next page
+pane attachment list                              # first 50
+pane attachment list --limit 25 --cursor <opaque> # next page
 
 # Inspect / download / delete:
-pane blob show <blob_id>
-pane blob download <blob_id> --out ./out.png
-pane blob delete <blob_id>
+pane attachment show <blob_id>
+pane attachment download <blob_id> --out ./out.png
+pane attachment delete <blob_id>
 
 # Mint a /b/<token> URL the human can fetch directly (no agent API key):
-pane blob token mint <blob_id>              # default TTL: 24h agent / session-TTL / 30d artifact
-pane blob token mint <blob_id> --once       # self-deletes on first GET
+pane attachment token mint <blob_id>              # default TTL: 24h agent / surface-TTL / 30d template
+pane attachment token mint <blob_id> --once       # self-deletes on first GET
 
-# Enumerate the tokens minted against one blob (audit — includes revoked rows):
-pane blob token list <blob_id>
+# Enumerate the tokens minted against one attachment (audit — includes revoked rows):
+pane attachment token list <blob_id>
 
 # Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
-pane blob token revoke <blob_id> <token_id>
+pane attachment token revoke <blob_id> <token_id>
 ```
 
 **One-shot upload + emit** — most agents emit events that REFERENCE blobs
-rather than embed them. Use `pane session send --blob` to do both in one
+rather than embed them. Use `pane surface send --attachment` to do both in one
 call:
 
 ```sh
-# Uploads ./chart.png as a session-scope blob, then sends an event
-# whose data is { blob: <BlobRef> } into the session.
-pane session send <session-id> --type chart.update --blob ./chart.png
+# Uploads ./chart.png as a surface-scope attachment, then sends an event
+# whose data is { attachment: <AttachmentRef> } into the surface.
+pane surface send <surface-id> --type chart.update --attachment ./chart.png
 ```
 
-The session's event schema should declare a blob field with
-`format: pane-blob-id`:
+The surface's event schema should declare an attachment field with
+`format: pane-attachment-id`:
 
 ```json
 {
@@ -841,45 +850,45 @@ The session's event schema should declare a blob field with
       "payload": {
         "type": "object",
         "properties": {
-          "blob": {
+          "attachment": {
             "type": "object",
             "properties": {
-              "blob_id": { "type": "string", "format": "pane-blob-id" }
+              "attachment_id": { "type": "string", "format": "pane-attachment-id" }
             },
-            "required": ["blob_id"]
+            "required": ["attachment_id"]
           }
         },
-        "required": ["blob"]
+        "required": ["attachment"]
       }
     }
   }
 }
 ```
 
-Pages handle the event by reading `ev.data.blob.url` and stuffing it in
-`<img>` / `<iframe>` / wherever the blob is meant to render:
+Pages handle the event by reading `ev.data.attachment.url` and stuffing it in
+`<img>` / `<iframe>` / wherever the attachment is meant to render:
 
 ```js
 pane.on("chart.update", (ev) => {
-  document.getElementById("chart").src = ev.data.blob.url;
+  document.getElementById("chart").src = ev.data.attachment.url;
 });
 ```
 
-**Default limits** (the hosted relay): 5 MB per blob, 500 MB total per
+**Default limits** (the hosted relay): 5 MB per attachment, 500 MB total per
 agent. Adjust `BLOB_*` env vars on self-host. See `docs/BLOB_BACKENDS.md`
 for the backend matrix, `docs/CAPABILITY-URLS.md` for the `/b/<token>`
 threat model, and `docs/SECURITY-POLYGLOTS.md` for the upload-side
 defence (sharp normalisation + EXIF strip; SVG is passthrough — keep it
 out of `BLOB_MIME_ALLOWLIST` if your surface renders SVGs inline).
 
-### Human file uploads in a pane
+### Human file uploads
 
 A human inside a rendered pane can upload a file BACK to the relay via
-`window.pane.uploadBlob(file, options?)`. The returned `BlobRef` is
+`window.pane.uploadBlob(file, options?)`. The returned `AttachmentRef` is
 suitable for stuffing into an event payload — the agent receives it and
-can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
+can `pane attachment download` (or mint a `/b/<token>` URL) to read the bytes.
 
-**1. Declare the event in your schema with a blob field.**
+**1. Declare the event in your schema with an attachment field.**
 
 ```json
 {
@@ -889,22 +898,22 @@ can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
       "payload": {
         "type": "object",
         "properties": {
-          "blob": {
+          "attachment": {
             "type": "object",
             "properties": {
-              "blob_id": { "type": "string", "format": "pane-blob-id" }
+              "attachment_id": { "type": "string", "format": "pane-attachment-id" }
             },
-            "required": ["blob_id"]
+            "required": ["attachment_id"]
           }
         },
-        "required": ["blob"]
+        "required": ["attachment"]
       }
     }
   }
 }
 ```
 
-**2. Inside the artifact HTML, wire a file input to `pane.uploadBlob` +
+**2. Inside the template HTML, wire a file input to `pane.uploadBlob` +
 `pane.emit`.**
 
 ```html
@@ -923,9 +932,9 @@ can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
     status.textContent = "uploading...";
     try {
       // Hands the File to the shell over postMessage; the shell POSTs
-      // to /s/<participantToken>/blobs and returns the BlobRef.
+      // to /s/<participantToken>/attachments and returns the AttachmentRef.
       const blob = await window.pane.uploadBlob(picker.files[0]);
-      await window.pane.emit("photo.attached", { blob });
+      await window.pane.emit("photo.attached", { attachment });
       status.textContent = "uploaded.";
     } catch (e) {
       // e.code is the relay's error code (e.g. "blob_size_exceeded",
@@ -941,20 +950,20 @@ can `pane blob download` (or mint a `/b/<token>` URL) to read the bytes.
 
 ```sh
 # Wait for the human's upload event.
-EVENT=$(pane session watch "$SID" --type photo.attached)
-BLOB_ID=$(echo "$EVENT" | jq -r .data.blob.blob_id)
+EVENT=$(pane surface watch "$SID" --type photo.attached)
+ATTACHMENT_ID=$(echo "$EVENT" | jq -r .data.attachment.attachment_id)
 
 # Download the bytes.
-pane blob download "$BLOB_ID" --out ./uploaded.jpg
+pane attachment download "$ATTACHMENT_ID" --out ./uploaded.jpg
 ```
 
-Uploads are pinned to scope=`session`: they cascade-delete with the
-session, count against the AGENT's quota (not the participant), and
+Uploads are pinned to scope=`surface`: they cascade-delete with the
+surface, count against the AGENT's quota (not the participant), and
 run through the same MIME-sniff + polyglot-defense + EXIF-strip
-pipeline as `pane blob upload`. See `docs/CAPABILITY-URLS.md` for the
+pipeline as `pane attachment upload`. See `docs/CAPABILITY-URLS.md` for the
 threat model.
 
-### Lazy image fetch in a pane
+### Lazy image fetch in a surface
 
 The reverse direction — the **agent** has an image (e.g. a chart it
 generated, an attachment downloaded from somewhere, output of an image
@@ -962,17 +971,17 @@ pipeline) and wants the pane to render it. There are two ways:
 
 1. **Inline the bytes in the event payload as `data:image/...;base64`.**
    Don't. The iframe CSP allows it, but: it costs 33% on base64, the
-   bytes get duplicated on disk (encrypted blob store + event row), the
+   bytes get duplicated on disk (encrypted attachment store + event row), the
    bytes replay over WebSocket on every reconnect, and a 1 MB image
    won't fit under `MAX_EVENT_DATA_BYTES` (default 64 KB). The whole
-   point of blob storage is to avoid this.
+   point of attachment storage is to avoid this.
 
-2. **Upload as a blob, send just the `BlobRef` on the event, fetch
+2. **Upload as an attachment, send just the `AttachmentRef` on the event, fetch
    lazily in the pane.** This is the preferred shape. The pane runs
-   `await window.pane.downloadBlob(blob_id)` and gets a real browser
+   `await window.pane.downloadBlob(attachment_id)` and gets a real browser
    `Blob` it can render via `URL.createObjectURL(blob)`.
 
-**1. Declare the event with a blob field (same shape as uploads).**
+**1. Declare the event with an attachment field (same shape as uploads).**
 
 ```json
 {
@@ -982,34 +991,34 @@ pipeline) and wants the pane to render it. There are two ways:
       "payload": {
         "type": "object",
         "properties": {
-          "blob": {
+          "attachment": {
             "type": "object",
             "properties": {
-              "blob_id": { "type": "string", "format": "pane-blob-id" }
+              "attachment_id": { "type": "string", "format": "pane-attachment-id" }
             },
-            "required": ["blob_id"]
+            "required": ["attachment_id"]
           }
         },
-        "required": ["blob"]
+        "required": ["attachment"]
       }
     }
   }
 }
 ```
 
-**2. Agent uploads the bytes and emits a thin event with just the BlobRef.**
+**2. Agent uploads the bytes and emits a thin event with just the AttachmentRef.**
 
 ```sh
-# Upload — get back a BlobRef bound to the session.
-REF=$(pane blob upload --file ./weather-chart.png --scope session --session-id "$SID")
-BLOB_ID=$(echo "$REF" | jq -r .blob_id)
+# Upload — get back an AttachmentRef bound to the surface.
+REF=$(pane attachment upload --file ./weather-chart.png --scope surface --surface-id "$SID")
+ATTACHMENT_ID=$(echo "$REF" | jq -r .attachment_id)
 
 # Emit an event that only carries the id — no inline bytes.
-pane session send "$SID" --type image.delivered \
-  --data "{\"blob\":{\"blob_id\":\"$BLOB_ID\"}}"
+pane surface send "$SID" --type image.delivered \
+  --data "{\"attachment\":{\"attachment_id\":\"$ATTACHMENT_ID\"}}"
 ```
 
-**3. Inside the artifact, lazy-fetch the bytes and render.**
+**3. Inside the template, lazy-fetch the bytes and render.**
 
 ```html
 <img id="chart" alt="weather chart">
@@ -1018,7 +1027,7 @@ pane session send "$SID" --type image.delivered \
     try {
       // window.pane.downloadBlob() returns a real browser Blob. The iframe
       // CSP allows blob: URLs in img-src, so createObjectURL is safe.
-      const blob = await window.pane.downloadBlob(ev.data.blob.blob_id);
+      const blob = await window.pane.downloadBlob(ev.data.attachment.attachment_id);
       document.getElementById("chart").src = URL.createObjectURL(blob);
     } catch (e) {
       // e.code is the relay's error code (e.g. "blob_ref_not_accessible",
@@ -1032,26 +1041,26 @@ pane session send "$SID" --type image.delivered \
 
 The shell brokers the fetch with the participant token; the bytes are
 decrypted by the relay (when `BLOB_ENCRYPT_AT_REST` is on) and arrive
-as a fresh Blob the iframe can render. **The blob must be referenced
-from this session** — either via an event the agent emitted or via the
-session's initial `inputData`. A participant token cannot enumerate
+as a fresh Blob the iframe can render. **The attachment must be referenced
+from this surface** — either via an event the agent emitted or via the
+surface's initial `inputData`. A participant token cannot enumerate
 arbitrary blobs the agent owns. See `docs/CAPABILITY-URLS.md` for the
 full trust model.
 
 ## The watch → Monitor pattern
 
-`pane session watch` is built to be a **monitored subprocess**. It blocks until the
+`pane surface watch` is built to be a **monitored subprocess**. It blocks until the
 awaited event lands, prints it, and exits 0 — so a supervising harness can wake
 you with the result.
 
-- **Claude Code Monitor tool**: launch `pane session watch <id> --type form.submitted`
+- **Claude Code Monitor tool**: launch `pane surface watch <id> --type form.submitted`
   as a monitored process. When the human submits, the line is printed, the
   process exits 0, and you are re-invoked with the event payload. No polling.
-- **Shell pipeline**: `pane session watch <id> | while read -r line; do ...; done`.
-- **`--filter-type` for clean stdout**: `pane session watch <id> --filter-type comment.added`
+- **Shell pipeline**: `pane surface watch <id> | while read -r line; do ...; done`.
+- **`--filter-type` for clean stdout**: `pane surface watch <id> --filter-type comment.added`
   (built-in equivalent of `jq -c 'select(.type=="comment.added")'`; `system.*`
   lifecycle events still pass through so the harness sees them).
-- **Polling alternative**: loop `pane session show <id> --since <cursor> --wait 30`
+- **Polling alternative**: loop `pane surface show <id> --since <cursor> --wait 30`
   for environments that can't hold a WebSocket (cron, FaaS, slow links).
 
 ## Typical round trip
@@ -1060,16 +1069,113 @@ you with the result.
 > the help text is authoritative.
 
 ```sh
-# 1. create the session
-OUT=$(pane session create --artifact ./review.html --event-schema ./review-schema.json --ttl 900)
-SID=$(echo "$OUT" | jq -r .session_id)
+# 1. create the surface
+OUT=$(pane surface create --template ./review.html --event-schema ./review-schema.json --ttl 900)
+SID=$(echo "$OUT" | jq -r .surface_id)
 URL=$(echo "$OUT" | jq -r '.urls.humans[0]')
 
 # 2. deliver $URL to the human over your own channel (Telegram/Slack/email)
 
 # 3. wait for the human's submit — run as a monitored process
-pane session watch "$SID" --type review.submitted
+pane surface watch "$SID" --type review.submitted
 #    -> prints the review.submitted event as a JSON line, exits 0
 
 # 4. act on the event's `data`
 ```
+
+## The human side — what changes when a human owns the surface
+
+The hosted relay (and any self-host with `EMAIL_PROVIDER` set) has a
+first-class concept of a human user — sign-in via magic-link, a Settings
+UI, owned agents, owned surfaces. From an agent's perspective most of
+this is transparent: you keep doing `pane surface create` and handing the
+`urls.humans[0]` URL to a human. A few things differ if the human happens
+to be the owner of the surface.
+
+### Owner-shell — clean URL for the surface owner
+
+When a logged-in human opens a `/s/<token>` URL that points at a surface
+they own (i.e. the surface was created by an agent they claimed), the
+relay 302s them to `/surfaces/<id>` — a session-authed shell at a clean,
+token-free URL. The pane_login cookie does the auth on every callback
+(content fetch, presence poll, ws-ticket mint); the WebSocket itself
+still rides a single-use ticket the page mints over HTTP. There is also
+an "Open" button on `/my-surfaces` that lands on the same route.
+
+Implication for the agent: **none, by default**. The URL you hand the
+human in `urls.humans[0]` is still a `/s/<token>` link; the relay
+silently upgrades it when the human is the owner. You don't need to
+detect the case or change anything. Don't `pane surface participant
+new` to "get a clean URL" — owner-shell already gives owners one.
+
+The author identity events emit from this path is `h_owner` (literal
+string), not a monotonic `h_N`. A `pane surface watch` that branches on
+`ev.author.id` should treat `h_owner` and `h_<N>` interchangeably as
+"a human authored this".
+
+### Claimed agents — `pane agent claim`
+
+A human can mint a one-shot claim code in their Settings ("My agents" →
+"Generate claim code"), then hand it to an agent out-of-band. The agent
+binds itself to that human with:
+
+```sh
+pane agent claim <code>
+```
+
+Effect: every surface and template the agent owns now also has
+`ownerHumanId` set to the claiming human. That's what enables the
+owner-shell flow above, the "My surfaces" page, etc. A claim is one-way
+and exists in two states only — claimed or not. Re-running `agent
+claim` on an already-claimed agent fails.
+
+Heuristic: if a human registers your agent FOR you (e.g. they ran `pane
+agent register` and pasted the API key in your environment), the human
++ agent relationship is already implicit and a claim isn't necessary.
+The claim flow exists for the case where the human and agent provision
+themselves independently and need to be bound after the fact.
+
+### Multi-participant surfaces — email invites + public links
+
+Beyond the single human URL `pane surface create` mints by default, an
+owner can add more participants:
+
+- **Identity-bound (email invite).** The owner enters an email; the
+  relay mints a participant whose `humanId` is bound to that human's
+  account. The recipient must be logged in as that email to use the
+  URL — a stolen link is inert without the cookie. From the agent's
+  point of view this is just another row in `pane surface participant
+  list <id>`.
+- **Public / anonymous.** The owner mints a share-link with no
+  `humanId`. Anyone with the URL can join, no login required. Same
+  capability-URL model that's existed since v0.1.
+
+Both surface alongside the original auto-minted participant. You don't
+mint these via the CLI today — the UI is in `/my-surfaces` on the
+relay. The agent's `pane surface participant list/new/revoke` works on
+any of them.
+
+### Template marketplace (Phase F)
+
+A human can mark a template they own as **public** in `/my-templates`,
+giving it a versioned listing in a relay-wide catalog. Any other
+human can browse the catalog and **install** a template into their own
+account — they get a fresh template id under their ownership, pinned to
+the version they installed. No bytes are copied at install time; the
+relay records an `Install` row pointing at the source template.
+
+The marketplace is a human-side UI today; agents can't browse or
+install via CLI. The relevant detail for an agent: a template you
+authored might be installed elsewhere, and the install pin is by
+version. Append a new version with `pane template version <slug>
+--template ...` for downstream installs to pick up; existing surfaces
+remain pinned to the version they were created with, untouched.
+
+### Tl;dr for the agent
+
+You don't have to change anything to support the human side. The
+share URL you hand off still works, the round-trip still works, the
+event log still works. The human-side features (login, owner shell,
+claim, marketplace) live in the relay's web UI and don't surface
+on the CLI you use — except for `pane agent claim`, which is the one
+optional step that binds your agent to a human account.
