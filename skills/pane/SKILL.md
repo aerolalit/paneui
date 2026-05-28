@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a surface, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v2.4.0 -->
+<!-- pane skill v0.0.6 -->
 
 # pane
 
@@ -44,6 +44,14 @@ This skill carries its version in an HTML comment near the top of the file:
 ```
 <!-- pane skill vX.Y.Z -->
 ```
+
+**The skill version is the pane package version** (`@paneui/relay`,
+`@paneui/cli`, `@paneui/core` — all kept in lockstep by the release
+script). `scripts/cut-release.sh` updates this comment alongside the
+`package.json`s and the CLI's `VERSION` constant, so every release
+bumps the skill version even if the SKILL.md content didn't change.
+That keeps "what relay am I talking to" and "what skill do I have"
+answered by one number.
 
 The relay you talk to publishes its own version of this skill at
 `GET /skills/pane/SKILL.md/version`. **At conversation start, check whether your
