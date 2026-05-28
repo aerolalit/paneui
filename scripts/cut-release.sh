@@ -19,6 +19,7 @@
 #     (caret-pins to the new ^X.Y.Z so npm-workspaces keeps linking the
 #      local copy instead of resolving an older version from npm)
 #   - VERSION constant in packages/cli/src/version.ts
+#   - "<!-- pane skill v... -->" comment in skills/pane/SKILL.md
 #
 # After PR merges, tag and push manually:
 #   git fetch origin main
@@ -140,6 +141,16 @@ sed -i.bak "s/export const VERSION = \".*\";/export const VERSION = \"$VERSION\"
 rm "${VERSION_TS}.bak"
 echo "  $VERSION_TS (VERSION constant)"
 
+# Skill version comment — the `<!-- pane skill vX.Y.Z -->` line in SKILL.md.
+# Kept in lockstep with the package version (see the "Keeping this skill up
+# to date" section of SKILL.md). The relay reads this comment at boot and
+# serves it from GET /skills/pane/SKILL.md/version; an agent's stale-skill
+# probe compares its local copy to the relay's.
+SKILL_MD="skills/pane/SKILL.md"
+sed -i.bak "s|<!-- pane skill v[0-9][^ ]* -->|<!-- pane skill v${VERSION} -->|" "$SKILL_MD"
+rm "${SKILL_MD}.bak"
+echo "  $SKILL_MD (skill version comment)"
+
 # ---- Refresh lockfile + workspace symlinks -----------------------------
 
 echo ""
@@ -169,13 +180,16 @@ echo "→ committing release-prep"
 git add package.json package-lock.json \
   packages/cli/package.json packages/cli/src/version.ts \
   packages/core/package.json \
-  packages/relay/package.json
+  packages/relay/package.json \
+  skills/pane/SKILL.md
 git commit -q -m "chore(release): v${VERSION}
 
 Bump @paneui/core, @paneui/cli, @paneui/relay and root to ${VERSION}.
 Bump VERSION constant in packages/cli/src/version.ts to match.
 Bump internal @paneui/core dependency in @paneui/cli and @paneui/relay
-to ^${VERSION} so workspace linking finds the local copy at build time."
+to ^${VERSION} so workspace linking finds the local copy at build time.
+Bump <!-- pane skill v... --> comment in skills/pane/SKILL.md so the
+relay's GET /skills/pane/SKILL.md/version probe matches the release."
 
 # Past this point we don't want the trap to rollback — we have a commit.
 ROLLBACK_ON_FAIL=0
