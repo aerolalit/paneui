@@ -181,34 +181,69 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
   }
 
   const now = new Date();
-  // Upsert: re-installing an uninstalled row reactivates it; new row otherwise.
-  const install = await prisma.humanTemplateInstall.upsert({
-    where: {
-      humanId_templateId: { humanId: human.id, templateId: id },
-    },
-    create: {
-      humanId: human.id,
-      templateId: id,
-      installedVersion: template.latestVersion,
-      installedAt: now,
-    },
-    update: {
-      installedVersion: template.latestVersion,
-      installedAt: now,
-      uninstalledAt: null,
-    },
+  // Three install states:
+  //   (a) no row              → first-time install: create + bump counter
+  //   (b) row, uninstalledAt  → re-install of a previously-uninstalled row:
+  //                             reactivate; DO NOT bump counter (the prior
+  //                             uninstall already decremented it back to
+  //                             where it was before)
+  //   (c) row, no uninstalledAt → already installed: refresh version + no-op
+  //                               on the counter
+  //
+  // Picking the branch requires actually knowing whether the row existed
+  // pre-call. `upsert` flattens (a) into (b/c), so previously we tried to
+  // infer "did create fire?" from `installedAt === now`, but `update` also
+  // sets `installedAt: now`, so the predicate was always true — anyone could
+  // pump the counter by calling install in a loop. Pre-check the row
+  // explicitly and branch.
+  const existing = await prisma.humanTemplateInstall.findUnique({
+    where: { humanId_templateId: { humanId: human.id, templateId: id } },
   });
 
-  // Bump the denormalised counter for the catalog ranking. Increment ONLY
-  // on the first-time install (not on re-install / re-consent) so the
-  // count reflects unique humans.
-  if (
-    !install.uninstalledAt &&
-    install.installedAt.getTime() === now.getTime()
-  ) {
-    await prisma.template.update({
-      where: { id },
-      data: { installCount: { increment: 1 } },
+  let install;
+  if (!existing) {
+    // (a) First-time install. Use create+catch-P2002 so a concurrent first-
+    // install on the same (humanId, templateId) — pre-checked as missing by
+    // both racers — resolves to "the other one won, treat as re-install"
+    // instead of throwing a 500.
+    try {
+      install = await prisma.humanTemplateInstall.create({
+        data: {
+          humanId: human.id,
+          templateId: id,
+          installedVersion: template.latestVersion,
+          installedAt: now,
+        },
+      });
+      await prisma.template.update({
+        where: { id },
+        data: { installCount: { increment: 1 } },
+      });
+    } catch (e) {
+      const code = (e as { code?: string } | null)?.code;
+      if (code !== "P2002") throw e;
+      // Concurrent first-install lost the race — treat as re-install path
+      // below. No counter bump (the winner already bumped).
+      install = await prisma.humanTemplateInstall.update({
+        where: { humanId_templateId: { humanId: human.id, templateId: id } },
+        data: {
+          installedVersion: template.latestVersion,
+          installedAt: now,
+          uninstalledAt: null,
+        },
+      });
+    }
+  } else {
+    // (b) or (c) — update existing row. No counter bump in either case;
+    // an uninstall → install round-trip is net-zero, and a refresh of an
+    // already-active install is a no-op against the counter.
+    install = await prisma.humanTemplateInstall.update({
+      where: { humanId_templateId: { humanId: human.id, templateId: id } },
+      data: {
+        installedVersion: template.latestVersion,
+        installedAt: now,
+        uninstalledAt: null,
+      },
     });
   }
 

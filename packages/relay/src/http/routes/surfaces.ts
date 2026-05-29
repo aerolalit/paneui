@@ -534,46 +534,100 @@ surfaces.post("/", requireAgent, async (c) => {
   // `input_schema` (when the version declares one) — it is safe to store.
   // For human-owned surfaces (claimed agent), set ownerHumanId so dedup
   // and the human-side catalogs (my-surfaces, …) see this row.
-  await prisma.surface.create({
-    data: {
-      id: surfaceId,
-      agentId: agent.id,
-      ownerHumanId,
-      contextKey: dedupKey,
-      creatorKind: "agent",
-      creatorId: agent.id,
-      templateVersionId,
-      title: resolvedTitle,
-      inputData: input_data
-        ? (input_data as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-      expiresAt,
-      metadata: metadata
-        ? (metadata as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-      callbackUrl: callback?.url ?? null,
-      callbackSecretEnc: callback ? encryptSecret(callback.secret) : null,
-      callbackFilter: callback?.events
-        ? (callback.events as unknown as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-      participants: {
-        create: [
-          {
-            kind: "agent",
-            identityId: agent.id,
-            tokenHash: hashKey(agentToken),
-            tokenPrefix: keyPrefix(agentToken),
-          },
-          ...humanTokens.map((t, i) => ({
-            kind: "human" as const,
-            identityId: `h_${i}`,
-            tokenHash: hashKey(t),
-            tokenPrefix: keyPrefix(t),
-          })),
-        ],
+  //
+  // P2002 catch on the create: the `Surface_owner_dedup` unique index
+  // (`@@unique([templateVersionId, ownerHumanId, contextKey])` on Surface)
+  // is the load-bearing guarantee here — two concurrent creates with the
+  // same dedup key both pass the `findFirst` above and race into `create`;
+  // the loser hits P2002 and we resolve to the winner's row, returning the
+  // same dedup-hit shape the pre-check would have. Without this the second
+  // caller bubbles a 500 and the dedup contract leaks under concurrency.
+  try {
+    await prisma.surface.create({
+      data: {
+        id: surfaceId,
+        agentId: agent.id,
+        ownerHumanId,
+        contextKey: dedupKey,
+        creatorKind: "agent",
+        creatorId: agent.id,
+        templateVersionId,
+        title: resolvedTitle,
+        inputData: input_data
+          ? (input_data as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        expiresAt,
+        metadata: metadata
+          ? (metadata as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        callbackUrl: callback?.url ?? null,
+        callbackSecretEnc: callback ? encryptSecret(callback.secret) : null,
+        callbackFilter: callback?.events
+          ? (callback.events as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        participants: {
+          create: [
+            {
+              kind: "agent",
+              identityId: agent.id,
+              tokenHash: hashKey(agentToken),
+              tokenPrefix: keyPrefix(agentToken),
+            },
+            ...humanTokens.map((t, i) => ({
+              kind: "human" as const,
+              identityId: `h_${i}`,
+              tokenHash: hashKey(t),
+              tokenPrefix: keyPrefix(t),
+            })),
+          ],
+        },
       },
-    },
-  });
+    });
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code;
+    if (code !== "P2002" || !dedupKey || !ownerHumanId) {
+      throw e;
+    }
+    // Concurrent dedup race — the winner's row exists. Re-read and return
+    // the same shape as the pre-check above.
+    const winner = await prisma.surface.findFirst({
+      where: {
+        templateVersionId,
+        ownerHumanId,
+        contextKey: dedupKey,
+      },
+      include: {
+        participants: { where: { revokedAt: null } },
+      },
+    });
+    if (!winner) {
+      // The constraint fired but the row isn't visible — almost certainly
+      // means it was deleted between the P2002 and our re-read. Surface
+      // the original error so the operator notices rather than 200-ing
+      // with stale data.
+      throw e;
+    }
+    const winnerHumanCount = winner.participants.filter(
+      (p) => p.kind === "human",
+    ).length;
+    const wsBase = publicWsUrl(config);
+    return c.json(
+      {
+        surface_id: winner.id,
+        created: false,
+        tokens: { humans: [], agent: null },
+        urls: {
+          humans: [],
+          agent_stream: `${wsBase}/v1/surfaces/${winner.id}/stream`,
+        },
+        expires_at: winner.expiresAt.toISOString(),
+        title: winner.title,
+        context_key: winner.contextKey,
+        active_human_participants: winnerHumanCount,
+      },
+      200,
+    );
+  }
 
   // Bump the template's last-used timestamp — search ranks by it.
   await prisma.template.update({
