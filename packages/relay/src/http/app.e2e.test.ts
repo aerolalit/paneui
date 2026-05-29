@@ -715,10 +715,18 @@ describe("HTTP e2e", () => {
   });
 
   describe("root route", () => {
-    it("GET / redirects to the landing site", async () => {
-      const res = await app.fetch(new Request("http://t/"));
-      expect(res.status).toBe(302);
-      expect(res.headers.get("location")).toBe("https://paneui.com");
+    it("GET / serves the relay's own landing (no offsite redirect)", async () => {
+      // Previously this 302'd to https://paneui.com — the marketing site
+      // swallowed every unauthenticated visit. The landing now lives in
+      // systemPages; see src/http/routes/system-pages.ts for the page
+      // body + the logged-in /home redirect.
+      const res = await app.fetch(
+        new Request("http://t/", { redirect: "manual" }),
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const html = await res.text();
+      expect(html).toContain("Pane relay");
     });
   });
 });

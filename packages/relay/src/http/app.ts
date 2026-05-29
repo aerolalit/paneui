@@ -184,9 +184,12 @@ export function buildApp(
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-  // GET / — bounce to the landing site for unauthenticated users (Phase D
-  // sends logged-in humans to /home via /v1/auth/verify's redirect).
-  app.get("/", (c) => c.redirect("https://paneui.com", 302));
+  // GET / is served by systemPages (below) — a public landing page for
+  // logged-out callers and a redirect to /home for logged-in humans.
+  // Earlier this route 302'd to https://paneui.com, which meant the relay
+  // had no public face of its own; the operator's marketing site swallowed
+  // every unauthenticated visit. The landing now belongs to systemPages so
+  // logged-in nav, branding, and theming stay consistent.
 
   // GET /skills/pane/SKILL.md — the pane agent skill, served verbatim so an
   // agent can fetch it from the relay it uses. Registered here, before the

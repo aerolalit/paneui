@@ -238,6 +238,37 @@ function loggedOutPrompt(): string {
 }
 
 // ----------------------------------------------------------------------
+// GET / — public landing for the relay
+//
+// The relay's own front door. Previously app.ts 302'd this to
+// https://paneui.com so the operator's marketing site swallowed every
+// unauthenticated visit; the relay now serves its own page so logged-out
+// callers see what this thing IS (and where to sign in) while logged-in
+// humans go straight to /home.
+// ----------------------------------------------------------------------
+systemPages.get("/", (c) => {
+  const human = c.get("human");
+  if (human) {
+    return c.redirect("/home", 302);
+  }
+  const provider = c.get("emailProvider");
+  const signInCta = provider.available
+    ? `<a class="btn" href="/login" style="min-width:160px;">Sign in</a>`
+    : `<span style="color:var(--muted);font-size:14px;">Human login is disabled on this relay (<code>EMAIL_PROVIDER=none</code>). The agent API is still available.</span>`;
+  const body = `<div class="card" style="max-width:560px;margin:24px auto 0;padding:32px 28px;">
+      <h1 style="margin:0 0 14px;font-size:28px;letter-spacing:-0.015em;">Pane relay</h1>
+      <p style="color:var(--muted);font-size:15px;margin:0 0 18px;">A round-trip UI channel between agents and humans. An agent renders an HTML surface, the relay hands a human the URL, the human's interactions come back to the agent as structured events.</p>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 22px;">${signInCta}</div>
+      <h2 style="font-size:14px;letter-spacing:0.04em;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;">For agents</h2>
+      <ul class="list">
+        <li><div><div class="title">Skill</div><div class="meta">The pane skill, served verbatim. <code>pane skill show</code> fetches this.</div></div><a class="btn ghost" href="/skills/pane/SKILL.md">Open</a></li>
+        <li><div><div class="title">Project home</div><div class="meta">Docs, releases, and source.</div></div><a class="btn ghost" href="https://paneui.com" rel="noreferrer">paneui.com</a></li>
+      </ul>
+    </div>`;
+  return c.html(layout({ title: "Pane relay", email: null, body, active: "" }));
+});
+
+// ----------------------------------------------------------------------
 // GET /login — static login form
 // ----------------------------------------------------------------------
 systemPages.get("/login", (c) => {
