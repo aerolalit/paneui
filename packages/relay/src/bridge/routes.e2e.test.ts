@@ -238,6 +238,24 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).toContain(`src="/s/${token}/content"`);
   });
 
+  it("does NOT embed the system-pages top nav on capability-token shells", async () => {
+    // /s/<token> is the share-link path — the caller is either anonymous
+    // or a non-owner participant, neither of which has access to /home or
+    // /my-surfaces. Showing those tabs would just produce dead links. The
+    // owner-shell mount (/surfaces/:id, separate route) is where the nav
+    // belongs; here it must stay absent.
+    const { token } = await seedSession();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    // The CSS rules for .top-nav-* sit in the stylesheet either way (cheap
+    // to keep them there than to template the <style> block). What MUST NOT
+    // appear is the rendered nav itself or the sign-out handler.
+    expect(body).not.toContain('class="top-nav-bar"');
+    expect(body).not.toContain('id="top-nav-signout"');
+    expect(body).not.toContain('href="/home"');
+    expect(body).not.toContain('href="/my-surfaces"');
+  });
+
   it("sandboxes the template iframe with allow-scripts and allow-forms", async () => {
     // The template runs in a sandboxed iframe. `allow-scripts` is required so
     // the inline <script> in the template (and the pane runtime) can run.
