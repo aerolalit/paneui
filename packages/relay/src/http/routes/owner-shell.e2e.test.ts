@@ -155,6 +155,29 @@ describe("GET /surfaces/:id", () => {
     expect(html).toContain("Test Surface");
   });
 
+  it("embeds the system-pages top nav so the owner can navigate away", async () => {
+    // Without this, /surfaces/:id traps the owner — browser back is the
+    // only way to reach /home, /my-surfaces, etc.
+    const { cookie, surfaceId } = await seedOwnedSurface();
+    const res = await app.fetch(
+      new Request(`http://t/surfaces/${surfaceId}`, withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("top-nav-tabs");
+    expect(html).toContain('href="/home"');
+    expect(html).toContain('href="/my-surfaces"');
+    expect(html).toContain('href="/my-templates"');
+    expect(html).toContain('href="/my-agents"');
+    expect(html).toContain('href="/settings"');
+    // The "My surfaces" tab is the active one (we're on a surface page).
+    expect(html).toMatch(
+      /class="top-nav-tab active"[^>]*href="\/my-surfaces"|href="\/my-surfaces"[^>]*aria-current="page"/,
+    );
+    // Owner's email is shown in the account block.
+    expect(html).toContain("alice@example.com");
+    expect(html).toContain('id="top-nav-signout"');
+  });
+
   it("401s when no login cookie is present", async () => {
     const { surfaceId } = await seedOwnedSurface();
     const res = await app.fetch(new Request(`http://t/surfaces/${surfaceId}`));

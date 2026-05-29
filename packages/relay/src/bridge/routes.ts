@@ -323,6 +323,12 @@ bridge.get("/:token", async (c) => {
       agentLastEventAt,
       agentLastUsedAt,
       title: surface.title,
+      // Capability-token mount: the caller is either anonymous or a
+      // non-owner who reached this surface via a share link. They don't
+      // have the system-pages context, so no top nav. (A logged-in OWNER
+      // hitting /s/<token> is already 302'd to /surfaces/<id> above this
+      // point, so they never see the bare token shell.)
+      topNav: null,
     }),
   );
 });
@@ -459,6 +465,62 @@ export interface ShellArgs {
   // surface create — non-empty, ≤80 chars, no control chars — but still
   // untrusted at this point; HTML-escaped into <title> at render time.
   title: string;
+  // Optional top-nav block — rendered above the existing dark presence
+  // header. The owner-shell route passes this so a logged-in surface owner
+  // gets the same Home / My surfaces / My templates / My agents / Settings
+  // tabs they see on the system pages, instead of being stuck with only the
+  // browser back button. The capability-token mount (/s/<token>) leaves this
+  // null — anonymous callers don't have access to those pages anyway.
+  topNav: { email: string; active?: string } | null;
+}
+
+// Slug → label + href for the system-pages tabs the owner-shell embeds. Kept
+// in one list so adding / renaming a system page only needs an edit here AND
+// in src/http/routes/system-pages.ts (which mounts the routes). The shell's
+// stale-tab risk vs. the source of truth in system-pages.ts is small —
+// pre-existing surfaces share the same tab set, and a missing slug on either
+// side just shows an inactive tab.
+const TOP_NAV_TABS: ReadonlyArray<{
+  slug: string;
+  label: string;
+  href: string;
+}> = [
+  { slug: "home", label: "Home", href: "/home" },
+  { slug: "surfaces", label: "My surfaces", href: "/my-surfaces" },
+  { slug: "templates", label: "My templates", href: "/my-templates" },
+  { slug: "agents", label: "My agents", href: "/my-agents" },
+  { slug: "settings", label: "Settings", href: "/settings" },
+];
+
+function renderTopNav(args: ShellArgs): string {
+  if (!args.topNav) return "";
+  const { email, active } = args.topNav;
+  const tabs = TOP_NAV_TABS.map((t) => {
+    const isActive = active === t.slug;
+    const cls = isActive ? "top-nav-tab active" : "top-nav-tab";
+    const aria = isActive ? ' aria-current="page"' : "";
+    return `<a class="${cls}" href="${t.href}"${aria}>${htmlEscape(t.label)}</a>`;
+  }).join("");
+  return `<div class="top-nav">
+  <div class="top-nav-bar">
+    <a class="top-nav-brand" href="/home" aria-label="pane home">
+      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <rect width="100" height="100" rx="22" fill="#0f172a"/>
+        <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
+        <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
+        <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
+        <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
+        <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
+      </svg>
+      <span class="wordmark">pane</span>
+    </a>
+    <div class="top-nav-account">
+      <span class="top-nav-email" title="${htmlEscape(email)}">${htmlEscape(email)}</span>
+      <button id="top-nav-signout" class="top-nav-signout" type="button">Sign out</button>
+    </div>
+  </div>
+  <nav class="top-nav-tabs" aria-label="Primary">${tabs}</nav>
+</div>`;
 }
 
 export function renderShell(args: ShellArgs): string {
@@ -538,10 +600,51 @@ export function renderShell(args: ShellArgs): string {
     flex: 1; display: flex; align-items: center; justify-content: center;
     color: #8a93a6; font-size: 14px;
   }
+  /* Optional top-nav block — same dark palette as the rest of the shell, so
+     the system-pages tabs sit naturally above the presence header instead
+     of injecting a light-on-dark visual break. */
+  .top-nav {
+    background: #0b0e14; border-bottom: 1px solid #1f2633;
+    padding-top: env(safe-area-inset-top);
+  }
+  .top-nav-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px max(14px, env(safe-area-inset-left)) 9px max(14px, env(safe-area-inset-right));
+  }
+  .top-nav-brand {
+    display: inline-flex; align-items: center; gap: 7px;
+    text-decoration: none; color: #e7ecf3; flex: none;
+  }
+  .top-nav-brand .wordmark { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  .top-nav-account { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .top-nav-email {
+    color: #8a93a6; font-size: 12px; max-width: 28vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .top-nav-signout {
+    background: transparent; border: 1px solid #1f2633; color: #8a93a6;
+    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px;
+    cursor: pointer; flex: none;
+  }
+  .top-nav-signout:hover { border-color: #a78bfa; color: #cdbcff; }
+  .top-nav-tabs {
+    display: flex; gap: 2px;
+    padding: 0 max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right));
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .top-nav-tabs::-webkit-scrollbar { display: none; }
+  .top-nav-tab {
+    flex: none; text-decoration: none; color: #8a93a6;
+    font-size: 13px; font-weight: 500; line-height: 1;
+    padding: 9px 11px; border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .top-nav-tab:hover { color: #e7ecf3; }
+  .top-nav-tab.active { color: #a78bfa; font-weight: 600; border-bottom-color: #a78bfa; }
 </style>
 </head>
 <body>
-<header>
+${renderTopNav(args)}<header>
   <span class="brand">
     <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
       <rect width="100" height="100" rx="22" fill="#0f172a"/>
@@ -590,7 +693,17 @@ ${
       `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
 }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
-<script nonce="${args.nonce}">${SHELL_JS}</script>
+<script nonce="${args.nonce}">${SHELL_JS}</script>${
+    args.topNav
+      ? `
+<script nonce="${args.nonce}">
+  document.getElementById("top-nav-signout")?.addEventListener("click", async () => {
+    try { await fetch("/v1/auth/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+    location.href = "/login";
+  });
+</script>`
+      : ""
+  }
 </body>
 </html>`;
 }
