@@ -501,6 +501,13 @@ function renderTopNav(args: ShellArgs): string {
     const aria = isActive ? ' aria-current="page"' : "";
     return `<a class="${cls}" href="${t.href}"${aria}>${htmlEscape(t.label)}</a>`;
   }).join("");
+  // Presence pills live in the SAME bar as the brand + account when the top
+  // nav is rendered — previously the shell stacked a second dark `<header>`
+  // below the nav just to hold them, producing three visible header rows
+  // (brand row, presence row, tabs row). One row each for "where am I" and
+  // "what is the relay doing" is enough; presence sits beside the email so
+  // the eye picks up both states without scanning vertically.
+  const closedLabel = args.isClosed ? "surface closed" : "no agent yet";
   return `<div class="top-nav">
   <div class="top-nav-bar">
     <a class="top-nav-brand" href="/home" aria-label="pane home">
@@ -514,6 +521,30 @@ function renderTopNav(args: ShellArgs): string {
       </svg>
       <span class="wordmark">pane</span>
     </a>
+    <div class="top-nav-presence">
+      <span class="pill" aria-label="WebSocket connection state">
+        <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+          <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
+          <line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+        <span id="dot" class="dot"></span>
+        <span id="status" class="info">connecting...</span>
+      </span>
+      <span class="pill" aria-label="Agent presence">
+        <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="9" width="16" height="11" rx="2.5"/>
+          <path d="M12 9V5"/>
+          <circle cx="12" cy="3.5" r="1.6"/>
+          <line x1="9" y1="14" x2="9" y2="14.5"/>
+          <line x1="15" y1="14" x2="15" y2="14.5"/>
+        </svg>
+        <span id="agent-dot" class="dot"></span>
+        <span id="agent-status" class="info">${closedLabel}</span>
+      </span>
+    </div>
     <div class="top-nav-account">
       <span class="top-nav-email" title="${htmlEscape(email)}">${htmlEscape(email)}</span>
       <button id="top-nav-signout" class="top-nav-signout" type="button">Sign out</button>
@@ -616,7 +647,19 @@ export function renderShell(args: ShellArgs): string {
     text-decoration: none; color: #e7ecf3; flex: none;
   }
   .top-nav-brand .wordmark { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
-  .top-nav-account { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  /* Presence pills inside the top nav. Pushed to the right via margin-left:auto
+     on the FIRST trailing block; the account block then sits next to it
+     without claiming the auto-margin a second time. */
+  .top-nav-presence { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+  .top-nav-presence .pill { padding: 2px 8px 2px 7px; font-size: 12px; }
+  .top-nav-account { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  /* On narrow viewports the presence pills wrap to the next visual line; the
+     status text is short enough that the icon + dot still reads at a glance,
+     so we ellipsis-truncate the .info span before the pill itself collapses. */
+  @media (max-width: 540px) {
+    .top-nav-presence .info { display: none; }
+    .top-nav-email { max-width: 22vw; }
+  }
   .top-nav-email {
     color: #8a93a6; font-size: 12px; max-width: 28vw;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -644,7 +687,14 @@ export function renderShell(args: ShellArgs): string {
 </style>
 </head>
 <body>
-${renderTopNav(args)}<header>
+${renderTopNav(args)}${
+    args.topNav
+      ? // Top-nav mode already carries the brand + presence pills inline,
+        // so we skip the standalone dark `<header>` block — otherwise the
+        // shell shows three header rows (brand, presence, tabs) for one
+        // page's worth of context.
+        ""
+      : `<header>
   <span class="brand">
     <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
       <rect width="100" height="100" rx="22" fill="#0f172a"/>
@@ -679,7 +729,8 @@ ${renderTopNav(args)}<header>
     <span id="agent-dot" class="dot"></span>
     <span id="agent-status" class="info">${args.isClosed ? "surface closed" : "no agent yet"}</span>
   </span>
-</header>
+</header>`
+  }
 ${
   args.isClosed
     ? `<div class="closed">This surface is closed. It cannot accept new events.</div>`
