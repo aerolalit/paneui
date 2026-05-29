@@ -176,6 +176,16 @@ describe("GET /surfaces/:id", () => {
     // Owner's email is shown in the account block.
     expect(html).toContain("alice@example.com");
     expect(html).toContain('id="top-nav-signout"');
+    // Presence pills moved INTO the top nav (one row + tabs row) instead of
+    // a separate dark <header> below it — folding the duplicated brand row
+    // out. Confirm the connection + agent status spans the shell client
+    // updates are present in the top nav, and the standalone dark header
+    // (with class="brand-name") is gone.
+    expect(html).toContain('id="dot"');
+    expect(html).toContain('id="status"');
+    expect(html).toContain('id="agent-dot"');
+    expect(html).toContain('id="agent-status"');
+    expect(html).not.toContain('class="brand-name"');
   });
 
   it("401s when no login cookie is present", async () => {
