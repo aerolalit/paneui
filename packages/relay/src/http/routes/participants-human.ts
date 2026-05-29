@@ -16,6 +16,7 @@
 
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import type { PrismaClient } from "@prisma/client";
 import {
   generateHumanParticipantToken,
   hashKey,
@@ -28,6 +29,66 @@ import { errors } from "../errors.js";
 const participantsHuman = new Hono<HumanAuthEnv>();
 
 participantsHuman.use("*", requireHuman);
+
+// Mint a kind="human" Participant on a surface, retrying on the
+// (surfaceId, identityId) unique-constraint collision a concurrent mint can
+// cause. The identityId is allocated monotonically from the ever-minted human
+// count (matching the agent-side allocator in routes/surfaces.ts); two
+// concurrent invites that both read the same count and pick the same `h_${N}`
+// see P2002 on the loser, which then loops back, re-reads the count, and
+// picks the next index. Without this, both invite-email and public-link
+// would 500 under realistic concurrency (the comment used to say "we retry on
+// conflict" but the retry was never actually wired up).
+async function mintHumanParticipantWithRetry(args: {
+  prisma: PrismaClient;
+  surfaceId: string;
+  tokenHash: string;
+  tokenPrefix: string;
+  humanId?: string;
+}): Promise<{ id: string; identityId: string; tokenPrefix: string }> {
+  const { prisma, surfaceId, tokenHash, tokenPrefix, humanId } = args;
+  // Cap the retry budget. Each round wins or loses one identity-id slot, so
+  // the worst case bounded by "at most N concurrent racers each running to
+  // exhaustion against each other" — pegging this at 8 covers any realistic
+  // owner-side burst (clicking Invite twice fast in two tabs).
+  const MAX_ATTEMPTS = 8;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const everCount = await prisma.participant.count({
+      where: { surfaceId, kind: "human" },
+    });
+    try {
+      return await prisma.participant.create({
+        data: {
+          surfaceId,
+          kind: "human",
+          identityId: `h_${everCount}`,
+          tokenHash,
+          tokenPrefix,
+          ...(humanId ? { humanId } : {}),
+        },
+        select: { id: true, identityId: true, tokenPrefix: true },
+      });
+    } catch (e) {
+      // Narrow to (surfaceId, identityId) collisions; let other P2002s
+      // (e.g. tokenHash) bubble — those signal a real bug. See
+      // routes/surfaces.ts (POST /:id/participants) for the matching shape.
+      const code = (e as { code?: string } | null)?.code;
+      if (code !== "P2002" || attempt === MAX_ATTEMPTS - 1) throw e;
+      const target = (e as { meta?: { target?: unknown } } | null)?.meta
+        ?.target;
+      const targetStr = Array.isArray(target)
+        ? target.join(",")
+        : String(target ?? "");
+      const message = (e as { message?: string } | null)?.message ?? "";
+      const isIdentityCollision =
+        targetStr.includes("identity_id") ||
+        targetStr.includes("participants_session_id_identity_id_key") ||
+        message.includes("identity_id");
+      if (!isIdentityCollision) throw e;
+    }
+  }
+  throw new Error("could not allocate participant identity-id after retries");
+}
 
 /**
  * Verifies the calling human owns the surface (or owns the agent that
@@ -125,28 +186,24 @@ participantsHuman.post("/:id/invite-email", async (c) => {
 
   // Mint the identity-bound participant. The identityId convention here
   // mirrors agent-side mints: `h_${count}`. The (surfaceId, identityId)
-  // unique constraint serialises concurrent inserts; we retry on conflict.
+  // unique constraint serialises concurrent inserts; we retry on conflict
+  // (the helper below mirrors the agent-side mint loop in
+  // src/http/routes/surfaces.ts — same shape, same constraint).
+  //
+  // Note: the relay deliberately accepts multiple identity-bound
+  // participants for the same human on the same surface (the owner can
+  // mint several revocable invite URLs for one person). So we only dedup
+  // on identityId collisions — not on (surfaceId, humanId) — and let the
+  // counter drive a fresh slot each call.
   const token = generateHumanParticipantToken();
   const tokenHash = hashKey(token);
   const tokenPrefix_ = keyPrefix(token);
-
-  // Single attempt is fine here — concurrent invites for the SAME email on
-  // the SAME surface would dedup via the (surfaceId, identityId) unique
-  // constraint, but we'd prefer to also dedup by humanId. The relay accepts
-  // multiple identity-bound participants for the same human (the human
-  // gets two URLs — both work; either can be revoked independently).
-  const everCount = await prisma.participant.count({
-    where: { surfaceId: surface.id, kind: "human" },
-  });
-  const participant = await prisma.participant.create({
-    data: {
-      surfaceId: surface.id,
-      kind: "human",
-      identityId: `h_${everCount}`,
-      humanId: target.id,
-      tokenHash,
-      tokenPrefix: tokenPrefix_,
-    },
+  const participant = await mintHumanParticipantWithRetry({
+    prisma,
+    surfaceId: surface.id,
+    humanId: target.id,
+    tokenHash,
+    tokenPrefix: tokenPrefix_,
   });
 
   return c.json(
@@ -180,19 +237,12 @@ participantsHuman.post("/:id/public-link", async (c) => {
   const token = generateHumanParticipantToken();
   const tokenHash = hashKey(token);
   const tokenPrefix_ = keyPrefix(token);
-
-  const everCount = await prisma.participant.count({
-    where: { surfaceId: surface.id, kind: "human" },
-  });
-  const participant = await prisma.participant.create({
-    data: {
-      surfaceId: surface.id,
-      kind: "human",
-      identityId: `h_${everCount}`,
-      // humanId + agentId both NULL — this is an anonymous capability participant.
-      tokenHash,
-      tokenPrefix: tokenPrefix_,
-    },
+  // humanId omitted — this is an anonymous capability participant.
+  const participant = await mintHumanParticipantWithRetry({
+    prisma,
+    surfaceId: surface.id,
+    tokenHash,
+    tokenPrefix: tokenPrefix_,
   });
 
   return c.json(

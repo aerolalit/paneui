@@ -242,11 +242,20 @@ function loggedOutPrompt(): string {
 // ----------------------------------------------------------------------
 systemPages.get("/login", (c) => {
   const provider = c.get("emailProvider");
+  const config = c.get("config");
   const human = c.get("human");
   if (human) {
     // Already signed in — bounce to /home rather than re-prompting.
     return c.redirect("/home", 302);
   }
+  // Format the magic-link TTL for the success message. Always shown in
+  // minutes — sub-minute TTLs round up to "1 minute" since "0 minutes" or
+  // "30 seconds" would be more noise than signal on a login page.
+  const ttlMinutes = Math.max(
+    1,
+    Math.round(config.MAGIC_LINK_TTL_SECONDS / 60),
+  );
+  const ttlLabel = ttlMinutes === 1 ? "1 minute" : `${ttlMinutes} minutes`;
   const body = !provider.available
     ? `<div class="card">
         <h1>Human-side login is disabled</h1>
@@ -278,7 +287,7 @@ systemPages.get("/login", (c) => {
                body: JSON.stringify({ email }),
              });
              if (res.ok) {
-               status.textContent = "Check " + email + " for your sign-in link. It expires in 15 minutes.";
+               status.textContent = "Check " + email + " for your sign-in link. It expires in ${ttlLabel}.";
              } else {
                const body = await res.json().catch(() => ({}));
                status.textContent = "Couldn't send: " + (body.error?.message || res.statusText);
