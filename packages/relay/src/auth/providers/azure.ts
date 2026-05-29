@@ -3,15 +3,43 @@
 // Uses the `@azure/communication-email` SDK. Dynamic import so a self-host
 // that doesn't pick this provider never pulls the SDK into its bundle.
 //
-// Configure with AZURE_COMMUNICATION_CONNECTION_STRING (from the Communication
-// Services resource in the Azure portal) and EMAIL_FROM (a verified sender
-// address in the same resource's domain configuration).
+// Two auth paths — pick whichever fits the deployment:
+//
+//   1. Managed identity (preferred when the relay runs on Azure):
+//      pass `endpointUrl`. The SDK uses DefaultAzureCredential to fetch
+//      a token at request time; no secret is stored anywhere. The
+//      identity (Container App MI / VM MSI / az-CLI dev login) must
+//      hold the "Communication and Email Service Owner" role on the
+//      ACS resource.
+//
+//   2. Connection string (simpler for local testing or self-hosters
+//      without an MI): pass `connectionString`. Authenticates via the
+//      shared key embedded in the string.
+//
+// If both are provided the caller (factory.ts) chooses one; this module
+// just constructs an EmailClient with whatever auth it was given.
 
 import type { EmailProvider } from "../email-provider.js";
 
-interface AzureEmailOpts {
-  connectionString: string;
-  from: string;
+export type AzureEmailOpts =
+  | { kind: "endpoint"; endpointUrl: string; from: string }
+  | { kind: "connection-string"; connectionString: string; from: string };
+
+// Structural type for the SDK's EmailClient — both overloads it exposes.
+// We import the SDK dynamically (see below) and cast to this shape.
+interface EmailClientCtor {
+  // (connectionString)
+  new (cs: string): EmailClientInstance;
+  // (endpoint, credential)
+  new (endpoint: string, credential: unknown): EmailClientInstance;
+}
+interface EmailClientInstance {
+  beginSend(message: unknown): Promise<{
+    pollUntilDone(): Promise<{
+      status: string;
+      error?: { code: string; message: string };
+    }>;
+  }>;
 }
 
 export async function makeAzureProvider(
@@ -20,19 +48,10 @@ export async function makeAzureProvider(
   // Dynamic import: the SDK isn't a hard dependency. Self-hosters who set
   // EMAIL_PROVIDER=azure must install `@azure/communication-email` themselves;
   // the hosted relay's image bundles it.
-  let EmailClient: {
-    new (cs: string): {
-      beginSend(message: unknown): Promise<{
-        pollUntilDone(): Promise<{
-          status: string;
-          error?: { code: string; message: string };
-        }>;
-      }>;
-    };
-  };
+  let EmailClient: EmailClientCtor;
   try {
     const mod = await import("@azure/communication-email");
-    EmailClient = mod.EmailClient as unknown as typeof EmailClient;
+    EmailClient = mod.EmailClient as unknown as EmailClientCtor;
   } catch {
     throw new Error(
       "EMAIL_PROVIDER=azure requires the @azure/communication-email npm " +
@@ -40,7 +59,29 @@ export async function makeAzureProvider(
         "different provider.",
     );
   }
-  const client = new EmailClient(opts.connectionString);
+
+  let client: EmailClientInstance;
+  if (opts.kind === "endpoint") {
+    // Managed-identity path. @azure/identity is a peer of the storage SDK
+    // already pulled in for blob auth; reuse it here so we don't add a
+    // separate dependency just for ACS.
+    let DefaultAzureCredential: new () => unknown;
+    try {
+      const mod = await import("@azure/identity");
+      DefaultAzureCredential =
+        mod.DefaultAzureCredential as unknown as new () => unknown;
+    } catch {
+      throw new Error(
+        "AZURE_COMMUNICATION_ENDPOINT_URL is set but @azure/identity is not " +
+          "installed — run `npm install @azure/identity`, set " +
+          "AZURE_COMMUNICATION_CONNECTION_STRING instead, or pick a different " +
+          "provider.",
+      );
+    }
+    client = new EmailClient(opts.endpointUrl, new DefaultAzureCredential());
+  } else {
+    client = new EmailClient(opts.connectionString);
+  }
 
   return {
     kind: "azure",

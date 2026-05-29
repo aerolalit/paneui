@@ -21,7 +21,20 @@ export async function makeEmailProvider(
     case "dev":
       return makeDevProvider({ isProduction: config.isProduction });
     case "azure":
+      // Prefer the managed-identity path when AZURE_COMMUNICATION_ENDPOINT_URL
+      // is set — no secret stored anywhere, DefaultAzureCredential picks up
+      // the MI token at request time. Fall back to the connection-string
+      // path for local testing or self-hosters not running on Azure. The
+      // config validator already enforces that at least one is present.
+      if (config.AZURE_COMMUNICATION_ENDPOINT_URL) {
+        return makeAzureProvider({
+          kind: "endpoint",
+          endpointUrl: config.AZURE_COMMUNICATION_ENDPOINT_URL,
+          from: config.EMAIL_FROM!,
+        });
+      }
       return makeAzureProvider({
+        kind: "connection-string",
         connectionString: config.AZURE_COMMUNICATION_CONNECTION_STRING!,
         from: config.EMAIL_FROM!,
       });

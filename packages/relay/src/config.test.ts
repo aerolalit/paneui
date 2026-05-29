@@ -126,6 +126,47 @@ describe("config", () => {
     );
   });
 
+  // ---- EMAIL_PROVIDER=azure: ACS connection-string vs managed-identity ----
+
+  it("fails fast when EMAIL_PROVIDER=azure has neither endpoint nor connection string", () => {
+    expect(() =>
+      loadConfig({ EMAIL_PROVIDER: "azure", EMAIL_FROM: "x@example.com" }),
+    ).toThrow(/AZURE_COMMUNICATION_ENDPOINT_URL/);
+  });
+
+  it("accepts EMAIL_PROVIDER=azure with just the managed-identity endpoint URL (no secret)", () => {
+    const c = loadConfig({
+      EMAIL_PROVIDER: "azure",
+      EMAIL_FROM: "x@example.com",
+      AZURE_COMMUNICATION_ENDPOINT_URL:
+        "https://acs-eur-prod-pane.europe.communication.azure.com",
+    });
+    expect(c.EMAIL_PROVIDER).toBe("azure");
+    expect(c.AZURE_COMMUNICATION_ENDPOINT_URL).toMatch(/communication.azure/);
+    expect(c.AZURE_COMMUNICATION_CONNECTION_STRING).toBeUndefined();
+  });
+
+  it("accepts EMAIL_PROVIDER=azure with just a connection string (no endpoint URL)", () => {
+    const c = loadConfig({
+      EMAIL_PROVIDER: "azure",
+      EMAIL_FROM: "x@example.com",
+      AZURE_COMMUNICATION_CONNECTION_STRING:
+        "endpoint=https://x.communication.azure.com/;accesskey=AAAA",
+    });
+    expect(c.EMAIL_PROVIDER).toBe("azure");
+    expect(c.AZURE_COMMUNICATION_CONNECTION_STRING).toContain("endpoint=");
+  });
+
+  it("rejects an AZURE_COMMUNICATION_ENDPOINT_URL that is not a valid URL", () => {
+    expect(() =>
+      loadConfig({
+        EMAIL_PROVIDER: "azure",
+        EMAIL_FROM: "x@example.com",
+        AZURE_COMMUNICATION_ENDPOINT_URL: "not-a-url",
+      }),
+    ).toThrow();
+  });
+
   it("does not require a connection string when azure is disabled via METRICS_ENABLED=false", () => {
     const c = loadConfig({
       METRICS_EXPORTER: "azure",
