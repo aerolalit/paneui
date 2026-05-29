@@ -291,8 +291,24 @@ const schema = z.object({
   // ---- Azure Communication Services Email (EMAIL_PROVIDER=azure) ----
   //
   // Azure's transactional email service. Same Azure subscription as the
-  // hosted relay; generous free tier (25K emails/month). Configure with a
-  // connection string from the Communication Service resource in the portal.
+  // hosted relay; generous free tier (25K emails/month). Two auth modes,
+  // pick exactly one:
+  //
+  //   1. Managed identity (preferred for prod on Azure Container Apps):
+  //      set AZURE_COMMUNICATION_ENDPOINT_URL to the resource's endpoint
+  //      (e.g. https://acs-eur-prod-pane.europe.communication.azure.com)
+  //      and grant the relay's MI the "Communication and Email Service
+  //      Owner" role on the Communication Service resource. No secret
+  //      stored anywhere — DefaultAzureCredential picks up the MI token
+  //      at request time.
+  //
+  //   2. Connection string (the simple path, useful for local testing or
+  //      self-hosters without an MI): paste the primary connection string
+  //      from the portal. The relay logs a startup warning so operators
+  //      don't ship this to prod by mistake.
+  //
+  // If both are set the endpoint URL wins (MI is the better auth path).
+  AZURE_COMMUNICATION_ENDPOINT_URL: z.string().url().optional(),
   AZURE_COMMUNICATION_CONNECTION_STRING: z.string().optional(),
 
   // ---- SMTP (EMAIL_PROVIDER=smtp) ----
@@ -415,12 +431,17 @@ export function loadConfig(
   }
   if (
     parsed.EMAIL_PROVIDER === "azure" &&
+    !parsed.AZURE_COMMUNICATION_ENDPOINT_URL &&
     !parsed.AZURE_COMMUNICATION_CONNECTION_STRING
   ) {
     throw new ConfigError(
       "invalid relay configuration:\n" +
-        "  - AZURE_COMMUNICATION_CONNECTION_STRING: required when " +
-        "EMAIL_PROVIDER=azure (from the Azure Communication Service resource)",
+        "  - EMAIL_PROVIDER=azure needs one of:\n" +
+        "      AZURE_COMMUNICATION_ENDPOINT_URL  (managed-identity path,\n" +
+        "        preferred on Azure; grant the relay's MI 'Communication\n" +
+        "        and Email Service Owner' on the ACS resource); or\n" +
+        "      AZURE_COMMUNICATION_CONNECTION_STRING  (connection-string\n" +
+        "        path, simpler for local testing / non-Azure self-hosters)",
     );
   }
   if (parsed.EMAIL_PROVIDER === "smtp" && !parsed.SMTP_HOST) {
