@@ -88,6 +88,49 @@ function withCookie(cookie: string): RequestInit {
   return { headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` } };
 }
 
+describe("GET / (public landing)", () => {
+  it("serves the relay's own landing page to logged-out callers", async () => {
+    // Previously this 302'd to https://paneui.com; the relay now owns its
+    // front door.
+    const res = await app.fetch(
+      new Request("http://t/", { redirect: "manual" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("Pane relay");
+    expect(html).toContain('href="/login"');
+    expect(html).toContain('href="/skills/pane/SKILL.md"');
+  });
+
+  it("redirects logged-in humans to /home", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/", {
+        ...withCookie(cookie),
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/home");
+  });
+
+  it("explains the EMAIL_PROVIDER=none case on the landing", async () => {
+    const res = await appNoEmail.fetch(
+      new Request("http://t/", { redirect: "manual" }),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The body card explains the disabled provider in plain language.
+    expect(html).toContain("Human login is disabled");
+    // It omits the primary Sign-in button (no card-level CTA). The nav still
+    // has a Sign-in link — clicking it lands on /login which renders the
+    // same "disabled" message, so the affordance is harmless. We just check
+    // the card itself doesn't offer one.
+    expect(html).not.toContain('class="btn" href="/login"');
+  });
+});
+
 describe("GET /login", () => {
   it("returns an HTML page when EMAIL_PROVIDER is configured", async () => {
     const res = await app.fetch(new Request("http://t/login"));
