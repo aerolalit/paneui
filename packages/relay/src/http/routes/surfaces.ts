@@ -16,6 +16,7 @@ import {
   keyPrefix,
 } from "../../keys.js";
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
+import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 import { compareSurfaceSchemas } from "../../core/schema-compat.js";
 import type { EventSchema } from "../../types.js";
@@ -47,6 +48,35 @@ function publicWsUrl(config: Config): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
+}
+
+// #283 — assert the caller may act on this surface. A surface is in scope
+// for any agent claimed to the same human as its owning agent. Throws
+// sessionNotFound when the surface is missing or owned by a strictly
+// unrelated agent (no shared human); throws forbidden when the surface
+// belongs to a different human (so the caller knows they hit a real id
+// that just isn't theirs to act on, which is the debugging hint the
+// issue called out).
+type SurfaceScopeFields = { agentId: string; ownerHumanId: string | null };
+
+// Returns the narrowed (non-null) surface so callers can continue working
+// with the surface in a type-safe way without re-asserting.
+async function assertSurfaceInScope<T extends SurfaceScopeFields>(
+  prisma: PrismaClient,
+  surface: T | null,
+  me: { id: string; ownerHumanId: string | null },
+): Promise<T> {
+  if (!surface) throw errors.sessionNotFound();
+  if (surface.agentId === me.id) return surface;
+  const scope = await agentScope(prisma, me);
+  if (scope.has(surface.agentId)) return surface;
+  if (surface.ownerHumanId !== null) {
+    throw errors.forbidden(
+      "forbidden_cross_human",
+      "this surface belongs to a different human's agents",
+    );
+  }
+  throw errors.sessionNotFound();
 }
 
 // #259 — mint a kind="agent" Participant for the calling agent on a surface
@@ -227,9 +257,12 @@ surfaces.get("/", requireAgent, async (c) => {
         }
       : {};
 
+  // #283 — once an agent is claimed, the list spans every agent
+  // claimed to the same human. Unclaimed agents stay self-scoped.
+  const scope = await agentScope(prisma, me);
   const rows = await prisma.surface.findMany({
     where: {
-      agentId: me.id,
+      agentId: { in: [...scope] },
       ...statusWhere,
       ...artifactWhere,
       ...cursorWhere,
@@ -769,11 +802,11 @@ surfaces.get("/:id", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
-  const surface = await prisma.surface.findUnique({
+  const surfaceRaw = await prisma.surface.findUnique({
     where: { id },
     include: { templateVersion: true },
   });
-  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
   const isExpired = surface.expiresAt.getTime() < Date.now();
   return c.json({
     surface_id: surface.id,
@@ -816,12 +849,13 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
   }
   const compat = body.compat ?? "strict";
 
-  // Surface — must exist, must be owned by the calling agent, must be live.
-  const surface = await prisma.surface.findUnique({
+  // Surface — must exist, must be owned by the calling agent (or a
+  // same-human sibling agent — #283), must be live.
+  const surfaceRaw = await prisma.surface.findUnique({
     where: { id },
     include: { templateVersion: { include: { template: true } } },
   });
-  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
   if (surface.status === "closed" || surface.expiresAt.getTime() < Date.now()) {
     throw errors.gone(
       "surface is closed — upgrading a closed surface has no effect",
@@ -919,8 +953,8 @@ surfaces.delete("/:id", requireAgent, async (c) => {
   const store = c.get("blobStore");
   const id = c.req.param("id");
   const me = c.get("agent");
-  const surface = await prisma.surface.findUnique({ where: { id } });
-  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
+  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
   if (surface.status === "closed") return c.body(null, 204);
   await prisma.surface.update({
     where: { id },
@@ -980,11 +1014,11 @@ surfaces.get("/:id/participants", requireAgent, async (c) => {
   const id = c.req.param("id");
   const me = c.get("agent");
 
-  const surface = await prisma.surface.findUnique({
+  const surfaceRaw = await prisma.surface.findUnique({
     where: { id },
-    select: { agentId: true },
+    select: { agentId: true, ownerHumanId: true },
   });
-  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  await assertSurfaceInScope(prisma, surfaceRaw, me);
 
   const participants = await prisma.participant.findMany({
     where: { surfaceId: id },
@@ -1036,8 +1070,8 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
     );
   }
 
-  const surface = await prisma.surface.findUnique({ where: { id } });
-  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
+  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
 
   // Effectively-closed surfaces cannot be revived by minting a new URL —
   // tell the agent to `pane create` instead. The check matches the
@@ -1166,8 +1200,8 @@ surfaces.delete(
     // Owner check on the surface first — cross-agent ids must 404 like every
     // other surface-scoped endpoint (existence-oracle parity with DELETE
     // /v1/surfaces/:id).
-    const surface = await prisma.surface.findUnique({ where: { id } });
-    if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+    const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
+    await assertSurfaceInScope(prisma, surfaceRaw, me);
 
     const participant = await prisma.participant.findUnique({
       where: { id: participantId },
