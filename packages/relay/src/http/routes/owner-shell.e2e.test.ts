@@ -188,10 +188,76 @@ describe("GET /surfaces/:id", () => {
     expect(html).not.toContain('class="brand-name"');
   });
 
-  it("401s when no login cookie is present", async () => {
+  it("401s when no login cookie is present (API / curl path — no Accept header)", async () => {
     const { surfaceId } = await seedOwnedSurface();
     const res = await app.fetch(new Request(`http://t/surfaces/${surfaceId}`));
     expect(res.status).toBe(401);
+    expect(res.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("302s an anonymous browser to /login?return=… (#269)", async () => {
+    // Previously a browser hitting /surfaces/:id cold got a raw JSON 401,
+    // which renders as a wall of text on the page. The bridge already
+    // handles this for identity-bound participants — match the behavior on
+    // the owner-shell mount.
+    const { surfaceId } = await seedOwnedSurface();
+    const res = await app.fetch(
+      new Request(`http://t/surfaces/${surfaceId}`, {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(302);
+    const loc = res.headers.get("location") ?? "";
+    expect(loc.startsWith("/login?return=")).toBe(true);
+    expect(decodeURIComponent(loc.slice("/login?return=".length))).toBe(
+      `/surfaces/${surfaceId}`,
+    );
+  });
+
+  it("302s on an expired cookie too — not just absent ones", async () => {
+    // An expired pane_login cookie is structurally the same problem as no
+    // cookie. Browser nav with such a cookie should still bounce, not show
+    // a JSON 401 wall.
+    const { surfaceId } = await seedOwnedSurface();
+    // Plant a login row that's already expired.
+    const expiredHuman = await prisma.human.create({
+      data: { email: "expired@example.com", verifiedAt: new Date() },
+    });
+    const expiredCookie = generateLoginCookie();
+    await prisma.login.create({
+      data: {
+        humanId: expiredHuman.id,
+        cookieHash: hashLoginCookie(expiredCookie),
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/surfaces/${surfaceId}`, {
+        headers: {
+          Accept: "text/html",
+          cookie: `${LOGIN_COOKIE_NAME}=${expiredCookie}`,
+        },
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location") ?? "").toContain("/login?return=");
+  });
+
+  it("still 401s a POST (xhr from a stale page) even with Accept: text/html", async () => {
+    // Only GETs are mis-clicks worth redirecting; a POST to /ws-ticket
+    // without a cookie is an XHR that needs the structured error to
+    // branch on. The middleware preserves that.
+    const { surfaceId } = await seedOwnedSurface();
+    const res = await app.fetch(
+      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+        method: "POST",
+        headers: { Accept: "text/html" },
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("content-type")).toContain("application/json");
   });
 
   it("404s when the logged-in human is not the surface owner", async () => {
