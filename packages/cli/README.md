@@ -63,5 +63,5 @@ pane surface watch "$SESSION" | jq 'select(.type == "human_response")'
 ## Links
 
 - Repo: <https://github.com/aerolalit/paneui>
-- Spec: <https://github.com/aerolalit/paneui/attachment/main/docs/SPEC.md>
+- Spec: <https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md>
 - License: MIT

@@ -3,7 +3,11 @@
 // how to fix its input (`hint`), and where to read more (`docsUrl`).
 
 // No hosted docs site yet — link the repo SPEC with verified heading anchors.
-const SPEC = "https://github.com/aerolalit/paneui/attachment/main/docs/SPEC.md";
+// `/blob/<branch>/<path>` is GitHub's tree-URL infix; it has no relation to
+// the product noun rename (Tier 3, #239: blob → attachment) but the rename
+// sweep flipped this string anyway, breaking the docs link in every error
+// envelope. See #260.
+const SPEC = "https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md";
 const DOCS = {
   auth: `${SPEC}#auth-three-layers-only-1-and-2-in-v1`,
   api: `${SPEC}#http-api-v1`,
