@@ -451,23 +451,69 @@ systemPages.get("/my-templates", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  // Auto-flow: templates owned by an agent the human has claimed.
-  const templates = await prisma.template.findMany({
-    where: { owner: { ownerHumanId: human.id } },
-    orderBy: { lastUsedAt: { sort: "desc", nulls: "last" } },
-    take: 50,
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      description: true,
-      shape: true,
-      publishedAt: true,
-      createdAt: true,
-    },
-  });
+  // Two lists side by side: templates the human's claimed agents own
+  // (authored), and templates the human has installed from the public
+  // catalog. Installed entries carry the #267 PR C blocked-upgrade
+  // pill when an auto-advance was refused by the compat gate.
+  const [templates, installs] = await Promise.all([
+    prisma.template.findMany({
+      where: { owner: { ownerHumanId: human.id } },
+      orderBy: { lastUsedAt: { sort: "desc", nulls: "last" } },
+      take: 50,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        shape: true,
+        publishedAt: true,
+        createdAt: true,
+      },
+    }),
+    prisma.humanTemplateInstall.findMany({
+      where: { humanId: human.id, uninstalledAt: null },
+      orderBy: { installedAt: "desc" },
+      take: 50,
+      include: {
+        template: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            latestVersion: true,
+          },
+        },
+      },
+    }),
+  ]);
+  const installedSection =
+    installs.length === 0
+      ? ""
+      : `<h2 style="margin-top:24px;">Installed</h2>
+  <div class="card">
+    <ul class="list">${installs
+      .map((i) => {
+        const blockedPill = i.upgradeBlockedAt
+          ? `<span class="pill" style="background:#fff4ec;color:#b34700;">Upgrade blocked</span>`
+          : "";
+        const policyPill =
+          i.upgradePolicy === "follow"
+            ? `<span class="pill muted">Follow</span>`
+            : `<span class="pill muted">Pinned v${i.installedVersion}</span>`;
+        const newerAvailable =
+          i.template.latestVersion > i.installedVersion
+            ? `<span class="pill" style="background:var(--accent-soft);color:var(--accent-ink);">v${i.template.latestVersion} available</span>`
+            : "";
+        const blockedNote = i.upgradeBlockedAt
+          ? `<div class="meta" style="color:#b34700;margin-top:4px;">A new version of this template can't be applied automatically — its schema narrows yours. Visit the template author or upgrade with <code>compat: &quot;force&quot;</code>.</div>`
+          : "";
+        return `<li><div><div class="title">${escapeHtml(i.template.name ?? i.template.slug ?? i.template.id)}</div><div class="meta">installed v${i.installedVersion}</div>${blockedNote}</div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${policyPill}${newerAvailable}${blockedPill}</div></li>`;
+      })
+      .join("")}</ul>
+  </div>`;
   const body = `<h1>My templates</h1>
-  <p style="color:var(--muted);font-size:14.5px;">Templates created by agents you own. Templates from other people that you've installed will appear here too once the public catalog lands.</p>
+  <p style="color:var(--muted);font-size:14.5px;">Templates created by agents you own. Templates you've installed from the public catalog appear below.</p>
+  <h2>Authored</h2>
   <div class="card">
     ${
       templates.length === 0
@@ -479,7 +525,8 @@ systemPages.get("/my-templates", async (c) => {
             )
             .join("")}</ul>`
     }
-  </div>`;
+  </div>
+  ${installedSection}`;
   return c.html(
     layout({
       title: "My templates",

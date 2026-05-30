@@ -159,6 +159,11 @@ model HumanTemplateInstall {
   installedAt      DateTime  @default(now()) @map("installed_at")
   uninstalledAt    DateTime? @map("uninstalled_at")
 
+  // #267 PR C — see the sqlite schema for the policy semantics; same here.
+  upgradePolicy        String    @default("pin") @map("upgrade_policy")
+  upgradeBlockedAt     DateTime? @map("upgrade_blocked_at")
+  upgradeBlockedReason Json?     @map("upgrade_blocked_reason")
+
   @@unique([humanId, templateId])
   @@index([humanId])
   @@index([templateId])

@@ -351,3 +351,374 @@ describe("POST /v1/templates/:id/uninstall (human)", () => {
     expect(res.status).toBe(204);
   });
 });
+
+// -------------------------------------------------------------------------
+// #267 PR C — install upgrade route + follow auto-advance
+// -------------------------------------------------------------------------
+
+async function seedPublishedTemplateWithV1(
+  schema: object,
+): Promise<{ templateId: string; ownerAgentId: string; v1Id: string }> {
+  const owner = await seedAgent();
+  const tmpl = await prisma.template.create({
+    data: {
+      ownerId: owner.id,
+      name: "tpl",
+      publishedAt: new Date(),
+      latestVersion: 1,
+    },
+  });
+  const v1 = await prisma.templateVersion.create({
+    data: {
+      templateId: tmpl.id,
+      version: 1,
+      templateType: "html-inline",
+      templateSource: "<p>v1</p>",
+      eventSchema: schema,
+    },
+  });
+  return { templateId: tmpl.id, ownerAgentId: owner.id, v1Id: v1.id };
+}
+
+async function publishV2OnTemplate(
+  templateId: string,
+  ownerApiKey: string,
+  v2Schema: object,
+  v2Source = "<p>v2</p>",
+): Promise<Response> {
+  return app.fetch(
+    new Request(`http://t/v1/templates/${templateId}/versions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ownerApiKey}`,
+      },
+      body: JSON.stringify({
+        type: "html-inline",
+        source: v2Source,
+        event_schema: v2Schema,
+      }),
+    }),
+  );
+}
+
+describe("POST /v1/templates/:id/install — upgrade_policy (#267 PR C)", () => {
+  it("defaults to pin when no body field is given", async () => {
+    const { templateId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(install!.upgradePolicy).toBe("pin");
+  });
+
+  it("accepts upgrade_policy=follow and persists it", async () => {
+    const { templateId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { upgrade_policy: string };
+    expect(body.upgrade_policy).toBe("follow");
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(install!.upgradePolicy).toBe("follow");
+  });
+
+  it("rejects an invalid upgrade_policy value", async () => {
+    const { templateId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "yolo" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /v1/templates/:id/upgrade (human, #267 PR C)", () => {
+  it("happy path: re-pins the install to the new version when compatible", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "pin",
+      },
+    });
+    // Publish v2 as a superset.
+    const owner = await prisma.agent.findUnique({
+      where: { id: ownerAgentId },
+    });
+    expect(owner).not.toBeNull();
+    // We seeded with seedAgent() which gave us an api key, but lost the
+    // reference. Mint a fresh one for the owner here.
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    const v2Res = await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": {
+          emittedBy: ["page"],
+          payload: {
+            type: "object",
+            properties: { note: { type: "string" } },
+          },
+        },
+      },
+    });
+    expect(v2Res.status).toBe(201);
+
+    const upgradeRes = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/upgrade`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(upgradeRes.status).toBe(200);
+    const body = (await upgradeRes.json()) as {
+      installed_version: number;
+      upgraded: boolean;
+      breaks: unknown[];
+    };
+    expect(body.installed_version).toBe(2);
+    expect(body.upgraded).toBe(true);
+    expect(body.breaks).toEqual([]);
+  });
+
+  it("refuses 422 when the target narrows the schema (strict, default)", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+        "feed.unlogged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: { humanId, templateId, installedVersion: 1 },
+    });
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    // v2 drops event type 'b' — narrowing.
+    await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/upgrade`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("schema_incompatible_upgrade");
+  });
+
+  it("compat=force applies the upgrade even with breaks", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+        "feed.unlogged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: { humanId, templateId, installedVersion: 1 },
+    });
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/upgrade`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ compat: "force" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(install!.installedVersion).toBe(2);
+    expect(install!.upgradeBlockedAt).toBeNull();
+  });
+
+  it("404s if the human hasn't installed the template", async () => {
+    const { templateId } = await seedPublishedTemplateWithV1({});
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${templateId}/upgrade`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("follow auto-advance on POST /v1/templates/:id/versions (#267 PR C)", () => {
+  it("advances a compatible follow install to the new version", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "follow",
+      },
+    });
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    // Publish v2 as a superset — the follow install should auto-advance.
+    const res = await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": {
+          emittedBy: ["page"],
+          payload: { type: "object", properties: { note: { type: "string" } } },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(install!.installedVersion).toBe(2);
+    expect(install!.upgradeBlockedAt).toBeNull();
+  });
+
+  it("blocks an incompatible follow install — sets upgradeBlockedAt + reason, leaves installedVersion", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+        "feed.unlogged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "follow",
+      },
+    });
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    // v2 drops event type 'b' — narrowing.
+    await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(install!.installedVersion).toBe(1);
+    expect(install!.upgradeBlockedAt).not.toBeNull();
+    const reason = install!.upgradeBlockedReason as Array<{
+      path: string;
+      message: string;
+    }>;
+    expect(reason.length).toBeGreaterThan(0);
+    expect(reason[0]!.path).toMatch(/events\.feed\.unlogged/);
+  });
+
+  it("leaves a pin install alone when a new version is published", async () => {
+    const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({
+      events: {
+        "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+      },
+    });
+    const { humanId } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "pin",
+      },
+    });
+    const ownerKey = generateApiKey();
+    await prisma.agent.update({
+      where: { id: ownerAgentId },
+      data: { keyHash: hashKey(ownerKey), keyPrefix: keyPrefix(ownerKey) },
+    });
+    await publishV2OnTemplate(templateId, ownerKey, {
+      events: {
+        "feed.logged": {
+          emittedBy: ["page"],
+          payload: { type: "object", properties: { note: { type: "string" } } },
+        },
+      },
+    });
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    // Still on v1; pin doesn't auto-advance.
+    expect(install!.installedVersion).toBe(1);
+    expect(install!.upgradeBlockedAt).toBeNull();
+  });
+});
