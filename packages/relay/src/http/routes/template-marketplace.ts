@@ -460,3 +460,79 @@ templateMarketplace.post("/:id/uninstall", requireHuman, async (c) => {
 
   return c.body(null, 204);
 });
+
+// ----------------------------------------------------------------------
+// Human-as-template-owner: publish/unpublish via the /my-templates UI.
+//
+// Mounted at /v1/my-templates so it can't collide with the agent-authed
+// /v1/templates/:id/{publish,unpublish}. Authorization: the caller must
+// be the human who owns the agent that owns the template.
+// ----------------------------------------------------------------------
+export const myTemplates = new Hono<HumanAuthEnv>();
+
+const ownerPublishBody = z.object({
+  scopes: z.array(z.string().regex(SCOPE_RX)).max(64).optional(),
+});
+
+myTemplates.post("/:id/publish", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  let body: z.infer<typeof ownerPublishBody>;
+  try {
+    body = ownerPublishBody.parse(await c.req.json().catch(() => ({})));
+  } catch (err) {
+    throw errors.invalidRequest("invalid body", err);
+  }
+
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  // Same not-found shape whether the template is missing or owned by
+  // someone else's agent — no enumeration oracle.
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    throw errors.notFound();
+  }
+
+  const updated = await prisma.template.update({
+    where: { id },
+    data: {
+      publishedAt: template.publishedAt ?? new Date(),
+      scopes: body.scopes ?? template.scopes ?? [],
+    },
+  });
+
+  return c.json({
+    id: updated.id,
+    slug: updated.slug,
+    name: updated.name,
+    published_at: updated.publishedAt?.toISOString() ?? null,
+    scopes: (updated.scopes as string[] | null) ?? [],
+    install_count: updated.installCount,
+  });
+});
+
+myTemplates.post("/:id/unpublish", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    throw errors.notFound();
+  }
+
+  await prisma.template.update({
+    where: { id },
+    data: { publishedAt: null },
+  });
+
+  return c.json({ id, published_at: null });
+});

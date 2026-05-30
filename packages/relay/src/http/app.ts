@@ -23,6 +23,7 @@ import participantsHuman from "./routes/participants-human.js";
 import {
   templatePublish,
   templateMarketplace,
+  myTemplates,
 } from "./routes/template-marketplace.js";
 import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
@@ -310,6 +311,10 @@ export function buildApp(
   app.route("/v1/templates", templateMarketplace);
   app.route("/v1/templates", templatePublish);
   app.route("/v1/templates", templates);
+  // Cookie-authed publish/unpublish for the /my-templates UI (#279 PR B).
+  // Distinct base path so it can't collide with the agent-authed
+  // /v1/templates/:id/publish above.
+  app.route("/v1/my-templates", myTemplates);
   app.route("/v1/keys", keys);
   // /v1/self/* — human-authenticated routes about the calling human's
   // own account. Currently only the claim-code mint; Phase D extends it.
