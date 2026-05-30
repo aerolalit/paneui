@@ -1,5 +1,7 @@
 import { Hono } from "hono";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
+import { log } from "../../log.js";
+import { compareSurfaceSchemas } from "../../core/schema-compat.js";
 import {
   createArtifactSchema,
   createArtifactVersionSchema,
@@ -267,8 +269,109 @@ templates.post("/:id/versions", async (c) => {
     });
   });
 
+  // #267 PR C — auto-advance every "follow" install against the new
+  // version. Compatible installs jump to nextVersion; incompatible ones
+  // are blocked (upgradeBlockedAt + upgradeBlockedReason) so /my-templates
+  // can show a "needs attention" pill. Side-effect of version publish,
+  // fire-and-forget — a partial failure here doesn't roll back the
+  // version-create transaction above (the version exists; we'll heal
+  // installs on the next publish or via an explicit upgrade).
+  await advanceFollowInstalls(prisma, template.id, nextVersion).catch(
+    (err: unknown) =>
+      log.warn("follow-install auto-advance batch failed", {
+        templateId: template.id,
+        nextVersion,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+  );
+
   return c.json({ template_id: template.id, version: nextVersion }, 201);
 });
+
+// Walk every active "follow" install on `templateId` and try to advance
+// it to `toVersion`. For each install:
+//   - Load the from + to TemplateVersion rows.
+//   - Run the compat gate.
+//   - Compatible → update installedVersion to toVersion, clear blocked state.
+//   - Incompatible → set upgradeBlockedAt + upgradeBlockedReason. Leave
+//     installedVersion where it was; the human resolves manually.
+// Exported so the install-side upgrade route's tests can also exercise
+// the helper directly.
+export async function advanceFollowInstalls(
+  prisma: PrismaClient,
+  templateId: string,
+  toVersion: number,
+): Promise<{ advanced: number; blocked: number }> {
+  const installs = await prisma.humanTemplateInstall.findMany({
+    where: {
+      templateId,
+      upgradePolicy: "follow",
+      uninstalledAt: null,
+      // Already on the target? Nothing to do for this install.
+      NOT: { installedVersion: toVersion },
+    },
+  });
+  if (installs.length === 0) return { advanced: 0, blocked: 0 };
+
+  // Cache versions we look up to avoid N round-trips when many installs
+  // are on the same source version.
+  const versionCache = new Map<
+    number,
+    {
+      eventSchema: unknown;
+      inputSchema: unknown;
+    }
+  >();
+  async function getVersion(v: number) {
+    const cached = versionCache.get(v);
+    if (cached) return cached;
+    const row = await prisma.templateVersion.findUnique({
+      where: { templateId_version: { templateId, version: v } },
+      select: { eventSchema: true, inputSchema: true },
+    });
+    if (!row) return null;
+    versionCache.set(v, row);
+    return row;
+  }
+
+  const toRow = await getVersion(toVersion);
+  if (!toRow) return { advanced: 0, blocked: 0 };
+
+  let advanced = 0;
+  let blocked = 0;
+  const now = new Date();
+  for (const install of installs) {
+    const fromRow = await getVersion(install.installedVersion);
+    if (!fromRow) continue;
+    const breaks = compareSurfaceSchemas({
+      oldEventSchema: fromRow.eventSchema as unknown as EventSchema | null,
+      newEventSchema: toRow.eventSchema as unknown as EventSchema | null,
+      oldInputSchema: fromRow.inputSchema as Record<string, unknown> | null,
+      newInputSchema: toRow.inputSchema as Record<string, unknown> | null,
+    });
+    if (breaks.length === 0) {
+      await prisma.humanTemplateInstall.update({
+        where: { id: install.id },
+        data: {
+          installedVersion: toVersion,
+          upgradeBlockedAt: null,
+          upgradeBlockedReason: Prisma.JsonNull,
+        },
+      });
+      advanced++;
+    } else {
+      await prisma.humanTemplateInstall.update({
+        where: { id: install.id },
+        data: {
+          upgradeBlockedAt: now,
+          upgradeBlockedReason: breaks as unknown as Prisma.InputJsonValue,
+        },
+      });
+      blocked++;
+    }
+  }
+  return { advanced, blocked };
+}
 
 // PATCH /v1/templates/:id — update head metadata only.
 // `:id` accepts the template id OR its slug (matches GET /:id).

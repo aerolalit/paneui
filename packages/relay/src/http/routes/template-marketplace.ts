@@ -16,9 +16,12 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
+import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import type { EventSchema } from "../../types.js";
 
 // ----------------------------------------------------------------------
 // Agent-authenticated publish/unpublish
@@ -168,11 +171,36 @@ templateMarketplace.get("/public", requireHuman, async (c) => {
 // publish that bumps latestVersion does NOT silently upgrade — humans
 // see a "new version available" prompt and must re-install (re-consent
 // to any new scopes).
+// #267 PR C — installs can now carry an upgrade_policy. "pin" (default)
+// keeps the existing behaviour: the install sits on installedVersion until
+// the human explicitly upgrades. "follow" means: when the author publishes
+// a new version that's a superset of the install's current schema, the
+// relay auto-advances the install. If the new version narrows the schema,
+// the advance is BLOCKED (upgrade_blocked_at + upgrade_blocked_reason on
+// the install row); the human resolves via the upgrade route or waits
+// for a compatible version.
+const installBody = z.object({
+  upgrade_policy: z.enum(["pin", "follow"]).optional(),
+});
+
 templateMarketplace.post("/:id/install", requireHuman, async (c) => {
   const prisma = c.get("prisma");
   const human = c.get("human");
   const id = c.req.param("id");
   if (!id) throw errors.invalidRequest("missing template id");
+
+  // Empty body OK; body with the wrong shape rejects.
+  let body: z.infer<typeof installBody>;
+  try {
+    body = installBody.parse(await c.req.json().catch(() => ({})));
+  } catch (e) {
+    throw errors.invalidRequest(
+      "invalid body",
+      e,
+      'the body must be `{ "upgrade_policy"?: "pin" | "follow" }`',
+    );
+  }
+  const upgradePolicy = body.upgrade_policy ?? "pin";
 
   const template = await prisma.template.findUnique({ where: { id } });
   if (!template || !template.publishedAt) {
@@ -213,6 +241,7 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
           templateId: id,
           installedVersion: template.latestVersion,
           installedAt: now,
+          upgradePolicy,
         },
       });
       await prisma.template.update({
@@ -230,6 +259,11 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
           installedVersion: template.latestVersion,
           installedAt: now,
           uninstalledAt: null,
+          upgradePolicy,
+          // Re-install clears any prior blocked state — the new policy +
+          // version are the human's fresh intent.
+          upgradeBlockedAt: null,
+          upgradeBlockedReason: Prisma.JsonNull,
         },
       });
     }
@@ -243,6 +277,9 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
         installedVersion: template.latestVersion,
         installedAt: now,
         uninstalledAt: null,
+        upgradePolicy,
+        upgradeBlockedAt: null,
+        upgradeBlockedReason: Prisma.JsonNull,
       },
     });
   }
@@ -252,9 +289,124 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
       template_id: id,
       installed_version: install.installedVersion,
       installed_at: install.installedAt.toISOString(),
+      upgrade_policy: install.upgradePolicy,
     },
     201,
   );
+});
+
+// POST /v1/templates/:id/upgrade — re-pin an install to another version of
+// the same template (#267 PR C). Mirrors the surface-side upgrade route but
+// operates on HumanTemplateInstall.installedVersion. Same compat gate;
+// same compat="strict" | "force" semantics.
+const upgradeInstallBody = z.object({
+  to_version: z.number().int().positive().optional(),
+  compat: z.enum(["strict", "force"]).optional(),
+});
+templateMarketplace.post("/:id/upgrade", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  let body: z.infer<typeof upgradeInstallBody>;
+  try {
+    body = upgradeInstallBody.parse(await c.req.json().catch(() => ({})));
+  } catch (e) {
+    throw errors.invalidRequest(
+      "invalid body",
+      e,
+      'the body must be `{ "to_version"?: number, "compat"?: "strict" | "force" }`',
+    );
+  }
+  const compat = body.compat ?? "strict";
+
+  const install = await prisma.humanTemplateInstall.findUnique({
+    where: { humanId_templateId: { humanId: human.id, templateId: id } },
+    include: { template: true },
+  });
+  if (!install || install.uninstalledAt) {
+    // Not installed (or uninstalled) — caller should install first; same
+    // not-found shape as if the template id were unknown.
+    throw errors.notFound();
+  }
+
+  // Source version = whatever the install currently sits on. Target version
+  // defaults to the template's latest published version.
+  const targetVersionNum = body.to_version ?? install.template.latestVersion;
+  if (targetVersionNum === install.installedVersion) {
+    // No-op: already on the requested version. Clear any prior blocked
+    // state since the install matches its target.
+    if (install.upgradeBlockedAt) {
+      await prisma.humanTemplateInstall.update({
+        where: { id: install.id },
+        data: {
+          upgradeBlockedAt: null,
+          upgradeBlockedReason: Prisma.JsonNull,
+        },
+      });
+    }
+    return c.json({
+      template_id: id,
+      installed_version: install.installedVersion,
+      upgraded: false,
+      breaks: [],
+      compat,
+    });
+  }
+
+  // Look up both versions for the schema diff.
+  const [fromVersion, toVersion] = await Promise.all([
+    prisma.templateVersion.findUnique({
+      where: {
+        templateId_version: {
+          templateId: id,
+          version: install.installedVersion,
+        },
+      },
+    }),
+    prisma.templateVersion.findUnique({
+      where: {
+        templateId_version: { templateId: id, version: targetVersionNum },
+      },
+    }),
+  ]);
+  if (!toVersion) throw errors.artifactVersionNotFound();
+  if (!fromVersion) {
+    // The installed_version no longer exists in the version history —
+    // shouldn't happen (versions are immutable + append-only) but if it
+    // does, fall through to a force-style apply: we can't compute breaks
+    // without the old schema.
+    throw errors.notFound();
+  }
+
+  const breaks = compareSurfaceSchemas({
+    oldEventSchema: fromVersion.eventSchema as unknown as EventSchema | null,
+    newEventSchema: toVersion.eventSchema as unknown as EventSchema | null,
+    oldInputSchema: fromVersion.inputSchema as Record<string, unknown> | null,
+    newInputSchema: toVersion.inputSchema as Record<string, unknown> | null,
+  });
+  if (breaks.length > 0 && compat === "strict") {
+    throw errors.schemaIncompatibleUpgrade(breaks);
+  }
+
+  await prisma.humanTemplateInstall.update({
+    where: { id: install.id },
+    data: {
+      installedVersion: targetVersionNum,
+      // Successful upgrade always clears blocked state.
+      upgradeBlockedAt: null,
+      upgradeBlockedReason: Prisma.JsonNull,
+    },
+  });
+
+  return c.json({
+    template_id: id,
+    installed_version: targetVersionNum,
+    upgraded: true,
+    breaks,
+    compat,
+  });
 });
 
 // POST /v1/templates/:id/uninstall

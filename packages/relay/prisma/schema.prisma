@@ -161,6 +161,20 @@ model HumanTemplateInstall {
   installedAt      DateTime  @default(now()) @map("installed_at")
   uninstalledAt    DateTime? @map("uninstalled_at")
 
+  // #267 PR C — upgrade policy for new TemplateVersions published by the
+  // author after install.
+  //   "pin"     (default): stay on installedVersion until the human
+  //             explicitly upgrades via POST /v1/templates/:id/upgrade.
+  //   "follow": auto-advance to the new version when the author publishes,
+  //             gated by the same schema-compat check the surface-upgrade
+  //             route uses. An advance blocked by incompat sets
+  //             upgrade_blocked_at + upgrade_blocked_reason; the human
+  //             sees a yellow pill on /my-templates and can resolve
+  //             manually (force-upgrade or wait for a wider version).
+  upgradePolicy        String    @default("pin") @map("upgrade_policy")
+  upgradeBlockedAt     DateTime? @map("upgrade_blocked_at")
+  upgradeBlockedReason Json?     @map("upgrade_blocked_reason")
+
   @@unique([humanId, templateId])
   @@index([humanId])
   @@index([templateId])
