@@ -141,7 +141,7 @@ async function loadOwnedSurface(
 // the dedup gate for this row — only one owner participant ever exists per
 // surface, and two concurrent mints from the same owner collide on the
 // constraint instead of producing duplicate rows. Distinct from the
-// `h_${N}` namespace Phase E's invite-email and public-link routes mint
+// `h_${N}` namespace Phase E's identity-link and public-link routes mint
 // from, so an admin reading the audit log can tell "owner's own click" from
 // "human invited by email" at a glance.
 const OWNER_IDENTITY_ID = "h_owner";
@@ -157,7 +157,7 @@ const OWNER_IDENTITY_ID = "h_owner";
 // or a rapid mobile/desktop overlap) could both see "no row" and both try
 // to create. The `(surfaceId, identityId)` unique constraint serialises the
 // write: the loser gets P2002, we re-`findFirst`, return the winner's row.
-// Phase E's invite-email route deliberately allows multiple Participants
+// Phase E's identity-link route deliberately allows multiple Participants
 // for the same `(surfaceId, humanId)` (so the owner can mint several
 // revocable invite URLs for the same person), so we cannot add a
 // `(surfaceId, humanId)` unique constraint; this is why the

@@ -303,7 +303,7 @@ export function buildApp(
   // /v1/agents/* — agent-authenticated routes about the calling agent.
   // Currently only the claim endpoint; Phase D will likely add more.
   app.route("/v1/agents", agents);
-  // /v1/surfaces/:id/invite-email + /v1/surfaces/:id/public-link — Phase E.
+  // /v1/surfaces/:id/identity-link + /v1/surfaces/:id/public-link — Phase E.
   // Human-authenticated mints; the agent-authed POST /v1/surfaces/:id/participants
   // is unchanged and lives in routes/surfaces.ts.
   app.route("/v1/surfaces", participantsHuman);
