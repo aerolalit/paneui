@@ -46,10 +46,18 @@ export async function reconcileOrphanedParticipants(
   try {
     const openSessions = await prisma.surface.findMany({
       where: { status: "open" },
-      select: { id: true },
+      select: {
+        id: true,
+        // #268 — stamp the surface's currently-pinned templateVersion onto
+        // every synthetic participant.left we emit, same as live writes.
+        // Selecting it here saves a per-event lookup inside the inner loop.
+        templateVersionId: true,
+        templateVersion: { select: { version: true } },
+      },
     });
 
-    for (const { id: surfaceId } of openSessions) {
+    for (const surface of openSessions) {
+      const surfaceId = surface.id;
       const events = await prisma.event.findMany({
         where: {
           surfaceId,
@@ -83,6 +91,8 @@ export async function reconcileOrphanedParticipants(
               authorId: "system",
               type: "system.participant.left",
               data: { author } as object,
+              templateVersionId: surface.templateVersionId,
+              templateVersionNum: surface.templateVersion.version,
             },
           });
           written++;

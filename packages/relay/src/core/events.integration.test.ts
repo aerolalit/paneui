@@ -161,6 +161,66 @@ describe("writeEvent (integration, real SQLite)", () => {
     expect(persisted[0]!.idempotencyKey).toBeNull();
   });
 
+  it("stamps the surface's pinned template version on every event (#268)", async () => {
+    // The load-bearing invariant for the polymorphic-render upgrade path:
+    // every event carries the version that was active when it was written,
+    // so a future upgrade (#267) can hand old events to the new template's
+    // JS unchanged.
+    const { surface, agentId } = await seedSession();
+    const { event } = await we(surface, agentAuthor(agentId), {
+      type: "review.commentAdded",
+      data: { body: "hi" },
+    });
+    expect(event.template_version_id).toBe(surface.templateVersionId);
+    expect(event.template_version).toBe(surface.templateVersion.version);
+
+    // And the persisted row matches the wire shape.
+    const persisted = await prisma.event.findUnique({
+      where: { id: Number(event.id) },
+    });
+    expect(persisted!.templateVersionId).toBe(surface.templateVersionId);
+    expect(persisted!.templateVersionNum).toBe(surface.templateVersion.version);
+  });
+
+  it("never rewrites a stamped version once an event is persisted (#268)", async () => {
+    // The other half of the invariant: a TemplateVersion bump (or a future
+    // surface upgrade) must leave the stamp on previously-written events
+    // alone. Without that, polymorphic render can't tell which schema an
+    // old event was validated against.
+    const { surface, agentId } = await seedSession();
+    const { event: e1 } = await we(surface, agentAuthor(agentId), {
+      type: "review.commentAdded",
+      data: { body: "v1 event" },
+    });
+    const e1VersionId = e1.template_version_id;
+    const e1VersionNum = e1.template_version;
+    expect(e1VersionId).not.toBeNull();
+    expect(e1VersionNum).toBe(1);
+
+    // Append a fresh TemplateVersion (v2) under the same template head.
+    const v2 = await prisma.templateVersion.create({
+      data: {
+        templateId: surface.templateVersion.templateId,
+        version: surface.templateVersion.version + 1,
+        templateType: "html-inline",
+        templateSource: "<html>v2</html>",
+        eventSchema: surface.templateVersion.eventSchema as object,
+      },
+    });
+
+    // Inspect the v1 event directly — it must still carry the v1 stamp.
+    const reread = await prisma.event.findUnique({
+      where: { id: Number(e1.id) },
+    });
+    expect(reread!.templateVersionId).toBe(e1VersionId);
+    expect(reread!.templateVersionNum).toBe(e1VersionNum);
+
+    // (The surface itself is still pinned to v1 — #267 is what would
+    // re-point it. This test just proves the stamp on past rows survives a
+    // new sibling version appearing.)
+    expect(v2.version).toBe(2);
+  });
+
   it("rejects an event on a closed surface as gone", async () => {
     const { surface, agentId } = await seedSession({ status: "closed" });
     await expect(
