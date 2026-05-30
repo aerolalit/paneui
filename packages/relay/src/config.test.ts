@@ -87,6 +87,26 @@ describe("config", () => {
     expect(r.DATABASE_URL).toBe("postgresql://<redacted>@host/db");
   });
 
+  it("redacts the access key in REDIS_URL (Azure Cache for Redis shape)", () => {
+    // Azure Cache for Redis hands out rediss://:<base64-key>@host:6380 —
+    // the entire access key sits in the password slot of the userinfo.
+    // (Test key below is a synthetic placeholder shaped like a real one.)
+    const c = loadConfig({
+      REDIS_URL: `rediss://:${"x".repeat(43)}=@example-cache.redis.cache.windows.net:6380`,
+    });
+    const r = redactConfig(c);
+    expect(r.REDIS_URL).toBe(
+      "rediss://<redacted>@example-cache.redis.cache.windows.net:6380",
+    );
+  });
+
+  it("leaves REDIS_URL untouched when no userinfo is present", () => {
+    // Self-host pattern: redis://localhost:6379 with no auth.
+    const c = loadConfig({ REDIS_URL: "redis://localhost:6379" });
+    const r = redactConfig(c);
+    expect(r.REDIS_URL).toBe("redis://localhost:6379");
+  });
+
   it("defaults METRICS_EXPORTER to none", () => {
     expect(loadConfig({}).METRICS_EXPORTER).toBe("none");
   });
