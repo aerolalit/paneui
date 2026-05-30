@@ -147,6 +147,7 @@ export function buildApp(
       // normal traffic). Token-bearing URLs (/s/:token, /b/:token) are
       // redacted with the same rules as the req-log middleware above.
       log.info("api rejected", {
+        reqId: c.res.headers.get("X-Request-Id") ?? undefined,
         code: err.code,
         status: err.status,
         method: c.req.method,
