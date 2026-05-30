@@ -271,6 +271,37 @@ describe("GET /my-templates (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Reviewer");
+    // Publish form is rendered on every authored template (#279 PR B)
+    expect(html).toContain("Publish to catalog");
+    expect(html).toContain("/v1/my-templates/");
+  });
+
+  it("renders the Unpublish form on already-published authored templates", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed",
+        keyHash: "u".repeat(64),
+        keyPrefix: "u",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Live",
+        publishedAt: new Date(),
+        installCount: 7,
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/my-templates", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("Live");
+    expect(html).toContain("Unpublish");
+    expect(html).toContain("7 installs");
   });
 });
 

@@ -469,6 +469,8 @@ systemPages.get("/my-templates", async (c) => {
         shape: true,
         publishedAt: true,
         createdAt: true,
+        scopes: true,
+        installCount: true,
       },
     }),
     prisma.humanTemplateInstall.findMany({
@@ -512,20 +514,97 @@ systemPages.get("/my-templates", async (c) => {
       })
       .join("")}</ul>
   </div>`;
+  const authoredList =
+    templates.length === 0
+      ? `<p class="empty">No templates yet.</p>`
+      : `<ul class="list">${templates
+          .map((t) => {
+            const title = escapeHtml(t.name ?? t.slug ?? t.id);
+            const desc = t.description
+              ? escapeHtml(t.description)
+              : "<em>no description</em>";
+            const statusPill = t.publishedAt
+              ? `<span class="pill good">Published · ${t.installCount} installs</span>`
+              : `<span class="pill muted">Private</span>`;
+            const scopesCsv = ((t.scopes as string[] | null) ?? []).join(", ");
+            const btnLabel = t.publishedAt ? "Unpublish" : "Publish to catalog";
+            const btnAct = t.publishedAt ? "unpublish" : "publish";
+            return `<li data-template-id="${escapeHtml(t.id)}" data-published="${t.publishedAt ? "1" : "0"}">
+              <div style="min-width:0;flex:1;">
+                <div class="title">${title}</div>
+                <div class="meta">${desc} · ${escapeHtml(t.shape)}</div>
+                <details class="pub-form" style="margin-top:6px;">
+                  <summary style="cursor:pointer;font-size:13px;color:var(--accent);">${btnLabel}</summary>
+                  <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+                    <label style="font-size:12.5px;color:var(--muted);">Scopes (comma-separated, e.g. <code>read:agent, write:surface</code>)</label>
+                    <textarea class="scopes" rows="2" style="width:100%;border:1px solid var(--rule);border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;" placeholder="leave blank to keep current scopes">${escapeHtml(scopesCsv)}</textarea>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                      <button class="btn" data-act="${btnAct}" type="button">${btnLabel}</button>
+                      <span class="pub-status" style="color:var(--muted);font-size:13px;"></span>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${statusPill}</div>
+            </li>`;
+          })
+          .join("")}</ul>
+        <script>
+          (function () {
+            const card = document.currentScript.previousElementSibling;
+            if (!card) return;
+            card.addEventListener('click', async (ev) => {
+              const target = ev.target;
+              if (!(target instanceof HTMLElement)) return;
+              const btn = target.closest('button[data-act]');
+              if (!btn) return;
+              const li = btn.closest('li[data-template-id]');
+              if (!li) return;
+              const id = li.getAttribute('data-template-id');
+              const act = btn.getAttribute('data-act');
+              const status = li.querySelector('.pub-status');
+              btn.disabled = true;
+              status.textContent = act === 'publish' ? 'Publishing…' : 'Unpublishing…';
+              let body = '{}';
+              if (act === 'publish') {
+                const ta = li.querySelector('textarea.scopes');
+                const raw = (ta && ta.value || '').trim();
+                if (raw) {
+                  const scopes = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+                  body = JSON.stringify({ scopes });
+                }
+              }
+              try {
+                const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/' + act, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  credentials: 'same-origin',
+                  body,
+                });
+                if (!res.ok) {
+                  btn.disabled = false;
+                  let detail = 'HTTP ' + res.status;
+                  try {
+                    const errBody = await res.json();
+                    if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+                  } catch (_) {}
+                  status.textContent = (act === 'publish' ? 'Publish' : 'Unpublish') + ' failed: ' + detail;
+                  return;
+                }
+                status.textContent = 'Done. Reloading…';
+                window.location.reload();
+              } catch (_) {
+                btn.disabled = false;
+                status.textContent = 'Network error — try again.';
+              }
+            });
+          })();
+        </script>`;
   const body = `<h1>My templates</h1>
   <p style="color:var(--muted);font-size:14.5px;">Templates created by agents you own. Templates you've installed from the public catalog appear below.</p>
   <h2>Authored</h2>
   <div class="card">
-    ${
-      templates.length === 0
-        ? `<p class="empty">No templates yet.</p>`
-        : `<ul class="list">${templates
-            .map(
-              (t) =>
-                `<li><div><div class="title">${escapeHtml(t.name ?? t.slug ?? t.id)}</div><div class="meta">${t.description ? escapeHtml(t.description) : "<em>no description</em>"} · ${escapeHtml(t.shape)}</div></div>${t.publishedAt ? `<span class="pill good">Published</span>` : `<span class="pill muted">Private</span>`}</li>`,
-            )
-            .join("")}</ul>`
-    }
+    ${authoredList}
   </div>
   ${installedSection}`;
   return c.html(

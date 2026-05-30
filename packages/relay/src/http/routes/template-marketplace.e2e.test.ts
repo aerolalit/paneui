@@ -797,3 +797,163 @@ describe("follow auto-advance on POST /v1/templates/:id/versions (#267 PR C)", (
     expect(install!.upgradeBlockedAt).toBeNull();
   });
 });
+
+describe("POST /v1/my-templates/:id/publish (human, #279 PR B)", () => {
+  it("requires a login cookie", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x/publish", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("404s when the template is owned by an agent the caller doesn't claim", async () => {
+    // Owner agent has no ownerHumanId — i.e. unclaimed / claimed by someone else.
+    const owner = await seedAgent();
+    const tpl = await seedTemplate(owner.id, "Foreign");
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/publish`, {
+        method: "POST",
+        headers: { ...withCookie(cookie), "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(res.status).toBe(404);
+    const after = await prisma.template.findUnique({ where: { id: tpl.id } });
+    expect(after!.publishedAt).toBeNull();
+  });
+
+  it("publishes when the caller owns the agent that owns the template + persists scopes", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "mine",
+        keyHash: "z".repeat(64),
+        keyPrefix: "z",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await seedTemplate(agent.id, "Reviewer");
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/publish`, {
+        method: "POST",
+        headers: { ...withCookie(cookie), "content-type": "application/json" },
+        body: JSON.stringify({ scopes: ["read:agent", "write:surface"] }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      published_at: string | null;
+      scopes: string[];
+    };
+    expect(body.published_at).not.toBeNull();
+    expect(body.scopes).toEqual(["read:agent", "write:surface"]);
+    const after = await prisma.template.findUnique({ where: { id: tpl.id } });
+    expect(after!.publishedAt).not.toBeNull();
+    expect(after!.scopes).toEqual(["read:agent", "write:surface"]);
+  });
+
+  it("rejects malformed scopes (verb:noun grammar)", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "mine",
+        keyHash: "z".repeat(64),
+        keyPrefix: "z",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await seedTemplate(agent.id);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/publish`, {
+        method: "POST",
+        headers: { ...withCookie(cookie), "content-type": "application/json" },
+        body: JSON.stringify({ scopes: ["not-a-scope"] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("preserves existing scopes when body omits the field", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "mine",
+        keyHash: "z".repeat(64),
+        keyPrefix: "z",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: { ownerId: agent.id, name: "t", scopes: ["read:agent"] },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/publish`, {
+        method: "POST",
+        headers: { ...withCookie(cookie), "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const after = await prisma.template.findUnique({ where: { id: tpl.id } });
+    expect(after!.scopes).toEqual(["read:agent"]);
+  });
+});
+
+describe("POST /v1/my-templates/:id/unpublish (human, #279 PR B)", () => {
+  it("requires a login cookie", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x/unpublish", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("404s when caller doesn't own the template's agent", async () => {
+    const owner = await seedAgent();
+    const tpl = await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Public foreign",
+        publishedAt: new Date(),
+      },
+    });
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/unpublish`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(404);
+    const after = await prisma.template.findUnique({ where: { id: tpl.id } });
+    expect(after!.publishedAt).not.toBeNull();
+  });
+
+  it("clears publishedAt when caller owns the agent", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "mine",
+        keyHash: "z".repeat(64),
+        keyPrefix: "z",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: { ownerId: agent.id, name: "Pub", publishedAt: new Date() },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tpl.id}/unpublish`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const after = await prisma.template.findUnique({ where: { id: tpl.id } });
+    expect(after!.publishedAt).toBeNull();
+  });
+});
