@@ -156,3 +156,16 @@ export const mintParticipantSchema = z.object({
   kind: z.literal("human"),
 });
 export type MintParticipantInput = z.infer<typeof mintParticipantSchema>;
+
+// POST /v1/surfaces/:id/upgrade — re-pin a live surface to a newer version
+// of the same template (#267). `template_version` is optional; the relay
+// defaults to the template's latest version. `compat` defaults to "strict",
+// which makes the relay refuse 422 if the target schema isn't a superset
+// of the current one (events written under the old schema would no longer
+// validate). "force" overrides the gate — used sparingly when the operator
+// knows data loss is acceptable.
+export const upgradeSurfaceSchema = z.object({
+  template_version: z.number().int().positive().optional(),
+  compat: z.enum(["strict", "force"]).optional(),
+});
+export type UpgradeSurfaceInput = z.infer<typeof upgradeSurfaceSchema>;
