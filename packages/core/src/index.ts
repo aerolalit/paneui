@@ -40,12 +40,14 @@ export {
   listSessionsStatusSchema,
   listSessionsQuerySchema,
   mintParticipantSchema,
+  upgradeSurfaceSchema,
 } from "./schemas.js";
 export type {
   CreateSessionInput,
   ListSessionsStatus,
   ListSessionsQuery,
   MintParticipantInput,
+  UpgradeSurfaceInput,
 } from "./schemas.js";
 
 export {

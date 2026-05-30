@@ -242,6 +242,11 @@ model TemplateVersion {
   inputSchema    Json?     @map("input_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
   surfaces       Surface[]
+  // Back-relation for Event.templateVersion (#268). Stamping the surface's
+  // pinned templateVersionId on each event at write-time lets a future
+  // upgrade (#267) read old events under the new schema (Level 1
+  // polymorphic render).
+  events         Event[]
 
   @@unique([templateId, version])
   @@index([templateId])
@@ -372,6 +377,24 @@ model Event {
   causationId     String?  @map("causation_id")
   idempotencyKey  String?  @map("idempotency_key")
   ts              DateTime @default(now())
+
+  // #268 — stamp the surface's pinned template_version at write time so a
+  // downstream upgrade (#267) can read old events under the new schema. Both
+  // fields are nullable to handle two cases: events written before this
+  // column existed (the migration backfills them, but tolerate a
+  // SET NULL on cascade so a TemplateVersion delete doesn't cascade-
+  // delete the historical event log), and the brief race-window in which a
+  // system event is written before the surface's templateVersion can be
+  // loaded (logged + treated as best-effort, see appendSystemEvent).
+  //
+  // `templateVersionNum` is the denormalised integer version number
+  // (TemplateVersion.version) — kept on the row so the read path doesn't
+  // need a join. Immutable per templateVersionId (version numbers are
+  // assigned once at TemplateVersion create and never edited), so the
+  // denormalisation is safe.
+  templateVersionId  String?           @map("template_version_id")
+  templateVersion    TemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: SetNull)
+  templateVersionNum Int?              @map("template_version_num")
 
   @@index([surfaceId, id])
   @@unique([surfaceId, authorId, idempotencyKey])

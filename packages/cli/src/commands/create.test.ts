@@ -270,6 +270,52 @@ describe("create — --title flag", () => {
   });
 });
 
+describe("create — --context-key flag (#262)", () => {
+  it("passes --context-key through to the request body as context_key", async () => {
+    // Phase G dedup is keyed off context_key. The CLI flag is the only path
+    // for an agent to drive that dedup without dropping to raw curl.
+    await run([
+      "--template",
+      "<html></html>",
+      "--title",
+      "PR review",
+      "--context-key",
+      "pr-42",
+    ]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { context_key?: string };
+    expect(req.context_key).toBe("pr-42");
+  });
+
+  it("omits context_key from the body when --context-key is not given", async () => {
+    // Without the flag, no dedup — the relay treats absent context_key as
+    // the legacy "every create is a fresh surface" behaviour.
+    await run(["--template", "<html></html>", "--title", "ad-hoc"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect(req).not.toHaveProperty("context_key");
+  });
+
+  it("surfaces schema rejection of an invalid context_key under the right flag", async () => {
+    // The shared @paneui/core schema enforces charset + length on
+    // context_key; a bad value rejects BEFORE we hit the wire, and the
+    // CLI's schema-path-to-flag mapping translates the rejection's
+    // internal path back to --context-key (not the wire path).
+    await run([
+      "--template",
+      "<html></html>",
+      "--title",
+      "bad key",
+      "--context-key",
+      "has spaces — not allowed",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--context-key");
+    expect(stderr).not.toContain("context_key:");
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("create — unknown-flag rejection (#224)", () => {
   it("rejects an unknown value-flag and never reaches the relay", async () => {
     // Pre-#224 the CLI silently dropped the flag and created the surface.

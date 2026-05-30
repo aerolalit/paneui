@@ -1,7 +1,8 @@
 // Human-authenticated participant minting (§7.3 — two invitation modes).
 //
-//   POST /v1/surfaces/:id/invite-email   identity-bound human participant
-//                                         (Alice → bob@example.com)
+//   POST /v1/surfaces/:id/identity-link  identity-bound human participant
+//                                         (Alice mints a URL only bob can use;
+//                                         was /invite-email pre-#261)
 //   POST /v1/surfaces/:id/public-link    anonymous capability participant
 //                                         (Google-Docs-style "anyone with the
 //                                         link" share)
@@ -36,7 +37,7 @@ participantsHuman.use("*", requireHuman);
 // count (matching the agent-side allocator in routes/surfaces.ts); two
 // concurrent invites that both read the same count and pick the same `h_${N}`
 // see P2002 on the loser, which then loops back, re-reads the count, and
-// picks the next index. Without this, both invite-email and public-link
+// picks the next index. Without this, both identity-link and public-link
 // would 500 under realistic concurrency (the comment used to say "we retry on
 // conflict" but the retry was never actually wired up).
 async function mintHumanParticipantWithRetry(args: {
@@ -143,7 +144,17 @@ function buildParticipantUrl(args: {
 }
 
 // ----------------------------------------------------------------------
-// POST /v1/surfaces/:id/invite-email
+// POST /v1/surfaces/:id/identity-link
+//
+// Was /invite-email until #261 — the old name read as an action verb
+// ("email an invitation to bob") but the endpoint doesn't send mail; it
+// mints + returns a URL the owner delivers out-of-band. /identity-link
+// parallels /public-link below: both routes mint a Participant URL,
+// but /identity-link binds the URL to a specific human (only that human
+// can use it after logging in), while /public-link is anyone-with-the-URL.
+// No legacy alias — the renamer accepts the break (only direct API
+// callers are affected today; no UI shell or CLI consumed the old path).
+//
 //   Body: { email }
 //   Response: 201 { participant_id, kind:"human", token, url, identity:{email} }
 //
@@ -155,22 +166,22 @@ function buildParticipantUrl(args: {
 //   - returns the surface URL ONCE; bob must complete the cookie flow on
 //     first visit
 // ----------------------------------------------------------------------
-const inviteEmailBody = z.object({
+const identityLinkBody = z.object({
   email: z.preprocess(
     (v) => (typeof v === "string" ? v.trim() : v),
     z.string().email().max(320),
   ),
 });
 
-participantsHuman.post("/:id/invite-email", async (c) => {
+participantsHuman.post("/:id/identity-link", async (c) => {
   const surface = await loadOwnedSurface(c);
   const prisma = c.get("prisma");
   const config = c.get("config");
   // human is implied by requireHuman; we don't need to re-read it here.
 
-  let body: z.infer<typeof inviteEmailBody>;
+  let body: z.infer<typeof identityLinkBody>;
   try {
-    body = inviteEmailBody.parse(await c.req.json());
+    body = identityLinkBody.parse(await c.req.json());
   } catch {
     throw errors.invalidRequest("expected { email }");
   }

@@ -11,5 +11,10 @@ export function serializeEvent(e: EventRow): SerializedEvent {
     data: e.data,
     causation_id: e.causationId,
     idempotency_key: e.idempotencyKey,
+    // #268 — passthrough of the stamped template version. Both nullable for
+    // pre-#268 events (the migration backfilled most from the surface's
+    // current pin; any that slipped through stay null).
+    template_version_id: e.templateVersionId,
+    template_version: e.templateVersionNum,
   };
 }

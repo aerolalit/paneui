@@ -240,6 +240,9 @@ model TemplateVersion {
   inputSchema    Json?     @map("input_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
   surfaces       Surface[]
+  // Back-relation for Event.templateVersion (#268). See the sqlite schema's
+  // matching comment for the migration's rationale.
+  events         Event[]
 
   @@unique([templateId, version])
   @@index([templateId])
@@ -370,6 +373,15 @@ model Event {
   causationId     String?  @map("causation_id")
   idempotencyKey  String?  @map("idempotency_key")
   ts              DateTime @default(now())
+
+  // #268 — stamp the surface's pinned template_version at write time so a
+  // downstream upgrade (#267) can read old events under the new schema.
+  // Both fields are nullable: events written before this column existed
+  // (the migration backfills them) and the cascade behaviour preserves
+  // historical events if a TemplateVersion is ever deleted.
+  templateVersionId  String?           @map("template_version_id")
+  templateVersion    TemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: SetNull)
+  templateVersionNum Int?              @map("template_version_num")
 
   @@index([surfaceId, id])
   @@unique([surfaceId, authorId, idempotencyKey])

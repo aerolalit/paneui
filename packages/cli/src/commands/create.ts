@@ -20,6 +20,7 @@ const KNOWN_FLAGS = [
   "participants",
   "metadata",
   "callback",
+  "context-key",
 ];
 const KNOWN_BOOLS: string[] = [];
 
@@ -41,6 +42,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   callback: "--callback",
   input_data: "--input-data",
   title: "--title",
+  context_key: "--context-key",
   "template.id": "--template-id",
   "template.version": "--version",
   "template.type": "--template-type",
@@ -138,6 +140,15 @@ Options:
   --participants <n>  Number of human participants (default 1).
   --metadata <path|json>  Arbitrary metadata object (file path or inline JSON).
   --callback <path|json>  Webhook callback config: { url, events[], secret }.
+  --context-key <key>  Natural key for "the same logical thing" — the relay
+                      dedups repeated creates with the same
+                      (template, owner, context_key) into one surface row,
+                      returning {created:false, surface_id:<existing>} on
+                      subsequent calls. Use this to make scripted creates
+                      idempotent (e.g. "pr-42", "deal-1138", "home"). Only
+                      meaningful when the calling agent is claimed by a
+                      human; omit otherwise. Allowed chars: A-Za-z0-9_:.-,
+                      max 256.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
   -h, --help          Show this help.
@@ -310,6 +321,15 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e), "invalid_args");
     }
+  }
+
+  // --context-key — natural-key dedup. Passthrough; the relay enforces
+  // length + charset (createSessionSchema in @paneui/core), so an invalid
+  // value surfaces as a schema rejection on the call below rather than
+  // a duplicated client-side guard that could drift.
+  const contextKey = args.flags.get("context-key");
+  if (contextKey !== undefined) {
+    candidate["context_key"] = contextKey;
   }
 
   const parsed = createSessionSchema.safeParse(candidate);

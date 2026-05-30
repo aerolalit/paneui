@@ -1,9 +1,10 @@
 import { Hono } from "hono";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   createSessionSchema,
   listSessionsQuerySchema,
   mintParticipantSchema,
+  upgradeSurfaceSchema,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
@@ -16,6 +17,9 @@ import {
 } from "../../keys.js";
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
+import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import type { EventSchema } from "../../types.js";
+import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
@@ -31,7 +35,6 @@ import {
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
-import type { EventSchema } from "../../types.js";
 
 const surfaces = new Hono<AuthEnv>();
 
@@ -44,6 +47,61 @@ function publicWsUrl(config: Config): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
+}
+
+// #259 — mint a kind="agent" Participant for the calling agent on a surface
+// they don't yet own, so the cross-agent Phase G dedup hands back a usable
+// credential. Returns the freshly-minted plaintext token, or null when the
+// calling agent already has a non-revoked agent participant on this surface
+// (either because they're the owning agent, or because a previous dedup
+// already minted one).
+//
+// Token-stored-as-hash means we cannot re-emit an existing participant's
+// token; the agent is responsible for keeping the value they got the first
+// time. The `null` case is the "you already have access, find your old
+// token" branch.
+//
+// Concurrency: two parallel cross-agent dedup hits from the SAME agent both
+// see no existing participant and both attempt the create with
+// identityId === agent.id. The `(surfaceId, identityId)` unique constraint
+// serialises; the loser's P2002 collapses to the same "already has access"
+// shape (null token), which is correct — the winner's create succeeded.
+export async function mintCrossAgentParticipantIfNeeded(
+  prisma: PrismaClient,
+  surfaceId: string,
+  agent: { id: string },
+): Promise<{ token: string | null }> {
+  const existing = await prisma.participant.findFirst({
+    where: {
+      surfaceId,
+      kind: "agent",
+      identityId: agent.id,
+      revokedAt: null,
+    },
+    select: { id: true },
+  });
+  if (existing) return { token: null };
+
+  const token = generateAgentParticipantToken();
+  try {
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "agent",
+        identityId: agent.id,
+        tokenHash: hashKey(token),
+        tokenPrefix: keyPrefix(token),
+        agentId: agent.id,
+      },
+    });
+    return { token };
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code;
+    if (code !== "P2002") throw e;
+    // Identity-id collision: another concurrent first-time mint from the
+    // same agent won the row. Treat the same as "already has access".
+    return { token: null };
+  }
 }
 
 // Default page size for GET /v1/surfaces. The upper bound (200) lives on
@@ -492,11 +550,23 @@ surfaces.post("/", requireAgent, async (c) => {
       },
     });
     if (existing) {
-      // Return the existing surface. Mint a participant slot if the
-      // existing surface has no live human token (e.g. revoked); else
-      // surface the existing tokens via /v1/surfaces/:id/participants
-      // (the caller can list them — we don't re-emit secret token values
-      // here).
+      // Cross-agent dedup (#259): if the calling agent isn't yet a
+      // participant on the matched surface, mint a fresh kind="agent"
+      // Participant for them and return its token. Without this the
+      // dedup branch hands the caller a surface_id they have no
+      // credential to use — the dedup contract was leaking under the
+      // realistic "human owns A and B, both call create with the same
+      // context_key" case.
+      //
+      // Same-agent dedup is unchanged: the owning agent already has a
+      // kind="agent" Participant from the original create, the helper
+      // returns null, the response keeps the existing { agent: null }
+      // shape and the agent uses the token they got at first create.
+      const { token: dedupAgentToken } =
+        await mintCrossAgentParticipantIfNeeded(prisma, existing.id, agent);
+      // Human-side participant tokens are stored hashed and cannot be
+      // re-emitted; the caller lists them via /v1/surfaces/:id/participants
+      // and mints fresh ones with /v1/surfaces/:id/participants when needed.
       const existingHumanCount = existing.participants.filter(
         (p) => p.kind === "human",
       ).length;
@@ -505,11 +575,7 @@ surfaces.post("/", requireAgent, async (c) => {
         {
           surface_id: existing.id,
           created: false,
-          // No token re-emit on dedup hit — tokens are stored hashed, so
-          // we cannot reveal them. The caller lists participants via
-          // /v1/surfaces/:id/participants and mints fresh ones via
-          // /v1/surfaces/:id/participants when needed.
-          tokens: { humans: [], agent: null },
+          tokens: { humans: [], agent: dedupAgentToken },
           urls: {
             humans: [],
             agent_stream: `${wsBase}/v1/surfaces/${existing.id}/stream`,
@@ -607,6 +673,17 @@ surfaces.post("/", requireAgent, async (c) => {
       // with stale data.
       throw e;
     }
+    // #259 — same cross-agent participant mint as the pre-check dedup
+    // branch above. The retry path can also be the FIRST time a peer
+    // agent sees this surface (their create lost the create race AND the
+    // matched surface belongs to a different agent owned by the same
+    // human), so we run the same helper here. See its doc-comment for
+    // the same-agent vs cross-agent behaviour split.
+    const { token: dedupAgentToken } = await mintCrossAgentParticipantIfNeeded(
+      prisma,
+      winner.id,
+      agent,
+    );
     const winnerHumanCount = winner.participants.filter(
       (p) => p.kind === "human",
     ).length;
@@ -615,7 +692,7 @@ surfaces.post("/", requireAgent, async (c) => {
       {
         surface_id: winner.id,
         created: false,
-        tokens: { humans: [], agent: null },
+        tokens: { humans: [], agent: dedupAgentToken },
         urls: {
           humans: [],
           agent_stream: `${wsBase}/v1/surfaces/${winner.id}/stream`,
@@ -709,6 +786,131 @@ surfaces.get("/:id", requireAgent, async (c) => {
     input_data: surface.inputData,
     created_at: surface.createdAt.toISOString(),
     expires_at: surface.expiresAt.toISOString(),
+  });
+});
+
+// POST /v1/surfaces/:id/upgrade — re-pin a live surface to a newer (or
+// other) version of the same template (#267). The schema-compat gate (see
+// src/core/schema-compat.ts) refuses by default when the target schema
+// narrows the surface's current one; compat="force" overrides.
+//
+// Events on disk are never rewritten — #268 stamps the version on each
+// event at write time, so a downstream polymorphic-render can read old
+// events under their original schema even after the upgrade.
+surfaces.post("/:id/upgrade", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  // Body — accept an empty body and apply defaults (latest version, strict).
+  let body;
+  try {
+    const raw = await c.req.json().catch(() => ({}));
+    body = upgradeSurfaceSchema.parse(raw);
+  } catch (e) {
+    throw errors.invalidRequest(
+      "invalid body",
+      e,
+      `the request body must be \`{ "template_version"?: number, "compat"?: "strict" | "force" }\``,
+    );
+  }
+  const compat = body.compat ?? "strict";
+
+  // Surface — must exist, must be owned by the calling agent, must be live.
+  const surface = await prisma.surface.findUnique({
+    where: { id },
+    include: { templateVersion: { include: { template: true } } },
+  });
+  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  if (surface.status === "closed" || surface.expiresAt.getTime() < Date.now()) {
+    throw errors.gone(
+      "surface is closed — upgrading a closed surface has no effect",
+    );
+  }
+
+  // Target version. Defaults to the template head's latestVersion. Must
+  // belong to the SAME template (the route doesn't support cross-template
+  // re-pointing — that'd be a different surface, conceptually).
+  const targetVersionNum =
+    body.template_version ?? surface.templateVersion.template.latestVersion;
+  const targetVersion = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: surface.templateVersion.templateId,
+        version: targetVersionNum,
+      },
+    },
+  });
+  if (!targetVersion) {
+    throw errors.artifactVersionNotFound();
+  }
+
+  // No-op: the surface is already on the target version. Return the
+  // current state with upgraded=false; idempotent retry-safe.
+  if (targetVersion.id === surface.templateVersionId) {
+    return c.json({
+      surface_id: id,
+      template_version_id: surface.templateVersionId,
+      template_version: surface.templateVersion.version,
+      upgraded: false,
+      breaks: [],
+      compat,
+    });
+  }
+
+  // Compat gate. PR A's library does the schema diff; this route just
+  // decides what to do with the result.
+  const breaks = compareSurfaceSchemas({
+    oldEventSchema: surface.templateVersion
+      .eventSchema as unknown as EventSchema | null,
+    newEventSchema: targetVersion.eventSchema as unknown as EventSchema | null,
+    oldInputSchema: surface.templateVersion.inputSchema as Record<
+      string,
+      unknown
+    > | null,
+    newInputSchema: targetVersion.inputSchema as Record<string, unknown> | null,
+  });
+  if (breaks.length > 0 && compat === "strict") {
+    throw errors.schemaIncompatibleUpgrade(breaks);
+  }
+
+  // Apply the re-pin. Events on disk are unchanged — they keep their
+  // original templateVersionId stamp (#268).
+  await prisma.surface.update({
+    where: { id },
+    data: { templateVersionId: targetVersion.id },
+  });
+
+  // Audit-log the upgrade as a system event. The full breaks list goes
+  // into the event payload (even on strict success, where breaks=[])
+  // so an operator reviewing the surface log can see exactly what
+  // changed. Logged at warn level on a force-with-breaks for the
+  // operator's monitor to pick up.
+  if (compat === "force" && breaks.length > 0) {
+    log.warn("surface upgrade with compat=force skipped schema gate", {
+      surfaceId: id,
+      agentId: me.id,
+      fromVersion: surface.templateVersion.version,
+      toVersion: targetVersion.version,
+      breakCount: breaks.length,
+    });
+  }
+  await appendSystemEvent(prisma, id, "system.template.updated", {
+    from_version_id: surface.templateVersionId,
+    from_version: surface.templateVersion.version,
+    to_version_id: targetVersion.id,
+    to_version: targetVersion.version,
+    compat,
+    breaks,
+  });
+
+  return c.json({
+    surface_id: id,
+    template_version_id: targetVersion.id,
+    template_version: targetVersion.version,
+    upgraded: true,
+    breaks,
+    compat,
   });
 });
 

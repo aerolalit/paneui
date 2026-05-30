@@ -66,6 +66,19 @@ export async function appendSystemEvent(
   data: object,
   decorate?: (e: SerializedEvent) => SerializedEvent | Promise<SerializedEvent>,
 ): Promise<SerializedEvent | null> {
+  // Look up the surface's currently-pinned templateVersion so we can stamp
+  // (templateVersionId, templateVersionNum) on the event row (#268). System
+  // events are infrequent — one tiny SELECT per join/leave/expire is fine.
+  // A missing surface here means the row was swept between the caller's
+  // entry and our insert; fall through with null stamps so the foreign-key
+  // failure in `create` produces the existing P2003 recovery path below.
+  const surface = await prisma.surface.findUnique({
+    where: { id: surfaceId },
+    select: {
+      templateVersionId: true,
+      templateVersion: { select: { version: true } },
+    },
+  });
   let event;
   try {
     event = await prisma.event.create({
@@ -75,6 +88,8 @@ export async function appendSystemEvent(
         authorId: "system",
         type,
         data: data as Prisma.InputJsonValue,
+        templateVersionId: surface?.templateVersionId ?? null,
+        templateVersionNum: surface?.templateVersion?.version ?? null,
       },
     });
   } catch (err) {
@@ -186,6 +201,12 @@ export async function writeEvent(
         data: (input.data ?? null) as Prisma.InputJsonValue,
         causationId: input.causationId ?? null,
         idempotencyKey: idemKey,
+        // #268 — stamp the surface's current pin so downstream readers can
+        // tell which template version's schema this event was validated
+        // against. surface.templateVersion is eager-loaded by every
+        // writeEvent caller (see SurfaceWithArtifactVersion above).
+        templateVersionId: surface.templateVersionId,
+        templateVersionNum: surface.templateVersion.version,
       },
     });
   } catch (err) {

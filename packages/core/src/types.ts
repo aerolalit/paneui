@@ -20,6 +20,17 @@ export interface PaneEvent {
   data: unknown;
   causation_id: string | null;
   idempotency_key: string | null;
+  /**
+   * The template version this event was written under — the surface's pinned
+   * templateVersionId at the moment of the write. Stamped at write time and
+   * never rewritten, so a downstream upgrade (#267) can read old events
+   * under the new schema (Level 1 polymorphic render). Nullable for events
+   * written before #268 landed; the relay's one-shot migration backfilled
+   * those from the surface's current pin where possible.
+   */
+  template_version_id: string | null;
+  /** Denormalised integer version number for `template_version_id`. */
+  template_version: number | null;
 }
 
 /** The template content type. `html-ref` is rejected by the relay for now. */

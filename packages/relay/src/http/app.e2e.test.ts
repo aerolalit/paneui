@@ -528,6 +528,12 @@ describe("HTTP e2e", () => {
       expect(body.error.retryable).toBe(false);
       expect(body.error.hint).toMatch(/bearer token/i);
       expect(body.error.docs_url).toContain("docs/SPEC.md#");
+      // Regression guard for #260: the Tier-3 rename swept GitHub's tree-URL
+      // infix `/blob/` → `/attachment/`, 404'ing every docs_url. Lock the
+      // GitHub-required `/blob/<branch>/` form here so a future rename pass
+      // can't silently break it again.
+      expect(body.error.docs_url).toContain("/blob/main/");
+      expect(body.error.docs_url).not.toContain("/attachment/main/");
     });
 
     it("404 on a missing surface uses session_not_found", async () => {

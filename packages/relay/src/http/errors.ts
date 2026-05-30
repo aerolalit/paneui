@@ -3,7 +3,11 @@
 // how to fix its input (`hint`), and where to read more (`docsUrl`).
 
 // No hosted docs site yet — link the repo SPEC with verified heading anchors.
-const SPEC = "https://github.com/aerolalit/paneui/attachment/main/docs/SPEC.md";
+// `/blob/<branch>/<path>` is GitHub's tree-URL infix; it has no relation to
+// the product noun rename (Tier 3, #239: blob → attachment) but the rename
+// sweep flipped this string anyway, breaking the docs link in every error
+// envelope. See #260.
+const SPEC = "https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md";
 const DOCS = {
   auth: `${SPEC}#auth-three-layers-only-1-and-2-in-v1`,
   api: `${SPEC}#http-api-v1`,
@@ -167,6 +171,26 @@ export const errors = {
       details,
       hint ??
         "the event does not satisfy the surface's event schema; check the event type and payload against the declared schema",
+      false,
+      DOCS.schema,
+    ),
+
+  // #267 — POST /v1/surfaces/:id/upgrade refused because the target
+  // template version's schema isn't a superset of the surface's current
+  // pinned version. Past events would no longer validate under the new
+  // schema. `details.breaks` is the list of specific narrowings from
+  // src/core/schema-compat.ts; the operator either resolves them (publish
+  // a wider new version, drop the upgrade) or passes compat="force" to
+  // skip the gate.
+  schemaIncompatibleUpgrade: (
+    breaks: Array<{ path: string; message: string }>,
+  ) =>
+    new ApiError(
+      422,
+      "schema_incompatible_upgrade",
+      undefined,
+      { breaks },
+      "the target template version narrows the surface's current schema in one or more places; either publish a wider template version that's a superset, or retry with compat=\"force\" to skip the gate (events written under the old schema may no longer validate)",
       false,
       DOCS.schema,
     ),
