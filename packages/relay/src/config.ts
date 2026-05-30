@@ -526,6 +526,15 @@ export function redactConfig(c: Config): Record<string, unknown> {
     url = url.replace(/([?&](?:password|pwd|pass)=)[^&]*/gi, "$1<redacted>");
     r.DATABASE_URL = url;
   }
+  if (typeof r.REDIS_URL === "string") {
+    // Same userinfo-mask as DATABASE_URL. Azure Cache for Redis hands out
+    // a rediss://:<base64-key>@host:6380 URL where the entire key sits in
+    // the password slot. Without this mask the key was being logged in
+    // cleartext via the "starting pane relay" config dump on boot. The
+    // adjacent "redis enabled" log line already masks correctly — this
+    // brings the config-dump path in line.
+    r.REDIS_URL = r.REDIS_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
+  }
   return r;
 }
 
