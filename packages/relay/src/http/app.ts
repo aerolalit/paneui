@@ -141,6 +141,20 @@ export function buildApp(
     if (err instanceof ApiError) {
       // Count the error exactly once, here, by its low-cardinality `code`.
       recordError(err.code);
+      // Log auth/cap/expiry rejections at info so operators can see who got
+      // turned away (the `req` middleware logs the status, but not the `code`
+      // — without this line, a wave of 401/404s is indistinguishable from
+      // normal traffic). Token-bearing URLs (/s/:token, /b/:token) are
+      // redacted with the same rules as the req-log middleware above.
+      log.info("api rejected", {
+        reqId: c.res.headers.get("X-Request-Id") ?? undefined,
+        code: err.code,
+        status: err.status,
+        method: c.req.method,
+        path: c.req.path
+          .replace(/^\/s\/[^/]+/, "/s/***")
+          .replace(/^\/b\/[^/]+/, "/b/***"),
+      });
       // Additive, agent-friendly error envelope. `code`/`message`/`details`
       // are unchanged for existing clients; `hint`/`retryable`/`docs_url`
       // (snake_case on the wire) are appended and omitted when undefined.

@@ -95,7 +95,9 @@ export function attachWs(
     for (const client of wss.clients) {
       const ws = client as AliveWs;
       if (ws.isAlive === false) {
-        log.debug("ws heartbeat: terminating unresponsive socket");
+        log.debug("ws heartbeat: terminating unresponsive socket", {
+          surfaceId: ws.paneSessionId,
+        });
         ws.terminate();
         continue;
       }
@@ -151,7 +153,10 @@ async function handleUpgrade(
         originOk = false;
       }
       if (!originOk) {
-        sendUpgradeError(socket, 403);
+        sendUpgradeError(socket, 403, "origin mismatch", {
+          surfaceId,
+          origin,
+        });
         return;
       }
     }
@@ -168,7 +173,7 @@ async function handleUpgrade(
         config.TRUSTED_PROXY,
       ))
     ) {
-      sendUpgradeError(socket, 429);
+      sendUpgradeError(socket, 429, "rate limit exceeded", { surfaceId });
       return;
     }
 
@@ -181,7 +186,7 @@ async function handleUpgrade(
     // req.url so the relay's own access logs stay redacted.
     const cred = extractCredential(req, url);
     if (!cred) {
-      sendUpgradeError(socket, 401);
+      sendUpgradeError(socket, 401, "missing credential", { surfaceId });
       return;
     }
 
@@ -197,7 +202,9 @@ async function handleUpgrade(
       // so we load those below exactly as the token path does.
       const redeemed = redeemTicket(cred.value, surfaceId);
       if (!redeemed) {
-        sendUpgradeError(socket, 401);
+        sendUpgradeError(socket, 401, "ticket invalid or expired", {
+          surfaceId,
+        });
         return;
       }
       author = redeemed;
@@ -206,7 +213,9 @@ async function handleUpgrade(
         include: { templateVersion: true },
       });
       if (!s) {
-        sendUpgradeError(socket, 404);
+        sendUpgradeError(socket, 404, "surface not found (ticket path)", {
+          surfaceId,
+        });
         return;
       }
       surface = s;
@@ -220,12 +229,14 @@ async function handleUpgrade(
     } else {
       const resolved = await resolveBearer(prisma, cred.value);
       if (!resolved) {
-        sendUpgradeError(socket, 404);
+        sendUpgradeError(socket, 404, "bearer not resolvable", { surfaceId });
         return;
       }
       if (resolved.kind === "participant") {
         if (resolved.participant.surfaceId !== surfaceId) {
-          sendUpgradeError(socket, 404);
+          sendUpgradeError(socket, 404, "participant surface mismatch", {
+            surfaceId,
+          });
           return;
         }
         participant = resolved.participant;
@@ -240,7 +251,9 @@ async function handleUpgrade(
           include: { templateVersion: true },
         });
         if (!s || s.agentId !== resolved.agent.id) {
-          sendUpgradeError(socket, 404);
+          sendUpgradeError(socket, 404, "agent not surface owner", {
+            surfaceId,
+          });
           return;
         }
         surface = s;
@@ -249,7 +262,10 @@ async function handleUpgrade(
     }
 
     if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
-      sendUpgradeError(socket, 410);
+      sendUpgradeError(socket, 410, "surface closed or expired", {
+        surfaceId,
+        surfaceStatus: surface.status,
+      });
       return;
     }
 
@@ -261,7 +277,7 @@ async function handleUpgrade(
       (await connectionCount(surfaceId)) >=
         config.MAX_WS_CONNECTIONS_PER_SESSION
     ) {
-      sendUpgradeError(socket, 429);
+      sendUpgradeError(socket, 429, "connection cap reached", { surfaceId });
       return;
     }
 
@@ -332,7 +348,19 @@ function extractCredential(
   return null;
 }
 
-function sendUpgradeError(socket: Duplex, status: number): void {
+// Log the rejection at info level (warn would page on noisy probe traffic;
+// info still hits the aggregator) and emit the matching HTTP status line so
+// the WS client sees the same status code that any HTTP caller would. `reason`
+// is a short human-readable tag for operators chasing auth/cap/expiry events;
+// `context` carries the surfaceId (and anything else useful) — both are
+// internal-only and never leave the log line.
+function sendUpgradeError(
+  socket: Duplex,
+  status: number,
+  reason: string,
+  context?: Record<string, unknown>,
+): void {
+  log.info("ws upgrade rejected", { status, reason, ...context });
   const statusText: Record<number, string> = {
     401: "Unauthorized",
     403: "Forbidden",
