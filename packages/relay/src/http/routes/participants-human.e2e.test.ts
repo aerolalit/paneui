@@ -1,7 +1,7 @@
 // End-to-end tests for Phase E — human-authenticated participant mints.
 //
 // Covers:
-//   POST /v1/surfaces/:id/invite-email   (identity-bound human, §7.3 A)
+//   POST /v1/surfaces/:id/identity-link   (identity-bound human, §7.3 A)
 //   POST /v1/surfaces/:id/public-link    (anonymous capability, §7.3 B)
 //   Bridge auth — identity-bound tokens redirect to /login when no cookie,
 //                 403 wrong_account when cookie is for a different human.
@@ -104,10 +104,10 @@ function withCookie(cookie: string): { cookie: string } {
   return { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` };
 }
 
-describe("POST /v1/surfaces/:id/invite-email", () => {
+describe("POST /v1/surfaces/:id/identity-link", () => {
   it("requires a login cookie", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/ses_x/invite-email", {
+      new Request("http://t/v1/surfaces/ses_x/identity-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: "bob@example.com" }),
@@ -122,7 +122,7 @@ describe("POST /v1/surfaces/:id/invite-email", () => {
     // Different human, not owner
     const other = await seedLoggedInHuman("eve@example.com");
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -138,7 +138,7 @@ describe("POST /v1/surfaces/:id/invite-email", () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const surfaceId = await seedAgentOwnedSurface(humanId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: { "content-type": "application/json", ...withCookie(cookie) },
         body: JSON.stringify({ email: "  Bob@Example.COM  " }),
@@ -173,7 +173,7 @@ describe("POST /v1/surfaces/:id/invite-email", () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const surfaceId = await seedAgentOwnedSurface(humanId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: { "content-type": "application/json", ...withCookie(cookie) },
         body: JSON.stringify({ email: "not-an-email" }),
@@ -242,7 +242,7 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
     const { humanId, cookie: aliceCookie } = await seedLoggedInHuman();
     const surfaceId = await seedAgentOwnedSurface(humanId);
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -265,7 +265,7 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
     const { humanId, cookie: aliceCookie } = await seedLoggedInHuman();
     const surfaceId = await seedAgentOwnedSurface(humanId);
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -295,7 +295,7 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
 
     // Alice invites bob; verify Bob can access by logging in as bob
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/invite-email`, {
+      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
