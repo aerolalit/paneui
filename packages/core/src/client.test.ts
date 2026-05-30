@@ -328,6 +328,58 @@ describe("PaneClient template operations", () => {
       code: "not_found",
     });
   });
+
+  it("publishTemplate POSTs the body to /v1/templates/:id/publish", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({
+        id: "art_1",
+        slug: "pr-review",
+        name: "PR Review",
+        published_at: "2026-01-01T00:00:00.000Z",
+        scopes: ["read:agent"],
+        install_count: 0,
+      }),
+    );
+    const out = await c.publishTemplate("pr-review", {
+      scopes: ["read:agent"],
+    });
+    expect(out.published_at).toBe("2026-01-01T00:00:00.000Z");
+    expect(seen().method).toBe("POST");
+    expect(seen().url).toBe(
+      "https://relay.test/v1/templates/pr-review/publish",
+    );
+  });
+
+  it("unpublishTemplate POSTs to /v1/templates/:id/unpublish", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ id: "art_1", published_at: null }),
+    );
+    const out = await c.unpublishTemplate("pr-review");
+    expect(out.published_at).toBeNull();
+    expect(seen().method).toBe("POST");
+    expect(seen().url).toBe(
+      "https://relay.test/v1/templates/pr-review/unpublish",
+    );
+  });
+
+  it("searchPublicTemplates GETs /v1/templates/catalog with q/limit/offset", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ items: [], total: 0, offset: 5, limit: 10 }),
+    );
+    await c.searchPublicTemplates("pr", { limit: 10, offset: 5 });
+    expect(seen().method).toBe("GET");
+    expect(seen().url).toBe(
+      "https://relay.test/v1/templates/catalog?q=pr&limit=10&offset=5",
+    );
+  });
+
+  it("searchPublicTemplates omits the query string when no args are given", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ items: [], total: 0, offset: 0, limit: 25 }),
+    );
+    await c.searchPublicTemplates();
+    expect(seen().url).toBe("https://relay.test/v1/templates/catalog");
+  });
 });
 
 describe("PaneClient.createSession", () => {

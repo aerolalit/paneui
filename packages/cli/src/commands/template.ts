@@ -42,6 +42,8 @@ const UPDATE_FLAGS = ["name", "slug", "description", "tags"];
 const NO_FLAGS: string[] = [];
 const NO_BOOLS: string[] = [];
 const DELETE_BOOLS = ["yes"];
+const PUBLISH_FLAGS = ["scopes"];
+const SEARCH_PUBLIC_FLAGS = ["limit", "offset"];
 
 export const artifactHelp = `pane template — manage reusable, versioned templates
 
@@ -54,15 +56,23 @@ Usage:
   pane template <subcommand> [options]
 
 Subcommands:
-  create     Create a named, reusable template (its v1).
-  version    Append a new version to an existing template.
-  update     Update an template's head metadata (name/slug/description/tags).
-  search     Search the agent's named templates (lean — no HTML).
-  list       List the agent's named templates (search with no query).
-  show       Show a full template: head metadata + its version list.
-  delete     Permanently delete an template and ALL its versions. Requires
-             --yes. Refused with 409 conflict if any surface (open or
-             closed) still references the template — delete those first.
+  create        Create a named, reusable template (its v1).
+  version       Append a new version to an existing template.
+  update        Update an template's head metadata (name/slug/description/tags).
+  search        Search the agent's named templates (lean — no HTML).
+  list          List the agent's named templates (search with no query).
+  show          Show a full template: head metadata + its version list.
+  delete        Permanently delete an template and ALL its versions. Requires
+                --yes. Refused with 409 conflict if any surface (open or
+                closed) still references the template — delete those first.
+  publish       Publish a template to the public catalog (so other humans
+                can install it). Optionally lock --scopes at publish time.
+  unpublish     Remove a template from the public catalog. Existing
+                installs are unaffected; the template just stops appearing
+                in searches.
+  search-public Search the PUBLIC catalog of all published templates from
+                every agent. Use before creating a new template, to find
+                an existing one you can install/recommend instead.
 
   pane template create --name <n> --template <path|inline>
                        [--event-schema <path|json>] [--slug <s>]
@@ -96,6 +106,26 @@ Subcommands:
       of the template's versions — run 'pane surface delete <surface-id>' on
       each first, or wait for the relay's TTL sweeper to reclaim them.
       Prints { template, deleted: true } on success.
+
+  pane template publish <id|slug> [--scopes <s1,s2,...>]
+      Publishes the template to the public catalog. Other humans can then
+      install it from their /apps page. --scopes is a comma-separated
+      'verb:noun' list (e.g. 'read:agent,write:surface') that locks the
+      permissions this version requests; reissue with new --scopes to
+      reset them. Prints the head metadata + published_at + scopes.
+
+  pane template unpublish <id|slug>
+      Removes the template from the public catalog. Existing installs
+      keep working — they're pinned to their version. Prints the head
+      metadata with published_at: null.
+
+  pane template search-public [query] [--limit <n>] [--offset <n>]
+      Searches the PUBLIC catalog across every agent's published
+      templates. Substring match on name, description, and tags. Ranked
+      by install_count desc, then publish recency. Useful BEFORE
+      authoring: 'pane template search-public pr-review' may find an
+      existing one you can install instead of building from scratch.
+      Prints { items, total, offset, limit }.
 
 Options:
   --name <n>          Template display name (required for 'create').
@@ -425,6 +455,93 @@ async function runArtifactDelete(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runTemplatePublish(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, PUBLISH_FLAGS, NO_BOOLS, "pane template publish");
+
+  const idOrSlug = args.positionals[1];
+  if (!idOrSlug) {
+    fail(
+      "missing template <id|slug> — usage: pane template publish <id|slug> [--scopes <s1,s2,...>]",
+      "invalid_args",
+    );
+  }
+
+  // --scopes is a comma-separated list of verb:noun strings. Omit to leave
+  // the existing scopes alone (server semantics). Pass an empty string to
+  // explicitly clear them (we send []).
+  const rawScopes = args.flags.get("scopes");
+  const body: { scopes?: string[] } = {};
+  if (rawScopes !== undefined) {
+    body.scopes = rawScopes
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  const client = makeClient(args);
+  try {
+    const res = await client.publishTemplate(idOrSlug, body);
+    printJson(res);
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
+async function runTemplateUnpublish(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane template unpublish");
+
+  const idOrSlug = args.positionals[1];
+  if (!idOrSlug) {
+    fail(
+      "missing template <id|slug> — usage: pane template unpublish <id|slug>",
+      "invalid_args",
+    );
+  }
+  const client = makeClient(args);
+  try {
+    const res = await client.unpublishTemplate(idOrSlug);
+    printJson(res);
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
+async function runTemplateSearchPublic(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(
+    args,
+    SEARCH_PUBLIC_FLAGS,
+    NO_BOOLS,
+    "pane template search-public",
+  );
+
+  const query = args.positionals[1];
+  const opts: { limit?: number; offset?: number } = {};
+  const limitRaw = args.flags.get("limit");
+  if (limitRaw !== undefined) {
+    const n = Number(limitRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 50) {
+      fail("--limit must be an integer between 1 and 50", "invalid_args");
+    }
+    opts.limit = n;
+  }
+  const offsetRaw = args.flags.get("offset");
+  if (offsetRaw !== undefined) {
+    const n = Number(offsetRaw);
+    if (!Number.isInteger(n) || n < 0) {
+      fail("--offset must be a non-negative integer", "invalid_args");
+    }
+    opts.offset = n;
+  }
+
+  const client = makeClient(args);
+  try {
+    const res = await client.searchPublicTemplates(query, opts);
+    printJson(res);
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
 export async function runArtifact(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
@@ -449,15 +566,24 @@ export async function runArtifact(args: ParsedArgs): Promise<void> {
     case "delete":
       await runArtifactDelete(args);
       break;
+    case "publish":
+      await runTemplatePublish(args);
+      break;
+    case "unpublish":
+      await runTemplateUnpublish(args);
+      break;
+    case "search-public":
+      await runTemplateSearchPublic(args);
+      break;
     case undefined:
       fail(
-        "missing subcommand — usage: pane template <create|version|update|search|list|show|delete> (run 'pane template --help')",
+        "missing subcommand — usage: pane template <create|version|update|search|list|show|delete|publish|unpublish|search-public> (run 'pane template --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown template subcommand '${sub}' — expected create|version|update|search|list|show|delete (run 'pane template --help')`,
+        `unknown template subcommand '${sub}' — expected create|version|update|search|list|show|delete|publish|unpublish|search-public (run 'pane template --help')`,
         "invalid_args",
       );
   }

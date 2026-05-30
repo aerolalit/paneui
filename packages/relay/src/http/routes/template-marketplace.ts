@@ -93,6 +93,74 @@ templatePublish.post("/:id/unpublish", requireAgent, async (c) => {
   return c.json({ id, published_at: null });
 });
 
+// GET /v1/templates/catalog — agent-side public catalog search (#279 PR C).
+// Same shape as GET /v1/templates/public but agent-authed and without the
+// per-human "installed" enrichment. Lets `pane template search-public`
+// recommend existing apps to an agent before it creates a duplicate.
+templatePublish.get("/catalog", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const limit = Math.min(50, Number(c.req.query("limit") ?? 25));
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
+  const q = c.req.query("q")?.trim() ?? "";
+
+  const baseWhere: Prisma.TemplateWhereInput = {
+    publishedAt: { not: null },
+  };
+  const items = await prisma.template.findMany({
+    where: baseWhere,
+    orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
+    ...(q.length === 0 ? { take: limit, skip: offset } : {}),
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      description: true,
+      tags: true,
+      shape: true,
+      publishedAt: true,
+      installCount: true,
+      latestVersion: true,
+      scopes: true,
+    },
+  });
+  const ql = q.toLowerCase();
+  const filtered =
+    q.length > 0
+      ? items.filter(
+          (t) =>
+            (t.name && t.name.toLowerCase().includes(ql)) ||
+            (t.description && t.description.toLowerCase().includes(ql)) ||
+            ((t.tags as string[] | null) ?? []).some((tag) =>
+              tag.toLowerCase().includes(ql),
+            ),
+        )
+      : items;
+  const total =
+    q.length === 0
+      ? await prisma.template.count({ where: baseWhere })
+      : filtered.length;
+  const matched =
+    q.length > 0 ? filtered.slice(offset, offset + limit) : filtered;
+
+  return c.json({
+    items: matched.map((t) => ({
+      id: t.id,
+      slug: t.slug,
+      name: t.name,
+      description: t.description,
+      tags: t.tags,
+      shape: t.shape,
+      scopes: (t.scopes as string[] | null) ?? [],
+      published_at: t.publishedAt?.toISOString() ?? null,
+      install_count: t.installCount,
+      latest_version: t.latestVersion,
+    })),
+    total,
+    offset,
+    limit,
+  });
+});
+
 // ----------------------------------------------------------------------
 // Human-authenticated browse/install/uninstall
 // ----------------------------------------------------------------------
