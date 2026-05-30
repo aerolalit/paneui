@@ -107,35 +107,56 @@ templateMarketplace.get("/public", requireHuman, async (c) => {
   // Pagination: simple offset for v1 (issue tracker has a cursor follow-up).
   const limit = Math.min(50, Number(c.req.query("limit") ?? 25));
   const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
-
-  const [items, total] = await Promise.all([
-    prisma.template.findMany({
-      where: { publishedAt: { not: null } },
-      orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
-      take: limit,
-      skip: offset,
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        tags: true,
-        shape: true,
-        publishedAt: true,
-        installCount: true,
-        latestVersion: true,
-        scopes: true,
-      },
-    }),
-    prisma.template.count({ where: { publishedAt: { not: null } } }),
-  ]);
+  const q = c.req.query("q")?.trim() ?? "";
+  // Filter post-DB: SQLite Prisma can't do case-insensitive `contains`
+  // on `name`/`description` and can't match inside a JSON tag array.
+  // The published catalog is bounded (few hundred rows) so load-then-
+  // filter is fine until we need fts.
+  const baseWhere: Prisma.TemplateWhereInput = {
+    publishedAt: { not: null },
+  };
+  const items = await prisma.template.findMany({
+    where: baseWhere,
+    orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
+    ...(q.length === 0 ? { take: limit, skip: offset } : {}),
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      description: true,
+      tags: true,
+      shape: true,
+      publishedAt: true,
+      installCount: true,
+      latestVersion: true,
+      scopes: true,
+    },
+  });
+  const ql = q.toLowerCase();
+  const filtered =
+    q.length > 0
+      ? items.filter(
+          (t) =>
+            (t.name && t.name.toLowerCase().includes(ql)) ||
+            (t.description && t.description.toLowerCase().includes(ql)) ||
+            ((t.tags as string[] | null) ?? []).some((tag) =>
+              tag.toLowerCase().includes(ql),
+            ),
+        )
+      : items;
+  const total =
+    q.length === 0
+      ? await prisma.template.count({ where: baseWhere })
+      : filtered.length;
+  const matched =
+    q.length > 0 ? filtered.slice(offset, offset + limit) : filtered;
 
   // Mark which the caller has already installed so the UI can render a
   // "Installed" pill without a second round-trip.
   const installs = await prisma.humanTemplateInstall.findMany({
     where: {
       humanId: human.id,
-      templateId: { in: items.map((t) => t.id) },
+      templateId: { in: matched.map((t) => t.id) },
       uninstalledAt: null,
     },
     select: { templateId: true, installedVersion: true },
@@ -143,7 +164,7 @@ templateMarketplace.get("/public", requireHuman, async (c) => {
   const installed = new Map(installs.map((i) => [i.templateId, i]));
 
   return c.json({
-    items: items.map((t) => ({
+    items: matched.map((t) => ({
       id: t.id,
       slug: t.slug,
       name: t.name,

@@ -167,6 +167,7 @@ describe("logged-out access to gated pages", () => {
     "/my-surfaces",
     "/my-templates",
     "/my-agents",
+    "/apps",
     "/settings",
   ])("%s shows the sign-in prompt to logged-out callers", async (path) => {
     const res = await app.fetch(new Request(`http://t${path}`));
@@ -270,6 +271,21 @@ describe("GET /my-templates (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Reviewer");
+  });
+});
+
+describe("GET /apps (signed in)", () => {
+  it("renders the Apps catalog shell + search input", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/apps", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Apps");
+    expect(html).toContain('id="apps-search"');
+    expect(html).toContain('id="apps-results"');
+    expect(html).toContain("/v1/templates/public");
   });
 });
 

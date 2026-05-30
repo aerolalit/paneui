@@ -219,6 +219,81 @@ describe("GET /v1/templates/public (human)", () => {
     expect(body.items[0]!.installed).toBe(false);
   });
 
+  it("?q= filters by name, description, and tags (case-insensitive)", async () => {
+    const owner = await seedAgent();
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Picture Review",
+        description: "Tool for image review",
+        tags: ["images"],
+        publishedAt: new Date(Date.now() - 30_000),
+        installCount: 1,
+      },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "PR Reviewer",
+        description: "Approve or request changes on pull requests",
+        tags: ["code", "github"],
+        publishedAt: new Date(Date.now() - 20_000),
+        installCount: 5,
+      },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Survey",
+        description: "Generic ranking form",
+        tags: ["forms"],
+        publishedAt: new Date(Date.now() - 10_000),
+        installCount: 2,
+      },
+    });
+    const { cookie } = await seedLoggedInHuman();
+
+    const byName = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=PR", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { name: string }[]; total: number };
+    expect(byName.total).toBe(1);
+    expect(byName.items[0]!.name).toBe("PR Reviewer");
+
+    const byDesc = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=ranking", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { name: string }[]; total: number };
+    expect(byDesc.total).toBe(1);
+    expect(byDesc.items[0]!.name).toBe("Survey");
+
+    const byTag = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=GITHUB", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { name: string }[]; total: number };
+    expect(byTag.total).toBe(1);
+    expect(byTag.items[0]!.name).toBe("PR Reviewer");
+
+    const noHit = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=nopenope", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: unknown[]; total: number };
+    expect(noHit.total).toBe(0);
+    expect(noHit.items).toEqual([]);
+  });
+
   it("marks installed templates with installed=true", async () => {
     const owner = await seedAgent();
     const tmpl = await prisma.template.create({
