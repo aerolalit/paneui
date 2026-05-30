@@ -649,6 +649,87 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
   }
 
+  /**
+   * POST /v1/templates/:id/publish — enter the public catalog. The optional
+   * `scopes` list locks the permissions the template will request from
+   * installers at this version (see Phase F §4.5 / §8). Passing an empty
+   * array clears the stored scopes; omitting `scopes` keeps the existing
+   * ones.
+   */
+  async publishTemplate(
+    idOrSlug: string,
+    body: { scopes?: string[] } = {},
+  ): Promise<{
+    id: string;
+    slug: string | null;
+    name: string | null;
+    published_at: string | null;
+    scopes: string[];
+    install_count: number;
+  }> {
+    const r = await this.call(
+      "POST",
+      `/v1/templates/${encodeURIComponent(idOrSlug)}/publish`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject(r);
+  }
+
+  /**
+   * POST /v1/templates/:id/unpublish — leave the public catalog. Existing
+   * installs are unaffected (humans keep their pinned version), but the
+   * template no longer appears in `searchPublicTemplates` results.
+   */
+  async unpublishTemplate(
+    idOrSlug: string,
+  ): Promise<{ id: string; published_at: string | null }> {
+    const r = await this.call(
+      "POST",
+      `/v1/templates/${encodeURIComponent(idOrSlug)}/unpublish`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject(r);
+  }
+
+  /**
+   * GET /v1/templates/catalog?q=... — agent-side public catalog search.
+   * Lets an agent discover already-published apps before authoring a
+   * duplicate. Sorted by install_count desc, then publish recency.
+   */
+  async searchPublicTemplates(
+    query?: string,
+    opts: { limit?: number; offset?: number } = {},
+  ): Promise<{
+    items: Array<{
+      id: string;
+      slug: string | null;
+      name: string | null;
+      description: string | null;
+      tags: string[] | null;
+      shape: string;
+      scopes: string[];
+      published_at: string | null;
+      install_count: number;
+      latest_version: number;
+    }>;
+    total: number;
+    offset: number;
+    limit: number;
+  }> {
+    const params = new URLSearchParams();
+    if (query != null && query !== "") params.set("q", query);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const r = await this.call(
+      "GET",
+      `/v1/templates/catalog${qs ? "?" + qs : ""}`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject(r);
+  }
+
   // ------------------------------------------------------------------------
   // Blobs (v0.1.0). Three-scope binary attachments with multipart upload.
   // See proposal pane#152 for the full design.

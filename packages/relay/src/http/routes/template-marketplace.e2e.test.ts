@@ -957,3 +957,84 @@ describe("POST /v1/my-templates/:id/unpublish (human, #279 PR B)", () => {
     expect(after!.publishedAt).toBeNull();
   });
 });
+
+describe("GET /v1/templates/catalog (agent, #279 PR C)", () => {
+  it("requires an agent bearer token", async () => {
+    const res = await app.fetch(new Request("http://t/v1/templates/catalog"));
+    expect(res.status).toBe(401);
+  });
+
+  it("lists only published templates, no installed pill", async () => {
+    const owner = await seedAgent();
+    await prisma.template.create({
+      data: { ownerId: owner.id, name: "Private (not published)" },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Public A",
+        publishedAt: new Date(Date.now() - 60_000),
+        installCount: 10,
+      },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Public B",
+        publishedAt: new Date(Date.now() - 30_000),
+        installCount: 100,
+      },
+    });
+    const caller = await seedAgent();
+    const res = await app.fetch(
+      new Request("http://t/v1/templates/catalog", {
+        headers: { authorization: `Bearer ${caller.apiKey}` },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ name: string; install_count: number }>;
+      total: number;
+    };
+    expect(body.total).toBe(2);
+    expect(body.items[0]!.name).toBe("Public B");
+    expect(body.items[1]!.name).toBe("Public A");
+    // No 'installed' field — agents don't have human installs.
+    expect(body.items[0]).not.toHaveProperty("installed");
+  });
+
+  it("?q= filters across name, description, and tags (case-insensitive)", async () => {
+    const owner = await seedAgent();
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "PR Reviewer",
+        description: "Approve pull requests",
+        tags: ["code"],
+        publishedAt: new Date(Date.now() - 20_000),
+      },
+    });
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Survey",
+        description: "Generic ranking form",
+        tags: ["forms"],
+        publishedAt: new Date(Date.now() - 10_000),
+      },
+    });
+    const caller = await seedAgent();
+
+    const res = await app.fetch(
+      new Request("http://t/v1/templates/catalog?q=pull", {
+        headers: { authorization: `Bearer ${caller.apiKey}` },
+      }),
+    );
+    const body = (await res.json()) as {
+      items: Array<{ name: string }>;
+      total: number;
+    };
+    expect(body.total).toBe(1);
+    expect(body.items[0]!.name).toBe("PR Reviewer");
+  });
+});

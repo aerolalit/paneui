@@ -33,6 +33,25 @@ const fakeClient = {
     calls.push({ method: "deleteArtifact", args: [id] });
     return Promise.resolve();
   }),
+  publishTemplate: vi.fn((id: unknown, body: unknown) => {
+    calls.push({ method: "publishTemplate", args: [id, body] });
+    return Promise.resolve({
+      id: "art_1",
+      slug: "x",
+      name: "X",
+      published_at: "2026-01-01T00:00:00.000Z",
+      scopes: [],
+      install_count: 0,
+    });
+  }),
+  unpublishTemplate: vi.fn((id: unknown) => {
+    calls.push({ method: "unpublishTemplate", args: [id] });
+    return Promise.resolve({ id: "art_1", published_at: null });
+  }),
+  searchPublicTemplates: vi.fn((q: unknown, opts: unknown) => {
+    calls.push({ method: "searchPublicTemplates", args: [q, opts] });
+    return Promise.resolve({ items: [], total: 0, offset: 0, limit: 25 });
+  }),
 };
 
 vi.mock("../config.js", () => ({
@@ -291,5 +310,103 @@ describe("template unknown subcommand", () => {
     await run(["nope"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("delete");
+  });
+});
+
+describe("template publish (#279 PR C)", () => {
+  it("sends empty body when --scopes is omitted (server keeps existing)", async () => {
+    await run(["publish", "pr-review"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      { method: "publishTemplate", args: ["pr-review", {}] },
+    ]);
+  });
+
+  it("parses --scopes as a comma-separated array", async () => {
+    await run([
+      "publish",
+      "pr-review",
+      "--scopes",
+      "read:agent, write:surface",
+    ]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      {
+        method: "publishTemplate",
+        args: ["pr-review", { scopes: ["read:agent", "write:surface"] }],
+      },
+    ]);
+  });
+
+  it("sends scopes: [] when --scopes is the empty string (clear)", async () => {
+    await run(["publish", "pr-review", "--scopes", ""]);
+    expect(calls).toEqual([
+      { method: "publishTemplate", args: ["pr-review", { scopes: [] }] },
+    ]);
+  });
+
+  it("fails when the id/slug positional is missing", async () => {
+    await run(["publish"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing template <id|slug>");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("template unpublish (#279 PR C)", () => {
+  it("calls unpublishTemplate with the id", async () => {
+    await run(["unpublish", "pr-review"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      { method: "unpublishTemplate", args: ["pr-review"] },
+    ]);
+  });
+
+  it("fails when the id/slug positional is missing", async () => {
+    await run(["unpublish"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("missing template <id|slug>");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("template search-public (#279 PR C)", () => {
+  it("calls searchPublicTemplates with no query", async () => {
+    await run(["search-public"]);
+    expect(exitCode).toBeUndefined();
+    expect(calls).toEqual([
+      { method: "searchPublicTemplates", args: [undefined, {}] },
+    ]);
+  });
+
+  it("forwards the positional query", async () => {
+    await run(["search-public", "pr review"]);
+    expect(calls).toEqual([
+      { method: "searchPublicTemplates", args: ["pr review", {}] },
+    ]);
+  });
+
+  it("forwards --limit and --offset", async () => {
+    await run(["search-public", "pr", "--limit", "10", "--offset", "20"]);
+    expect(calls).toEqual([
+      {
+        method: "searchPublicTemplates",
+        args: ["pr", { limit: 10, offset: 20 }],
+      },
+    ]);
+  });
+
+  it("rejects out-of-range --limit", async () => {
+    await run(["search-public", "--limit", "100"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--limit must be an integer between 1 and 50");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects negative --offset", async () => {
+    await run(["search-public", "--offset", "-1"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--offset must be a non-negative integer");
+    expect(calls).toHaveLength(0);
   });
 });
