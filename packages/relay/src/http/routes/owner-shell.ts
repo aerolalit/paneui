@@ -24,7 +24,7 @@
 // routes). On subsequent visits the same participant is reused, so the
 // owner's identity-id is stable and the audit log stays coherent.
 
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import {
@@ -41,6 +41,7 @@ import {
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import { errors } from "../errors.js";
 import type { EventSchema, Author } from "../../types.js";
+import { prefersHtml } from "../accept.js";
 
 // Mounted at `/surfaces` in app.ts, so the route paths here are relative
 // (`/:id`, `/:id/content`, ...). The `use("*", requireHuman)` then only
@@ -48,9 +49,64 @@ import type { EventSchema, Author } from "../../types.js";
 // wildcard middleware can't accidentally 401 unrelated routes elsewhere.
 const ownerShell = new Hono<HumanAuthEnv>();
 
-// All routes in this module require a valid pane_login cookie. requireHuman
-// throws 401 + clears the cookie if the session is missing or expired.
-ownerShell.use("*", requireHuman);
+// Browser-friendly variant of requireHuman: an anonymous GET that prefers
+// HTML (i.e. a human typed the URL into their browser) gets a 302 to
+// /login?return=<encoded surface path>, mirroring how the identity-bound
+// participant bridge already handles the same case at
+// src/bridge/routes.ts:238. Without this, anonymous browser access to
+// /surfaces/:id rendered a raw `{"error":{"code":"unauthorized",...}}`
+// JSON page — hostile to a human who just wanted the surface to ask
+// them to sign in. See #269.
+//
+// Non-browser callers (curl with default `Accept: */*`, an XHR with
+// `Accept: application/json`, anything POST/non-GET) still get the
+// existing 401 envelope — they need the structured error to branch on.
+const redirectOrRequireHuman: MiddlewareHandler<HumanAuthEnv> = async (
+  c,
+  next,
+) => {
+  const accept = c.req.header("Accept");
+  // Only GETs make sense to redirect — a POST to /:id/ws-ticket without a
+  // cookie is an XHR misuse, not a misnavigated tab; 401 is the right
+  // signal there.
+  if (c.req.method === "GET" && prefersHtml(accept)) {
+    // Resolve the cookie ourselves so we can branch on missing-vs-present
+    // before requireHuman gets a chance to throw. We don't reuse
+    // resolveHumanOptional because the lookup-side imports would loop;
+    // inline the small bit we need.
+    const { parseLoginCookie, hashLoginCookie } =
+      await import("../../auth/cookie.js");
+    const cookieValue = parseLoginCookie(c.req.header("cookie") ?? null);
+    if (!cookieValue) {
+      return bounceToLogin(c);
+    }
+    const prisma = c.get("prisma");
+    const login = await prisma.login.findUnique({
+      where: { cookieHash: hashLoginCookie(cookieValue) },
+      include: { human: true },
+    });
+    if (!login || login.expiresAt < new Date()) {
+      return bounceToLogin(c);
+    }
+    // Valid cookie — set human and continue. lastSeenAt is updated by
+    // requireHuman's lookup; we'd be double-updating if we did it here too,
+    // so just hand off below.
+    c.set("human", login.human);
+    return next();
+  }
+  // Non-GET or non-HTML — fall through to the standard requireHuman path,
+  // which throws the JSON 401 envelope on missing/expired cookies.
+  return requireHuman(c, next);
+};
+
+function bounceToLogin(c: Parameters<MiddlewareHandler<HumanAuthEnv>>[0]) {
+  // Reconstruct the original path + query — Hono's c.req.url is absolute.
+  const u = new URL(c.req.url);
+  const returnTo = u.pathname + u.search;
+  return c.redirect(`/login?return=${encodeURIComponent(returnTo)}`, 302);
+}
+
+ownerShell.use("*", redirectOrRequireHuman);
 
 // Load a surface by id and assert the logged-in human owns it. Returns the
 // surface row (with templateVersion eager-loaded) for downstream handlers.
