@@ -201,6 +201,7 @@ function layout(args: {
   </div>
   <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
+    ${nav("apps", "Apps", "/apps")}
     ${nav("surfaces", "My surfaces", "/my-surfaces")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
@@ -534,6 +535,119 @@ systemPages.get("/my-templates", async (c) => {
       body,
       active: "templates",
     }),
+  );
+});
+
+// ----------------------------------------------------------------------
+// GET /apps — public catalog browse page (#279).
+// Human-facing wrapper over GET /v1/templates/public + install/uninstall.
+// UI uses "Apps" vocabulary; the underlying noun stays "template".
+// ----------------------------------------------------------------------
+systemPages.get("/apps", (c) => {
+  const human = c.get("human");
+  if (!human) {
+    return c.html(
+      layout({ title: "Apps", email: null, body: loggedOutPrompt() }),
+    );
+  }
+  const body = `<h1>Apps</h1>
+  <p style="color:var(--muted);font-size:14.5px;">Mini apps published by other agents. Install one to make it available to your own agents — they can then create surfaces from it for you.</p>
+  <div class="card">
+    <input id="apps-search" type="text" placeholder="Search apps by name, description, or tag" autocomplete="off" />
+    <div id="apps-results" style="margin-top:14px;"></div>
+  </div>
+  <script>
+    const resultsEl = document.getElementById("apps-results");
+    const searchEl = document.getElementById("apps-search");
+
+    function escape(s) {
+      return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function renderItems(items) {
+      if (!items.length) {
+        resultsEl.innerHTML = '<p class="empty">No apps match that search.</p>';
+        return;
+      }
+      const html = '<ul class="list">' + items.map((t) => {
+        const name = t.name || t.slug || t.id;
+        const tags = (t.tags || []).map((x) => '<span class="pill muted">' + escape(x) + '</span>').join(' ');
+        const installedPill = t.installed
+          ? '<span class="pill good">Installed v' + escape(t.installed_version) + '</span>'
+          : '';
+        const btn = t.installed
+          ? '<button class="btn ghost" data-act="uninstall" data-id="' + escape(t.id) + '">Uninstall</button>'
+          : '<button class="btn" data-act="install" data-id="' + escape(t.id) + '">Install</button>';
+        return '<li><div style="min-width:0;flex:1;"><div class="title">' + escape(name) + '</div>'
+          + '<div class="meta">' + (t.description ? escape(t.description) : '<em>no description</em>') + '</div>'
+          + (tags ? '<div class="meta" style="margin-top:4px;">' + tags + '</div>' : '')
+          + '<div class="meta" style="margin-top:4px;">' + escape(t.install_count) + ' installs · latest v' + escape(t.latest_version) + '</div>'
+          + '</div>'
+          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + installedPill + btn + '</div></li>';
+      }).join('') + '</ul>';
+      resultsEl.innerHTML = html;
+    }
+
+    async function load(q) {
+      const url = '/v1/templates/public' + (q ? ('?q=' + encodeURIComponent(q)) : '');
+      resultsEl.textContent = 'Loading…';
+      try {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) {
+          resultsEl.textContent = 'Failed to load apps (' + res.status + ').';
+          return;
+        }
+        const body = await res.json();
+        renderItems(body.items || []);
+      } catch (e) {
+        resultsEl.textContent = 'Network error — try again.';
+      }
+    }
+
+    // Debounce typing.
+    let debounce = null;
+    searchEl.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => load(searchEl.value.trim()), 200);
+    });
+
+    // Install / Uninstall click delegation.
+    resultsEl.addEventListener('click', async (ev) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLElement)) return;
+      const btn = target.closest('button[data-act]');
+      if (!btn) return;
+      const act = btn.getAttribute('data-act');
+      const id = btn.getAttribute('data-id');
+      if (!act || !id) return;
+      btn.disabled = true;
+      btn.textContent = act === 'install' ? 'Installing…' : 'Uninstalling…';
+      try {
+        const res = await fetch('/v1/templates/' + encodeURIComponent(id) + '/' + act, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+          body: act === 'install' ? '{}' : undefined,
+        });
+        if (!res.ok && res.status !== 204) {
+          btn.disabled = false;
+          btn.textContent = act === 'install' ? 'Install' : 'Uninstall';
+          alert((act === 'install' ? 'Install' : 'Uninstall') + ' failed: HTTP ' + res.status);
+          return;
+        }
+      } catch (e) {
+        btn.disabled = false;
+        alert('Network error — try again.');
+        return;
+      }
+      // Reload to reflect new installed state.
+      load(searchEl.value.trim());
+    });
+
+    load('');
+  </script>`;
+  return c.html(
+    layout({ title: "Apps", email: human.email, body, active: "apps" }),
   );
 });
 
