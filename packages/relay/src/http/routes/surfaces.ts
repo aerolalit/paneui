@@ -4,6 +4,7 @@ import {
   createSessionSchema,
   listSessionsQuerySchema,
   mintParticipantSchema,
+  upgradeSurfaceSchema,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
@@ -16,6 +17,9 @@ import {
 } from "../../keys.js";
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { errors } from "../errors.js";
+import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import type { EventSchema } from "../../types.js";
+import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
@@ -31,7 +35,6 @@ import {
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
-import type { EventSchema } from "../../types.js";
 
 const surfaces = new Hono<AuthEnv>();
 
@@ -783,6 +786,131 @@ surfaces.get("/:id", requireAgent, async (c) => {
     input_data: surface.inputData,
     created_at: surface.createdAt.toISOString(),
     expires_at: surface.expiresAt.toISOString(),
+  });
+});
+
+// POST /v1/surfaces/:id/upgrade — re-pin a live surface to a newer (or
+// other) version of the same template (#267). The schema-compat gate (see
+// src/core/schema-compat.ts) refuses by default when the target schema
+// narrows the surface's current one; compat="force" overrides.
+//
+// Events on disk are never rewritten — #268 stamps the version on each
+// event at write time, so a downstream polymorphic-render can read old
+// events under their original schema even after the upgrade.
+surfaces.post("/:id/upgrade", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  // Body — accept an empty body and apply defaults (latest version, strict).
+  let body;
+  try {
+    const raw = await c.req.json().catch(() => ({}));
+    body = upgradeSurfaceSchema.parse(raw);
+  } catch (e) {
+    throw errors.invalidRequest(
+      "invalid body",
+      e,
+      `the request body must be \`{ "template_version"?: number, "compat"?: "strict" | "force" }\``,
+    );
+  }
+  const compat = body.compat ?? "strict";
+
+  // Surface — must exist, must be owned by the calling agent, must be live.
+  const surface = await prisma.surface.findUnique({
+    where: { id },
+    include: { templateVersion: { include: { template: true } } },
+  });
+  if (!surface || surface.agentId !== me.id) throw errors.sessionNotFound();
+  if (surface.status === "closed" || surface.expiresAt.getTime() < Date.now()) {
+    throw errors.gone(
+      "surface is closed — upgrading a closed surface has no effect",
+    );
+  }
+
+  // Target version. Defaults to the template head's latestVersion. Must
+  // belong to the SAME template (the route doesn't support cross-template
+  // re-pointing — that'd be a different surface, conceptually).
+  const targetVersionNum =
+    body.template_version ?? surface.templateVersion.template.latestVersion;
+  const targetVersion = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: surface.templateVersion.templateId,
+        version: targetVersionNum,
+      },
+    },
+  });
+  if (!targetVersion) {
+    throw errors.artifactVersionNotFound();
+  }
+
+  // No-op: the surface is already on the target version. Return the
+  // current state with upgraded=false; idempotent retry-safe.
+  if (targetVersion.id === surface.templateVersionId) {
+    return c.json({
+      surface_id: id,
+      template_version_id: surface.templateVersionId,
+      template_version: surface.templateVersion.version,
+      upgraded: false,
+      breaks: [],
+      compat,
+    });
+  }
+
+  // Compat gate. PR A's library does the schema diff; this route just
+  // decides what to do with the result.
+  const breaks = compareSurfaceSchemas({
+    oldEventSchema: surface.templateVersion
+      .eventSchema as unknown as EventSchema | null,
+    newEventSchema: targetVersion.eventSchema as unknown as EventSchema | null,
+    oldInputSchema: surface.templateVersion.inputSchema as Record<
+      string,
+      unknown
+    > | null,
+    newInputSchema: targetVersion.inputSchema as Record<string, unknown> | null,
+  });
+  if (breaks.length > 0 && compat === "strict") {
+    throw errors.schemaIncompatibleUpgrade(breaks);
+  }
+
+  // Apply the re-pin. Events on disk are unchanged — they keep their
+  // original templateVersionId stamp (#268).
+  await prisma.surface.update({
+    where: { id },
+    data: { templateVersionId: targetVersion.id },
+  });
+
+  // Audit-log the upgrade as a system event. The full breaks list goes
+  // into the event payload (even on strict success, where breaks=[])
+  // so an operator reviewing the surface log can see exactly what
+  // changed. Logged at warn level on a force-with-breaks for the
+  // operator's monitor to pick up.
+  if (compat === "force" && breaks.length > 0) {
+    log.warn("surface upgrade with compat=force skipped schema gate", {
+      surfaceId: id,
+      agentId: me.id,
+      fromVersion: surface.templateVersion.version,
+      toVersion: targetVersion.version,
+      breakCount: breaks.length,
+    });
+  }
+  await appendSystemEvent(prisma, id, "system.template.updated", {
+    from_version_id: surface.templateVersionId,
+    from_version: surface.templateVersion.version,
+    to_version_id: targetVersion.id,
+    to_version: targetVersion.version,
+    compat,
+    breaks,
+  });
+
+  return c.json({
+    surface_id: id,
+    template_version_id: targetVersion.id,
+    template_version: targetVersion.version,
+    upgraded: true,
+    breaks,
+    compat,
   });
 });
 

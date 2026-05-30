@@ -175,6 +175,26 @@ export const errors = {
       DOCS.schema,
     ),
 
+  // #267 — POST /v1/surfaces/:id/upgrade refused because the target
+  // template version's schema isn't a superset of the surface's current
+  // pinned version. Past events would no longer validate under the new
+  // schema. `details.breaks` is the list of specific narrowings from
+  // src/core/schema-compat.ts; the operator either resolves them (publish
+  // a wider new version, drop the upgrade) or passes compat="force" to
+  // skip the gate.
+  schemaIncompatibleUpgrade: (
+    breaks: Array<{ path: string; message: string }>,
+  ) =>
+    new ApiError(
+      422,
+      "schema_incompatible_upgrade",
+      undefined,
+      { breaks },
+      "the target template version narrows the surface's current schema in one or more places; either publish a wider template version that's a superset, or retry with compat=\"force\" to skip the gate (events written under the old schema may no longer validate)",
+      false,
+      DOCS.schema,
+    ),
+
   // The route is wired but the underlying capability (e.g. presigned PUT
   // against a backend that doesn't support it) isn't available on this
   // relay. 501 is the correct status — the request was well-formed but
