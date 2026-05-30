@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   createSessionSchema,
   listSessionsQuerySchema,
@@ -44,6 +44,61 @@ function publicWsUrl(config: Config): string {
   const u = new URL(config.publicUrl);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return u.toString().replace(/\/$/, "");
+}
+
+// #259 — mint a kind="agent" Participant for the calling agent on a surface
+// they don't yet own, so the cross-agent Phase G dedup hands back a usable
+// credential. Returns the freshly-minted plaintext token, or null when the
+// calling agent already has a non-revoked agent participant on this surface
+// (either because they're the owning agent, or because a previous dedup
+// already minted one).
+//
+// Token-stored-as-hash means we cannot re-emit an existing participant's
+// token; the agent is responsible for keeping the value they got the first
+// time. The `null` case is the "you already have access, find your old
+// token" branch.
+//
+// Concurrency: two parallel cross-agent dedup hits from the SAME agent both
+// see no existing participant and both attempt the create with
+// identityId === agent.id. The `(surfaceId, identityId)` unique constraint
+// serialises; the loser's P2002 collapses to the same "already has access"
+// shape (null token), which is correct — the winner's create succeeded.
+export async function mintCrossAgentParticipantIfNeeded(
+  prisma: PrismaClient,
+  surfaceId: string,
+  agent: { id: string },
+): Promise<{ token: string | null }> {
+  const existing = await prisma.participant.findFirst({
+    where: {
+      surfaceId,
+      kind: "agent",
+      identityId: agent.id,
+      revokedAt: null,
+    },
+    select: { id: true },
+  });
+  if (existing) return { token: null };
+
+  const token = generateAgentParticipantToken();
+  try {
+    await prisma.participant.create({
+      data: {
+        surfaceId,
+        kind: "agent",
+        identityId: agent.id,
+        tokenHash: hashKey(token),
+        tokenPrefix: keyPrefix(token),
+        agentId: agent.id,
+      },
+    });
+    return { token };
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code;
+    if (code !== "P2002") throw e;
+    // Identity-id collision: another concurrent first-time mint from the
+    // same agent won the row. Treat the same as "already has access".
+    return { token: null };
+  }
 }
 
 // Default page size for GET /v1/surfaces. The upper bound (200) lives on
@@ -492,11 +547,23 @@ surfaces.post("/", requireAgent, async (c) => {
       },
     });
     if (existing) {
-      // Return the existing surface. Mint a participant slot if the
-      // existing surface has no live human token (e.g. revoked); else
-      // surface the existing tokens via /v1/surfaces/:id/participants
-      // (the caller can list them — we don't re-emit secret token values
-      // here).
+      // Cross-agent dedup (#259): if the calling agent isn't yet a
+      // participant on the matched surface, mint a fresh kind="agent"
+      // Participant for them and return its token. Without this the
+      // dedup branch hands the caller a surface_id they have no
+      // credential to use — the dedup contract was leaking under the
+      // realistic "human owns A and B, both call create with the same
+      // context_key" case.
+      //
+      // Same-agent dedup is unchanged: the owning agent already has a
+      // kind="agent" Participant from the original create, the helper
+      // returns null, the response keeps the existing { agent: null }
+      // shape and the agent uses the token they got at first create.
+      const { token: dedupAgentToken } =
+        await mintCrossAgentParticipantIfNeeded(prisma, existing.id, agent);
+      // Human-side participant tokens are stored hashed and cannot be
+      // re-emitted; the caller lists them via /v1/surfaces/:id/participants
+      // and mints fresh ones with /v1/surfaces/:id/participants when needed.
       const existingHumanCount = existing.participants.filter(
         (p) => p.kind === "human",
       ).length;
@@ -505,11 +572,7 @@ surfaces.post("/", requireAgent, async (c) => {
         {
           surface_id: existing.id,
           created: false,
-          // No token re-emit on dedup hit — tokens are stored hashed, so
-          // we cannot reveal them. The caller lists participants via
-          // /v1/surfaces/:id/participants and mints fresh ones via
-          // /v1/surfaces/:id/participants when needed.
-          tokens: { humans: [], agent: null },
+          tokens: { humans: [], agent: dedupAgentToken },
           urls: {
             humans: [],
             agent_stream: `${wsBase}/v1/surfaces/${existing.id}/stream`,
@@ -607,6 +670,17 @@ surfaces.post("/", requireAgent, async (c) => {
       // with stale data.
       throw e;
     }
+    // #259 — same cross-agent participant mint as the pre-check dedup
+    // branch above. The retry path can also be the FIRST time a peer
+    // agent sees this surface (their create lost the create race AND the
+    // matched surface belongs to a different agent owned by the same
+    // human), so we run the same helper here. See its doc-comment for
+    // the same-agent vs cross-agent behaviour split.
+    const { token: dedupAgentToken } = await mintCrossAgentParticipantIfNeeded(
+      prisma,
+      winner.id,
+      agent,
+    );
     const winnerHumanCount = winner.participants.filter(
       (p) => p.kind === "human",
     ).length;
@@ -615,7 +689,7 @@ surfaces.post("/", requireAgent, async (c) => {
       {
         surface_id: winner.id,
         created: false,
-        tokens: { humans: [], agent: null },
+        tokens: { humans: [], agent: dedupAgentToken },
         urls: {
           humans: [],
           agent_stream: `${wsBase}/v1/surfaces/${winner.id}/stream`,
