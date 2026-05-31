@@ -243,6 +243,12 @@ model TemplateVersion {
   templateSource String    @map("template_source")
   eventSchema    Json?     @map("event_schema")
   inputSchema    Json?     @map("input_schema")
+  // #288 — JSON Schema 2020-12 document declaring the template's record
+  // collections (under `x-pane-collections`). NULL = template has no
+  // record collections (the default; record support is opt-in per template).
+  // Schema-only column for now; validation, writers, and routes ship in
+  // follow-up issues (#289 / #291 / #292).
+  recordSchema   Json?     @map("record_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
   surfaces       Surface[]
   // Back-relation for Event.templateVersion (#268). See the sqlite schema's
@@ -311,6 +317,8 @@ model Surface {
   events          Event[]
   feedback        Feedback[]
   attachments     Attachment[]
+  // #288 — per-surface mutable record collections.
+  recordCollections RecordCollection[]
 
   @@index([agentId])
   @@index([expiresAt])
@@ -391,6 +399,44 @@ model Event {
   @@index([surfaceId, id])
   @@unique([surfaceId, authorId, idempotencyKey])
   @@map("events")
+}
+
+
+// #288 — A per-surface, named mutable record collection. See the sqlite
+// schema's matching comment for the design rationale.
+model RecordCollection {
+  id          String          @id @default(cuid())
+  surfaceId   String          @map("surface_id")
+  surface     Surface         @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  name        String
+  seq         Int             @default(0)
+  records     SurfaceRecord[]
+
+  @@unique([surfaceId, name])
+  @@map("record_collections")
+}
+
+// #288 — One row per record in a collection. See the sqlite schema's
+// matching comment for the design rationale (optimistic locking via
+// `version`, monotonic `seq` snapshot, soft-delete tombstones).
+model SurfaceRecord {
+  id           String           @id @default(cuid())
+  collectionId String           @map("collection_id")
+  collection   RecordCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  recordKey    String           @map("record_key")
+  data         Json
+  version      Int              @default(1)
+  seq          Int
+  // "agent" | "human" — mirrors Event.authorKind.
+  authorKind   String           @map("author_kind")
+  authorId     String           @map("author_id")
+  deletedAt    DateTime?        @map("deleted_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@unique([collectionId, recordKey])
+  @@index([collectionId, seq])
+  @@map("surface_records")
 }
 
 // A binary attachment scoped to a template, a surface, or an agent's reusable
