@@ -77,6 +77,8 @@ export interface SeedSurfaceOptions {
   /** Per-surface tab title. Defaults to a benign placeholder; tests exercising
    * the bridge shell's <title> rendering pass their own value. */
   title?: string;
+  /** Optional context preamble — passes through to Surface.preamble. */
+  preamble?: string | null;
   /** Reuse an existing template version instead of creating a fresh one. */
   templateVersionId?: string;
 }
@@ -108,6 +110,7 @@ export async function seedSurfaceRow(
       agentId: opts.agentId,
       templateVersionId,
       title: opts.title ?? "Pane Surface",
+      preamble: opts.preamble ?? null,
       status: opts.status ?? "open",
       expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
       metadata: opts.metadata ?? undefined,

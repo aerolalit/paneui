@@ -817,3 +817,86 @@ describe("POST /v1/surfaces — title", () => {
     expect(((await res.json()) as { title: string }).title).toBe("Padded");
   });
 });
+
+describe("POST /v1/surfaces — preamble", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  const eventSchema = {
+    events: {
+      "form.submitted": {
+        emittedBy: ["page"],
+        payload: { type: "object" },
+      },
+    },
+  };
+
+  it("persists a valid preamble onto the surface row", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/surfaces", apiKey, {
+      template: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "x",
+      preamble: "Your CI bot wants you to approve a deploy.",
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { surface_id: string };
+    const row = await prisma.surface.findUnique({
+      where: { id: body.surface_id },
+    });
+    expect(row?.preamble).toBe("Your CI bot wants you to approve a deploy.");
+  });
+
+  it("treats an empty / whitespace-only preamble as omitted", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/surfaces", apiKey, {
+      template: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "x",
+      preamble: "   ",
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { surface_id: string };
+    const row = await prisma.surface.findUnique({
+      where: { id: body.surface_id },
+    });
+    expect(row?.preamble).toBeNull();
+  });
+
+  it("rejects a preamble longer than 280 chars with 400", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/surfaces", apiKey, {
+      template: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "x",
+      preamble: "a".repeat(281),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_request");
+  });
+
+  it("rejects a preamble containing non-newline control chars with 400", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/surfaces", apiKey, {
+      template: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      title: "x",
+      preamble: "tab\there",
+    });
+    expect(res.status).toBe(400);
+  });
+});

@@ -270,6 +270,29 @@ describe("create — --title flag", () => {
   });
 });
 
+describe("create — --preamble flag", () => {
+  it("passes --preamble through to the request body", async () => {
+    await run([
+      "--template",
+      "<html></html>",
+      "--title",
+      "Approve",
+      "--preamble",
+      "Your CI bot wants you to approve a deploy.",
+    ]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { preamble?: string };
+    expect(req.preamble).toBe("Your CI bot wants you to approve a deploy.");
+  });
+
+  it("omits preamble from the body when --preamble is not given", async () => {
+    await run(["--template", "<html></html>", "--title", "no preamble"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect(req).not.toHaveProperty("preamble");
+  });
+});
+
 describe("create — --context-key flag (#262)", () => {
   it("passes --context-key through to the request body as context_key", async () => {
     // Phase G dedup is keyed off context_key. The CLI flag is the only path

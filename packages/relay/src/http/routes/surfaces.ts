@@ -28,6 +28,7 @@ import {
   validateSchemaShape,
   validateInputData,
   validateSessionTitle,
+  validateSessionPreamble,
 } from "../../core/validation.js";
 import {
   assertBlobsAccessibleByAgent,
@@ -353,8 +354,11 @@ surfaces.post("/", requireAgent, async (c) => {
     callback,
     input_data,
     title,
+    preamble,
     context_key,
   } = parsed.data;
+
+  const resolvedPreamble = validateSessionPreamble(preamble);
 
   const requestedHumans = participants?.humans ?? 1;
   if (requestedHumans > config.MAX_PARTICIPANTS_PER_SESSION) {
@@ -652,6 +656,7 @@ surfaces.post("/", requireAgent, async (c) => {
         creatorId: agent.id,
         templateVersionId,
         title: resolvedTitle,
+        preamble: resolvedPreamble,
         inputData: input_data
           ? (input_data as Prisma.InputJsonValue)
           : Prisma.JsonNull,

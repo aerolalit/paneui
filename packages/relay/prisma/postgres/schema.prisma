@@ -297,6 +297,12 @@ model Surface {
   // (HTML-escaped) into the bridge shell's <title>.
   title           String
 
+  // Optional one-line/two-line context message the agent supplies at create
+  // time. Rendered (HTML-escaped) in the shell band above the iframe so the
+  // human sees "who is asking, why" before reading the artifact. Trust
+  // boundary: untrusted agent input; escaped at render. Max 280 chars; one
+  // `\n` permitted, other control chars rejected at the route.
+  preamble        String?
   status          SurfaceStatus @default(open)
   createdAt       DateTime      @default(now()) @map("created_at")
   expiresAt       DateTime      @map("expires_at")

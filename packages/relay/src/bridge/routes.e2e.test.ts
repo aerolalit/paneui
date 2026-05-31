@@ -57,6 +57,7 @@ async function seedSurface(opts?: {
   templateSource?: string;
   inputData?: object | null;
   title?: string;
+  preamble?: string | null;
 }): Promise<{
   token: string;
   agentId: string;
@@ -81,6 +82,7 @@ async function seedSurface(opts?: {
       ? new Date(Date.now() - 60 * 60 * 1000)
       : new Date(Date.now() + 60 * 60 * 1000),
     ...(opts?.title !== undefined ? { title: opts.title } : {}),
+    ...(opts?.preamble !== undefined ? { preamble: opts.preamble } : {}),
   });
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
@@ -254,6 +256,46 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).not.toContain('id="top-nav-signout"');
     expect(body).not.toContain('href="/home"');
     expect(body).not.toContain('href="/my-surfaces"');
+  });
+
+  it("renders the agent-supplied preamble in a context band above the iframe", async () => {
+    const { token } = await seedSurface({
+      preamble: "Your CI bot wants you to approve a deploy to staging.",
+    });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).toContain('class="preamble"');
+    expect(body).toContain(
+      "Your CI bot wants you to approve a deploy to staging.",
+    );
+    // Order: the preamble band must appear before the <iframe>, so the
+    // human reads the context first.
+    const preIdx = body.indexOf('class="preamble"');
+    const iframeIdx = body.indexOf("<iframe");
+    expect(preIdx).toBeGreaterThan(-1);
+    expect(iframeIdx).toBeGreaterThan(preIdx);
+  });
+
+  it("omits the preamble band entirely when the agent didn't supply one", async () => {
+    const { token } = await seedSurface();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    expect(body).not.toContain('class="preamble"');
+  });
+
+  it("HTML-escapes preamble content (XSS defence in the shell band)", async () => {
+    const { token } = await seedSurface({
+      preamble: '<script>alert("x")</script> & "quotes"',
+    });
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const body = await res.text();
+    // The escaped text appears; the raw script tag does not.
+    expect(body).toContain(
+      "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &quot;quotes&quot;",
+    );
+    // Defence-in-depth: no unescaped <script>alert(... in the page body
+    // outside of the legitimate config + shell script blocks.
+    expect(body).not.toMatch(/<script[^>]*>alert\(/);
   });
 
   it("sandboxes the template iframe with allow-scripts and allow-forms", async () => {

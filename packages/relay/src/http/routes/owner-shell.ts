@@ -314,6 +314,7 @@ ownerShell.get("/:id", async (c) => {
       agentLastEventAt,
       agentLastUsedAt,
       title: surface.title,
+      preamble: surface.preamble,
       // Same dark top nav the system pages render on /home, /my-surfaces,
       // etc. — the owner came here from one of those pages and needs a way
       // back without using the browser back button.

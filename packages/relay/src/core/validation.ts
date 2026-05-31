@@ -234,6 +234,46 @@ export function validateSessionTitle(raw: unknown): string {
   return trimmed;
 }
 
+// Validate an agent-supplied surface preamble. Trust boundary: untrusted
+// agent input rendered (HTML-escaped) into the shell band above the iframe.
+// Rules:
+//   - not a string → 400
+//   - empty after trim → treat as omitted (return null)
+//   - longer than 280 chars after trim → 400
+//   - control chars rejected EXCEPT a single `\n` (two-line message is fine);
+//     normalises `\r\n` and bare `\r` to `\n` before the check
+const PREAMBLE_MAX_LEN = 280;
+// eslint-disable-next-line no-control-regex
+const PREAMBLE_FORBIDDEN_CTRL_RX = /[\x00-\x09\x0b-\x1f]/;
+
+export function validateSessionPreamble(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") {
+    throw errors.invalidRequest(
+      "preamble must be a string",
+      undefined,
+      'pass `preamble` as a JSON string (e.g. "Your CI bot wants you to approve the deploy")',
+    );
+  }
+  const normalised = raw.replace(/\r\n?/g, "\n").trim();
+  if (normalised.length === 0) return null;
+  if (normalised.length > PREAMBLE_MAX_LEN) {
+    throw errors.invalidRequest(
+      `preamble is too long: ${normalised.length} chars exceeds the ${PREAMBLE_MAX_LEN}-char limit`,
+      { length: normalised.length, max: PREAMBLE_MAX_LEN },
+      `shorten the preamble to ${PREAMBLE_MAX_LEN} characters or fewer`,
+    );
+  }
+  if (PREAMBLE_FORBIDDEN_CTRL_RX.test(normalised)) {
+    throw errors.invalidRequest(
+      "preamble must not contain control characters other than newline",
+      undefined,
+      "remove tabs and other control characters — only a single `\\n` for a line break is allowed",
+    );
+  }
+  return normalised;
+}
+
 // Compute the maximum nesting depth of a JSON value. Objects and arrays add one
 // level; primitives are depth 0. Used to reject pathologically-nested schemas
 // before Ajv compiles them. Bails out early once `limit` is exceeded so a
