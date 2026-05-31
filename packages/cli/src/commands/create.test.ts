@@ -339,6 +339,73 @@ describe("create — --context-key flag (#262)", () => {
   });
 });
 
+// The fake client at the top of this file returns urls.humans=[]; for the
+// TTY-output tests we replace its implementation so the formatter has a
+// real URL + an expires_at to render against.
+const ttySample = {
+  surface_id: "sur_tty",
+  tokens: { humans: ["tok_h_one"], agent: "tok_a_x" },
+  urls: {
+    humans: ["https://relay.test/s/tok_h_one"],
+    agent_stream: "wss://relay.test/v1/surfaces/sur_tty/stream",
+  },
+  expires_at: new Date(Date.now() + 3600_000).toISOString(),
+  title: "PR review",
+};
+
+describe("create — output mode (TTY vs --json)", () => {
+  let originalIsTty: unknown;
+  beforeEach(() => {
+    originalIsTty = (process.stdout as unknown as { isTTY?: boolean }).isTTY;
+    fakeClient.createSession.mockImplementation((req: unknown) => {
+      calls.push({ method: "createSession", args: [req] });
+      return Promise.resolve(ttySample);
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: originalIsTty,
+    });
+  });
+
+  function setTty(v: boolean): void {
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: v,
+    });
+  }
+
+  it("emits human-readable output on a TTY by default", async () => {
+    setTty(true);
+    await run(["--template", "<html></html>", "--title", "PR review"]);
+    expect(stdout).toContain("PR review");
+    expect(stdout).toContain("https://relay.test/s/tok_h_one");
+    // The human form doesn't start with `{` — that's the JSON tell.
+    expect(stdout.trimStart().startsWith("{")).toBe(false);
+  });
+
+  it("emits JSON when --json is passed even on a TTY", async () => {
+    setTty(true);
+    await run([
+      "--template",
+      "<html></html>",
+      "--title",
+      "PR review",
+      "--json",
+    ]);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.surface_id).toBe("sur_tty");
+  });
+
+  it("emits JSON when stdout is not a TTY (piped)", async () => {
+    setTty(false);
+    await run(["--template", "<html></html>", "--title", "PR review"]);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.surface_id).toBe("sur_tty");
+  });
+});
+
 describe("create — unknown-flag rejection (#224)", () => {
   it("rejects an unknown value-flag and never reaches the relay", async () => {
     // Pre-#224 the CLI silently dropped the flag and created the surface.

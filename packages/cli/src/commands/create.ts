@@ -6,6 +6,7 @@ import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
+import { formatSurfaceCreated } from "../format.js";
 
 const KNOWN_FLAGS = [
   "template",
@@ -23,7 +24,10 @@ const KNOWN_FLAGS = [
   "callback",
   "context-key",
 ];
-const KNOWN_BOOLS: string[] = [];
+// `--json` forces machine-readable output even on a TTY. Without it, an
+// interactive terminal gets the human-readable form (title + URLs + QR +
+// countdown); pipes and `--json` callers still get the legacy JSON shape.
+const KNOWN_BOOLS: string[] = ["json"];
 
 // Translate a Zod schema path (e.g. ["participants","humans"]) back to the
 // public CLI flag the user actually typed. Without this, a `--participants 0`
@@ -159,10 +163,14 @@ Options:
                       max 256.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
+  --json              Force JSON output even on a TTY. Default: JSON when
+                      stdout is piped; a human-readable summary (title, URL,
+                      QR code, expiry countdown) when stdout is a terminal.
   -h, --help          Show this help.
 
-Output (stdout, JSON):
-  { surface_id, urls, tokens, expires_at }
+Output:
+  - Piped (or --json): { surface_id, urls, tokens, expires_at } as JSON
+  - TTY: title + each human URL + a scannable QR code + expiry countdown
 
 Deliver urls.humans to the human(s); keep tokens.agent for the WS stream.`;
 
@@ -365,7 +373,19 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const client = makeClient(args);
   try {
     const res = await client.createSession(req);
-    printJson(res);
+    // Output mode:
+    //   --json explicit         → JSON
+    //   stdout NOT a TTY (pipe) → JSON (so scripts / agents stay parseable)
+    //   stdout IS a TTY         → human-readable (URL + QR + countdown)
+    // The TTY check matches the existing `pane taste` / `pane feedback`
+    // pattern: agents are non-interactive, humans are.
+    const forceJson = args.bools.has("json");
+    const isTty = Boolean(process.stdout.isTTY);
+    if (forceJson || !isTty) {
+      printJson(res);
+    } else {
+      process.stdout.write(formatSurfaceCreated(res, { color: isTty }));
+    }
   } catch (e) {
     failFromError(e);
   }
