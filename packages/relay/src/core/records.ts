@@ -32,7 +32,9 @@ import type {
 import type { ValidateFunction } from "ajv";
 import { publish } from "../http/broadcast.js";
 import { ApiError, errors } from "../http/errors.js";
+import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
+import type { Config } from "../config.js";
 
 // -------------------------------------------------------------------------
 // Types
@@ -77,7 +79,16 @@ export type RecordDeltaMessage =
 
 export interface WriteRecordDeps {
   prisma: PrismaClient;
+  // #293 — config drives the per-row payload byte cap and per-collection row
+  // cap. Optional on the type to keep test setups terse; absent = use the
+  // hard-coded defaults below.
+  config?: Pick<Config, "MAX_RECORD_DATA_BYTES" | "MAX_RECORDS_PER_COLLECTION">;
 }
+
+// Defaults used when WriteRecordDeps.config is omitted (mainly tests). Match
+// the config.ts defaults so behaviour is identical either way.
+const DEFAULT_MAX_RECORD_DATA_BYTES = 65_536;
+const DEFAULT_MAX_RECORDS_PER_COLLECTION = 50_000;
 
 export interface WriteRecordInput {
   collectionName: string;
@@ -454,6 +465,7 @@ export async function writeRecord(
 ): Promise<WriteRecordResult> {
   const { prisma } = deps;
   assertSurfaceOpen(surface);
+  await assertRecordWithinCaps({ prisma, config: deps.config }, surface, input);
 
   const collection = resolveCollection(surface, input.collectionName);
 
@@ -761,6 +773,83 @@ function assertSurfaceOpen(surface: Surface): void {
   if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }
+}
+
+// #293 — per-write byte + count caps for writeRecord. Byte cap throws 413;
+// count cap throws 429 with a clear "rotate to a new surface" hint. updateRecord
+// and deleteRecord don't grow the collection so they skip the count check;
+// updateRecord still benefits from the byte check (done inline there).
+async function assertRecordWithinCaps(
+  deps: { prisma: PrismaClient; config?: WriteRecordDeps["config"] },
+  surface: SurfaceWithRecordSchema,
+  input: { collectionName: string; data: unknown },
+): Promise<void> {
+  const maxBytes =
+    deps.config?.MAX_RECORD_DATA_BYTES ?? DEFAULT_MAX_RECORD_DATA_BYTES;
+  const maxRows =
+    deps.config?.MAX_RECORDS_PER_COLLECTION ??
+    DEFAULT_MAX_RECORDS_PER_COLLECTION;
+
+  if (
+    Buffer.byteLength(JSON.stringify(input.data ?? null), "utf8") > maxBytes
+  ) {
+    throw errors.payloadTooLarge();
+  }
+
+  if (maxRows > 0) {
+    // Count-then-create soft cap — concurrent writers can race past it and
+    // overshoot by ~inflight count. Same shape as writeEvent's per-surface
+    // cap; the cap exists to bound abuse to ~N, not enforce exact rows.
+    // Counts ALIVE rows only (tombstones don't count) so a chatty collection
+    // can keep working after the sweeper hard-deletes old tombstones.
+    const col = await deps.prisma.recordCollection.findUnique({
+      where: {
+        surfaceId_name: {
+          surfaceId: surface.id,
+          name: input.collectionName,
+        },
+      },
+    });
+    if (col) {
+      const live = await deps.prisma.surfaceRecord.count({
+        where: { collectionId: col.id, deletedAt: null },
+      });
+      if (live >= maxRows) {
+        throw errors.tooManyRequests(
+          `record cap reached for collection '${input.collectionName}' (max ${maxRows} rows); delete an existing row or rotate to a new surface`,
+        );
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------------------
+// Tombstone sweeper (#293)
+// -------------------------------------------------------------------------
+
+/**
+ * One pass of the tombstone sweeper — hard-delete soft-deleted records whose
+ * deletedAt is older than `ttlSeconds`. Returns the number of rows removed.
+ *
+ * Idempotent: safe to interrupt + restart. Logs the count on every pass.
+ * Records that have already been observed-as-tombstone by reconnecting
+ * clients can finally be reclaimed; clients that disconnected longer ago
+ * than ttlSeconds and reconnect later see the row simply "not exist" (no row,
+ * no tombstone), which is the same as a never-created row — the client store
+ * evicts it via cursor advancement.
+ */
+export async function sweepRecordTombstones(
+  prisma: PrismaClient,
+  ttlSeconds: number,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - ttlSeconds * 1000);
+  const r = await prisma.surfaceRecord.deleteMany({
+    where: { deletedAt: { not: null, lt: cutoff } },
+  });
+  if (r.count > 0) {
+    log.info("record tombstone swept", { count: r.count });
+  }
+  return r.count;
 }
 
 // 404 helper for the "this collection isn't declared in the template's

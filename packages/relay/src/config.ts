@@ -84,6 +84,33 @@ const schema = z.object({
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
 
   // ------------------------------------------------------------------
+  // Records (#287)
+  // ------------------------------------------------------------------
+  // Max number of rows in one (surface, collection). Records replace the
+  // comments-as-events anti-pattern at scale, so the ceiling is larger than
+  // MAX_EVENTS_PER_SESSION. MAX_RECORDS_PER_COLLECTION=0 disables the cap.
+  MAX_RECORDS_PER_COLLECTION: z.coerce.number().int().min(0).default(50_000),
+  // Per-row payload byte cap. Mirrors MAX_EVENT_DATA_BYTES.
+  MAX_RECORD_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
+  // GET pagination cap (the route default is 100; this is the hard ceiling).
+  MAX_RECORDS_PER_PAGE: z.coerce.number().int().positive().default(200),
+  // Tombstone retention. A soft-deleted record stays in the table this long
+  // so a client that disconnected at delete-time can observe the tombstone
+  // on reconnect (a GET ?since=<seq> returns the row with deleted_at set).
+  // After this TTL the row is hard-deleted by the sweeper.
+  RECORD_TOMBSTONE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .default(604_800), // 7d
+  // How often the tombstone sweeper wakes. 0 disables the sweeper.
+  RECORD_SWEEPER_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(3_600), // 1h
+
+  // ------------------------------------------------------------------
   // Blob attachments (v0.1.0)
   // ------------------------------------------------------------------
   // Selects the AttachmentStore implementation. "filesystem" is the zero-config

@@ -25,7 +25,6 @@ records.use("*", dualAuth);
 // Cap mirrors event idempotency_key cap; record_key serves the same role
 // (natural idempotency key for POST) so the limits line up.
 const MAX_RECORD_KEY_LENGTH = 256;
-const MAX_RECORDS_PER_PAGE = 200;
 const DEFAULT_RECORDS_PER_PAGE = 100;
 
 const postBody = z.object({
@@ -81,13 +80,14 @@ records.get("/", async (c) => {
     since = n;
   }
 
-  let limit = DEFAULT_RECORDS_PER_PAGE;
+  const cap = c.get("config").MAX_RECORDS_PER_PAGE;
+  let limit = Math.min(DEFAULT_RECORDS_PER_PAGE, cap);
   const limitRaw = c.req.query("limit");
   if (limitRaw !== undefined) {
     const n = Number(limitRaw);
-    if (!Number.isInteger(n) || n < 1 || n > MAX_RECORDS_PER_PAGE) {
+    if (!Number.isInteger(n) || n < 1 || n > cap) {
       throw errors.invalidRequest(
-        `?limit must be an integer between 1 and ${MAX_RECORDS_PER_PAGE}`,
+        `?limit must be an integer between 1 and ${cap}`,
       );
     }
     limit = n;
@@ -115,11 +115,16 @@ records.post("/", async (c) => {
     );
   }
 
-  const { record, deduped } = await writeRecord({ prisma }, surface, author, {
-    collectionName: collection,
-    recordKey: parsed.data.record_key,
-    data: parsed.data.data,
-  });
+  const { record, deduped } = await writeRecord(
+    { prisma, config: c.get("config") },
+    surface,
+    author,
+    {
+      collectionName: collection,
+      recordKey: parsed.data.record_key,
+      data: parsed.data.data,
+    },
+  );
 
   if (deduped) {
     return c.json({ record, deduped: true }, 200);
@@ -147,12 +152,17 @@ records.patch("/:recordKey", async (c) => {
     );
   }
 
-  const { record } = await updateRecord({ prisma }, surface, author, {
-    collectionName: collection,
-    recordKey,
-    data: parsed.data.data,
-    ifMatch: parsed.data.if_match,
-  });
+  const { record } = await updateRecord(
+    { prisma, config: c.get("config") },
+    surface,
+    author,
+    {
+      collectionName: collection,
+      recordKey,
+      data: parsed.data.data,
+      ifMatch: parsed.data.if_match,
+    },
+  );
   return c.json({ record });
 });
 

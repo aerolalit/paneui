@@ -301,3 +301,47 @@ describe("validateProductionConfig", () => {
     expect(() => validateProductionConfig(c)).not.toThrow();
   });
 });
+
+describe("records env vars (#293)", () => {
+  it("sets sane defaults for the records knobs", () => {
+    const c = loadConfig({});
+    expect(c.MAX_RECORDS_PER_COLLECTION).toBe(50_000);
+    expect(c.MAX_RECORD_DATA_BYTES).toBe(65_536);
+    expect(c.MAX_RECORDS_PER_PAGE).toBe(200);
+    expect(c.RECORD_TOMBSTONE_TTL_SECONDS).toBe(604_800);
+    expect(c.RECORD_SWEEPER_INTERVAL_SECONDS).toBe(3_600);
+  });
+
+  it("accepts overrides", () => {
+    const c = loadConfig({
+      MAX_RECORDS_PER_COLLECTION: "100",
+      MAX_RECORD_DATA_BYTES: "8192",
+      MAX_RECORDS_PER_PAGE: "50",
+      RECORD_TOMBSTONE_TTL_SECONDS: "60",
+      RECORD_SWEEPER_INTERVAL_SECONDS: "0", // disabled
+    });
+    expect(c.MAX_RECORDS_PER_COLLECTION).toBe(100);
+    expect(c.MAX_RECORD_DATA_BYTES).toBe(8192);
+    expect(c.MAX_RECORDS_PER_PAGE).toBe(50);
+    expect(c.RECORD_TOMBSTONE_TTL_SECONDS).toBe(60);
+    expect(c.RECORD_SWEEPER_INTERVAL_SECONDS).toBe(0);
+  });
+
+  it("allows MAX_RECORDS_PER_COLLECTION=0 to disable the cap", () => {
+    const c = loadConfig({ MAX_RECORDS_PER_COLLECTION: "0" });
+    expect(c.MAX_RECORDS_PER_COLLECTION).toBe(0);
+  });
+
+  it("rejects negative MAX_RECORDS_PER_COLLECTION", () => {
+    expect(() => loadConfig({ MAX_RECORDS_PER_COLLECTION: "-1" })).toThrow();
+  });
+
+  it("rejects RECORD_TOMBSTONE_TTL_SECONDS < 60 (the floor)", () => {
+    expect(() => loadConfig({ RECORD_TOMBSTONE_TTL_SECONDS: "10" })).toThrow();
+  });
+
+  it("rejects zero / negative MAX_RECORD_DATA_BYTES", () => {
+    expect(() => loadConfig({ MAX_RECORD_DATA_BYTES: "0" })).toThrow();
+    expect(() => loadConfig({ MAX_RECORD_DATA_BYTES: "-1" })).toThrow();
+  });
+});
