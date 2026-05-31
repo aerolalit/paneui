@@ -259,7 +259,7 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("renders the agent-supplied preamble in a context band above the iframe", async () => {
-    const { token } = await seedSession({
+    const { token } = await seedSurface({
       preamble: "Your CI bot wants you to approve a deploy to staging.",
     });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
@@ -277,14 +277,14 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("omits the preamble band entirely when the agent didn't supply one", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).not.toContain('class="preamble"');
   });
 
   it("HTML-escapes preamble content (XSS defence in the shell band)", async () => {
-    const { token } = await seedSession({
+    const { token } = await seedSurface({
       preamble: '<script>alert("x")</script> & "quotes"',
     });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
