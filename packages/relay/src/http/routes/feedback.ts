@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { submitFeedbackSchema } from "@paneui/core";
 import { requireAgent, type AuthEnv } from "../auth.js";
+import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 
 const feedback = new Hono<AuthEnv>();
@@ -58,7 +59,10 @@ feedback.post("/", async (c) => {
       where: { id: surface_id },
       select: { agentId: true },
     });
-    if (!surface || surface.agentId !== me.id) throw errors.notFound();
+    // #283 — any same-human agent may attach feedback to a surface
+    // owned by a sibling agent.
+    const scope = await agentScope(prisma, me);
+    if (!surface || !scope.has(surface.agentId)) throw errors.notFound();
   }
 
   const row = await prisma.feedback.create({

@@ -9,6 +9,7 @@ import {
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
+import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 import {
   assertSchemaWithinLimits,
@@ -213,8 +214,14 @@ templates.post("/:id/versions", async (c) => {
   const agent = c.get("agent");
   const idOrSlug = c.req.param("id");
 
+  // #283 — any agent claimed to the same human as the template's owner
+  // may append a version.
+  const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
-    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: {
+      ownerId: { in: [...scope] },
+      OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+    },
   });
   if (!template) throw errors.artifactNotFound();
 
@@ -380,8 +387,13 @@ templates.patch("/:id", async (c) => {
   const agent = c.get("agent");
   const idOrSlug = c.req.param("id");
 
+  // #283 — any same-human agent may patch head metadata.
+  const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
-    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: {
+      ownerId: { in: [...scope] },
+      OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+    },
   });
   if (!template) throw errors.artifactNotFound();
 
@@ -430,8 +442,10 @@ templates.get("/", async (c) => {
 
   // Only named templates are discoverable — anonymous (inline-created) ones
   // have name = null and are an implementation detail, not browseable.
+  // #283 — claimed agents see every same-human agent's templates.
+  const scope = await agentScope(prisma, agent);
   const rows = await prisma.template.findMany({
-    where: { ownerId: agent.id, name: { not: null } },
+    where: { ownerId: { in: [...scope] }, name: { not: null } },
     orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
   });
 
@@ -462,9 +476,11 @@ templates.get("/:id", async (c) => {
   const agent = c.get("agent");
   const idOrSlug = c.req.param("id");
 
+  // #283 — same-human agents share read access.
+  const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
     where: {
-      ownerId: agent.id,
+      ownerId: { in: [...scope] },
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
     include: { versions: { orderBy: { version: "asc" } } },
@@ -490,9 +506,11 @@ templates.get("/:id/versions/:version", async (c) => {
     throw errors.invalidRequest("version must be a positive integer");
   }
 
+  // #283 — same-human agents share read access.
+  const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
     where: {
-      ownerId: agent.id,
+      ownerId: { in: [...scope] },
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
@@ -526,8 +544,13 @@ templates.delete("/:id", async (c) => {
   const agent = c.get("agent");
   const idOrSlug = c.req.param("id");
 
+  // #283 — any same-human agent may delete the template.
+  const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
-    where: { ownerId: agent.id, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: {
+      ownerId: { in: [...scope] },
+      OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+    },
     select: { id: true, name: true, slug: true },
   });
   if (!template) throw errors.artifactNotFound();

@@ -18,6 +18,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireAgent, type AuthEnv } from "../auth.js";
+import { agentScope } from "../agent-scope.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import { compareSurfaceSchemas } from "../../core/schema-compat.js";
@@ -52,9 +53,10 @@ templatePublish.post("/:id/publish", requireAgent, async (c) => {
   }
 
   const template = await prisma.template.findUnique({ where: { id } });
-  // Same not-found shape whether the template is missing or owned by a
-  // different agent — no enumeration oracle.
-  if (!template || template.ownerId !== me.id) {
+  // #283 — accept any same-human agent. Same not-found shape whether the
+  // template is missing or owned by a stranger's agent.
+  const scope = await agentScope(prisma, me);
+  if (!template || !scope.has(template.ownerId)) {
     throw errors.notFound();
   }
 
@@ -83,7 +85,8 @@ templatePublish.post("/:id/unpublish", requireAgent, async (c) => {
   if (!id) throw errors.invalidRequest("missing template id");
 
   const template = await prisma.template.findUnique({ where: { id } });
-  if (!template || template.ownerId !== me.id) throw errors.notFound();
+  const scope = await agentScope(prisma, me);
+  if (!template || !scope.has(template.ownerId)) throw errors.notFound();
 
   await prisma.template.update({
     where: { id },
