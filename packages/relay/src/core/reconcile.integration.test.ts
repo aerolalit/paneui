@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSessionRow } from "../test-helpers/seed.js";
+import { seedSurfaceRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { reconcileOrphanedParticipants } from "./reconcile.js";
 
@@ -30,7 +30,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSession(
+async function seedSurface(
   status = "open",
 ): Promise<{ surfaceId: string; agentId: string }> {
   const agent = await prisma.agent.create({
@@ -40,7 +40,7 @@ async function seedSession(
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { surfaceId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSurfaceRow(prisma, {
     agentId: agent.id,
     eventSchema: { events: {} },
     status: status as "open" | "closed",
@@ -86,7 +86,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
 
   it("emits a synthetic left for an orphaned joined after an abrupt restart", async () => {
     // Simulate a crash mid-surface: joined written, close handler never ran.
-    const { surfaceId } = await seedSession();
+    const { surfaceId } = await seedSurface();
     const author = { kind: "human", id: "h_0" };
     await joined(surfaceId, author);
 
@@ -100,7 +100,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
   });
 
   it("leaves a cleanly-paired joined/left alone", async () => {
-    const { surfaceId } = await seedSession();
+    const { surfaceId } = await seedSurface();
     const author = { kind: "agent", id: "a_0" };
     await joined(surfaceId, author);
     await left(surfaceId, author);
@@ -111,7 +111,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
   });
 
   it("pairs by author: only the orphaned author gets a synthetic left", async () => {
-    const { surfaceId } = await seedSession();
+    const { surfaceId } = await seedSurface();
     const agent = { kind: "agent", id: "a_0" };
     const human = { kind: "human", id: "h_0" };
     await joined(surfaceId, agent);
@@ -128,7 +128,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
 
   it("handles repeated connects: nets joined vs left per author", async () => {
     // Author joined three times, left twice -> one orphan remains.
-    const { surfaceId } = await seedSession();
+    const { surfaceId } = await seedSurface();
     const author = { kind: "human", id: "h_0" };
     await joined(surfaceId, author);
     await left(surfaceId, author);
@@ -142,7 +142,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
   });
 
   it("ignores surfaces that are not open", async () => {
-    const { surfaceId } = await seedSession("closed");
+    const { surfaceId } = await seedSurface("closed");
     await joined(surfaceId, { kind: "human", id: "h_0" });
 
     const written = await reconcileOrphanedParticipants(prisma);
@@ -151,7 +151,7 @@ describe("reconcileOrphanedParticipants (integration)", () => {
   });
 
   it("is idempotent: a second run finds nothing to reconcile", async () => {
-    const { surfaceId } = await seedSession();
+    const { surfaceId } = await seedSurface();
     await joined(surfaceId, { kind: "human", id: "h_0" });
 
     expect(await reconcileOrphanedParticipants(prisma)).toBe(1);

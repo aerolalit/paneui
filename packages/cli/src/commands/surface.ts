@@ -20,7 +20,7 @@ import { runList, listHelp } from "./list.js";
 import { runParticipant, participantHelp } from "./participant.js";
 import { fail } from "../output.js";
 
-export const sessionHelp = `pane surface — open, observe, send to, and close surfaces
+export const surfaceHelp = `pane surface — open, observe, send to, and close surfaces
 
 A surface is one use of an template: an open URL the human(s) interact with,
 plus an event log the agent reads and appends to.
@@ -71,7 +71,7 @@ function shiftPositionals(args: ParsedArgs): ParsedArgs {
   return out;
 }
 
-export async function runSession(args: ParsedArgs): Promise<void> {
+export async function runSurface(args: ParsedArgs): Promise<void> {
   const verb = args.positionals[0];
 
   // `pane surface participant --help` (verb-level help on the participant

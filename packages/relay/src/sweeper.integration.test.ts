@@ -1,4 +1,4 @@
-// Integration test for the TTL sweeper (sweepExpiredSessions). Runs against
+// Integration test for the TTL sweeper (sweepExpiredSurfaces). Runs against
 // whatever engine DATABASE_URL points at (sqlite file or postgres).
 //
 // Regression coverage for #57: the sweeper must invalidate the compiled-
@@ -10,11 +10,11 @@ import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { EventSchema } from "./types.js";
 import { setupTestDb, type TestDb } from "./test-helpers/db.js";
-import { seedSessionRow } from "./test-helpers/seed.js";
+import { seedSurfaceRow } from "./test-helpers/seed.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
-let sweepExpiredSessions: typeof import("./index.js").sweepExpiredSessions;
+let sweepExpiredSurfaces: typeof import("./index.js").sweepExpiredSurfaces;
 let validateEvent: typeof import("./core/validation.js").validateEvent;
 let __schemaCacheInternals: typeof import("./core/validation.js").__schemaCacheInternals;
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
   prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
-  ({ sweepExpiredSessions } = await import("./index.js"));
+  ({ sweepExpiredSurfaces } = await import("./index.js"));
   ({ validateEvent, __schemaCacheInternals } =
     await import("./core/validation.js"));
 });
@@ -52,7 +52,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSession(expiresInMs: number): Promise<string> {
+async function seedSurface(expiresInMs: number): Promise<string> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -60,7 +60,7 @@ async function seedSession(expiresInMs: number): Promise<string> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { surfaceId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSurfaceRow(prisma, {
     agentId: agent.id,
     eventSchema: SCHEMA as unknown as object,
     status: "open",
@@ -81,22 +81,22 @@ function warmCache(surfaceId: string): void {
   });
 }
 
-describe("sweepExpiredSessions (integration, real DB)", () => {
+describe("sweepExpiredSurfaces (integration, real DB)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
     __schemaCacheInternals.clear();
   });
 
   it("invalidates the validator cache for swept (expired) surfaces", async () => {
-    const expiredId = await seedSession(-1000);
-    const liveId = await seedSession(3_600_000);
+    const expiredId = await seedSurface(-1000);
+    const liveId = await seedSurface(3_600_000);
 
     warmCache(expiredId);
     warmCache(liveId);
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(true);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    const count = await sweepExpiredSessions(prisma);
+    const count = await sweepExpiredSurfaces(prisma);
     expect(count).toBe(1);
 
     // The expired surface's compiled validators are gone; the live one stays.
@@ -109,10 +109,10 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
   });
 
   it("is a no-op when nothing is expired", async () => {
-    const liveId = await seedSession(3_600_000);
+    const liveId = await seedSurface(3_600_000);
     warmCache(liveId);
 
-    const count = await sweepExpiredSessions(prisma);
+    const count = await sweepExpiredSurfaces(prisma);
     expect(count).toBe(0);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });
@@ -120,8 +120,8 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
   // ---- anonymous-template orphan cleanup --------------------------------
 
   it("hard-deletes the anonymous template once its last surface is swept", async () => {
-    // seedSession() uses seedArtifact() with no name/slug — anonymous.
-    const expiredId = await seedSession(-1000);
+    // seedSurface() uses seedArtifact() with no name/slug — anonymous.
+    const expiredId = await seedSurface(-1000);
     const surfaceBefore = await prisma.surface.findUnique({
       where: { id: expiredId },
       select: { templateVersionId: true },
@@ -132,7 +132,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     });
     const templateId = versionBefore!.templateId;
 
-    await sweepExpiredSessions(prisma);
+    await sweepExpiredSurfaces(prisma);
 
     // Surface + its anonymous template are both gone (template cascade
     // deletes its versions).
@@ -170,14 +170,14 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
         eventSchema: SCHEMA as unknown as object,
       },
     });
-    const { surfaceId } = await seedSessionRow(prisma, {
+    const { surfaceId } = await seedSurfaceRow(prisma, {
       agentId: agent.id,
       templateVersionId: version.id,
       status: "open",
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await sweepExpiredSessions(prisma);
+    await sweepExpiredSurfaces(prisma);
 
     // Surface is swept, but the named template (and its version) survives —
     // future surfaces may reference it via id/slug.
@@ -201,7 +201,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
         keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
       },
     });
-    const { surfaceId: expiredId, templateVersionId } = await seedSessionRow(
+    const { surfaceId: expiredId, templateVersionId } = await seedSurfaceRow(
       prisma,
       {
         agentId: agent.id,
@@ -210,7 +210,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
         expiresAt: new Date(Date.now() - 1000),
       },
     );
-    const { surfaceId: liveId } = await seedSessionRow(prisma, {
+    const { surfaceId: liveId } = await seedSurfaceRow(prisma, {
       agentId: agent.id,
       templateVersionId,
       status: "open",
@@ -222,7 +222,7 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     });
     const templateId = versionRow!.templateId;
 
-    await sweepExpiredSessions(prisma);
+    await sweepExpiredSurfaces(prisma);
 
     // The expired surface is gone. The live one + the shared anonymous
     // template both survive — sweep must check that NO surface still

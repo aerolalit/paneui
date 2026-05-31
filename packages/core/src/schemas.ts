@@ -51,7 +51,7 @@ const refArtifactSchema = z.object({
 // The surface-create `template` field: exactly one of the two forms. A union
 // (not a discriminated union — the two forms share no discriminant key) with a
 // refine enforcing exactly-one-of `id` / `source`.
-const sessionArtifactSchema = z
+const surfaceTemplateSchema = z
   .union([refArtifactSchema, inlineArtifactSchema])
   .refine(
     (a) => {
@@ -66,7 +66,7 @@ const sessionArtifactSchema = z
   );
 
 export const createSessionSchema = z.object({
-  template: sessionArtifactSchema,
+  template: surfaceTemplateSchema,
   input_data: z.record(z.string(), z.unknown()).optional(),
   participants: z.object({ humans: z.number().int().positive() }).optional(),
   ttl: z.number().int().positive().optional(),

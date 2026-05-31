@@ -10,7 +10,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Author } from "../types.js";
 import { ApiError } from "../http/errors.js";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSessionRow } from "../test-helpers/seed.js";
+import { seedSurfaceRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig, type Config } from "../config.js";
 import {
@@ -52,7 +52,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSession(): Promise<SurfaceWithArtifactVersion> {
+async function seedSurface(): Promise<SurfaceWithArtifactVersion> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -60,7 +60,7 @@ async function seedSession(): Promise<SurfaceWithArtifactVersion> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { surfaceId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSurfaceRow(prisma, {
     agentId: agent.id,
     eventSchema: {
       events: {
@@ -83,7 +83,7 @@ describe("per-surface event cap", () => {
   });
 
   it("rejects events once the surface reaches MAX_EVENTS_PER_SESSION", async () => {
-    const surface = await seedSession();
+    const surface = await seedSurface();
     for (let i = 0; i < CAP; i++) {
       await we(surface, author, { type: "ping", data: {} });
     }
@@ -93,8 +93,8 @@ describe("per-surface event cap", () => {
   });
 
   it("caps are per-surface — a second surface is unaffected", async () => {
-    const a = await seedSession();
-    const b = await seedSession();
+    const a = await seedSurface();
+    const b = await seedSurface();
     for (let i = 0; i < CAP; i++) {
       await we(a, author, { type: "ping", data: {} });
     }

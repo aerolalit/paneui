@@ -49,7 +49,7 @@ vi.mock("../config.js", () => ({
   makeClient: () => fakeClient,
 }));
 
-import { runSession } from "./surface.js";
+import { runSurface } from "./surface.js";
 import { parseArgs } from "../argv.js";
 
 const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
@@ -82,13 +82,13 @@ afterEach(() => {
 
 async function run(tokens: string[]): Promise<void> {
   try {
-    await runSession(argv(tokens));
+    await runSurface(argv(tokens));
   } catch (e) {
     if (!(e instanceof Error && e.message.startsWith("__exit_"))) throw e;
   }
 }
 
-describe("runSession dispatch", () => {
+describe("runSurface dispatch", () => {
   it("rejects a missing verb", async () => {
     await run([]);
     expect(exitCode).toBe(1);
@@ -124,7 +124,7 @@ describe("runSession dispatch", () => {
   });
 });
 
-describe("runSession list", () => {
+describe("runSurface list", () => {
   it("forwards `list` to runList with no opts by default", async () => {
     await run(["list"]);
     expect(exitCode).toBeUndefined();
@@ -170,7 +170,7 @@ describe("runSession list", () => {
   });
 });
 
-describe("runSession participant", () => {
+describe("runSurface participant", () => {
   it("lists the participants on the given surface", async () => {
     await run(["participant", "list", "sur_abc"]);
     expect(exitCode).toBeUndefined();

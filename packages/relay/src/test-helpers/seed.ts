@@ -60,7 +60,7 @@ export async function seedArtifact(
   return { templateId: template.id, templateVersionId: version.id };
 }
 
-export interface SeedSessionOptions {
+export interface SeedSurfaceOptions {
   agentId: string;
   id?: string;
   status?: "open" | "closed";
@@ -86,9 +86,9 @@ export interface SeedSessionOptions {
  * first (unless `templateVersionId` is supplied). Returns the surface id and
  * the template-version id it was pinned to.
  */
-export async function seedSessionRow(
+export async function seedSurfaceRow(
   prisma: PrismaClient,
-  opts: SeedSessionOptions,
+  opts: SeedSurfaceOptions,
 ): Promise<{ surfaceId: string; templateVersionId: string }> {
   let templateVersionId = opts.templateVersionId;
   if (!templateVersionId) {

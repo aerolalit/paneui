@@ -45,7 +45,7 @@ import { ensureKeyLoaded } from "./crypto.js";
 // swept in this tick AND (b) end up with zero remaining surface references
 // AND (c) have null name + slug (the anonymity marker). Named templates and
 // templates still referenced by an active surface are left alone.
-export async function sweepExpiredSessions(
+export async function sweepExpiredSurfaces(
   prisma: PrismaClient,
 ): Promise<number> {
   const now = new Date();
@@ -105,7 +105,7 @@ function startTtlSweeper(config: Config, prisma: PrismaClient): void {
   const jitter = () =>
     Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
   const tick = (): void => {
-    void sweepExpiredSessions(prisma)
+    void sweepExpiredSurfaces(prisma)
       .then((count) => {
         if (count > 0) log.debug("ttl swept", { count });
       })
@@ -243,7 +243,7 @@ async function main(): Promise<void> {
 
 // Only boot the relay when this module is the process entry point. When it is
 // imported instead (e.g. the sweeper integration test importing
-// `sweepExpiredSessions`), `main()` must not run — otherwise it would bind the
+// `sweepExpiredSurfaces`), `main()` must not run — otherwise it would bind the
 // HTTP port and start the TTL sweeper as an import side effect.
 const isEntryPoint =
   process.argv[1] !== undefined &&
