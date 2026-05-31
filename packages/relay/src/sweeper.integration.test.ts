@@ -116,4 +116,125 @@ describe("sweepExpiredSessions (integration, real DB)", () => {
     expect(count).toBe(0);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });
+
+  // ---- anonymous-template orphan cleanup --------------------------------
+
+  it("hard-deletes the anonymous template once its last surface is swept", async () => {
+    // seedSession() uses seedArtifact() with no name/slug — anonymous.
+    const expiredId = await seedSession(-1000);
+    const surfaceBefore = await prisma.surface.findUnique({
+      where: { id: expiredId },
+      select: { templateVersionId: true },
+    });
+    const versionBefore = await prisma.templateVersion.findUnique({
+      where: { id: surfaceBefore!.templateVersionId },
+      select: { templateId: true },
+    });
+    const templateId = versionBefore!.templateId;
+
+    await sweepExpiredSessions(prisma);
+
+    // Surface + its anonymous template are both gone (template cascade
+    // deletes its versions).
+    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
+      null,
+    );
+    expect(
+      await prisma.template.findUnique({ where: { id: templateId } }),
+    ).toBe(null);
+  });
+
+  it("preserves a named template even when its only surface is swept", async () => {
+    const agent = await prisma.agent.create({
+      data: {
+        name: `agent-${randomBytes(4).toString("hex")}`,
+        keyHash: randomBytes(32).toString("hex"),
+        keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
+      },
+    });
+    // Named (non-anonymous) template — has a name even if no slug.
+    const template = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "PR Review",
+        slug: null,
+        latestVersion: 1,
+      },
+    });
+    const version = await prisma.templateVersion.create({
+      data: {
+        templateId: template.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<html></html>",
+        eventSchema: SCHEMA as unknown as object,
+      },
+    });
+    const { surfaceId } = await seedSessionRow(prisma, {
+      agentId: agent.id,
+      templateVersionId: version.id,
+      status: "open",
+      expiresAt: new Date(Date.now() - 1000),
+    });
+
+    await sweepExpiredSessions(prisma);
+
+    // Surface is swept, but the named template (and its version) survives —
+    // future surfaces may reference it via id/slug.
+    expect(await prisma.surface.findUnique({ where: { id: surfaceId } })).toBe(
+      null,
+    );
+    expect(
+      await prisma.template.findUnique({ where: { id: template.id } }),
+    ).not.toBe(null);
+    expect(
+      await prisma.templateVersion.findUnique({ where: { id: version.id } }),
+    ).not.toBe(null);
+  });
+
+  it("preserves an anonymous template still referenced by an active surface", async () => {
+    // Two surfaces share the same anonymous template — one expires, one lives.
+    const agent = await prisma.agent.create({
+      data: {
+        name: `agent-${randomBytes(4).toString("hex")}`,
+        keyHash: randomBytes(32).toString("hex"),
+        keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
+      },
+    });
+    const { surfaceId: expiredId, templateVersionId } = await seedSessionRow(
+      prisma,
+      {
+        agentId: agent.id,
+        eventSchema: SCHEMA as unknown as object,
+        status: "open",
+        expiresAt: new Date(Date.now() - 1000),
+      },
+    );
+    const { surfaceId: liveId } = await seedSessionRow(prisma, {
+      agentId: agent.id,
+      templateVersionId,
+      status: "open",
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const versionRow = await prisma.templateVersion.findUnique({
+      where: { id: templateVersionId },
+      select: { templateId: true },
+    });
+    const templateId = versionRow!.templateId;
+
+    await sweepExpiredSessions(prisma);
+
+    // The expired surface is gone. The live one + the shared anonymous
+    // template both survive — sweep must check that NO surface still
+    // references any of the template's versions, not just the swept one.
+    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
+      null,
+    );
+    expect(await prisma.surface.findUnique({ where: { id: liveId } })).not.toBe(
+      null,
+    );
+    expect(
+      await prisma.template.findUnique({ where: { id: templateId } }),
+    ).not.toBe(null);
+  });
 });

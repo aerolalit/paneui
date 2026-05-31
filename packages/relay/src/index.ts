@@ -32,18 +32,67 @@ import { ensureKeyLoaded } from "./crypto.js";
 // per-surface round-trip), so still O(1) DB calls regardless of batch size.
 // Takes the Prisma client as a parameter — no module-level singleton — so the
 // integration test can run it against its own isolated database.
+//
+// Also cleans up anonymous template orphans. Inline-form surfaces transparently
+// create a Template row with name=null/slug=null (see surfaces.ts:404). When
+// the only surface(s) using that template expire and get swept, the template
+// itself is left behind forever — every smoke test, every one-off pane
+// session leaves a permanent agent-owned row. Hard-deleting an anonymous
+// template whose last referencing surface just went away cascades through
+// template_versions automatically (onDelete: Cascade on the FK).
+//
+// We only touch templates that BOTH (a) are referenced by surfaces being
+// swept in this tick AND (b) end up with zero remaining surface references
+// AND (c) have null name + slug (the anonymity marker). Named templates and
+// templates still referenced by an active surface are left alone.
 export async function sweepExpiredSessions(
   prisma: PrismaClient,
 ): Promise<number> {
   const now = new Date();
   const expired = await prisma.surface.findMany({
     where: { expiresAt: { lt: now } },
-    select: { id: true },
+    select: { id: true, templateVersionId: true },
   });
   if (expired.length === 0) return 0;
   const ids = expired.map((s) => s.id);
+
+  // The template ids the expiring surfaces point at (via their pinned version).
+  // We need these before the surface delete so we can re-check orphan status
+  // after the delete commits.
+  const candidateVersionIds = Array.from(
+    new Set(expired.map((s) => s.templateVersionId)),
+  );
+  const candidateVersions = await prisma.templateVersion.findMany({
+    where: { id: { in: candidateVersionIds } },
+    select: { templateId: true },
+  });
+  const candidateTemplateIds = Array.from(
+    new Set(candidateVersions.map((v) => v.templateId)),
+  );
+
   const r = await prisma.surface.deleteMany({ where: { id: { in: ids } } });
   for (const id of ids) invalidateSchemaCache(id);
+
+  // After the surface delete, find anonymous templates whose every version
+  // is now surface-less. `versions.none.surfaces.some` reads as "no version
+  // has any surface" — exactly the orphan predicate.
+  if (candidateTemplateIds.length > 0) {
+    const orphans = await prisma.template.findMany({
+      where: {
+        id: { in: candidateTemplateIds },
+        name: null,
+        slug: null,
+        versions: { none: { surfaces: { some: {} } } },
+      },
+      select: { id: true },
+    });
+    if (orphans.length > 0) {
+      await prisma.template.deleteMany({
+        where: { id: { in: orphans.map((t) => t.id) } },
+      });
+    }
+  }
+
   return r.count;
 }
 
