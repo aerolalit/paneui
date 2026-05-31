@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSessionRow } from "../test-helpers/seed.js";
+import { seedSurfaceRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
 import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
@@ -106,7 +106,7 @@ afterAll(async () => {
   rmSync(blobDir, { recursive: true, force: true });
 });
 
-async function seedSession(): Promise<{
+async function seedSurface(): Promise<{
   token: string;
   agentId: string;
   surfaceId: string;
@@ -119,7 +119,7 @@ async function seedSession(): Promise<{
       keyPrefix: keyPrefix(apiKey),
     },
   });
-  const { surfaceId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSurfaceRow(prisma, {
     agentId: agent.id,
     templateSource: "<html></html>",
     eventSchema: minimalSchema,
@@ -175,7 +175,7 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
   });
 
   it("uploads a JPEG and returns a AttachmentRef pinned to scope='surface'", async () => {
-    const { token, agentId, surfaceId } = await seedSession();
+    const { token, agentId, surfaceId } = await seedSurface();
     const payload = await makeJpeg(128);
 
     const res = await upload(token, payload);
@@ -208,7 +208,7 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
   });
 
   it("forces scope=surface even when the client tries to send scope=agent", async () => {
-    const { token, surfaceId } = await seedSession();
+    const { token, surfaceId } = await seedSurface();
     const res = await upload(token, await makeJpeg(), {
       extra: {
         scope: "agent",
@@ -229,7 +229,7 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
   });
 
   it("stores the filename when provided", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const res = await upload(token, await makeJpeg(), {
       filename: "selfie.jpg",
     });
@@ -260,7 +260,7 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
   });
 
   it("rejects a revoked participant with 401", async () => {
-    const { token, surfaceId } = await seedSession();
+    const { token, surfaceId } = await seedSurface();
     await prisma.participant.updateMany({
       where: { surfaceId },
       data: { revokedAt: new Date() },
@@ -272,7 +272,7 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
   });
 
   it("rejects uploads to a closed surface with 410 gone", async () => {
-    const { token, surfaceId } = await seedSession();
+    const { token, surfaceId } = await seedSurface();
     await prisma.surface.update({
       where: { id: surfaceId },
       data: { status: "closed" },
@@ -284,7 +284,7 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
   });
 
   it("rejects uploads to an expired surface with 410 gone", async () => {
-    const { token, surfaceId } = await seedSession();
+    const { token, surfaceId } = await seedSurface();
     await prisma.surface.update({
       where: { id: surfaceId },
       data: { expiresAt: new Date(Date.now() - 1000) },
@@ -300,7 +300,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("400 invalid_request when the file part is missing", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const fd = new FormData();
     fd.set("filename", "no-file.jpg");
     const res = await app.fetch(
@@ -315,7 +315,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("415 mime_disallowed for an HTML-looking payload (polyglot defense)", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     // FF D8 FF prefix sniffs as image/jpeg but the rest is HTML — sharp's
     // decode-then-encode pass refuses it, mirroring the agent-side route.
     const fakeJpeg = Buffer.concat([
@@ -329,7 +329,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("413 attachment_size_exceeded when the upload exceeds MAX_BLOB_BYTES", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const big = await makeBigJpeg(MAX_BLOB + 1024);
     const res = await upload(token, big);
     expect(res.status).toBe(413);
@@ -338,7 +338,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("413 quota_exceeded when the agent's aggregate quota is exhausted", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const perBlob = 80 * 1024;
     // First three fit (240 KB total), 4th would push past the 300 KB cap.
     expect((await upload(token, await makeBigJpeg(perBlob))).status).toBe(201);
@@ -360,7 +360,7 @@ describe("POST /s/:participantToken/attachments — polyglot defense", () => {
   });
 
   it("strips HTML appended after a JPEG (same defense as POST /v1/attachments)", async () => {
-    const { token } = await seedSession();
+    const { token } = await seedSurface();
     const realJpeg = await makeJpeg(256);
     const polyglot = Buffer.concat([
       realJpeg,

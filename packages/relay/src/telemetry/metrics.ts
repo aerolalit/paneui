@@ -44,7 +44,7 @@ let enabled = false;
 let provider: MeterProvider | null = null;
 
 // Custom instruments. Undefined until initTelemetry() runs with metrics on.
-let sessionsCreated: Counter | undefined;
+let surfacesCreated: Counter | undefined;
 let eventsWritten: Counter | undefined;
 let registrations: Counter | undefined;
 let errors: Counter | undefined;
@@ -61,7 +61,7 @@ export type EventKind = "agent" | "human" | "system";
  * Async because the "azure" exporter is loaded via dynamic import (it is an
  * optional dependency). The "none" path resolves synchronously.
  *
- * `prisma` is injected (not a module singleton) so the pane_sessions_open
+ * `prisma` is injected (not a module singleton) so the pane_surfaces_open
  * ObservableGauge can count rows against the same client the app uses.
  */
 export async function initTelemetry(
@@ -101,7 +101,7 @@ export async function initTelemetry(
 
   const meter: Meter = provider.getMeter("pane-relay");
 
-  sessionsCreated = meter.createCounter("pane_sessions_created_total", {
+  surfacesCreated = meter.createCounter("pane_surfaces_created_total", {
     description: "Total UI surfaces created via POST /v1/surfaces.",
   });
   eventsWritten = meter.createCounter("pane_events_written_total", {
@@ -137,12 +137,12 @@ export async function initTelemetry(
       }
     });
 
-  // pane_sessions_open — ObservableGauge that counts currently-open surfaces on
+  // pane_surfaces_open — ObservableGauge that counts currently-open surfaces on
   // each collection. The exporter reads it periodically, so one count query per
   // collection is acceptable. The callback is resilient: a DB error is logged
   // and the observation is simply skipped, never thrown out of the callback.
   meter
-    .createObservableGauge("pane_sessions_open", {
+    .createObservableGauge("pane_surfaces_open", {
       description: "Sessions currently open (status=open, not expired).",
     })
     .addCallback(async (result) => {
@@ -169,7 +169,7 @@ export async function initTelemetry(
 
 /** Increment after a surface is successfully created. */
 export function recordSessionCreated(): void {
-  sessionsCreated?.add(1);
+  surfacesCreated?.add(1);
 }
 
 /** Increment per persisted event, labelled by the author kind. */

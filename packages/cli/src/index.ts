@@ -24,7 +24,7 @@ function failArgvError(e: ArgvError): never {
   process.stderr.write(JSON.stringify({ error }) + "\n");
   process.exit(1);
 }
-import { runSession, sessionHelp } from "./commands/surface.js";
+import { runSurface, surfaceHelp } from "./commands/surface.js";
 import { runArtifact, artifactHelp } from "./commands/template.js";
 import { runAgent, agentHelp } from "./commands/agent.js";
 import { runKey, keyHelp } from "./commands/key.js";
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
   }
 
   const helps: Record<string, string> = {
-    surface: sessionHelp,
+    surface: surfaceHelp,
     template: artifactHelp,
     key: keyHelp,
     taste: tasteHelp,
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   }
 
   // `pane <noun> --help` with no verb prints the noun-level help. A verb-level
-  // --help is the responsibility of each runner (e.g. runSession dispatches to
+  // --help is the responsibility of each runner (e.g. runSurface dispatches to
   // the verb runner which reads its own xxxHelp). This pre-empt only fires
   // when --help is the FIRST positional-equivalent — i.e. no verb given.
   if (args.bools.has("help") && args.positionals.length === 0) {
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
 
   switch (noun) {
     case "surface":
-      await runSession(args);
+      await runSurface(args);
       break;
     case "template":
       await runArtifact(args);

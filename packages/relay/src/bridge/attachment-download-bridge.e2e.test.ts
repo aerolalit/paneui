@@ -21,7 +21,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSessionRow } from "../test-helpers/seed.js";
+import { seedSurfaceRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
 import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
@@ -154,7 +154,7 @@ interface SeededSession {
   participantToken: string;
 }
 
-async function seedSession(
+async function seedSurface(
   opts: { inputData?: object | null; inputSchema?: object | null } = {},
 ): Promise<SeededSession> {
   const apiKey = "pane_" + randomBytes(16).toString("hex");
@@ -165,7 +165,7 @@ async function seedSession(
       keyPrefix: keyPrefix(apiKey),
     },
   });
-  const { surfaceId } = await seedSessionRow(prisma, {
+  const { surfaceId } = await seedSurfaceRow(prisma, {
     agentId: agent.id,
     templateSource: "<html></html>",
     eventSchema: blobEventSchema,
@@ -262,7 +262,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — happy paths", 
   });
 
   it("returns the bytes when the attachment is referenced from an event in the surface", async () => {
-    const { agentApiKey, surfaceId, participantToken } = await seedSession();
+    const { agentApiKey, surfaceId, participantToken } = await seedSurface();
     const bytes = await makeJpeg(256);
     const { attachment_id, sha256, size } = await agentUploadBlob(
       plainApp,
@@ -311,7 +311,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — happy paths", 
     // Now seed a surface that pins this attachment in inputData. We use the seed
     // helper directly because POST /v1/surfaces has its own access check;
     // seeding bypasses validation but we WANT a sane inputData here.
-    const { surfaceId } = await seedSessionRow(prisma, {
+    const { surfaceId } = await seedSurfaceRow(prisma, {
       agentId: agent.id,
       eventSchema: blobEventSchema,
       inputSchema: blobInputSchema,
@@ -343,7 +343,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — happy paths", 
     // event in this surface is reachable — the authz rule is "is this id
     // referenced from THIS surface?", not "does this attachment belong to this
     // surface's scope".
-    const { agentApiKey, surfaceId, participantToken } = await seedSession();
+    const { agentApiKey, surfaceId, participantToken } = await seedSurface();
     const bytes = await makeJpeg(256);
     const { attachment_id, sha256 } = await agentUploadBlob(
       plainApp,
@@ -396,7 +396,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — auth / token v
   });
 
   it("rejects a revoked participant with 401", async () => {
-    const { participantToken, surfaceId } = await seedSession();
+    const { participantToken, surfaceId } = await seedSurface();
     await prisma.participant.updateMany({
       where: { surfaceId },
       data: { revokedAt: new Date() },
@@ -410,7 +410,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — auth / token v
   });
 
   it("rejects downloads against a closed surface with 410 gone", async () => {
-    const { participantToken, surfaceId } = await seedSession();
+    const { participantToken, surfaceId } = await seedSurface();
     await prisma.surface.update({
       where: { id: surfaceId },
       data: { status: "closed" },
@@ -435,7 +435,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
 
   it("rejects a token from surface A used to download a attachment only referenced in surface B with 404", async () => {
     // Surface A — has the attachment referenced.
-    const a = await seedSession();
+    const a = await seedSurface();
     const bytes = await makeJpeg(256);
     const { attachment_id } = await agentUploadBlob(
       plainApp,
@@ -453,7 +453,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
     );
 
     // Surface B — same agent, different surface, never references the attachment.
-    const { surfaceId: sessionBId } = await seedSessionRow(prisma, {
+    const { surfaceId: sessionBId } = await seedSurfaceRow(prisma, {
       agentId: a.agentId,
       eventSchema: blobEventSchema,
       status: "open",
@@ -480,7 +480,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
 
   it("rejects a attachment_id of correct shape but not referenced in this surface with 404", async () => {
     // Seed a attachment the agent owns but the surface never references.
-    const { agentApiKey, participantToken } = await seedSession();
+    const { agentApiKey, participantToken } = await seedSurface();
     const bytes = await makeJpeg(256);
     const { attachment_id } = await agentUploadBlob(
       plainApp,
@@ -499,7 +499,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
   });
 
   it("rejects a soft-deleted attachment with 404 even when previously referenced", async () => {
-    const { agentApiKey, surfaceId, participantToken } = await seedSession();
+    const { agentApiKey, surfaceId, participantToken } = await seedSurface();
     const bytes = await makeJpeg(256);
     const { attachment_id } = await agentUploadBlob(
       plainApp,
@@ -527,7 +527,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
   });
 
   it("rejects a nonexistent attachment_id of correct shape with 404", async () => {
-    const { participantToken } = await seedSession();
+    const { participantToken } = await seedSurface();
     // A cuid-ish shape that doesn't correspond to any row.
     const fake = "ckabcd0123456789abcdef01";
     const res = await plainApp.fetch(
@@ -539,7 +539,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
   });
 
   it("rejects a malformed attachment_id with 400 invalid_request", async () => {
-    const { participantToken } = await seedSession();
+    const { participantToken } = await seedSurface();
     // Path-segment with disallowed chars but no slashes — Hono routes this
     // to the handler, which rejects on shape.
     const res = await plainApp.fetch(
@@ -569,7 +569,7 @@ describe("GET /s/:participantToken/attachments/:attachment_id — envelope encry
         keyPrefix: keyPrefix(apiKey),
       },
     });
-    const { surfaceId } = await seedSessionRow(prisma, {
+    const { surfaceId } = await seedSurfaceRow(prisma, {
       agentId: agent.id,
       eventSchema: blobEventSchema,
       status: "open",

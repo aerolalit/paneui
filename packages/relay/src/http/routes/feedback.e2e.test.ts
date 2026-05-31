@@ -49,7 +49,7 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
   return { id: agent.id, apiKey };
 }
 
-async function seedSession(agentId: string): Promise<string> {
+async function seedSurface(agentId: string): Promise<string> {
   const template = await prisma.template.create({
     data: { ownerId: agentId },
   });
@@ -163,7 +163,7 @@ describe("/v1/feedback", () => {
 
   it("accepts an optional surface_id owned by the caller", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const surfaceId = await seedSession(agentId);
+    const surfaceId = await seedSurface(agentId);
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "feature",
       message: "richer event types",
@@ -177,7 +177,7 @@ describe("/v1/feedback", () => {
   it("returns 404 when surface_id is not owned by the caller", async () => {
     const { apiKey } = await seedAgent();
     const other = await seedAgent();
-    const otherSession = await seedSession(other.id);
+    const otherSession = await seedSurface(other.id);
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "bug",
       message: "spoofy",
