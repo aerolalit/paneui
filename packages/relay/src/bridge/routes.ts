@@ -10,6 +10,7 @@ import { errors, ApiError } from "../http/errors.js";
 import { prefersHtml } from "../http/accept.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
+import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
 
 const bridge = new Hono<AppEnv>();
 
@@ -396,11 +397,19 @@ bridge.get("/:token/content", async (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");
 
+  // Default stylesheet — injected in <head> before the agent's markup so any
+  // author <style> blocks win the cascade at equal specificity. The literal
+  // marker `data-pane-bare` anywhere in the artifact body skips injection
+  // entirely for artifacts that want a blank canvas.
+  const styleBlock = shouldInjectDefaults(artifactBody)
+    ? `<style>${PANE_DEFAULT_CSS}</style>`
+    : "";
   const wrapped = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${styleBlock}
 <script>${RUNTIME_JS}</script>
 </head>
 <body>

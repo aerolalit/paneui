@@ -395,6 +395,46 @@ describe("bridge content GET /s/:token/content", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("injects the default artifact stylesheet into <head> by default", async () => {
+    const { token } = await seedSurface({ templateSource: MARKER });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    const body = await res.text();
+    // A stable token unique to default-styles.ts — picks up if injection ran.
+    expect(body).toContain("--pane-accent");
+    // Injected in <head>, so author <style> in the body wins the cascade.
+    const styleIdx = body.indexOf("--pane-accent");
+    const markerIdx = body.indexOf(MARKER);
+    expect(styleIdx).toBeGreaterThan(-1);
+    expect(markerIdx).toBeGreaterThan(styleIdx);
+  });
+
+  it("skips default-style injection when the artifact opts out via data-pane-bare", async () => {
+    const { token } = await seedSurface({
+      templateSource: "<html data-pane-bare><body>raw</body></html>",
+    });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    const body = await res.text();
+    expect(body).not.toContain("--pane-accent");
+    expect(body).toContain("data-pane-bare");
+  });
+
+  it("lets author <style> rules override defaults (cascade order)", async () => {
+    // Author rule comes AFTER the pane <head> block, so at equal specificity
+    // the author wins. We assert the rule is present in the rendered HTML;
+    // the actual cascade is a browser concern but document-order is the
+    // contract we expose.
+    const { token } = await seedSurface({
+      templateSource:
+        "<style>button { background: red; }</style><button>x</button>",
+    });
+    const res = await app.fetch(new Request(`http://t/s/${token}/content`));
+    const body = await res.text();
+    expect(body).toContain("--pane-accent");
+    const paneStyleIdx = body.indexOf("--pane-accent");
+    const authorStyleIdx = body.indexOf("button { background: red; }");
+    expect(authorStyleIdx).toBeGreaterThan(paneStyleIdx);
+  });
 });
 
 // The bridge is the human-facing entry point. When a person opens a stale
