@@ -213,7 +213,7 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
       extra: {
         scope: "agent",
         // Even with these set, the route ignores them.
-        surface_id: "ses_someone_else",
+        surface_id: "sur_someone_else",
         template_id: "art_someone_else",
       },
     });

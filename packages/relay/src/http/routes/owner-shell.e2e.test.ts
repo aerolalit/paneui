@@ -18,7 +18,7 @@ import {
 import { makeDevProvider } from "../../auth/providers/dev.js";
 import {
   generateApiKey,
-  generateSessionId,
+  generateSurfaceId,
   hashKey,
   keyPrefix,
 } from "../../keys.js";
@@ -115,7 +115,7 @@ async function seedOwnedSurface(): Promise<{
 
   const surface = await prisma.surface.create({
     data: {
-      id: generateSessionId(),
+      id: generateSurfaceId(),
       agentId: agent.id,
       ownerHumanId: human.id,
       templateVersionId: templateVersion.id,

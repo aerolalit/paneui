@@ -24,13 +24,13 @@ beforeEach(() => {
 
 describe("presence (in-process backend, REDIS_URL unset)", () => {
   it("counts agent and human connections per surface", async () => {
-    await addConnection("ses_a", "c1", "agent");
-    await addConnection("ses_a", "c2", "human");
-    await addConnection("ses_a", "c3", "agent");
+    await addConnection("sur_a", "c1", "agent");
+    await addConnection("sur_a", "c2", "human");
+    await addConnection("sur_a", "c3", "agent");
 
-    expect(await agentCount("ses_a")).toBe(2);
-    expect(await humanCount("ses_a")).toBe(1);
-    expect(await connectionCount("ses_a")).toBe(3);
+    expect(await agentCount("sur_a")).toBe(2);
+    expect(await humanCount("sur_a")).toBe(1);
+    expect(await connectionCount("sur_a")).toBe(3);
   });
 
   it("an unknown surface has zero connections", async () => {
@@ -39,12 +39,12 @@ describe("presence (in-process backend, REDIS_URL unset)", () => {
   });
 
   it("removeConnection drops a connection and prunes the empty surface", async () => {
-    await addConnection("ses_b", "c1", "agent");
-    await removeConnection("ses_b", "c1");
-    expect(await connectionCount("ses_b")).toBe(0);
+    await addConnection("sur_b", "c1", "agent");
+    await removeConnection("sur_b", "c1");
+    expect(await connectionCount("sur_b")).toBe(0);
     // Removing again is a harmless no-op.
-    await removeConnection("ses_b", "c1");
-    expect(await connectionCount("ses_b")).toBe(0);
+    await removeConnection("sur_b", "c1");
+    expect(await connectionCount("sur_b")).toBe(0);
   });
 
   it("totalConnections sums across surfaces and filters by kind", async () => {

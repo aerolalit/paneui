@@ -7,7 +7,7 @@ const fakeClient = {
   createSession: vi.fn((req: unknown) => {
     calls.push({ method: "createSession", args: [req] });
     return Promise.resolve({
-      surface_id: "ses_1",
+      surface_id: "sur_1",
       tokens: { humans: [], agent: "t" },
       urls: { humans: [], agent_stream: "ws" },
       expires_at: "2026-01-01T00:00:00Z",
@@ -81,7 +81,7 @@ describe("create — inline template form", () => {
       source: "<html></html>",
       event_schema: { events: {} },
     });
-    expect(JSON.parse(stdout).surface_id).toBe("ses_1");
+    expect(JSON.parse(stdout).surface_id).toBe("sur_1");
   });
 
   it("accepts --input-data on the inline path", async () => {
@@ -107,7 +107,7 @@ describe("create — inline template form", () => {
       source: "<html></html>",
     });
     expect("event_schema" in req.template).toBe(false);
-    expect(JSON.parse(stdout).surface_id).toBe("ses_1");
+    expect(JSON.parse(stdout).surface_id).toBe("sur_1");
   });
 
   it("plumbs --input-schema into template.input_schema (inline JSON) — #208", async () => {

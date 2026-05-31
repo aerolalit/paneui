@@ -101,7 +101,7 @@ export async function seedSessionRow(
     });
     templateVersionId = seeded.templateVersionId;
   }
-  const surfaceId = opts.id ?? `ses_${randomBytes(8).toString("hex")}`;
+  const surfaceId = opts.id ?? `sur_${randomBytes(8).toString("hex")}`;
   await prisma.surface.create({
     data: {
       id: surfaceId,

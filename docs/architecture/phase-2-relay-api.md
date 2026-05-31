@@ -182,7 +182,7 @@ Effect (one `prisma.$transaction`):
 → `201`:
 ```json
 {
-  "session_id": "ses_...",
+  "session_id": "sur_...",
   "tokens": {
     "humans": ["tok_h_..."],
     "agent":  "tok_a_..."

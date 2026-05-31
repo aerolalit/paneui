@@ -262,7 +262,7 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
 
   it("rejects unauthenticated requests with 401", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/ses_nope/participants", {
+      new Request("http://t/v1/surfaces/sur_nope/participants", {
         method: "POST",
         body: "{}",
       }),

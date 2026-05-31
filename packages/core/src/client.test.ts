@@ -124,7 +124,7 @@ describe("PaneClient typed operations", () => {
         body: JSON.stringify({ error: { code: "not_found", message: "nope" } }),
       }),
     );
-    await expect(c.getSession("ses_x")).rejects.toMatchObject({
+    await expect(c.getSession("sur_x")).rejects.toMatchObject({
       name: "PaneApiError",
       status: 404,
       code: "not_found",
@@ -147,7 +147,7 @@ describe("PaneClient typed operations", () => {
         }),
       }),
     );
-    const err = await c.getSession("ses_x").catch((e: unknown) => e);
+    const err = await c.getSession("sur_x").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PaneApiError);
     const e = err as PaneApiError;
     expect(e.code).toBe("rate_limited");
@@ -165,7 +165,7 @@ describe("PaneClient typed operations", () => {
       }),
     );
     const err = (await c
-      .getSession("ses_x")
+      .getSession("sur_x")
       .catch((e: unknown) => e)) as PaneApiError;
     expect(err.hint).toBeUndefined();
     expect(err.retryable).toBeUndefined();
@@ -174,8 +174,8 @@ describe("PaneClient typed operations", () => {
 
   it("throws invalid_response when a 2xx body is not an object", async () => {
     const c = clientWith(async () => res({ status: 200, body: "null" }));
-    await expect(c.getSession("ses_x")).rejects.toBeInstanceOf(PaneApiError);
-    await expect(c.getSession("ses_x")).rejects.toMatchObject({
+    await expect(c.getSession("sur_x")).rejects.toBeInstanceOf(PaneApiError);
+    await expect(c.getSession("sur_x")).rejects.toMatchObject({
       code: "invalid_response",
     });
   });
@@ -184,11 +184,11 @@ describe("PaneClient typed operations", () => {
     const c = clientWith(async () =>
       res({
         status: 200,
-        body: JSON.stringify({ surface_id: "ses_x", status: "open" }),
+        body: JSON.stringify({ surface_id: "sur_x", status: "open" }),
       }),
     );
-    const s = await c.getSession("ses_x");
-    expect(s.surface_id).toBe("ses_x");
+    const s = await c.getSession("sur_x");
+    expect(s.surface_id).toBe("sur_x");
   });
 });
 
@@ -409,7 +409,7 @@ describe("PaneClient.createSession", () => {
     // so `pane surface create --template <inline> --title <t>` stops 4xx-ing.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        surface_id: "ses_1",
+        surface_id: "sur_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
@@ -430,7 +430,7 @@ describe("PaneClient.createSession", () => {
     // string here — undefined stays undefined on the wire.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        surface_id: "ses_1",
+        surface_id: "sur_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
@@ -497,9 +497,9 @@ describe("PaneClient key + surface-delete operations", () => {
 
   it("deleteSession DELETEs /v1/surfaces/:id and handles a 204 without throwing", async () => {
     const { c, seen } = capturingClient({ status: 204 });
-    await expect(c.deleteSession("ses_1")).resolves.toBeUndefined();
+    await expect(c.deleteSession("sur_1")).resolves.toBeUndefined();
     expect(seen().method).toBe("DELETE");
-    expect(seen().url).toBe("https://relay.test/v1/surfaces/ses_1");
+    expect(seen().url).toBe("https://relay.test/v1/surfaces/sur_1");
   });
 
   it("deleteSession throws PaneApiError on a 404", async () => {
@@ -510,7 +510,7 @@ describe("PaneClient key + surface-delete operations", () => {
         body: JSON.stringify({ error: { code: "not_found" } }),
       }),
     );
-    await expect(c.deleteSession("ses_missing")).rejects.toMatchObject({
+    await expect(c.deleteSession("sur_missing")).rejects.toMatchObject({
       name: "PaneApiError",
       status: 404,
       code: "not_found",

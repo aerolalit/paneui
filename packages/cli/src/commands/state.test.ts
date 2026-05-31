@@ -66,7 +66,7 @@ async function run(tokens: string[]): Promise<void> {
 
 describe("pane surface show", () => {
   it("fetches meta + events without --wait (non-blocking, default behaviour)", async () => {
-    await run(["ses_abc"]);
+    await run(["sur_abc"]);
     expect(exitCode).toBeUndefined();
     expect(calls[0]!.method).toBe("getSession");
     expect(calls[1]!.method).toBe("getEvents");
@@ -82,7 +82,7 @@ describe("pane surface show", () => {
   });
 
   it("passes --since through verbatim", async () => {
-    await run(["ses_abc", "--since", "42"]);
+    await run(["sur_abc", "--since", "42"]);
     const opts = calls[1]!.args[1] as { since: string | null };
     expect(opts.since).toBe("42");
   });
@@ -91,13 +91,13 @@ describe("pane surface show", () => {
     // The relay caps the wait at 30s server-side; we pass the raw value
     // and don't clamp client-side (cheaper, and lets the operator change
     // the cap without coordinating a CLI release).
-    await run(["ses_abc", "--wait", "30"]);
+    await run(["sur_abc", "--wait", "30"]);
     const opts = calls[1]!.args[1] as { waitSeconds?: number };
     expect(opts.waitSeconds).toBe(30);
   });
 
   it("rejects --wait with a negative or non-numeric value", async () => {
-    await run(["ses_abc", "--wait", "-1"]);
+    await run(["sur_abc", "--wait", "-1"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("--wait");
     // No relay call should have fired — the parser rejects before the

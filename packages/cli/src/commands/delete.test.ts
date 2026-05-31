@@ -60,12 +60,12 @@ async function run(tokens: string[]): Promise<void> {
 
 describe("runDelete", () => {
   it("deletes the given surface id", async () => {
-    await run(["ses_abc"]);
+    await run(["sur_abc"]);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.method).toBe("deleteSession");
-    expect(calls[0]!.args[0]).toBe("ses_abc");
+    expect(calls[0]!.args[0]).toBe("sur_abc");
     expect(JSON.parse(stdout)).toEqual({
-      surface_id: "ses_abc",
+      surface_id: "sur_abc",
       deleted: true,
     });
   });

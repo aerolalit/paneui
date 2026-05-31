@@ -20,7 +20,7 @@ import { loadClient } from "./routes.js";
 const SHELL_JS = loadClient("shell.client.js");
 
 const TOKEN = "tok_h_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const SESSION_ID = "ses_test";
+const SESSION_ID = "sur_test";
 
 // Minimal cfg that satisfies the shell IIFE. The shell takes its callback URLs
 // from the cfg block rather than constructing them from a token (the same
@@ -36,7 +36,7 @@ const CFG = {
   wsTicketAuthorization: `Bearer ${TOKEN}`,
   attachmentsUploadUrl: `/s/${TOKEN}/attachments`,
   attachmentsDownloadUrlBase: `/s/${TOKEN}/attachments`,
-  wsUrl: "ws://localhost/v1/surfaces/ses_test/stream",
+  wsUrl: "ws://localhost/v1/surfaces/sur_test/stream",
   isClosed: false,
   agentLive: false,
   agentLastEventAt: null,

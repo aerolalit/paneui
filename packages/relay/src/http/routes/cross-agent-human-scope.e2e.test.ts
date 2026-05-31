@@ -80,7 +80,7 @@ async function seedSurface(opts: {
   });
   return prisma.surface.create({
     data: {
-      id: `ses_${randomBytes(8).toString("hex")}`,
+      id: `sur_${randomBytes(8).toString("hex")}`,
       agent: { connect: { id: opts.agentId } },
       ...(opts.ownerHumanId
         ? { ownerHuman: { connect: { id: opts.ownerHumanId } } }
