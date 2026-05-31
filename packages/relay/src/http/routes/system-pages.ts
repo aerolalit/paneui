@@ -183,6 +183,38 @@ function layout(args: {
   .empty-state-cta { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   .empty-state-snippet { font-family: "SF Mono",Menlo,Consolas,monospace; background: var(--code-bg); padding: 8px 12px; border-radius: 6px; font-size: 13px; user-select: all; margin-top: 4px; display: inline-block; }
 
+  /* Login landing — two-column on wide viewports (hero + form), stacked on
+     narrow ones. Anything inside the .login-* tree only fires on the
+     dedicated /login page; the same layout shell still serves the other
+     pages with a single .card block. */
+  .login-grid { display: grid; gap: 32px; margin: 32px auto 0; max-width: 920px; }
+  @media (min-width: 880px) {
+    .login-grid { grid-template-columns: 1.1fr 1fr; gap: 56px; align-items: start; }
+  }
+  .login-hero-title { margin: 0 0 14px; font-size: 30px; line-height: 1.15; letter-spacing: -0.02em; }
+  @media (min-width: 880px) { .login-hero-title { font-size: 36px; } }
+  .login-hero-lede { margin: 0 0 14px; color: var(--muted); font-size: 15.5px; line-height: 1.55; }
+  .login-hero-lede em { color: var(--fg); font-style: normal; font-weight: 600; }
+  .login-form-card { margin: 0; max-width: 420px; align-self: start; }
+  @media (max-width: 879px) { .login-form-card { margin: 0 auto; } }
+
+  /* Mock artifact preview — a CSS-rendered representation of what a Pane
+     surface looks like in the wild. Static; aria-hidden so screen readers
+     skip it. The look mirrors the bridge's iframe shell (chrome bar,
+     preamble band, content) so the lede + preview cohere. */
+  .hero-mock { margin-top: 24px; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow); }
+  .hero-mock-chrome { display: flex; gap: 6px; align-items: center; padding: 10px 14px; background: var(--code-bg); border-bottom: 1px solid var(--rule); }
+  .hero-mock-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rule); flex: none; }
+  .hero-mock-url { margin-left: 10px; color: var(--muted); font-size: 12.5px; font-family: "SF Mono",Menlo,Consolas,monospace; }
+  .hero-mock-preamble { padding: 9px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--accent-border); color: var(--accent-ink); font-size: 13px; border-left: 3px solid var(--accent); }
+  .hero-mock-body { padding: 16px 18px 18px; }
+  .hero-mock-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .hero-mock-title code { font-size: 14px; }
+  .hero-mock-meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .hero-mock-buttons { display: flex; gap: 8px; }
+  .hero-mock-btn { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); font-size: 13px; font-weight: 500; }
+  .hero-mock-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
   button.btn:hover, a.btn:hover { background: var(--accent-hover); }
   button.btn:active, a.btn:active { transform: translateY(1px); }
@@ -305,15 +337,40 @@ systemPages.get("/login", (c) => {
         <p>This relay is configured with <code>EMAIL_PROVIDER=none</code>; only the agent API and capability-URL surfaces are available.</p>
         <p>If you're operating this relay, configure an email provider (Azure, SMTP, or Resend) and restart.</p>
        </div>`
-    : `<div class="card" style="max-width:420px;margin:48px auto 0;">
-        <h1>Sign in to pane</h1>
-        <p style="color:var(--muted);font-size:14.5px;">We'll email you a one-time sign-in link. No password.</p>
-        <form id="login-form" autocomplete="on">
-          <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;">Email</label>
-          <input id="email" name="email" type="email" required autofocus autocomplete="email" />
-          <button class="btn" type="submit" style="width:100%;margin-top:14px;">Email me a link</button>
-        </form>
-        <p id="login-status" style="margin-top:14px;font-size:14px;color:var(--muted);" aria-live="polite"></p>
+    : `<div class="login-grid">
+        <section class="login-hero">
+          <h1 class="login-hero-title">A real UI for the human in the loop.</h1>
+          <p class="login-hero-lede">Pane is a round-trip UI channel between your agents and you: an agent renders an HTML form, dashboard, or report; you get a URL; your interactions stream back to the agent as structured events.</p>
+          <p class="login-hero-lede">Close the loop without building a custom frontend — for deploy approvals, PR reviews, surveys, dashboards, anything the human needs to <em>see and act on</em>.</p>
+          <div class="hero-mock" aria-hidden="true">
+            <div class="hero-mock-chrome">
+              <span class="hero-mock-dot"></span>
+              <span class="hero-mock-dot"></span>
+              <span class="hero-mock-dot"></span>
+              <span class="hero-mock-url">pane → ci-bot</span>
+            </div>
+            <div class="hero-mock-preamble">Your CI bot wants you to approve a deploy.</div>
+            <div class="hero-mock-body">
+              <div class="hero-mock-title">Approve deploy to <code>prod</code>?</div>
+              <div class="hero-mock-meta">Service: api · Build #1138 · Diff +124 −37</div>
+              <div class="hero-mock-buttons">
+                <span class="hero-mock-btn primary">Approve</span>
+                <span class="hero-mock-btn">Reject</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="login-form-card card">
+          <h2 style="margin-top:0;">Sign in</h2>
+          <p style="color:var(--muted);font-size:14.5px;">We'll email you a one-time sign-in link. No password.</p>
+          <form id="login-form" autocomplete="on">
+            <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;">Email</label>
+            <input id="email" name="email" type="email" required autofocus autocomplete="email" />
+            <button class="btn" type="submit" style="width:100%;margin-top:14px;">Email me a link</button>
+          </form>
+          <p id="login-status" style="margin-top:14px;font-size:14px;color:var(--muted);" aria-live="polite"></p>
+          <p style="margin-top:18px;font-size:13px;color:var(--muted);">New here? Sign-in creates your account on first use — there's nothing to set up first.</p>
+        </section>
        </div>
        <script>
          const form = document.getElementById("login-form");
