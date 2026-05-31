@@ -223,7 +223,7 @@ describe("GET /my-surfaces (signed in)", () => {
     });
     await prisma.surface.create({
       data: {
-        id: "ses_test_one",
+        id: "sur_test_one",
         agentId: agent.id,
         ownerHumanId: humanId,
         templateVersionId: tv.id,
@@ -237,7 +237,7 @@ describe("GET /my-surfaces (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Alice's PR review");
-    expect(html).toContain("ses_test_one");
+    expect(html).toContain("sur_test_one");
   });
 });
 

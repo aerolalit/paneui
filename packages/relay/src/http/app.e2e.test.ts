@@ -98,7 +98,7 @@ describe("HTTP e2e", () => {
         urls: { humans: string[]; agent_stream: string };
         expires_at: string;
       };
-      expect(body.surface_id).toMatch(/^ses_/);
+      expect(body.surface_id).toMatch(/^sur_/);
       expect(body.tokens.humans).toHaveLength(2);
       expect(body.tokens.agent).toBeTruthy();
       expect(body.urls.humans[0]).toContain("/s/");
@@ -539,7 +539,7 @@ describe("HTTP e2e", () => {
     it("404 on a missing surface uses session_not_found", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
-        new Request("http://t/v1/surfaces/ses_does_not_exist", {
+        new Request("http://t/v1/surfaces/sur_does_not_exist", {
           headers: bearer(apiKey),
         }),
       );

@@ -257,7 +257,7 @@ describe("POST /v1/agents/claim", () => {
     });
     const surface = await prisma.surface.create({
       data: {
-        id: "ses_test",
+        id: "sur_test",
         agentId,
         templateVersionId: tv.id,
         title: "t",

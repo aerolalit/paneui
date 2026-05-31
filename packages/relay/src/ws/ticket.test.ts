@@ -15,39 +15,39 @@ describe("ws ticket store", () => {
   });
 
   it("issues a high-entropy base64url ticket", () => {
-    const t = issueTicket(author, "ses_a");
+    const t = issueTicket(author, "sur_a");
     expect(t).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(t.length).toBe(43);
   });
 
   it("issue -> redeem round trip returns the bound author", () => {
-    const t = issueTicket(author, "ses_a");
-    expect(redeemTicket(t, "ses_a")).toEqual(author);
+    const t = issueTicket(author, "sur_a");
+    expect(redeemTicket(t, "sur_a")).toEqual(author);
   });
 
   it("is single-use: a second redeem fails", () => {
-    const t = issueTicket(author, "ses_a");
-    expect(redeemTicket(t, "ses_a")).toEqual(author);
-    expect(redeemTicket(t, "ses_a")).toBeNull();
+    const t = issueTicket(author, "sur_a");
+    expect(redeemTicket(t, "sur_a")).toEqual(author);
+    expect(redeemTicket(t, "sur_a")).toBeNull();
   });
 
   it("rejects an unknown ticket", () => {
-    expect(redeemTicket("nope", "ses_a")).toBeNull();
+    expect(redeemTicket("nope", "sur_a")).toBeNull();
   });
 
   it("rejects a ticket redeemed against the wrong surface", () => {
-    const t = issueTicket(author, "ses_a");
-    expect(redeemTicket(t, "ses_b")).toBeNull();
+    const t = issueTicket(author, "sur_a");
+    expect(redeemTicket(t, "sur_b")).toBeNull();
     // A wrong-surface redeem still burns the ticket (single-use).
-    expect(redeemTicket(t, "ses_a")).toBeNull();
+    expect(redeemTicket(t, "sur_a")).toBeNull();
   });
 
   it("rejects a ticket past its TTL", () => {
     vi.useFakeTimers();
     try {
-      const t = issueTicket(author, "ses_a");
+      const t = issueTicket(author, "sur_a");
       vi.advanceTimersByTime(TICKET_TTL_MS + 1);
-      expect(redeemTicket(t, "ses_a")).toBeNull();
+      expect(redeemTicket(t, "sur_a")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -56,9 +56,9 @@ describe("ws ticket store", () => {
   it("still redeems a ticket just inside its TTL", () => {
     vi.useFakeTimers();
     try {
-      const t = issueTicket(author, "ses_a");
+      const t = issueTicket(author, "sur_a");
       vi.advanceTimersByTime(TICKET_TTL_MS - 1);
-      expect(redeemTicket(t, "ses_a")).toEqual(author);
+      expect(redeemTicket(t, "sur_a")).toEqual(author);
     } finally {
       vi.useRealTimers();
     }
@@ -66,7 +66,7 @@ describe("ws ticket store", () => {
 
   it("binds the agent author kind/id", () => {
     const agentAuthor: Author = { kind: "agent", id: "ag_1" };
-    const t = issueTicket(agentAuthor, "ses_x");
-    expect(redeemTicket(t, "ses_x")).toEqual(agentAuthor);
+    const t = issueTicket(agentAuthor, "sur_x");
+    expect(redeemTicket(t, "sur_x")).toEqual(agentAuthor);
   });
 });

@@ -334,14 +334,14 @@ parallel code path.
 
 ```json
 {
-  "session_id": "ses_...",
+  "session_id": "sur_...",
   "tokens": {
     "humans": ["tok_h_..."],
     "agent":  "tok_a_..."
   },
   "urls": {
     "humans":       ["https://pane.relay/s/tok_h_..."],
-    "agent_stream": "wss://pane.relay/v1/sessions/ses_.../stream"
+    "agent_stream": "wss://pane.relay/v1/sessions/sur_.../stream"
   },
   "expires_at": "2026-05-13T..."
 }

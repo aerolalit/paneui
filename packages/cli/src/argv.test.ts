@@ -7,8 +7,8 @@ const BOOLS = new Set(["json", "once", "help", "version"]);
 
 describe("parseArgs", () => {
   it("collects positionals", () => {
-    const r = parseArgs(["ses_1", "ses_2"], BOOLS);
-    expect(r.positionals).toEqual(["ses_1", "ses_2"]);
+    const r = parseArgs(["sur_1", "sur_2"], BOOLS);
+    expect(r.positionals).toEqual(["sur_1", "sur_2"]);
   });
 
   it("parses --flag value", () => {
@@ -53,10 +53,10 @@ describe("parseArgs", () => {
 
   it("handles a mix of positionals, flags, and bools", () => {
     const r = parseArgs(
-      ["watch", "ses_1", "--type", "form.submitted", "--once"],
+      ["watch", "sur_1", "--type", "form.submitted", "--once"],
       BOOLS,
     );
-    expect(r.positionals).toEqual(["watch", "ses_1"]);
+    expect(r.positionals).toEqual(["watch", "sur_1"]);
     expect(r.flags.get("type")).toBe("form.submitted");
     expect(r.bools.has("once")).toBe(true);
   });

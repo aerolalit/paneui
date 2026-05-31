@@ -9,7 +9,7 @@ import {
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
-  generateSessionId,
+  generateSurfaceId,
   generateAgentParticipantToken,
   generateHumanParticipantToken,
   hashKey,
@@ -623,7 +623,7 @@ surfaces.post("/", requireAgent, async (c) => {
     }
   }
 
-  const surfaceId = generateSessionId();
+  const surfaceId = generateSurfaceId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
     generateHumanParticipantToken(),
   );

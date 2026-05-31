@@ -199,7 +199,7 @@ async function seedSessionFor(agentId: string): Promise<string> {
   });
   const surface = await prisma.surface.create({
     data: {
-      id: "ses_" + randomBytes(8).toString("hex"),
+      id: "sur_" + randomBytes(8).toString("hex"),
       agentId,
       templateVersionId: version.id,
       title: "attachments e2e test surface",

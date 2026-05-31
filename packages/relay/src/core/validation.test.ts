@@ -134,7 +134,7 @@ describe("assertSchemaWithinLimits", () => {
 
 describe("validateEvent", () => {
   const args = {
-    surfaceId: "ses_test1",
+    surfaceId: "sur_test1",
     schemaVersion: 1,
     schema: exampleSchema,
   };
@@ -201,7 +201,7 @@ describe("validateEvent", () => {
     };
     try {
       validateEvent({
-        surfaceId: "ses_multi",
+        surfaceId: "sur_multi",
         schemaVersion: 1,
         schema: multiFieldSchema,
         type: "form.submitted",
@@ -259,7 +259,7 @@ describe("validateEvent", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        surfaceId: "ses_viewonly",
+        surfaceId: "sur_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -277,7 +277,7 @@ describe("validateEvent", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        surfaceId: "ses_viewonly",
+        surfaceId: "sur_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -296,7 +296,7 @@ describe("validateEvent", () => {
     // system.surface.expired, participant.joined, etc. still work.
     expect(() =>
       validateEvent({
-        surfaceId: "ses_viewonly",
+        surfaceId: "sur_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "system.note",
@@ -526,7 +526,7 @@ describe("format: pane-attachment-id", () => {
   };
 
   const baseArgs = {
-    surfaceId: "ses_blob_format",
+    surfaceId: "sur_blob_format",
     schemaVersion: 1,
     schema: schemaWithBlobRef,
     type: "image.attach",

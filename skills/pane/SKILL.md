@@ -570,7 +570,7 @@ to stdout, flushing after each. This is the key command — it's how you wait fo
 the human.
 
 ```sh
-pane surface watch ses_xxxx --type form.submitted
+pane surface watch sur_xxxx --type form.submitted
 ```
 
 - `--type <t[,t2,…]>` — exit 0 after the first event whose type is in this
@@ -607,9 +607,9 @@ pane surface watch ses_xxxx --type form.submitted
 ### `pane surface show <id>` — snapshot, optionally long-polled
 
 ```sh
-pane surface show ses_xxxx                          # snapshot, returns immediately
-pane surface show ses_xxxx --since <next_cursor>    # only events past the cursor
-pane surface show ses_xxxx --since <next_cursor> --wait 30
+pane surface show sur_xxxx                          # snapshot, returns immediately
+pane surface show sur_xxxx --since <next_cursor>    # only events past the cursor
+pane surface show sur_xxxx --since <next_cursor> --wait 30
 ```
 
 Prints `{ meta, events, next_cursor }` without holding a WebSocket. Two
@@ -630,7 +630,7 @@ Choose `watch` (streaming) when you can hold a process; choose
 ### `pane surface send <id>` — emit your own event
 
 ```sh
-pane surface send ses_xxxx --type assistant.reply \
+pane surface send sur_xxxx --type assistant.reply \
   --data '{"title":"Got it","message":"Thanks — your rating is recorded."}'
 ```
 
@@ -641,7 +641,7 @@ works.
 ### `pane surface delete <id>` — close a surface
 
 ```sh
-pane surface delete ses_xxxx
+pane surface delete sur_xxxx
 ```
 
 Closes the surface and tears it down (`DELETE /v1/surfaces/:id`). Idempotent —
@@ -679,13 +679,13 @@ to mint a fresh URL on the still-alive surface.
 
 ```sh
 # Find the participant ids on one surface.
-pane surface participant list ses_abc123
+pane surface participant list sur_abc123
 
 # Lost the URL but the surface is still alive — mint a new entry door.
-pane surface participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+pane surface participant new sur_abc123 | tee -a ~/.pane-sessions.jsonl
 
 # Invalidate a URL you no longer want usable.
-pane surface participant revoke ses_abc123 p_xyz
+pane surface participant revoke sur_abc123 p_xyz
 ```
 
 Three primitives that together replace `pane surface delete + pane surface
@@ -712,12 +712,12 @@ template pin, and created_at — `participant new` preserves all of that).
 
 ```sh
 pane surface list                                          # find surface_id
-pane surface participant list ses_abc123                   # find participant
+pane surface participant list sur_abc123                   # find participant
                                                            #   ids on that
                                                            #   surface
-pane surface participant new ses_abc123 | tee -a ~/.pane-sessions.jsonl
+pane surface participant new sur_abc123 | tee -a ~/.pane-sessions.jsonl
 # use the new url; the old one is still valid until you revoke
-pane surface participant revoke ses_abc123 p_xyz           # optional —
+pane surface participant revoke sur_abc123 p_xyz           # optional —
                                                            #   invalidate
                                                            #   the old URL
 ```
@@ -812,7 +812,7 @@ you need an answer to, or for the human's answer to a surface question
 pane attachment upload --file ./chart.png
 
 # Surface-scope (dies with the surface; cheaper to GC):
-pane attachment upload --file ./hero.jpg --scope surface --surface-id ses_xxx
+pane attachment upload --file ./hero.jpg --scope surface --surface-id sur_xxx
 
 # Template-scope (reusable across every surface using the template):
 pane attachment upload --file ./icon.svg --scope template --template-id <id>

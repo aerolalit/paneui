@@ -87,7 +87,7 @@ async function seedSurfaceV1(opts?: { v1Schema?: object }): Promise<{
       },
     },
   });
-  const surfaceId = `ses_${randomBytes(8).toString("hex")}`;
+  const surfaceId = `sur_${randomBytes(8).toString("hex")}`;
   await prisma.surface.create({
     data: {
       id: surfaceId,
@@ -352,7 +352,7 @@ describe("POST /v1/surfaces/:id/upgrade — error envelopes", () => {
 
   it("404s on an unknown surface id", async () => {
     const { apiKey } = await seedSurfaceV1();
-    const res = await postUpgrade("ses_does_not_exist", apiKey, {});
+    const res = await postUpgrade("sur_does_not_exist", apiKey, {});
     expect(res.status).toBe(404);
   });
 

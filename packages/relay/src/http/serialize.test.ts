@@ -6,7 +6,7 @@ describe("serializeEvent", () => {
   it("converts numeric id to a string and flattens author", () => {
     const row: EventRow = {
       id: 42,
-      surfaceId: "ses_x",
+      surfaceId: "sur_x",
       authorKind: "human",
       authorId: "h_0",
       type: "review.commentAdded",
@@ -19,7 +19,7 @@ describe("serializeEvent", () => {
     };
     const s = serializeEvent(row);
     expect(s.id).toBe("42");
-    expect(s.surface_id).toBe("ses_x");
+    expect(s.surface_id).toBe("sur_x");
     expect(s.author).toEqual({ kind: "human", id: "h_0" });
     expect(s.ts).toBe("2026-05-13T10:00:00.000Z");
     expect(s.type).toBe("review.commentAdded");
@@ -31,7 +31,7 @@ describe("serializeEvent", () => {
   it("preserves causation_id and idempotency_key when present", () => {
     const row: EventRow = {
       id: 100,
-      surfaceId: "ses_x",
+      surfaceId: "sur_x",
       authorKind: "agent",
       authorId: "agent_1",
       type: "review.commentAdded",
@@ -53,7 +53,7 @@ describe("serializeEvent", () => {
     // schema.
     const row: EventRow = {
       id: 7,
-      surfaceId: "ses_x",
+      surfaceId: "sur_x",
       authorKind: "agent",
       authorId: "agent_1",
       type: "feed.logged",
@@ -76,7 +76,7 @@ describe("serializeEvent", () => {
     // `null` rather than absent, and consumers must handle that.
     const row: EventRow = {
       id: 1,
-      surfaceId: "ses_x",
+      surfaceId: "sur_x",
       authorKind: "system",
       authorId: "system",
       type: "system.participant.joined",

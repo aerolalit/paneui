@@ -17,7 +17,7 @@ function makeEvent(id: string, surfaceId: string): SerializedEvent {
 
 describe("openWaiter", () => {
   it("buffers an event published before wait() is called and delivers it", async () => {
-    const surfaceId = "ses_buffer";
+    const surfaceId = "sur_buffer";
     const waiter = openWaiter(surfaceId);
     try {
       // Event arrives during the "query window" — after subscribe, before wait().
@@ -30,7 +30,7 @@ describe("openWaiter", () => {
   });
 
   it("blocks for the next event when nothing is buffered", async () => {
-    const surfaceId = "ses_block";
+    const surfaceId = "sur_block";
     const waiter = openWaiter(surfaceId);
     try {
       const pending = waiter.wait(1000);
@@ -43,7 +43,7 @@ describe("openWaiter", () => {
   });
 
   it("resolves to null after the timeout when no event arrives", async () => {
-    const surfaceId = "ses_timeout";
+    const surfaceId = "sur_timeout";
     const waiter = openWaiter(surfaceId);
     try {
       const got = await waiter.wait(10);
@@ -54,7 +54,7 @@ describe("openWaiter", () => {
   });
 
   it("does not deliver after close()", async () => {
-    const surfaceId = "ses_closed";
+    const surfaceId = "sur_closed";
     const waiter = openWaiter(surfaceId);
     waiter.close();
     publish(surfaceId, makeEvent("3", surfaceId));
@@ -65,7 +65,7 @@ describe("openWaiter", () => {
 
 describe("waitForEvent", () => {
   it("resolves to null after the timeout", async () => {
-    const got = await waitForEvent("ses_none", 10);
+    const got = await waitForEvent("sur_none", 10);
     expect(got).toBeNull();
   });
 });

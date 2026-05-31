@@ -89,7 +89,7 @@ async function seedAgentOwnedSurface(humanId: string): Promise<string> {
   });
   const surface = await prisma.surface.create({
     data: {
-      id: `ses_${randomBytes(6).toString("hex")}`,
+      id: `sur_${randomBytes(6).toString("hex")}`,
       agentId: agent.id,
       ownerHumanId: humanId,
       templateVersionId: tv.id,
@@ -107,7 +107,7 @@ function withCookie(cookie: string): { cookie: string } {
 describe("POST /v1/surfaces/:id/identity-link", () => {
   it("requires a login cookie", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/ses_x/identity-link", {
+      new Request("http://t/v1/surfaces/sur_x/identity-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: "bob@example.com" }),
@@ -186,7 +186,7 @@ describe("POST /v1/surfaces/:id/identity-link", () => {
 describe("POST /v1/surfaces/:id/public-link", () => {
   it("requires a login cookie", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/ses_x/public-link", {
+      new Request("http://t/v1/surfaces/sur_x/public-link", {
         method: "POST",
       }),
     );

@@ -110,9 +110,9 @@ describe("runSession dispatch", () => {
     // surface id at positionals[0] for runDelete. If we got the slice
     // wrong, runDelete would either see "delete" as the id or undefined
     // and fail with "missing <surface-id>".
-    await run(["delete", "ses_abc"]);
+    await run(["delete", "sur_abc"]);
     expect(exitCode).toBeUndefined();
-    expect(calls).toEqual([{ method: "deleteSession", args: ["ses_abc"] }]);
+    expect(calls).toEqual([{ method: "deleteSession", args: ["sur_abc"] }]);
   });
 
   it("propagates missing-id errors from the verb runner", async () => {
@@ -172,24 +172,24 @@ describe("runSession list", () => {
 
 describe("runSession participant", () => {
   it("lists the participants on the given surface", async () => {
-    await run(["participant", "list", "ses_abc"]);
+    await run(["participant", "list", "sur_abc"]);
     expect(exitCode).toBeUndefined();
-    expect(calls).toEqual([{ method: "listParticipants", args: ["ses_abc"] }]);
+    expect(calls).toEqual([{ method: "listParticipants", args: ["sur_abc"] }]);
   });
 
   it("mints a fresh URL on the given surface", async () => {
-    await run(["participant", "new", "ses_abc"]);
+    await run(["participant", "new", "sur_abc"]);
     expect(exitCode).toBeUndefined();
     expect(calls).toEqual([
-      { method: "mintParticipant", args: ["ses_abc", undefined] },
+      { method: "mintParticipant", args: ["sur_abc", undefined] },
     ]);
   });
 
   it("revokes the given (surface-id, participant-id) pair", async () => {
-    await run(["participant", "revoke", "ses_abc", "p_xyz"]);
+    await run(["participant", "revoke", "sur_abc", "p_xyz"]);
     expect(exitCode).toBeUndefined();
     expect(calls).toEqual([
-      { method: "revokeParticipant", args: ["ses_abc", "p_xyz"] },
+      { method: "revokeParticipant", args: ["sur_abc", "p_xyz"] },
     ]);
   });
 
@@ -222,7 +222,7 @@ describe("runSession participant", () => {
   });
 
   it("fails when 'revoke' is missing <participant-id>", async () => {
-    await run(["participant", "revoke", "ses_abc"]);
+    await run(["participant", "revoke", "sur_abc"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing arguments");
     expect(calls).toHaveLength(0);
