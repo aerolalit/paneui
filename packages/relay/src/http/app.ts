@@ -28,6 +28,7 @@ import {
 import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
 import events from "./routes/events.js";
+import records from "./routes/records.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
@@ -304,6 +305,20 @@ export function buildApp(
     }),
   );
   app.route("/v1/surfaces/:id/events", events);
+  // #292 — records routes. Mounted under the surface tree so dualAuth's
+  // `:id` lookup keeps working. Per-route body limit mirrors events' (the
+  // record payload cap matches MAX_EVENT_DATA_BYTES until #293's dedicated
+  // MAX_RECORD_DATA_BYTES lands).
+  app.use(
+    "/v1/surfaces/:id/records/:collection/*",
+    bodyLimit({
+      maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
+      onError: () => {
+        throw apiErrors.payloadTooLarge();
+      },
+    }),
+  );
+  app.route("/v1/surfaces/:id/records/:collection", records);
   // Phase F — public catalog + install flow. MUST mount the human-side
   // marketplace BEFORE the agent-CRUD `templates` router: the latter has
   // a `/:id` route that would otherwise capture `/public` (`id=public`)
