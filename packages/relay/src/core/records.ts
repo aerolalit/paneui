@@ -47,35 +47,22 @@ export type SurfaceWithRecordSchema = Surface & {
   templateVersion: TemplateVersion;
 };
 
-export interface SerializedRecord {
-  id: string;
-  collection: string;
-  key: string;
-  data: unknown;
-  version: number;
-  seq: number;
-  author: { kind: AuthorKind; id: string };
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-}
-
-// The wire shape for a record that's been soft-deleted. Smaller than
-// SerializedRecord — clients only need enough to evict the row from their
-// local store (id, key, seq for cursor advancement, deleted_at).
-export interface DeletedRecordRef {
-  id: string;
-  key: string;
-  seq: number;
-  deleted_at: string;
-}
-
-// Discriminated WS-wire shape for record changes. The `kind` field is the
-// discriminator; events have no `kind`. See http/broadcast.ts WireMessage.
-export type RecordDeltaMessage =
-  | { kind: "record.upsert"; collection: string; record: SerializedRecord }
-  | { kind: "record.delete"; collection: string; record: DeletedRecordRef }
-  | { kind: "record.replay.complete"; collection: string; seq: number };
+// Wire-shape types live in ws/messages.ts as the single source of truth (#294).
+// Re-exported here so callers of the writer can construct messages without
+// reaching into the ws/ subtree from core/.
+export type {
+  SerializedRecord,
+  DeletedRecordRef,
+  RecordDeltaMessage,
+  RecordUpsertMessage,
+  RecordDeleteMessage,
+  RecordReplayCompleteMessage,
+} from "../ws/messages.js";
+import type { SerializedRecord, DeletedRecordRef } from "../ws/messages.js";
+import {
+  recordDelete as makeRecordDelete,
+  recordUpsert as makeRecordUpsert,
+} from "../ws/messages.js";
 
 export interface WriteRecordDeps {
   prisma: PrismaClient;
@@ -370,24 +357,17 @@ export function serializeRecord(
 function tombstone(
   row: SurfaceRecord,
   collectionName: string,
-): {
-  kind: "record.delete";
-  collection: string;
-  record: DeletedRecordRef;
-} {
-  // A deleteRecord call always sets deletedAt; the non-null assertion is
-  // safe in this branch. The fallback to updatedAt is purely defensive for
-  // an upstream caller that hands us a row without deletedAt set.
-  return {
-    kind: "record.delete",
-    collection: collectionName,
-    record: {
-      id: row.id,
-      key: row.recordKey,
-      seq: row.seq,
-      deleted_at: (row.deletedAt ?? row.updatedAt).toISOString(),
-    },
+): import("../ws/messages.js").RecordDeleteMessage {
+  // A deleteRecord call always sets deletedAt; the fallback to updatedAt is
+  // purely defensive for an upstream caller that hands us a row without
+  // deletedAt set.
+  const ref: DeletedRecordRef = {
+    id: row.id,
+    key: row.recordKey,
+    seq: row.seq,
+    deleted_at: (row.deletedAt ?? row.updatedAt).toISOString(),
   };
+  return makeRecordDelete(collectionName, ref);
 }
 
 // -------------------------------------------------------------------------
@@ -558,11 +538,7 @@ export async function writeRecord(
 
   const serialized = serializeRecord(row, input.collectionName);
   if (!deduped) {
-    publish(surface.id, {
-      kind: "record.upsert",
-      collection: input.collectionName,
-      record: serialized,
-    });
+    publish(surface.id, makeRecordUpsert(input.collectionName, serialized));
   }
   return { record: serialized, deduped };
 }
@@ -656,11 +632,7 @@ export async function updateRecord(
   });
 
   const serialized = serializeRecord(updated, input.collectionName);
-  publish(surface.id, {
-    kind: "record.upsert",
-    collection: input.collectionName,
-    record: serialized,
-  });
+  publish(surface.id, makeRecordUpsert(input.collectionName, serialized));
   return { record: serialized };
 }
 

@@ -32,33 +32,38 @@
 
 import { EventEmitter } from "node:events";
 import type { SerializedEvent } from "../types.js";
-import type { RecordDeltaMessage } from "../core/records.js";
+import type {
+  RecordDeltaMessage,
+  SystemReplayCompleteMessage,
+  WireMessage,
+} from "../ws/messages.js";
 import { redisEnabled, redisPub, redisSub } from "../redis.js";
 import { log } from "../log.js";
 
-/**
- * Any message that can flow over the per-surface pub/sub channel. Discriminated
- * by the presence of a top-level `kind` field — events have no `kind`, record
- * deltas do (`record.upsert` | `record.delete` | `record.replay.complete`).
- *
- * Subscribers that need to distinguish use the `isEvent` / `isRecordDelta`
- * predicates below. Consumers that only stringify-and-forward (the WS handler)
- * can treat the union as opaque JSON.
- *
- * #294 will introduce a formal `ws/messages.ts` with the canonical shapes; for
- * now this union is the minimum needed to let #291's record writer publish.
- */
-export type WireMessage = SerializedEvent | RecordDeltaMessage;
+// The canonical WireMessage union lives in ws/messages.ts (#294). Re-exported
+// here so existing call sites (`import { WireMessage } from "../http/broadcast.js"`)
+// keep working without churn — broadcast.ts owns the pub/sub bus and the
+// predicates, while ws/messages.ts owns the wire shapes themselves.
+export type { WireMessage };
 
 /** True iff `m` is an event (no `kind` discriminator). */
 export function isEvent(m: WireMessage): m is SerializedEvent {
   return !("kind" in m);
 }
 
-/** True iff `m` is a record delta (has a `record.*` `kind`). */
+/** True iff `m` is a record delta (any of the `record.*` kinds). */
 export function isRecordDelta(m: WireMessage): m is RecordDeltaMessage {
   return (
     "kind" in m && typeof m.kind === "string" && m.kind.startsWith("record.")
+  );
+}
+
+/** True iff `m` is a system sentinel (currently just `system.replay.complete`). */
+export function isSystemSentinel(
+  m: WireMessage,
+): m is SystemReplayCompleteMessage {
+  return (
+    "kind" in m && typeof m.kind === "string" && m.kind.startsWith("system.")
   );
 }
 
