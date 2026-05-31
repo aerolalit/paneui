@@ -32,8 +32,35 @@
 
 import { EventEmitter } from "node:events";
 import type { SerializedEvent } from "../types.js";
+import type { RecordDeltaMessage } from "../core/records.js";
 import { redisEnabled, redisPub, redisSub } from "../redis.js";
 import { log } from "../log.js";
+
+/**
+ * Any message that can flow over the per-surface pub/sub channel. Discriminated
+ * by the presence of a top-level `kind` field — events have no `kind`, record
+ * deltas do (`record.upsert` | `record.delete` | `record.replay.complete`).
+ *
+ * Subscribers that need to distinguish use the `isEvent` / `isRecordDelta`
+ * predicates below. Consumers that only stringify-and-forward (the WS handler)
+ * can treat the union as opaque JSON.
+ *
+ * #294 will introduce a formal `ws/messages.ts` with the canonical shapes; for
+ * now this union is the minimum needed to let #291's record writer publish.
+ */
+export type WireMessage = SerializedEvent | RecordDeltaMessage;
+
+/** True iff `m` is an event (no `kind` discriminator). */
+export function isEvent(m: WireMessage): m is SerializedEvent {
+  return !("kind" in m);
+}
+
+/** True iff `m` is a record delta (has a `record.*` `kind`). */
+export function isRecordDelta(m: WireMessage): m is RecordDeltaMessage {
+  return (
+    "kind" in m && typeof m.kind === "string" && m.kind.startsWith("record.")
+  );
+}
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);
@@ -67,10 +94,10 @@ function ensureRedisSubscription(): void {
     if (!channel.startsWith(CHANNEL_PREFIX)) return;
     const surfaceId = channel.slice(CHANNEL_PREFIX.length);
     try {
-      const event = JSON.parse(payload) as SerializedEvent;
+      const msg = JSON.parse(payload) as WireMessage;
       // Re-emit into the local emitter — this is the ONLY thing that feeds
-      // subscribers when Redis is on, so each event arrives exactly once.
-      emitter.emit(surfaceId, event);
+      // subscribers when Redis is on, so each message arrives exactly once.
+      emitter.emit(surfaceId, msg);
     } catch (err) {
       log.warn("broadcast: failed to parse redis message", {
         channel,
@@ -95,19 +122,20 @@ function ensureRedisSubscription(): void {
  *            the Redis subscription (see ensureRedisSubscription), so the
  *            publishing replica still receives its own event — exactly once.
  */
-export function publish(surfaceId: string, event: SerializedEvent): void {
+export function publish(surfaceId: string, msg: WireMessage): void {
   if (!redisEnabled()) {
-    emitter.emit(surfaceId, event);
+    emitter.emit(surfaceId, msg);
     return;
   }
   ensureRedisSubscription();
   const channel = CHANNEL_PREFIX + surfaceId;
   void redisPub()
-    .publish(channel, JSON.stringify(event))
+    .publish(channel, JSON.stringify(msg))
     .catch((err: unknown) => {
       // A mid-flight Redis error must not crash the relay. Log and drop —
       // ioredis is reconnecting; the event is lost for remote replicas but
-      // the persisted Event row is still the source of truth on replay.
+      // the persisted Event/SurfaceRecord row is still the source of truth
+      // on replay.
       log.warn("broadcast: redis publish failed", {
         surfaceId,
         error: err instanceof Error ? err.message : String(err),
@@ -117,28 +145,31 @@ export function publish(surfaceId: string, event: SerializedEvent): void {
 
 export function subscribe(
   surfaceId: string,
-  fn: (e: SerializedEvent) => void,
+  fn: (m: WireMessage) => void,
 ): () => void {
   // When Redis is on, make sure the SUBSCRIBE bridge is live before the first
-  // subscriber registers, so no event is missed between subscribe and publish.
+  // subscriber registers, so no message is missed between subscribe and publish.
   ensureRedisSubscription();
   emitter.on(surfaceId, fn);
   return () => emitter.off(surfaceId, fn);
 }
 
 // Wait for the next event on a surface, or resolve to null after timeoutMs.
+// Event-only: record-delta messages flowing on the same channel are filtered
+// out so existing callers (GET /events?wait=) keep their event-only contract.
 export function waitForEvent(
   surfaceId: string,
   timeoutMs: number,
 ): Promise<SerializedEvent | null> {
   return new Promise((resolve) => {
     let resolved = false;
-    const handler = (e: SerializedEvent): void => {
+    const handler = (m: WireMessage): void => {
       if (resolved) return;
+      if (!isEvent(m)) return; // skip record deltas
       resolved = true;
       unsub();
       clearTimeout(timer);
-      resolve(e);
+      resolve(m);
     };
     const unsub = subscribe(surfaceId, handler);
     const timer = setTimeout(() => {
@@ -160,15 +191,18 @@ export function openWaiter(surfaceId: string): {
   wait: (timeoutMs: number) => Promise<SerializedEvent | null>;
   close: () => void;
 } {
+  // Event-only buffer — record-delta messages are dropped at the subscribe
+  // handler so this waiter's contract matches the pre-#291 behaviour.
   const buffer: SerializedEvent[] = [];
   let pending: ((e: SerializedEvent) => void) | null = null;
-  const handler = (e: SerializedEvent): void => {
+  const handler = (m: WireMessage): void => {
+    if (!isEvent(m)) return;
     if (pending) {
       const fn = pending;
       pending = null;
-      fn(e);
+      fn(m);
     } else {
-      buffer.push(e);
+      buffer.push(m);
     }
   };
   const unsub = subscribe(surfaceId, handler);
