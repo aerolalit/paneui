@@ -4,6 +4,7 @@ import {
   validateSchemaShape,
   validateInputData,
   validateSessionTitle,
+  validateSessionPreamble,
   assertSchemaWithinLimits,
   mergeSchemaAdditive,
   invalidateSchemaCache,
@@ -636,5 +637,64 @@ describe("validateSessionTitle", () => {
       "Quarterly Review · Pane",
     );
     expect(validateSessionTitle("会議メモ")).toBe("会議メモ");
+  });
+});
+
+describe("validateSessionPreamble", () => {
+  it("returns null for undefined / null / empty / whitespace-only", () => {
+    expect(validateSessionPreamble(undefined)).toBeNull();
+    expect(validateSessionPreamble(null)).toBeNull();
+    expect(validateSessionPreamble("")).toBeNull();
+    expect(validateSessionPreamble("   ")).toBeNull();
+    expect(validateSessionPreamble("\n\n")).toBeNull();
+  });
+
+  it("trims and returns valid one-liners", () => {
+    expect(validateSessionPreamble("  Please approve the deploy.  ")).toBe(
+      "Please approve the deploy.",
+    );
+  });
+
+  it("permits a single newline for a two-line message", () => {
+    expect(validateSessionPreamble("Heads up:\nfailing test on main")).toBe(
+      "Heads up:\nfailing test on main",
+    );
+  });
+
+  it("normalises CRLF and bare CR to LF before validation", () => {
+    expect(validateSessionPreamble("line1\r\nline2")).toBe("line1\nline2");
+    expect(validateSessionPreamble("line1\rline2")).toBe("line1\nline2");
+  });
+
+  it("rejects non-string input with a 400", () => {
+    for (const v of [42, true, [], {}]) {
+      try {
+        validateSessionPreamble(v);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect((err as { status?: number }).status).toBe(400);
+      }
+    }
+  });
+
+  it("rejects preambles longer than 280 chars (post-trim)", () => {
+    try {
+      validateSessionPreamble("a".repeat(281));
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect((err as { status?: number }).status).toBe(400);
+    }
+    expect(validateSessionPreamble("a".repeat(280))).toBe("a".repeat(280));
+  });
+
+  it("rejects tab and other control chars (but not \\n)", () => {
+    for (const v of ["tab\there", "nul\x00byte", "bell\x07"]) {
+      try {
+        validateSessionPreamble(v);
+        expect.unreachable("should have thrown for: " + JSON.stringify(v));
+      } catch (err) {
+        expect((err as { status?: number }).status).toBe(400);
+      }
+    }
   });
 });

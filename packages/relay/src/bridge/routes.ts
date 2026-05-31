@@ -323,6 +323,7 @@ bridge.get("/:token", async (c) => {
       agentLastEventAt,
       agentLastUsedAt,
       title: surface.title,
+      preamble: surface.preamble,
       // Capability-token mount: the caller is either anonymous or a
       // non-owner who reached this surface via a share link. They don't
       // have the system-pages context, so no top nav. (A logged-in OWNER
@@ -465,6 +466,10 @@ export interface ShellArgs {
   // surface create — non-empty, ≤80 chars, no control chars — but still
   // untrusted at this point; HTML-escaped into <title> at render time.
   title: string;
+  // Optional agent-supplied context message. Validated at surface create
+  // (≤280 chars, one `\n` allowed). Rendered into the shell band above the
+  // iframe — HTML-escaped at render. Null when the agent didn't pass one.
+  preamble: string | null;
   // Optional top-nav block — rendered above the existing dark presence
   // header. The owner-shell route passes this so a logged-in surface owner
   // gets the same Home / My surfaces / My templates / My agents / Settings
@@ -685,6 +690,22 @@ export function renderShell(args: ShellArgs): string {
   }
   .top-nav-tab:hover { color: #e7ecf3; }
   .top-nav-tab.active { color: #a78bfa; font-weight: 600; border-bottom-color: #a78bfa; }
+  /* Agent-supplied context band — sits between any header / top-nav and the
+     iframe. The accent stripe + speech-bubble glyph telegraphs "this is the
+     agent talking to you" so the message reads as context, not chrome. */
+  .preamble {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 14px 11px;
+    background: linear-gradient(180deg, #0e1320 0%, #0b0e14 100%);
+    border-bottom: 1px solid #1f2633;
+    border-left: 3px solid #a78bfa;
+    color: #d7dee9; font-size: 13px; line-height: 1.45;
+    white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere;
+  }
+  .preamble-icon {
+    flex: none; color: #a78bfa; margin-top: 1px;
+  }
+  .preamble-text { flex: 1; min-width: 0; }
 </style>
 </head>
 <body>
@@ -733,17 +754,27 @@ ${renderTopNav(args)}${
 </header>`
   }
 ${
-  args.isClosed
-    ? `<div class="closed">This surface is closed. It cannot accept new events.</div>`
-    : // `allow-downloads` is required for `<a download href="attachment:...">` to
-      // actually fire on Chromium-based browsers (especially mobile Chrome),
-      // which silently drops the navigation otherwise. Without it, an template
-      // that delivers a non-image file (PDF, CSV, archive) the human is meant
-      // to save has no working code path — the file can be fetched via
-      // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
-      // is intentionally NOT included; only the in-tab download is enabled.
-      `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
-}
+  args.preamble
+    ? `<div class="preamble" role="note">
+  <svg class="preamble-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+  </svg>
+  <span class="preamble-text">${htmlEscape(args.preamble)}</span>
+</div>`
+    : ""
+}${
+    args.isClosed
+      ? `<div class="closed">This surface is closed. It cannot accept new events.</div>`
+      : // `allow-downloads` is required for `<a download href="attachment:...">` to
+        // actually fire on Chromium-based browsers (especially mobile Chrome),
+        // which silently drops the navigation otherwise. Without it, an template
+        // that delivers a non-image file (PDF, CSV, archive) the human is meant
+        // to save has no working code path — the file can be fetched via
+        // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
+        // is intentionally NOT included; only the in-tab download is enabled.
+        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
+  }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>${
     args.topNav

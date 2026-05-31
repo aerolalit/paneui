@@ -15,6 +15,7 @@ const KNOWN_FLAGS = [
   "event-schema",
   "input-schema",
   "title",
+  "preamble",
   "input-data",
   "ttl",
   "participants",
@@ -42,6 +43,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   callback: "--callback",
   input_data: "--input-data",
   title: "--title",
+  preamble: "--preamble",
   context_key: "--context-key",
   "template.id": "--template-id",
   "template.version": "--version",
@@ -125,6 +127,12 @@ Options:
                       --template-id references a named template, the relay
                       falls back to Template.name. Inline (--template …) form
                       always needs --title.
+  --preamble <text>   Optional one- or two-line context message rendered in
+                      the shell band above the iframe — "who is asking, why".
+                      Max 280 chars after trim; a single \\n is allowed for a
+                      two-line message; other control chars are rejected. Pass
+                      this whenever the artifact itself doesn't make the
+                      request self-explanatory.
   --input-data <v>    This instance's seed data — a JSON object (file path or
                       inline JSON), validated by the relay against the template
                       version's input_schema. The page reads it as
@@ -277,6 +285,14 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const titleRaw = args.flags.get("title");
   if (titleRaw !== undefined) {
     candidate["title"] = titleRaw;
+  }
+
+  // --preamble — passthrough. The relay trims, normalises CRLF, enforces
+  // ≤280 chars and rejects non-newline control chars; mirroring those
+  // checks here would just create drift on edge cases.
+  const preambleRaw = args.flags.get("preamble");
+  if (preambleRaw !== undefined) {
+    candidate["preamble"] = preambleRaw;
   }
 
   // --input-data — per-instance seed data, applies to either form (the relay

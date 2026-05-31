@@ -255,6 +255,7 @@ export class PaneClient {
     const r = await this.call("POST", "/v1/surfaces", {
       template: req.template,
       title: req.title,
+      preamble: req.preamble,
       input_data: req.input_data,
       participants: req.participants,
       ttl: req.ttl,

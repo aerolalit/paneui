@@ -77,6 +77,10 @@ export const createSessionSchema = z.object({
   // form). The relay enforces "required-or-fallback" + length/control-char
   // rules — Zod only confirms it's a string here.
   title: z.string().optional(),
+  // Optional context preamble shown in the shell band above the iframe so the
+  // human reads "who is asking, why" before the artifact. Wire cap is 300 to
+  // leave the relay's trimmed 280-char rejection as the one callers see.
+  preamble: z.string().max(300).optional(),
   // Phase G — natural-key dedup. When set, the relay collapses repeated
   // creates with the same (template, owner, context_key) into one surface
   // row. NULL = ad-hoc, no dedup. See HUMAN-SIDE-PROPOSAL.md §7.1.
