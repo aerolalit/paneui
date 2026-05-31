@@ -129,19 +129,155 @@ export function compareInputSchema(
 }
 
 /**
- * Combined gate for the upgrade route — diff both schemas in one call and
- * return the merged breaks list.
+ * The recordSchema declaration shape (#287 / #289) — a plain JSON Schema
+ * 2020-12 document with one namespaced extension, `x-pane-collections`,
+ * that declares the template's record collections.
+ */
+export type RecordSchema = JsonSchemaLike;
+
+/**
+ * Compare two recordSchemas — diff the `x-pane-collections` map, then
+ * recursively diff each common collection's resolved row schema.
+ *
+ * Both null = no record schema either side = no breaks.
+ * Old has schema, new is null = every declared collection is orphaned —
+ * persisted SurfaceRecord rows lose their schema reference. One break
+ * per collection so the operator sees the scope.
+ * Old is null, new has schema = additive (no surfaces could have
+ * persisted record rows under a non-existent schema). No breaks.
+ *
+ * Per-collection rules (issue #290):
+ *   - Added collection: fine — no rows existed for it on this surface.
+ *   - Removed collection: break — existing rows would be orphaned.
+ *   - Payload schema widening (added optional fields, looser bounds): fine.
+ *   - Payload schema narrowing (new required field, narrower bounds, type
+ *     change): break — past records would not validate under the new shape.
+ *   - `write` / `delete` principals added or removed: fine — authz changes
+ *     affect new operations, not stored data, so existing rows are untouched.
+ *
+ * Rename is intentionally NOT inferred: a removed-collection + added-collection
+ * pair surfaces as one removed-collection break, exactly as the rule above
+ * intends. The operator can pass `compat="force"` if the "rename" is meant.
+ */
+export function compareRecordSchema(
+  oldDoc: RecordSchema | null,
+  newDoc: RecordSchema | null,
+): SchemaBreak[] {
+  const breaks: SchemaBreak[] = [];
+  if (!oldDoc && !newDoc) return breaks;
+  if (!oldDoc) {
+    // null → set: additive. The new collections start empty for the surface.
+    return breaks;
+  }
+  if (!newDoc) {
+    // set → null: every declared collection orphaned. Emit one break per.
+    const oldCollections = collectionsOf(oldDoc);
+    for (const name of Object.keys(oldCollections)) {
+      breaks.push({
+        path: `record_schema['x-pane-collections'].${name}`,
+        message: `collection "${name}" was removed (record_schema dropped entirely) — persisted records in this collection would be orphaned`,
+      });
+    }
+    return breaks;
+  }
+
+  const oldCollections = collectionsOf(oldDoc);
+  const newCollections = collectionsOf(newDoc);
+
+  for (const [name, oldEntry] of Object.entries(oldCollections)) {
+    const newEntry = newCollections[name];
+    if (!newEntry) {
+      breaks.push({
+        path: `record_schema['x-pane-collections'].${name}`,
+        message: `collection "${name}" was removed — persisted records in this collection would be orphaned`,
+      });
+      continue;
+    }
+    // write / delete principal changes are intentionally NOT breaks — authz
+    // changes affect future operations, not stored data. See the JSDoc above.
+
+    const oldRow = resolveRowSchema(oldDoc, oldEntry);
+    const newRow = resolveRowSchema(newDoc, newEntry);
+    if (oldRow === null || newRow === null) {
+      // Defensive: a malformed schema slipped past validation. The shape
+      // validator (#289 — validateRecordSchemaShape) already rejects this
+      // at write-time, but flag it so a force-through doesn't silently
+      // pass through a malformed schema.
+      breaks.push({
+        path: `record_schema['x-pane-collections'].${name}.schema`,
+        message: `row schema for "${name}" could not be resolved on the ${oldRow === null ? "old" : "new"} side — record_schema is malformed (schema.$ref must resolve to an object under $defs)`,
+      });
+      continue;
+    }
+    breaks.push(
+      ...compareJsonSchema(
+        oldRow,
+        newRow,
+        `record_schema['x-pane-collections'].${name}.schema`,
+      ),
+    );
+  }
+
+  // Added collections: fine. No surface had rows for them yet, so the new
+  // declaration introduces no incompat against stored data.
+  return breaks;
+}
+
+/**
+ * Combined gate for the upgrade route — diff every schema kind in one call
+ * and return the merged breaks list. The record-schema args are optional so
+ * existing callers (pre-#290) continue to type-check.
  */
 export function compareSurfaceSchemas(args: {
   oldEventSchema: EventSchema | null;
   newEventSchema: EventSchema | null;
   oldInputSchema: JsonSchemaLike | null;
   newInputSchema: JsonSchemaLike | null;
+  oldRecordSchema?: RecordSchema | null;
+  newRecordSchema?: RecordSchema | null;
 }): SchemaBreak[] {
   return [
     ...compareEventSchema(args.oldEventSchema, args.newEventSchema),
     ...compareInputSchema(args.oldInputSchema, args.newInputSchema),
+    ...compareRecordSchema(
+      args.oldRecordSchema ?? null,
+      args.newRecordSchema ?? null,
+    ),
   ];
+}
+
+// Pull the `x-pane-collections` map off a recordSchema doc, validating each
+// entry is an object (skipping malformed entries — the shape validator
+// (#289) catches malformed shapes at write time; the compat gate is
+// defensive).
+function collectionsOf(doc: RecordSchema): Record<string, JsonSchemaLike> {
+  const x = doc["x-pane-collections"];
+  if (!x || typeof x !== "object" || Array.isArray(x)) return {};
+  const out: Record<string, JsonSchemaLike> = {};
+  for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
+    const obj = asObject(v);
+    if (obj) out[k] = obj;
+  }
+  return out;
+}
+
+// Resolve a collection entry's `schema.$ref` (of the form `#/$defs/<Name>`)
+// against the doc's own `$defs`. Returns null if the schema/ref is missing,
+// the ref isn't a local `#/$defs/<Name>` pointer, or the target doesn't exist.
+function resolveRowSchema(
+  doc: RecordSchema,
+  collectionEntry: JsonSchemaLike,
+): JsonSchemaLike | null {
+  const schemaField = asObject(collectionEntry["schema"]);
+  if (!schemaField) return null;
+  const refRaw = schemaField["$ref"];
+  if (typeof refRaw !== "string") return null;
+  const match = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(refRaw);
+  if (!match) return null;
+  const defs = asObject(doc["$defs"]);
+  if (!defs) return null;
+  const defName = match[1] as string;
+  return asObject(defs[defName]);
 }
 
 // -------------------------------------------------------------------------

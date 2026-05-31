@@ -11,7 +11,9 @@ import { describe, it, expect } from "vitest";
 import {
   compareEventSchema,
   compareInputSchema,
+  compareRecordSchema,
   compareSurfaceSchemas,
+  type RecordSchema,
 } from "./schema-compat.js";
 import type { EventSchema } from "../types.js";
 
@@ -442,6 +444,226 @@ describe("compareInputSchema", () => {
   });
 });
 
+describe("compareRecordSchema — record-collection diffs (#290)", () => {
+  // Fixture builder: wrap one collection name + its row schema (the value
+  // under $defs/Row_<name>) into the full recordSchema doc shape.
+  function rec(
+    collections: Record<
+      string,
+      {
+        rowSchema: object;
+        write?: string[];
+        delete?: string[];
+      }
+    >,
+  ): RecordSchema {
+    const defs: Record<string, object> = {};
+    const xpc: Record<string, object> = {};
+    for (const [name, entry] of Object.entries(collections)) {
+      const defName = `Row_${name}`;
+      defs[defName] = entry.rowSchema;
+      xpc[name] = {
+        schema: { $ref: `#/$defs/${defName}` },
+        write: entry.write ?? ["page"],
+        delete: entry.delete ?? ["author"],
+      };
+    }
+    return { $defs: defs, "x-pane-collections": xpc };
+  }
+
+  it("compatible: both null", () => {
+    expect(compareRecordSchema(null, null)).toEqual([]);
+  });
+
+  it("compatible: null → set (additive — no records existed)", () => {
+    const next = rec({
+      comments: { rowSchema: { type: "object" } },
+    });
+    expect(compareRecordSchema(null, next)).toEqual([]);
+  });
+
+  it("break: set → null (every declared collection orphaned, one break per)", () => {
+    const old = rec({
+      comments: { rowSchema: { type: "object" } },
+      posts: { rowSchema: { type: "object" } },
+    });
+    const breaks = compareRecordSchema(old, null);
+    expect(breaks.length).toBe(2);
+    expect(breaks.map((b) => b.path).sort()).toEqual([
+      "record_schema['x-pane-collections'].comments",
+      "record_schema['x-pane-collections'].posts",
+    ]);
+    for (const b of breaks) {
+      expect(b.message).toMatch(/orphaned/);
+    }
+  });
+
+  it("compatible: added collection (no rows existed on this surface)", () => {
+    const old = rec({ comments: { rowSchema: { type: "object" } } });
+    const next = rec({
+      comments: { rowSchema: { type: "object" } },
+      reactions: { rowSchema: { type: "object" } },
+    });
+    expect(compareRecordSchema(old, next)).toEqual([]);
+  });
+
+  it("break: removed collection", () => {
+    const old = rec({
+      comments: { rowSchema: { type: "object" } },
+      reactions: { rowSchema: { type: "object" } },
+    });
+    const next = rec({ comments: { rowSchema: { type: "object" } } });
+    const breaks = compareRecordSchema(old, next);
+    expect(breaks.length).toBe(1);
+    expect(breaks[0]!.path).toBe(
+      "record_schema['x-pane-collections'].reactions",
+    );
+    expect(breaks[0]!.message).toMatch(/orphaned/);
+  });
+
+  it("break: renamed collection surfaces as remove+add (only the removed side is a break)", () => {
+    const old = rec({ comments: { rowSchema: { type: "object" } } });
+    const next = rec({ remarks: { rowSchema: { type: "object" } } });
+    const breaks = compareRecordSchema(old, next);
+    expect(breaks.length).toBe(1);
+    expect(breaks[0]!.path).toBe(
+      "record_schema['x-pane-collections'].comments",
+    );
+  });
+
+  it("compatible: write principals added — authz widening doesn't affect stored data", () => {
+    const old = rec({
+      comments: { rowSchema: { type: "object" }, write: ["page"] },
+    });
+    const next = rec({
+      comments: { rowSchema: { type: "object" }, write: ["page", "agent"] },
+    });
+    expect(compareRecordSchema(old, next)).toEqual([]);
+  });
+
+  it("compatible: write principals removed — authz tightening doesn't affect stored data", () => {
+    const old = rec({
+      comments: { rowSchema: { type: "object" }, write: ["page", "agent"] },
+    });
+    const next = rec({
+      comments: { rowSchema: { type: "object" }, write: ["page"] },
+    });
+    expect(compareRecordSchema(old, next)).toEqual([]);
+  });
+
+  it("compatible: delete principals changed in either direction", () => {
+    const old = rec({
+      comments: { rowSchema: { type: "object" }, delete: ["author"] },
+    });
+    const widen = rec({
+      comments: {
+        rowSchema: { type: "object" },
+        delete: ["author", "agent"],
+      },
+    });
+    const narrow = rec({
+      comments: { rowSchema: { type: "object" }, delete: ["agent"] },
+    });
+    expect(compareRecordSchema(old, widen)).toEqual([]);
+    expect(compareRecordSchema(old, narrow)).toEqual([]);
+  });
+
+  it("compatible: row-schema widening (added optional field)", () => {
+    const old = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: { body: { type: "string" } },
+          required: ["body"],
+        },
+      },
+    });
+    const next = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: {
+            body: { type: "string" },
+            edited: { type: "boolean" },
+          },
+          required: ["body"],
+        },
+      },
+    });
+    expect(compareRecordSchema(old, next)).toEqual([]);
+  });
+
+  it("break: row-schema narrowing (added required field)", () => {
+    const old = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: { body: { type: "string" } },
+          required: ["body"],
+        },
+      },
+    });
+    const next = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: {
+            body: { type: "string" },
+            authorEmail: { type: "string" },
+          },
+          required: ["body", "authorEmail"],
+        },
+      },
+    });
+    const breaks = compareRecordSchema(old, next);
+    expect(breaks.length).toBeGreaterThan(0);
+    expect(breaks[0]!.path).toBe(
+      "record_schema['x-pane-collections'].comments.schema.required",
+    );
+    expect(breaks[0]!.message).toMatch(/authorEmail.*required/);
+  });
+
+  it("break: row-schema type change", () => {
+    const old = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: { rating: { type: "string" } },
+        },
+      },
+    });
+    const next = rec({
+      comments: {
+        rowSchema: {
+          type: "object",
+          properties: { rating: { type: "number" } },
+        },
+      },
+    });
+    const breaks = compareRecordSchema(old, next);
+    expect(breaks.length).toBeGreaterThan(0);
+    expect(breaks[0]!.message).toMatch(/string/);
+  });
+
+  it("defensive: unresolvable $ref on old or new is reported (malformed schema reached the gate)", () => {
+    const valid = rec({ comments: { rowSchema: { type: "object" } } });
+    const malformed: RecordSchema = {
+      $defs: {},
+      "x-pane-collections": {
+        comments: {
+          schema: { $ref: "#/$defs/Missing" },
+          write: ["page"],
+          delete: ["author"],
+        },
+      },
+    };
+    const breaksOld = compareRecordSchema(malformed, valid);
+    expect(breaksOld[0]!.message).toMatch(/old side.*malformed/);
+    const breaksNew = compareRecordSchema(valid, malformed);
+    expect(breaksNew[0]!.message).toMatch(/new side.*malformed/);
+  });
+});
+
 describe("compareSurfaceSchemas — combined gate", () => {
   it("returns all breaks from both halves merged", () => {
     const breaks = compareSurfaceSchemas({
@@ -462,6 +684,42 @@ describe("compareSurfaceSchemas — combined gate", () => {
   });
 
   it("empty breaks = compatible", () => {
+    const breaks = compareSurfaceSchemas({
+      oldEventSchema: ev({}),
+      newEventSchema: ev({}),
+      oldInputSchema: null,
+      newInputSchema: null,
+    });
+    expect(breaks).toEqual([]);
+  });
+
+  it("merges record-schema breaks alongside event + input ones (#290)", () => {
+    const oldRec: RecordSchema = {
+      $defs: { Row: { type: "object" } },
+      "x-pane-collections": {
+        comments: {
+          schema: { $ref: "#/$defs/Row" },
+          write: ["page"],
+          delete: ["author"],
+        },
+      },
+    };
+    const breaks = compareSurfaceSchemas({
+      oldEventSchema: ev({}),
+      newEventSchema: ev({}),
+      oldInputSchema: null,
+      newInputSchema: null,
+      oldRecordSchema: oldRec,
+      newRecordSchema: null, // every declared collection orphaned
+    });
+    expect(breaks.length).toBe(1);
+    expect(breaks[0]!.path).toBe(
+      "record_schema['x-pane-collections'].comments",
+    );
+  });
+
+  it("omitting the new record-schema args preserves pre-#290 caller behavior", () => {
+    // Existing callers (not yet updated) pass only the four old args.
     const breaks = compareSurfaceSchemas({
       oldEventSchema: ev({}),
       newEventSchema: ev({}),
