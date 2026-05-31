@@ -31,6 +31,17 @@ const ajv = new AjvCtor({
   removeAdditional: false,
 });
 
+// Separate Ajv instance configured for JSON Schema 2020-12, used to validate
+// recordSchema documents (#287 / #289). Kept distinct from the default `ajv`
+// instance above so the 2020-12 vocabulary cannot leak into event- or
+// input-schema validation, which target draft-07 by convention.
+const Ajv2020Ctor: typeof AjvCtor = require("ajv/dist/2020");
+const ajv2020 = new Ajv2020Ctor({
+  strict: false,
+  allErrors: true,
+  removeAdditional: false,
+});
+
 // `format: pane-attachment-id` — schema vocabulary for attachment references inside
 // event payloads + input_data. The format is purely SYNTACTIC: a cuid-
 // shaped string. The relay's authoritative access check (does this attachment
@@ -57,6 +68,14 @@ const ajv = new AjvCtor({
 // The format check rejects empty / wrong-shape strings up front so the
 // downstream batch-lookup can assume well-formed input.
 ajv.addFormat("pane-attachment-id", {
+  type: "string",
+  validate: (s: string): boolean =>
+    typeof s === "string" && /^c[a-z0-9]{20,40}$/.test(s),
+});
+
+// Mirror the same format on the 2020-12 instance so record payloads can
+// declare attachment refs just like event payloads can.
+ajv2020.addFormat("pane-attachment-id", {
   type: "string",
   validate: (s: string): boolean =>
     typeof s === "string" && /^c[a-z0-9]{20,40}$/.test(s),
@@ -338,6 +357,159 @@ export function validateSchemaShape(raw: unknown): EventSchema {
     out.events[type] = { payload: e.payload as object, emittedBy };
   }
   return out;
+}
+
+// Allowed top-level keys on a recordSchema document. Strict — anything else
+// is rejected so a typo doesn't get silently ignored.
+const RECORD_SCHEMA_TOP_KEYS = new Set([
+  "$schema",
+  "$id",
+  "$defs",
+  "$comment",
+  "x-pane-collections",
+]);
+const RECORD_COLLECTION_KEYS = new Set(["schema", "write", "delete"]);
+const RECORD_WRITE_PRINCIPALS = new Set(["agent", "page"]);
+const RECORD_DELETE_PRINCIPALS = new Set(["agent", "page", "author"]);
+// Snake-or-kebab collection name, 1-64 chars, must start with a lowercase letter.
+const RECORD_COLLECTION_NAME_RX = /^[a-z][a-z0-9_-]{0,63}$/;
+
+// Validate the *shape* of a recordSchema document at template-create / version
+// time. The document is plain JSON Schema 2020-12, with one namespaced
+// extension — `x-pane-collections` — that declares the template's record
+// collections + their per-operation authz. Standards-first by design: agents
+// writing templates only need to learn the one extension keyword; everything
+// else is JSON Schema as they already know it. See epic #287 for the rationale.
+//
+// What we enforce here is the *document shape* — strict top-level keys, strict
+// collection sub-keys, principal allowlists, and that each declared collection's
+// schema $ref resolves to a valid JSON Schema under $defs. Compiled validators
+// are discarded; the per-write validator (`validateRecord`, follow-up PR after
+// #288 lands) will set up its own LRU cache keyed by surface + collection.
+export function validateRecordSchemaShape(raw: unknown): void {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw errors.invalidRequest("record_schema must be an object");
+  }
+  const doc = raw as Record<string, unknown>;
+
+  for (const k of Object.keys(doc)) {
+    if (!RECORD_SCHEMA_TOP_KEYS.has(k)) {
+      throw errors.invalidRequest(
+        `record_schema: unknown top-level key '${k}' (allowed: ${[...RECORD_SCHEMA_TOP_KEYS].join(", ")})`,
+      );
+    }
+  }
+
+  const collections = doc["x-pane-collections"];
+  if (
+    !collections ||
+    typeof collections !== "object" ||
+    Array.isArray(collections)
+  ) {
+    throw errors.invalidRequest(
+      "record_schema['x-pane-collections'] is required and must be an object",
+    );
+  }
+  const collectionsObj = collections as Record<string, unknown>;
+  if (Object.keys(collectionsObj).length === 0) {
+    throw errors.invalidRequest(
+      "record_schema['x-pane-collections'] must declare at least one collection",
+    );
+  }
+
+  const defs = (doc.$defs ?? {}) as Record<string, unknown>;
+
+  for (const [name, entryRaw] of Object.entries(collectionsObj)) {
+    if (!RECORD_COLLECTION_NAME_RX.test(name)) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections']: collection name '${name}' must match ${RECORD_COLLECTION_NAME_RX}`,
+      );
+    }
+    if (!entryRaw || typeof entryRaw !== "object" || Array.isArray(entryRaw)) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name} must be an object`,
+      );
+    }
+    const entry = entryRaw as Record<string, unknown>;
+    for (const k of Object.keys(entry)) {
+      if (!RECORD_COLLECTION_KEYS.has(k)) {
+        throw errors.invalidRequest(
+          `record_schema['x-pane-collections'].${name}: unknown key '${k}' (allowed: ${[...RECORD_COLLECTION_KEYS].join(", ")})`,
+        );
+      }
+    }
+
+    const schemaRef = entry.schema;
+    if (
+      !schemaRef ||
+      typeof schemaRef !== "object" ||
+      Array.isArray(schemaRef)
+    ) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.schema is required and must be an object`,
+      );
+    }
+    const refRaw = (schemaRef as Record<string, unknown>).$ref;
+    if (typeof refRaw !== "string") {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.schema.$ref is required and must be a string`,
+      );
+    }
+    const refMatch = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(refRaw);
+    if (!refMatch) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.schema.$ref must match '#/$defs/<Name>' (cross-doc refs are not supported)`,
+      );
+    }
+    // refMatch[1] is the capture group; the regex guarantees it's present
+    // when refMatch is truthy, but noUncheckedIndexedAccess types it as
+    // possibly-undefined.
+    const defName = refMatch[1] as string;
+    const rowSchema = defs[defName];
+    if (
+      !rowSchema ||
+      typeof rowSchema !== "object" ||
+      Array.isArray(rowSchema)
+    ) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.schema.$ref '${refRaw}' does not resolve under $defs`,
+      );
+    }
+
+    try {
+      ajv2020.compile(rowSchema as object);
+    } catch (err) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.schema ('${refRaw}') does not compile as JSON Schema 2020-12: ${(err as Error).message}`,
+      );
+    }
+
+    if (!Array.isArray(entry.write) || entry.write.length === 0) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.write must be a non-empty array`,
+      );
+    }
+    for (const v of entry.write as unknown[]) {
+      if (typeof v !== "string" || !RECORD_WRITE_PRINCIPALS.has(v)) {
+        throw errors.invalidRequest(
+          `record_schema['x-pane-collections'].${name}.write values must be 'agent' or 'page' (got '${String(v)}')`,
+        );
+      }
+    }
+
+    if (!Array.isArray(entry.delete) || entry.delete.length === 0) {
+      throw errors.invalidRequest(
+        `record_schema['x-pane-collections'].${name}.delete must be a non-empty array`,
+      );
+    }
+    for (const v of entry.delete as unknown[]) {
+      if (typeof v !== "string" || !RECORD_DELETE_PRINCIPALS.has(v)) {
+        throw errors.invalidRequest(
+          `record_schema['x-pane-collections'].${name}.delete values must be 'agent', 'page', or 'author' (got '${String(v)}')`,
+        );
+      }
+    }
+  }
 }
 
 // Compile an template's `input_schema` to confirm it is a valid JSON Schema.

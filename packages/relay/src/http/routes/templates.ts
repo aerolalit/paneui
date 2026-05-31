@@ -14,6 +14,7 @@ import { errors } from "../errors.js";
 import {
   assertSchemaWithinLimits,
   assertValidInputSchema,
+  validateRecordSchemaShape,
   validateSchemaShape,
 } from "../../core/validation.js";
 import type { EventSchema } from "../../types.js";
@@ -34,6 +35,7 @@ function validateVersionContent(
     type: "html-inline" | "html-ref";
     event_schema: unknown;
     input_schema?: unknown;
+    record_schema?: unknown;
   },
 ): EventSchema | null {
   if (Buffer.byteLength(content.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
@@ -62,6 +64,17 @@ function validateVersionContent(
   }
   if (content.input_schema !== undefined) {
     assertValidInputSchema(content.input_schema);
+  }
+  // #289 — validate record_schema shape (JSON Schema 2020-12 + x-pane-collections).
+  // Validation-only for this PR; persistence lands after #288 adds the Prisma
+  // column. A 400 here means an agent's record_schema is malformed, which is
+  // worth surfacing now even though the relay drops the schema on the floor.
+  if (content.record_schema !== undefined) {
+    assertSchemaWithinLimits(content.record_schema, {
+      maxBytes: config.MAX_SCHEMA_BYTES,
+      maxDepth: config.MAX_SCHEMA_DEPTH,
+    });
+    validateRecordSchemaShape(content.record_schema);
   }
   return eventSchema;
 }
@@ -138,6 +151,7 @@ templates.post("/", async (c) => {
     type,
     event_schema,
     input_schema,
+    record_schema,
   } = parsed.data;
 
   const eventSchema = validateVersionContent(config, {
@@ -145,6 +159,7 @@ templates.post("/", async (c) => {
     type,
     event_schema,
     input_schema,
+    record_schema,
   });
 
   // Per-agent template cap (count-then-create — a soft cap, see the surface
@@ -234,13 +249,15 @@ templates.post("/:id/versions", async (c) => {
       "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
     );
   }
-  const { source, type, event_schema, input_schema } = parsed.data;
+  const { source, type, event_schema, input_schema, record_schema } =
+    parsed.data;
 
   const eventSchema = validateVersionContent(config, {
     source,
     type,
     event_schema,
     input_schema,
+    record_schema,
   });
 
   if (
