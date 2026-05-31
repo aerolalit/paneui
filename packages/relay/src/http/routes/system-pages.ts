@@ -171,6 +171,17 @@ function layout(args: {
   .list li .meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
 
   .empty { color: var(--muted); padding: 28px 12px; text-align: center; }
+  /* First-touch empty state — icon + headline + one sentence + one CTA.
+     Used wherever the primary list of a logged-in page is empty. The plain
+     .empty rule above survives for the second-tier "no results" case
+     (search miss / minor lists). */
+  .empty-state { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 18px 30px; text-align: center; }
+  .empty-state-icon { color: var(--muted); width: 38px; height: 38px; flex: none; }
+  .empty-state-headline { margin: 4px 0 0; font-size: 16.5px; font-weight: 600; color: var(--fg); }
+  .empty-state-body { margin: 0; max-width: 380px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+  .empty-state-body code { font-size: 12.5px; user-select: all; }
+  .empty-state-cta { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .empty-state-snippet { font-family: "SF Mono",Menlo,Consolas,monospace; background: var(--code-bg); padding: 8px 12px; border-radius: 6px; font-size: 13px; user-select: all; margin-top: 4px; display: inline-block; }
 
   button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
   button.btn:hover, a.btn:hover { background: var(--accent-hover); }
@@ -411,7 +422,12 @@ systemPages.get("/my-surfaces", async (c) => {
   <div class="card">
     ${
       surfaces.length === 0
-        ? `<p class="empty">No surfaces yet. Once one of your agents creates one, it'll show up here.</p>`
+        ? `<div class="empty-state">
+            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".7" fill="currentColor"/><circle cx="10" cy="6" r=".7" fill="currentColor"/></svg>
+            <h3 class="empty-state-headline">No surfaces yet</h3>
+            <p class="empty-state-body">A surface is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
+            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/apps">Browse apps</a></div>
+          </div>`
         : `<ul class="list">${surfaces
             .map((s) => {
               const isActive =
@@ -516,7 +532,12 @@ systemPages.get("/my-templates", async (c) => {
   </div>`;
   const authoredList =
     templates.length === 0
-      ? `<p class="empty">No templates yet.</p>`
+      ? `<div class="empty-state">
+          <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg>
+          <h3 class="empty-state-headline">You haven't authored any templates</h3>
+          <p class="empty-state-body">Templates are reusable mini-apps your agents create with <code>pane template create</code>. Once an agent saves one, it lives here — installs from the public catalog appear below.</p>
+          <div class="empty-state-cta"><a class="btn ghost" href="/apps">Browse apps</a></div>
+        </div>`
       : `<ul class="list">${templates
           .map((t) => {
             const title = escapeHtml(t.name ?? t.slug ?? t.id);
@@ -643,9 +664,19 @@ systemPages.get("/apps", (c) => {
       return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
-    function renderItems(items) {
+    function renderItems(items, query) {
       if (!items.length) {
-        resultsEl.innerHTML = '<p class="empty">No apps match that search.</p>';
+        // Two empty states: search-miss (user typed something) vs. an empty
+        // catalog on first load. Different copy, different CTA.
+        if (query) {
+          resultsEl.innerHTML = '<p class="empty">No apps match "' + escape(query) + '". Try fewer or different keywords.</p>';
+        } else {
+          resultsEl.innerHTML = '<div class="empty-state">'
+            + '<svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></svg>'
+            + '<h3 class="empty-state-headline">The public catalog is empty</h3>'
+            + '<p class="empty-state-body">Once agents publish templates with <code>pane template publish &lt;id-or-slug&gt;</code>, the marketplace appears here. Your own authored templates live on <a href="/my-templates">My templates</a>.</p>'
+            + '</div>';
+        }
         return;
       }
       const html = '<ul class="list">' + items.map((t) => {
@@ -677,7 +708,7 @@ systemPages.get("/apps", (c) => {
           return;
         }
         const body = await res.json();
-        renderItems(body.items || []);
+        renderItems(body.items || [], q || "");
       } catch (e) {
         resultsEl.textContent = 'Network error — try again.';
       }
@@ -774,7 +805,11 @@ systemPages.get("/my-agents", async (c) => {
     <h2 style="margin-top:0;">Claimed</h2>
     ${
       agents.length === 0
-        ? `<p class="empty">No claimed agents yet.</p>`
+        ? `<div class="empty-state">
+          <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V5"/><circle cx="12" cy="3.6" r="1.4"/><circle cx="9" cy="13" r=".8" fill="currentColor"/><circle cx="15" cy="13" r=".8" fill="currentColor"/></svg>
+          <h3 class="empty-state-headline">No claimed agents yet</h3>
+          <p class="empty-state-body">Use the Generate claim code button above, then run <code>pane agent claim &lt;code&gt;</code> on the agent's machine. Each claim binds an existing agent key to your account — it doesn't replace the key.</p>
+        </div>`
         : `<ul class="list">${agents
             .map(
               (a) =>
