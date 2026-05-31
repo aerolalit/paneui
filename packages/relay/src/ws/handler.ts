@@ -13,7 +13,7 @@ import {
   type SlidingWindowLimiter,
 } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
-import { subscribe } from "../http/broadcast.js";
+import { isEvent, subscribe } from "../http/broadcast.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
@@ -465,9 +465,14 @@ async function handleConnection(
   //    strictly newer than the last replayed id.
   const lastReplayId =
     replay.length > 0 ? replay[replay.length - 1]!.id : (sinceCursor ?? 0);
-  const unsub = subscribe(surfaceId, (e) => {
-    const n = Number(e.id);
-    if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, e);
+  const unsub = subscribe(surfaceId, (m) => {
+    // Pre-#291 behaviour: this handler forwards events only. Record-delta
+    // messages (kind: "record.*") now share the same broadcast channel
+    // (#291); filter them here. Forwarding records to WS clients lands in
+    // #295 (handleConnection record replay + dedup).
+    if (!isEvent(m)) return;
+    const n = Number(m.id);
+    if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, m);
   });
 
   ws.on("message", async (raw) => {
