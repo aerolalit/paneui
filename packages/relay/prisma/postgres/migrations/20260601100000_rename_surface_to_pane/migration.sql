@@ -27,6 +27,7 @@ ALTER INDEX "surfaces_agent_id_idx" RENAME TO "panes_agent_id_idx";
 ALTER INDEX "surfaces_expires_at_idx" RENAME TO "panes_expires_at_idx";
 ALTER INDEX "surfaces_template_version_id_idx" RENAME TO "panes_template_version_id_idx";
 ALTER INDEX "surfaces_owner_human_id_idx" RENAME TO "panes_owner_human_id_idx";
+ALTER INDEX "surfaces_deleted_at_idx" RENAME TO "panes_deleted_at_idx";
 ALTER INDEX "Surface_owner_dedup" RENAME TO "Pane_owner_dedup";
 
 -- 4. Rename FK constraints to match Prisma's <table>_<col>_fkey convention.
