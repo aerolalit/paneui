@@ -41,10 +41,12 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@paneui/core": "^0.0.9"
+    "@paneui/core": "^0.0.9",
+    "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
+    "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   }
