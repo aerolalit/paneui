@@ -163,6 +163,21 @@ export const errors = {
       DOCS.api,
     ),
 
+  // #305 — mutation refused because the target row is soft-deleted (in
+  // trash). Distinct from `gone` (a pane's TTL expired): a soft-deleted
+  // row is recoverable until the hard-delete sweeper reclaims it, so the
+  // hint points the caller at restore rather than "create a new one".
+  softDeleted: (entity: string) =>
+    new ApiError(
+      410,
+      "soft_deleted",
+      `${entity} is in trash`,
+      undefined,
+      `restore the ${entity} from trash (POST /v1/trash/${entity}s/:id/restore) before mutating it, or use ?include_deleted=true on read-only endpoints to see its current state`,
+      false,
+      DOCS.api,
+    ),
+
   schemaViolation: (code: string, details?: unknown, hint?: string) =>
     new ApiError(
       422,

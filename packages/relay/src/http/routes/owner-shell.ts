@@ -132,6 +132,12 @@ async function loadOwnedPane(
     // pane exists but belongs to someone else.
     throw errors.notFound();
   }
+  // #305 — a soft-deleted pane is treated as "not found" for the owner-
+  // shell pages. Visiting /panes/:id on a trashed pane mints a fresh
+  // participant token and opens the iframe; both would fight with the
+  // hard-delete sweeper and look like flapping to the user. The /trash UI
+  // (#306) is the one place a trashed pane should be viewable.
+  if (pane.deletedAt !== null) throw errors.notFound();
   return pane;
 }
 
