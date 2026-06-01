@@ -1055,6 +1055,129 @@ surface's initial `inputData`. A participant token cannot enumerate
 arbitrary blobs the agent owns. See `docs/CAPABILITY-URLS.md` for the
 full trust model.
 
+## Records — per-surface mutable collections (#287)
+
+Records are a **separate data shape from events**. Where events are an
+append-only journal ("Alice posted", "Bob clicked"), records are a mutable
+per-surface collection (posts, comments, reactions, line items in a form)
+keyed by stable `record_key`. Templates that look like *applications* —
+comment threads, kanban boards, form collections — should use records.
+One-shot interactions stay on events.
+
+### When to reach for which
+
+| Use a **record** | Use an **event** |
+|---|---|
+| The current value matters; history doesn't | History is the point (audit, replay, activity feed) |
+| Concurrent partial-row mutations | Writers serialise; immutable facts |
+| Hundreds-to-thousands of items | Dozens of writes total per surface |
+| Reads want paginated / queryable access | Reads want the full stream replayed |
+
+### Declaring a record collection
+
+Set the template's `record_schema` to a **JSON Schema 2020-12 document**
+with one namespaced extension, `x-pane-collections`. Only the extension is
+pane-specific; everything else is standard JSON Schema you already know.
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$defs:
+  Comment:
+    type: object
+    properties:
+      body: { type: string, minLength: 1, maxLength: 4000 }
+    required: [body]
+  Post:
+    type: object
+    properties:
+      title: { type: string }
+      body:  { type: string }
+    required: [title, body]
+
+x-pane-collections:
+  posts:
+    schema: { $ref: "#/$defs/Post" }
+    write:  [agent, page]          # principals that may create / update
+    delete: [agent, author]        # `author` = only the row's authorId
+  comments:
+    schema: { $ref: "#/$defs/Comment" }
+    write:  [page]
+    delete: [author]
+```
+
+`write` is a non-empty subset of `{agent, page}`; `delete` is a non-empty
+subset of `{agent, page, author}`. The `author` rule on `delete` lets a
+participant delete their own rows without granting blanket delete to all
+participants. Collection names match `^[a-z][a-z0-9_-]{0,63}$`.
+
+Pass `record_schema` to `pane template create` (or the inline form on
+`pane surface create`) alongside `event_schema` / `input_schema`.
+
+### Reading + writing records from the page
+
+The page-side `pane.records` API is **read-only in v1**:
+
+```js
+// Snapshot of every row in a collection (empty array if unseen).
+const allComments = pane.records.snapshot("comments");
+
+// Subscribe to live upserts + deletes. Fires from subscription forward —
+// for replay history, call snapshot() first and merge.
+const unsubscribe = pane.records.on("comments", (ev) => {
+  if (ev.kind === "upsert") {
+    // ev.record has id, key, data, version, seq, author, *_at fields
+    renderComment(ev.record);
+  } else {
+    // ev.kind === "delete" — ev.record has id, key, seq, deleted_at
+    removeComment(ev.record.key);
+  }
+});
+```
+
+**Mutators from the page are not yet wired** (`pane.records.create / upsert /
+update / delete` throw a clear "use the CLI / HTTP for now" error). To create
+or modify records, use the agent-side CLI or the relay's HTTP routes:
+
+```sh
+pane records upsert <surface-id> comments --data '{"body":"hi"}' --key cmt_1
+pane records list   <surface-id> comments --since 0 --limit 100
+pane records update <surface-id> comments cmt_1 --data '{"body":"edited"}' --if-match 1
+pane records delete <surface-id> comments cmt_1 --if-match 2
+pane records watch  <surface-id>                       # JSON-line stream of deltas
+```
+
+### Authoring rules of thumb
+
+- **Default to events for low-volume data.** Reach for records when read-cost
+  or fan-out cost becomes visible — typically when a collection grows past
+  ~100 rows.
+- **Record `key` is your idempotency key.** A duplicate POST with the same
+  `record_key` returns the existing row (`deduped: true`), no version bump.
+  Use this for client-supplied stable ids (slugify a title, hash a body).
+- **Optimistic locking on update / delete.** Pass `if_match: <version>` and
+  on 409 the relay returns the current row in `error.details.current` — rebase
+  your edit and retry.
+- **Soft delete is observable.** The deleted row stays in the table as a
+  tombstone (with `deleted_at` set) for the configured TTL so reconnecting
+  clients can observe the deletion. After the TTL it's hard-deleted by the
+  tombstone sweeper.
+- **Records don't write to the event log.** A `record.upsert` WS message is
+  not a `system.record.*` event. If you want an activity-feed entry for a
+  record write ("Alice posted"), emit a normal event from your agent in the
+  same flow.
+
+### Schema migration when iterating
+
+Templates pin one `record_schema` per version. When upgrading a surface to a
+newer template version (#267), the relay's compat gate blocks:
+
+- Removed collections (would orphan persisted rows)
+- Row-schema narrowing (added required field, type change, narrower bounds)
+
+Adding optional fields, adding new collections, and changing `write` / `delete`
+principal lists are compatible (existing rows still validate; authz only
+affects new operations).
+
 ## The watch → Monitor pattern
 
 `pane surface watch` is built to be a **monitored subprocess**. It blocks until the
