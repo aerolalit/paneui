@@ -223,14 +223,17 @@ describe("GET /my-surfaces (signed in)", () => {
     expect(html).toContain("Browse apps");
   });
 
-  it("lists surfaces the human owns", async () => {
+  it("renders a surface card with title, template, agent, and id", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    // Seed: an agent + template + version + surface owned by Alice
     const agent = await prisma.agent.create({
-      data: { name: "a", keyHash: "x".repeat(64), keyPrefix: "x" },
+      data: {
+        name: "deploy-bot",
+        keyHash: "x".repeat(64),
+        keyPrefix: "x",
+      },
     });
     const tmpl = await prisma.template.create({
-      data: { ownerId: agent.id, name: "t" },
+      data: { ownerId: agent.id, name: "PR Review", slug: "pr-review" },
     });
     const tv = await prisma.templateVersion.create({
       data: {
@@ -255,8 +258,56 @@ describe("GET /my-surfaces (signed in)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
+    expect(html).toContain('class="surface-card"');
+    // The page's escapeHtml only encodes &, <, >, " — apostrophe stays literal,
+    // matching the existing behaviour of every other title rendered into the
+    // signed-in pages.
     expect(html).toContain("Alice's PR review");
     expect(html).toContain("sur_test_one");
+    // The new card surfaces the template name + the agent that created it
+    // so the human can tell two surfaces of the same template apart.
+    expect(html).toContain("PR Review");
+    expect(html).toContain("deploy-bot");
+    // The avatar tile carries hash-derived hue + the template initials.
+    expect(html).toContain("surface-card-tile");
+    expect(html).toContain("--tile-h:");
+    expect(html).toMatch(/>PR<\/div>/);
+  });
+
+  it("falls back to the slug then to 'ad-hoc template' for unnamed templates", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: { name: "a", keyHash: "y".repeat(64), keyPrefix: "y" },
+    });
+    // Anonymous template (no name, no slug) — created by the inline
+    // POST /v1/surfaces path. The card should still render with a
+    // useful label rather than a blank.
+    const tmpl = await prisma.template.create({
+      data: { ownerId: agent.id },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    await prisma.surface.create({
+      data: {
+        id: "sur_anon",
+        agentId: agent.id,
+        ownerHumanId: humanId,
+        templateVersionId: tv.id,
+        title: "Quick form",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/my-surfaces", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("ad-hoc template");
   });
 });
 
