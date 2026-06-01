@@ -310,7 +310,7 @@ describe("GET /my-panes (signed in)", () => {
     expect(html).toContain("ad-hoc template");
   });
 
-  // #301 — /my-surfaces should reflect every surface the human has access
+  // #301 — /my-panes should reflect every pane the human has access
   // to, not just ones they own. Pre-fix only ownerHumanId rows surfaced
   // here; a human who joined a colleague's surface had no recovery path.
   it("includes surfaces opened as a (non-revoked) participant, not just owned ones", async () => {
@@ -335,7 +335,7 @@ describe("GET /my-panes (signed in)", () => {
     });
     // Surface owned by someone else (no ownerHumanId pointing at our human),
     // but our human is identity-bound on it via a non-revoked participant.
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_invited",
         agentId: ownerAgent.id,
@@ -346,7 +346,7 @@ describe("GET /my-panes (signed in)", () => {
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -356,7 +356,7 @@ describe("GET /my-panes (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -383,18 +383,18 @@ describe("GET /my-panes (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_kicked",
         agentId: ownerAgent.id,
         templateVersionId: tv.id,
-        title: "Surface Carol was kicked from",
+        title: "Pane Carol was kicked from",
         expiresAt: new Date(Date.now() + 60_000),
       },
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -405,12 +405,12 @@ describe("GET /my-panes (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     const html = await res.text();
-    expect(html).not.toContain("Surface Carol was kicked from");
+    expect(html).not.toContain("Pane Carol was kicked from");
     // Empty-state should render — no surfaces.
-    expect(html).toContain("No surfaces yet");
+    expect(html).toContain("No panes yet");
   });
 
   it("does not double-list a surface where the human is BOTH owner and participant", async () => {
@@ -432,19 +432,19 @@ describe("GET /my-panes (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_self",
         agentId: agent.id,
         ownerHumanId: humanId,
         templateVersionId: tv.id,
-        title: "Self surface",
+        title: "Self pane",
         expiresAt: new Date(Date.now() + 60_000),
       },
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -454,7 +454,7 @@ describe("GET /my-panes (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     const html = await res.text();
     // The surface card appears exactly once — count the title or the id.
@@ -464,7 +464,7 @@ describe("GET /my-panes (signed in)", () => {
     // couple of occurrences inside one card; verify the title is exactly
     // once which is the user-visible signal.
     expect(matches.length).toBeGreaterThan(0);
-    const titleMatches = html.match(/Self surface/g) ?? [];
+    const titleMatches = html.match(/Self pane/g) ?? [];
     expect(titleMatches).toHaveLength(1);
   });
 });
