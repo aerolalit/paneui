@@ -1,7 +1,7 @@
 {
   "name": "@paneui/relay",
   "version": "0.0.9",
-  "description": "Pane relay: HTTP + WebSocket server brokering UI surfaces between agents and humans.",
+  "description": "Pane relay: HTTP + WebSocket server brokering UI panes between agents and humans.",
   "private": true,
   "license": "MIT",
   "type": "module",

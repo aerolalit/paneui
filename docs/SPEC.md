@@ -352,11 +352,11 @@ parallel code path.
 ```
 agents 1 ──< artifacts 1 ──< artifact_versions 1 ──< sessions 1 ──< events
                                                               1 ──< participants
-                                                              1 ──< record_collections 1 ──< surface_records
+                                                              1 ──< record_collections 1 ──< pane_records
 ```
 
 > **Records (#287)** — a third first-class data shape was added after v1's
-> initial release. `record_collections` and `surface_records` back per-pane
+> initial release. `record_collections` and `pane_records` back per-pane
 > mutable record collections (posts, comments, reactions, etc.) declared via
 > a JSON Schema 2020-12 document on `artifact_versions.record_schema`. Wire
 > shapes, routes, and config knobs are summarised in the **Records** section

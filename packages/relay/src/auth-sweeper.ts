@@ -1,5 +1,5 @@
 // Auth-state sweeper (#307) — hourly hard-delete of expired/consumed auth
-// tokens. Distinct from the surface/template/agent/human soft-delete
+// tokens. Distinct from the pane/template/agent/human soft-delete
 // lifecycle (#302/#303/#304): these rows are transient auth state, not user
 // content, so they're hard-deleted directly with no soft-delete phase and
 // no audit-log rows.
