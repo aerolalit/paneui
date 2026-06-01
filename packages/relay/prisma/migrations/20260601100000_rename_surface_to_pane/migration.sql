@@ -50,10 +50,13 @@ DROP INDEX IF EXISTS "surfaces_expires_at_idx";
 DROP INDEX IF EXISTS "surfaces_template_version_id_idx";
 DROP INDEX IF EXISTS "surfaces_owner_human_id_idx";
 DROP INDEX IF EXISTS "surfaces_deleted_at_idx";
-DROP INDEX IF EXISTS "Surface_owner_dedup";
+-- The dedup unique index lives under Prisma's conventional name
+-- (<table>_<col>_<col>_..._key), not under the `name:` attribute from
+-- @@unique — that attribute is only the TS query name in Prisma 7.
+DROP INDEX IF EXISTS "surfaces_template_version_id_owner_human_id_context_key_key";
 CREATE INDEX "panes_agent_id_idx" ON "panes"("agent_id");
 CREATE INDEX "panes_expires_at_idx" ON "panes"("expires_at");
 CREATE INDEX "panes_template_version_id_idx" ON "panes"("template_version_id");
 CREATE INDEX "panes_owner_human_id_idx" ON "panes"("owner_human_id");
 CREATE INDEX "panes_deleted_at_idx" ON "panes"("deleted_at");
-CREATE UNIQUE INDEX "Pane_owner_dedup" ON "panes"("template_version_id", "owner_human_id", "context_key");
+CREATE UNIQUE INDEX "panes_template_version_id_owner_human_id_context_key_key" ON "panes"("template_version_id", "owner_human_id", "context_key");

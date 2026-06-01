@@ -651,7 +651,7 @@ panes.post("/", requireAgent, async (c) => {
   // For human-owned panes (claimed agent), set ownerHumanId so dedup
   // and the human-side catalogs (my-panes, …) see this row.
   //
-  // P2002 catch on the create: the `Surface_owner_dedup` unique index
+  // P2002 catch on the create: the `panes_template_version_id_owner_human_id_context_key_key` unique index
   // (`@@unique([templateVersionId, ownerHumanId, contextKey])` on Pane)
   // is the load-bearing guarantee here — two concurrent creates with the
   // same dedup key both pass the `findFirst` above and race into `create`;

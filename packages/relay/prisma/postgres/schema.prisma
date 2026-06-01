@@ -353,7 +353,7 @@ model Pane {
   // Dedup index — (templateVersionId, ownerHumanId, contextKey) is unique
   // for human-owned panes with a contextKey. Panes without a
   // contextKey are not deduped (ad-hoc).
-  @@unique([templateVersionId, ownerHumanId, contextKey], name: "Pane_owner_dedup")
+  @@unique([templateVersionId, ownerHumanId, contextKey])
   @@map("panes")
 }
 
