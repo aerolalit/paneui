@@ -466,10 +466,8 @@ panes.post("/", requireAgent, async (c) => {
       assertValidInputSchema(inline.input_schema);
       inputSchema = inline.input_schema;
     }
-    // #289 — validate record_schema shape on inline templates. Validation-only
-    // for this PR (persistence lands once #288 adds the Prisma column); a 400
-    // here panes a malformed agent-supplied record_schema instead of
-    // silently dropping it.
+    // Validate record_schema shape (JSON Schema 2020-12 + x-pane-collections)
+    // before persisting. A 400 here means an agent supplied a malformed schema.
     if (inline.record_schema !== undefined) {
       assertSchemaWithinLimits(inline.record_schema, {
         maxBytes: config.MAX_SCHEMA_BYTES,
@@ -495,6 +493,10 @@ panes.post("/", requireAgent, async (c) => {
           inputSchema:
             inline.input_schema !== undefined
               ? (inline.input_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          recordSchema:
+            inline.record_schema !== undefined
+              ? (inline.record_schema as Prisma.InputJsonValue)
               : Prisma.JsonNull,
         },
       });
