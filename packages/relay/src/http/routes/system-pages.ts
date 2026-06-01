@@ -532,8 +532,13 @@ systemPages.get("/my-panes", async (c) => {
   // bound participant on the same pane shows up exactly once. Revoked
   // participants are filtered out so a kicked human's panes don't linger
   // on their list.
+  // #305 — hide soft-deleted panes from /my-panes. The /trash page
+  // (#306) is the dedicated view for trashed rows; mixing them into the
+  // live list would force every user to mentally filter "live" vs "in
+  // trash" at every glance.
   const panes = await prisma.pane.findMany({
     where: {
+      deletedAt: null,
       OR: [
         { ownerHumanId: human.id },
         { participants: { some: { humanId: human.id, revokedAt: null } } },
@@ -627,7 +632,8 @@ systemPages.get("/my-templates", async (c) => {
   // pill when an auto-advance was refused by the compat gate.
   const [templates, installs] = await Promise.all([
     prisma.template.findMany({
-      where: { owner: { ownerHumanId: human.id } },
+      // #305 — soft-deleted templates live on /trash, not here.
+      where: { deletedAt: null, owner: { ownerHumanId: human.id } },
       orderBy: { lastUsedAt: { sort: "desc", nulls: "last" } },
       take: 50,
       select: {
@@ -925,8 +931,11 @@ systemPages.get("/my-agents", async (c) => {
     );
   }
   const prisma = c.get("prisma");
+  // #305 — soft-deleted agents live on /trash. A revoked agent (revokedAt
+  // != null) is still surfaced here with a "Revoked" pill, since revocation
+  // and trash are distinct lifecycle states.
   const agents = await prisma.agent.findMany({
-    where: { ownerHumanId: human.id },
+    where: { ownerHumanId: human.id, deletedAt: null },
     orderBy: { claimedAt: { sort: "desc", nulls: "last" } },
     select: {
       id: true,

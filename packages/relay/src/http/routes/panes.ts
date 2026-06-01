@@ -18,6 +18,7 @@ import {
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
+import { parseIncludeDeleted, softDeleteWhere } from "../../db/soft-delete.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
 import type { EventSchema } from "../../types.js";
 import { log } from "../../log.js";
@@ -262,9 +263,14 @@ panes.get("/", requireAgent, async (c) => {
   // #283 — once an agent is claimed, the list spans every agent
   // claimed to the same human. Unclaimed agents stay self-scoped.
   const scope = await agentScope(prisma, me);
+  // #305 — hide soft-deleted panes by default. Owner agents can opt-in
+  // with ?include_deleted=true to see trashed rows (used by `pane trash list`
+  // and the /trash UI page).
+  const includeDeleted = parseIncludeDeleted(c);
   const rows = await prisma.pane.findMany({
     where: {
       agentId: { in: [...scope] },
+      ...softDeleteWhere(includeDeleted),
       ...statusWhere,
       ...artifactWhere,
       ...cursorWhere,
@@ -317,6 +323,10 @@ panes.get("/", requireAgent, async (c) => {
       active_human_participants: s._count.participants,
       created_at: s.createdAt.toISOString(),
       expires_at: s.expiresAt.toISOString(),
+      // #305 — non-null iff the pane is soft-deleted (in trash). Always
+      // returned so the caller can distinguish "active row" from "trashed
+      // row" in a single list response when ?include_deleted=true.
+      deleted_at: s.deletedAt?.toISOString() ?? null,
       has_callback: s.callbackUrl !== null,
     };
   });
@@ -587,11 +597,16 @@ panes.post("/", requireAgent, async (c) => {
   const dedupKey = context_key ?? null;
   const ownerHumanId = agent.ownerHumanId;
   if (dedupKey && ownerHumanId) {
+    // #305 — a soft-deleted pane must not satisfy contextKey dedup.
+    // Re-creating a "same context_key" pane after the previous one is
+    // trashed should produce a fresh row, otherwise the caller would be
+    // handed a pane_id that 410s on every mutation.
     const existing = await prisma.pane.findFirst({
       where: {
         templateVersionId,
         ownerHumanId,
         contextKey: dedupKey,
+        deletedAt: null,
       },
       include: {
         participants: {
@@ -707,21 +722,44 @@ panes.post("/", requireAgent, async (c) => {
     }
     // Concurrent dedup race — the winner's row exists. Re-read and return
     // the same shape as the pre-check above.
+    // #305 — only LIVE rows can satisfy dedup. A soft-deleted winner means
+    // the trashed row's `(templateVersionId, ownerHumanId, contextKey)` is
+    // still occupying the unique index; the unique index is not partial on
+    // `deletedAt`, so re-creates collide until the hard-delete sweeper
+    // reclaims the row. Surface this as `conflict` with a restore-or-wait
+    // hint, instead of handing back the trashed pane_id as a success.
     const winner = await prisma.pane.findFirst({
       where: {
         templateVersionId,
         ownerHumanId,
         contextKey: dedupKey,
+        deletedAt: null,
       },
       include: {
         participants: { where: { revokedAt: null } },
       },
     });
     if (!winner) {
-      // The constraint fired but the row isn't visible — almost certainly
-      // means it was deleted between the P2002 and our re-read. Pane
-      // the original error so the operator notices rather than 200-ing
-      // with stale data.
+      // Either the winner was hard-deleted between P2002 and re-read (rare,
+      // surfaces the original error) OR a soft-deleted row is occupying
+      // the unique slot. Distinguish the two so the caller gets a useful
+      // hint rather than the raw Prisma error.
+      const trashed = await prisma.pane.findFirst({
+        where: {
+          templateVersionId,
+          ownerHumanId,
+          contextKey: dedupKey,
+          deletedAt: { not: null },
+        },
+        select: { id: true },
+      });
+      if (trashed) {
+        throw errors.conflict(
+          `a soft-deleted pane with the same context_key is occupying the dedup slot`,
+          false,
+          `restore the trashed pane (POST /v1/trash/panes/${trashed.id}/restore) or wait for the hard-delete sweeper to reclaim it before retrying with this context_key`,
+        );
+      }
       throw e;
     }
     // #259 — same cross-agent participant mint as the pre-check dedup
@@ -803,6 +841,10 @@ panes.post("/", requireAgent, async (c) => {
 panes.post("/:id/ws-ticket", dualAuth, (c) => {
   const pane = c.get("pane");
   const author = c.get("author");
+  // #305 — refuse WS ticket for soft-deleted panes. A trashed pane is
+  // read-only until restored; minting a ticket would let the holder push new
+  // events into a row destined for hard-delete.
+  if (pane.deletedAt !== null) throw errors.softDeleted("pane");
   if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }
@@ -837,6 +879,11 @@ panes.get("/:id", requireAgent, async (c) => {
     input_data: pane.inputData,
     created_at: pane.createdAt.toISOString(),
     expires_at: pane.expiresAt.toISOString(),
+    // #305 — GET /:id always returns soft-deleted panes (the id is
+    // unguessable, so exposure is not a leak); `deleted_at` lets the caller
+    // see "this row is in trash, restore it before mutating". Mutations
+    // (upgrade/ws-ticket/participants) still 410 — see softDeleted error.
+    deleted_at: pane.deletedAt?.toISOString() ?? null,
   });
 });
 
@@ -874,6 +921,11 @@ panes.post("/:id/upgrade", requireAgent, async (c) => {
     include: { templateVersion: { include: { template: true } } },
   });
   const pane = await assertPaneInScope(prisma, paneRaw, me);
+  // #305 — refuse mutation on a soft-deleted (trashed) pane. Distinct from
+  // the closed/expired check below: closed panes 410 with "create a new
+  // one", trashed panes 410 with "restore from trash first" so the caller
+  // knows the row is recoverable.
+  if (pane.deletedAt !== null) throw errors.softDeleted("pane");
   if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone("pane is closed — upgrading a closed pane has no effect");
   }
@@ -982,6 +1034,10 @@ panes.delete("/:id", requireAgent, async (c) => {
   const me = c.get("agent");
   const paneRaw = await prisma.pane.findUnique({ where: { id } });
   const pane = await assertPaneInScope(prisma, paneRaw, me);
+  // #305 — already in trash: idempotent no-op. The TTL sweeper (#303) flips
+  // expired panes to soft-deleted; DELETEing one again should not 410 since
+  // the caller's intent ("close this pane") is already satisfied.
+  if (pane.deletedAt !== null) return c.body(null, 204);
   if (pane.status === "closed") return c.body(null, 204);
   await prisma.pane.update({
     where: { id },
@@ -1099,6 +1155,9 @@ panes.post("/:id/participants", requireAgent, async (c) => {
 
   const paneRaw = await prisma.pane.findUnique({ where: { id } });
   const pane = await assertPaneInScope(prisma, paneRaw, me);
+
+  // #305 — refuse mutation on a soft-deleted (trashed) pane.
+  if (pane.deletedAt !== null) throw errors.softDeleted("pane");
 
   // Effectively-closed panes cannot be revived by minting a new URL —
   // tell the agent to `pane create` instead. The check matches the

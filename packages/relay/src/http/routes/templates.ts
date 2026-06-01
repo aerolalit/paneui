@@ -11,6 +11,7 @@ import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
+import { parseIncludeDeleted, softDeleteWhere } from "../../db/soft-delete.js";
 import {
   assertSchemaWithinLimits,
   assertValidInputSchema,
@@ -239,6 +240,9 @@ templates.post("/:id/versions", async (c) => {
     },
   });
   if (!template) throw errors.artifactNotFound();
+  // #305 — refuse mutation on a soft-deleted template. Restore-from-trash
+  // first (the dedicated route lands in #306).
+  if (template.deletedAt !== null) throw errors.softDeleted("template");
 
   const body = await c.req.json().catch(() => null);
   const parsed = createArtifactVersionSchema.safeParse(body);
@@ -413,6 +417,8 @@ templates.patch("/:id", async (c) => {
     },
   });
   if (!template) throw errors.artifactNotFound();
+  // #305 — refuse mutation on a soft-deleted template.
+  if (template.deletedAt !== null) throw errors.softDeleted("template");
 
   const body = await c.req.json().catch(() => null);
   const parsed = patchArtifactMetadataSchema.safeParse(body);
@@ -460,9 +466,16 @@ templates.get("/", async (c) => {
   // Only named templates are discoverable — anonymous (inline-created) ones
   // have name = null and are an implementation detail, not browseable.
   // #283 — claimed agents see every same-human agent's templates.
+  // #305 — soft-deleted templates hidden by default; ?include_deleted=true
+  // exposes them for the trash UI.
   const scope = await agentScope(prisma, agent);
+  const includeDeleted = parseIncludeDeleted(c);
   const rows = await prisma.template.findMany({
-    where: { ownerId: { in: [...scope] }, name: { not: null } },
+    where: {
+      ownerId: { in: [...scope] },
+      name: { not: null },
+      ...softDeleteWhere(includeDeleted),
+    },
     orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
   });
 
@@ -508,6 +521,8 @@ templates.get("/:id", async (c) => {
     ...summarize(template),
     created_at: template.createdAt.toISOString(),
     updated_at: template.updatedAt.toISOString(),
+    // #305 — exposes the trashed state so the trash UI can render the row.
+    deleted_at: template.deletedAt?.toISOString() ?? null,
     versions: template.versions.map(serializeVersion),
   });
 });
@@ -562,11 +577,16 @@ templates.delete("/:id", async (c) => {
   const idOrSlug = c.req.param("id");
 
   // #283 — any same-human agent may delete the template.
+  // #305 — already-soft-deleted templates resolve to 404 here. The
+  // `/v1/trash/templates/:id/restore` and `/v1/trash/templates/:id`
+  // permanent-delete routes (#306) own the trash side of the lifecycle;
+  // this endpoint remains the live-template delete path.
   const scope = await agentScope(prisma, agent);
   const template = await prisma.template.findFirst({
     where: {
       ownerId: { in: [...scope] },
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+      deletedAt: null,
     },
     select: { id: true, name: true, slug: true },
   });
