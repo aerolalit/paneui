@@ -352,7 +352,17 @@ parallel code path.
 ```
 agents 1 ──< artifacts 1 ──< artifact_versions 1 ──< sessions 1 ──< events
                                                               1 ──< participants
+                                                              1 ──< record_collections 1 ──< surface_records
 ```
+
+> **Records (#287)** — a third first-class data shape was added after v1's
+> initial release. `record_collections` and `surface_records` back per-surface
+> mutable record collections (posts, comments, reactions, etc.) declared via
+> a JSON Schema 2020-12 document on `artifact_versions.record_schema`. Wire
+> shapes, routes, and config knobs are summarised in the **Records** section
+> below; the canonical design is in epic
+> [#287](https://github.com/aerolalit/paneui/issues/287). The legacy event
+> log is unchanged — records are additive.
 
 ### `agents` (one row per API key issued)
 
@@ -501,6 +511,87 @@ Principle: the OSS version must do the whole job, end to end, for one user, on t
 - Participant access control: SSO, magic-link, "only user X can open this".
 - Robust webhook delivery: dead-letter queue, replay, configurable retry. Signing is already in OSS.
 - Higher limits, SLA, SOC2, EU data residency, support.
+
+## Records (#287)
+
+Per-surface mutable record collections. Third first-class data shape alongside events and attachments. Use records when the **current value** of structured rows is what matters and the history isn't; keep events for the **journal of interactions** (audit trail, activity feed).
+
+### Decision rule
+
+| Use a **record** when… | Use an **event** when… |
+|---|---|
+| Current value is what matters; history isn't | History is the point (audit, replay) |
+| Multiple participants edit different rows concurrently | Writers serialise naturally and order matters |
+| Hundreds-to-thousands of items in the collection | Dozens of writes total per surface |
+| Partial-row mutations, paginated reads | Immutable facts, stream reads |
+
+### Schema declaration — JSON Schema 2020-12 + `x-pane-collections`
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$defs:
+  Comment:
+    type: object
+    properties: { body: { type: string, maxLength: 4000 } }
+    required: [body]
+x-pane-collections:
+  comments:
+    schema: { $ref: "#/$defs/Comment" }
+    write:  [page]              # subset of {agent, page}
+    delete: [author]            # subset of {agent, page, author}
+```
+
+Set on the template via `record_schema` at create / version time. Validated by `validateRecordSchemaShape` in `core/validation.ts`. Standards-first: only `x-pane-collections` is pane-specific; the rest is plain JSON Schema.
+
+### HTTP routes
+
+```http
+GET    /v1/surfaces/:id/records/:collection?since=&limit=
+POST   /v1/surfaces/:id/records/:collection
+PATCH  /v1/surfaces/:id/records/:collection/:recordKey
+DELETE /v1/surfaces/:id/records/:collection/:recordKey
+```
+
+`dualAuth` (agent owner or participant token). POST is **create-or-return-existing** (duplicate `record_key` → 200 with `deduped: true`, no version bump). PATCH and DELETE accept `if_match: <version>`; on mismatch return **409** with the current row in `error.details.current`. GET pagination via `?since=<seq>` includes tombstones.
+
+### WebSocket messages
+
+Records flow over the same `/v1/surfaces/:id/stream` channel as events. The wire shapes (defined in `ws/messages.ts`) are discriminated by the top-level `kind` field — events have no `kind`, every other shape does:
+
+```json
+{ "kind": "record.upsert",          "collection": "comments", "record": { ... } }
+{ "kind": "record.delete",          "collection": "comments", "record": { "id","key","seq","deleted_at" } }
+{ "kind": "record.replay.complete", "collection": "comments", "seq": 17 }
+```
+
+Subscribe with `?subscribe_records=*` (all declared collections) or `?subscribe_records=a,b` (filter). Per-collection reconnect cursors via `?since_record_seq.<name>=<seq>`. The bridge shell auto-subscribes to all collections; the page-side `pane.records.snapshot(name)` / `pane.records.on(name, h)` API consumes the deltas.
+
+### Config knobs
+
+| Var | Default | Notes |
+|---|---|---|
+| `MAX_RECORDS_PER_COLLECTION` | 50000 | Live-row ceiling. 0 disables. Tombstones excluded. |
+| `MAX_RECORD_DATA_BYTES` | 65536 | Per-row payload byte cap. |
+| `MAX_RECORDS_PER_PAGE` | 200 | GET pagination cap. |
+| `RECORD_TOMBSTONE_TTL_SECONDS` | 604800 (7d) | Soft-deleted rows hard-deleted after this. Floor 60s. |
+| `RECORD_SWEEPER_INTERVAL_SECONDS` | 3600 (1h) | Tombstone sweeper interval. 0 disables. |
+
+### Authz model
+
+| Step | Rule |
+|---|---|
+| 1 | Token resolves to an `Author` and `Surface` (`dualAuth`) |
+| 2 | `surface.status === "open" && expiresAt > now` |
+| 3 | `author.kind` (mapped to `agent` / `page`) ∈ `write` / `delete` |
+| 4 | `delete: ["author"]` → `row.authorId === author.id` |
+| 5 | Attachment refs scoped to `surface.agentId` (mirrors event-write) |
+
+### Out of scope (open questions)
+
+- Page-side `pane.records.create / upsert / update / delete` runtime API — phase 2.
+- `eventSchema` standards alignment (parallel migration off the bespoke `events` / `payload` / `emittedBy` keywords) — separate epic.
+- Server-side data migration of records on incompatible upgrade.
+- A `?filter=` grammar on the list route.
 
 **Code-sharing:** one repo, MIT/Apache core, `/ee/` directory under a commercial license. Default build excludes `/ee/`. License-key gate only for enterprise features that run in self-host. Clean seams (auth, storage, event delivery) so `/ee/` plugs in without monkey-patches.
 
