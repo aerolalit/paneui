@@ -87,25 +87,71 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
     __schemaCacheInternals.clear();
   });
 
-  it("invalidates the validator cache for swept (expired) surfaces", async () => {
+  // #303 — semantics changed: TTL sweep now SOFT-deletes (sets deleted_at)
+  // instead of hard-deleting. The hard-delete sweeper from #304 reclaims the
+  // row after the retention window. Anonymous-template orphan cleanup also
+  // moves to #304; templates whose surfaces are merely soft-deleted are
+  // still referenced by extant rows, so the orphan predicate returns false
+  // — premature cleanup avoided.
+
+  it("soft-deletes expired surfaces (row preserved, deleted_at set)", async () => {
     const expiredId = await seedSurface(-1000);
     const liveId = await seedSurface(3_600_000);
 
     warmCache(expiredId);
     warmCache(liveId);
-    expect(__schemaCacheInternals.has(expiredId, 1)).toBe(true);
-    expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
     const count = await sweepExpiredSurfaces(prisma);
     expect(count).toBe(1);
 
-    // The expired surface's compiled validators are gone; the live one stays.
+    // Expired surface row STAYS — but with deleted_at set.
+    const expired = await prisma.surface.findUnique({
+      where: { id: expiredId },
+    });
+    expect(expired).not.toBe(null);
+    expect(expired!.deletedAt).not.toBe(null);
+
+    // Live surface untouched.
+    const live = await prisma.surface.findUnique({ where: { id: liveId } });
+    expect(live!.deletedAt).toBe(null);
+
+    // Validator cache: expired entry dropped, live entry preserved.
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(false);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
+  });
 
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
-      null,
+  it("appends one deletion_log row per soft-deleted surface", async () => {
+    const expiredId1 = await seedSurface(-2000);
+    const expiredId2 = await seedSurface(-1000);
+
+    await sweepExpiredSurfaces(prisma);
+
+    const logs = await prisma.deletionLog.findMany({
+      where: { entityType: "surface", phase: "soft_deleted" },
+      orderBy: { at: "asc" },
+    });
+    expect(logs.map((l) => l.entityId).sort()).toEqual(
+      [expiredId1, expiredId2].sort(),
     );
+    for (const l of logs) {
+      expect(l.reason).toBe("ttl_expired");
+      expect(l.ownerAgentId).not.toBe(null);
+    }
+  });
+
+  it("is idempotent — second tick is a no-op (no double-soft-delete, no double log)", async () => {
+    await seedSurface(-1000);
+
+    const first = await sweepExpiredSurfaces(prisma);
+    expect(first).toBe(1);
+
+    const second = await sweepExpiredSurfaces(prisma);
+    expect(second).toBe(0);
+
+    const logCount = await prisma.deletionLog.count({
+      where: { entityType: "surface", phase: "soft_deleted" },
+    });
+    expect(logCount).toBe(1);
   });
 
   it("is a no-op when nothing is expired", async () => {
@@ -117,10 +163,10 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });
 
-  // ---- anonymous-template orphan cleanup --------------------------------
+  // ---- anonymous-template-orphan cleanup deferred to #304 -------------
 
-  it("hard-deletes the anonymous template once its last surface is swept", async () => {
-    // seedSurface() uses seedArtifact() with no name/slug — anonymous.
+  it("does NOT hard-delete the anonymous template (cleanup moved to #304's hard-delete sweeper)", async () => {
+    // seedSurface uses seedArtifact with no name/slug — anonymous.
     const expiredId = await seedSurface(-1000);
     const surfaceBefore = await prisma.surface.findUnique({
       where: { id: expiredId },
@@ -134,17 +180,15 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
 
     await sweepExpiredSurfaces(prisma);
 
-    // Surface + its anonymous template are both gone (template cascade
-    // deletes its versions).
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
-      null,
-    );
+    // Under #303 the surface is only soft-deleted, so the template is still
+    // referenced (the row exists) and the orphan predicate is correctly
+    // false. Template stays. #304's hard-delete sweeper will reclaim both.
     expect(
       await prisma.template.findUnique({ where: { id: templateId } }),
-    ).toBe(null);
+    ).not.toBe(null);
   });
 
-  it("preserves a named template even when its only surface is swept", async () => {
+  it("does NOT touch a named template whose only surface is soft-deleted", async () => {
     const agent = await prisma.agent.create({
       data: {
         name: `agent-${randomBytes(4).toString("hex")}`,
@@ -152,7 +196,6 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
         keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
       },
     });
-    // Named (non-anonymous) template — has a name even if no slug.
     const template = await prisma.template.create({
       data: {
         ownerId: agent.id,
@@ -179,62 +222,14 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
 
     await sweepExpiredSurfaces(prisma);
 
-    // Surface is swept, but the named template (and its version) survives —
-    // future surfaces may reference it via id/slug.
-    expect(await prisma.surface.findUnique({ where: { id: surfaceId } })).toBe(
-      null,
-    );
+    // Surface soft-deleted, template + version both still active.
+    const s = await prisma.surface.findUnique({ where: { id: surfaceId } });
+    expect(s!.deletedAt).not.toBe(null);
     expect(
       await prisma.template.findUnique({ where: { id: template.id } }),
     ).not.toBe(null);
     expect(
       await prisma.templateVersion.findUnique({ where: { id: version.id } }),
-    ).not.toBe(null);
-  });
-
-  it("preserves an anonymous template still referenced by an active surface", async () => {
-    // Two surfaces share the same anonymous template — one expires, one lives.
-    const agent = await prisma.agent.create({
-      data: {
-        name: `agent-${randomBytes(4).toString("hex")}`,
-        keyHash: randomBytes(32).toString("hex"),
-        keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
-      },
-    });
-    const { surfaceId: expiredId, templateVersionId } = await seedSurfaceRow(
-      prisma,
-      {
-        agentId: agent.id,
-        eventSchema: SCHEMA as unknown as object,
-        status: "open",
-        expiresAt: new Date(Date.now() - 1000),
-      },
-    );
-    const { surfaceId: liveId } = await seedSurfaceRow(prisma, {
-      agentId: agent.id,
-      templateVersionId,
-      status: "open",
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
-    const versionRow = await prisma.templateVersion.findUnique({
-      where: { id: templateVersionId },
-      select: { templateId: true },
-    });
-    const templateId = versionRow!.templateId;
-
-    await sweepExpiredSurfaces(prisma);
-
-    // The expired surface is gone. The live one + the shared anonymous
-    // template both survive — sweep must check that NO surface still
-    // references any of the template's versions, not just the swept one.
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
-      null,
-    );
-    expect(await prisma.surface.findUnique({ where: { id: liveId } })).not.toBe(
-      null,
-    );
-    expect(
-      await prisma.template.findUnique({ where: { id: templateId } }),
     ).not.toBe(null);
   });
 });

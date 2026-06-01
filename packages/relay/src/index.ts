@@ -46,55 +46,67 @@ import { ensureKeyLoaded } from "./crypto.js";
 // swept in this tick AND (b) end up with zero remaining surface references
 // AND (c) have null name + slug (the anonymity marker). Named templates and
 // templates still referenced by an active surface are left alone.
+// #303 — soft-delete (not hard-delete) on TTL expiry. The expired surface
+// row stays in the table with `deleted_at` set; the hard-delete sweeper
+// (#304) reclaims it after the retention window elapses.
+//
+// Why split: the old single-phase DELETE meant a missed check-in (TTL
+// shorter than expected) immediately and permanently destroyed the
+// surface's events + attachments. The 2026-05-30 baby-tracking incident
+// motivated the split: 6-month default TTL + 30-day soft-delete window
+// + audit log = "lost the surface" becomes "restore from /v1/trash".
+//
+// The anonymous-template-orphan cleanup that used to live here moves
+// to the hard-delete sweeper (#304). Templates whose surfaces are merely
+// soft-deleted are still referenced by extant rows, so the orphan
+// predicate `versions.none.surfaces.some` correctly returns false — no
+// premature cleanup. Templates become reclaimable only when their last
+// referencing surface is hard-deleted.
 export async function sweepExpiredSurfaces(
   prisma: PrismaClient,
 ): Promise<number> {
   const now = new Date();
+  // Predicate: expired AND not already soft-deleted. The second clause
+  // makes the sweep idempotent — a second tick over the same window is a
+  // no-op (rows already soft-deleted don't get re-logged or re-touched).
   const expired = await prisma.surface.findMany({
-    where: { expiresAt: { lt: now } },
-    select: { id: true, templateVersionId: true },
+    where: { expiresAt: { lt: now }, deletedAt: null },
+    select: {
+      id: true,
+      agentId: true,
+      ownerHumanId: true,
+    },
   });
   if (expired.length === 0) return 0;
   const ids = expired.map((s) => s.id);
 
-  // The template ids the expiring surfaces point at (via their pinned version).
-  // We need these before the surface delete so we can re-check orphan status
-  // after the delete commits.
-  const candidateVersionIds = Array.from(
-    new Set(expired.map((s) => s.templateVersionId)),
-  );
-  const candidateVersions = await prisma.templateVersion.findMany({
-    where: { id: { in: candidateVersionIds } },
-    select: { templateId: true },
-  });
-  const candidateTemplateIds = Array.from(
-    new Set(candidateVersions.map((v) => v.templateId)),
-  );
+  // Soft-delete + append audit rows in a single transaction so a partial
+  // failure doesn't leave half-marked rows with no audit trail.
+  await prisma.$transaction([
+    prisma.surface.updateMany({
+      where: { id: { in: ids } },
+      data: { deletedAt: now },
+    }),
+    prisma.deletionLog.createMany({
+      data: expired.map((s) => ({
+        entityType: "surface",
+        entityId: s.id,
+        ownerHumanId: s.ownerHumanId,
+        ownerAgentId: s.agentId,
+        phase: "soft_deleted",
+        reason: "ttl_expired",
+        at: now,
+      })),
+    }),
+  ]);
 
-  const r = await prisma.surface.deleteMany({ where: { id: { in: ids } } });
+  // Even though the surface row stays, its compiled event-schema validator
+  // is no longer useful (no new events accepted on a soft-deleted surface,
+  // see #305 route filter). Drop the cache entries so a long-running relay
+  // doesn't accumulate stale compilers proportional to total-ever-expired.
   for (const id of ids) invalidateSchemaCache(id);
 
-  // After the surface delete, find anonymous templates whose every version
-  // is now surface-less. `versions.none.surfaces.some` reads as "no version
-  // has any surface" — exactly the orphan predicate.
-  if (candidateTemplateIds.length > 0) {
-    const orphans = await prisma.template.findMany({
-      where: {
-        id: { in: candidateTemplateIds },
-        name: null,
-        slug: null,
-        versions: { none: { surfaces: { some: {} } } },
-      },
-      select: { id: true },
-    });
-    if (orphans.length > 0) {
-      await prisma.template.deleteMany({
-        where: { id: { in: orphans.map((t) => t.id) } },
-      });
-    }
-  }
-
-  return r.count;
+  return expired.length;
 }
 
 function startTtlSweeper(config: Config, prisma: PrismaClient): void {
