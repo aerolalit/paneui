@@ -25,75 +25,71 @@ import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { sweepRecordTombstones } from "./core/records.js";
 import { sweepAuthTokens, authSweepIntervalSeconds } from "./auth-sweeper.js";
+import { sweepHardDeletable } from "./hard-delete-sweeper.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
 
-// One TTL sweep pass: collect the expired pane ids first, then deleteMany,
-// then drop each pane's compiled-validator cache entry. Two queries (no
-// per-pane round-trip), so still O(1) DB calls regardless of batch size.
-// Takes the Prisma client as a parameter — no module-level singleton — so the
-// integration test can run it against its own isolated database.
+// #303 — soft-delete (not hard-delete) on TTL expiry. The expired pane row
+// stays in the table with `deleted_at` set; the hard-delete sweeper (#304)
+// reclaims it after the retention window elapses.
 //
-// Also cleans up anonymous template orphans. Inline-form panes transparently
-// create a Template row with name=null/slug=null (see panes.ts:404). When
-// the only pane(s) using that template expire and get swept, the template
-// itself is left behind forever — every smoke test, every one-off pane
-// session leaves a permanent agent-owned row. Hard-deleting an anonymous
-// template whose last referencing pane just went away cascades through
-// template_versions automatically (onDelete: Cascade on the FK).
+// Why split: the old single-phase DELETE meant a missed check-in (TTL
+// shorter than expected) immediately and permanently destroyed the pane's
+// events + attachments. The 2026-05-30 baby-tracking incident motivated
+// the split: 6-month default TTL + 30-day soft-delete window + audit log =
+// "lost the pane" becomes "restore from /v1/trash".
 //
-// We only touch templates that BOTH (a) are referenced by panes being
-// swept in this tick AND (b) end up with zero remaining pane references
-// AND (c) have null name + slug (the anonymity marker). Named templates and
-// templates still referenced by an active pane are left alone.
+// The anonymous-template-orphan cleanup that used to live here moves to
+// the hard-delete sweeper (#304). Templates whose panes are merely
+// soft-deleted are still referenced by extant rows, so the orphan
+// predicate `versions.none.panes.some` correctly returns false — no
+// premature cleanup. Templates become reclaimable only when their last
+// referencing pane is hard-deleted.
 export async function sweepExpiredPanes(prisma: PrismaClient): Promise<number> {
   const now = new Date();
+  // Predicate: expired AND not already soft-deleted. The second clause
+  // makes the sweep idempotent — a second tick over the same window is a
+  // no-op (rows already soft-deleted don't get re-logged or re-touched).
   const expired = await prisma.pane.findMany({
-    where: { expiresAt: { lt: now } },
-    select: { id: true, templateVersionId: true },
+    where: { expiresAt: { lt: now }, deletedAt: null },
+    select: {
+      id: true,
+      agentId: true,
+      ownerHumanId: true,
+    },
   });
   if (expired.length === 0) return 0;
   const ids = expired.map((s) => s.id);
 
-  // The template ids the expiring panes point at (via their pinned version).
-  // We need these before the pane delete so we can re-check orphan status
-  // after the delete commits.
-  const candidateVersionIds = Array.from(
-    new Set(expired.map((s) => s.templateVersionId)),
-  );
-  const candidateVersions = await prisma.templateVersion.findMany({
-    where: { id: { in: candidateVersionIds } },
-    select: { templateId: true },
-  });
-  const candidateTemplateIds = Array.from(
-    new Set(candidateVersions.map((v) => v.templateId)),
-  );
+  // Soft-delete + append audit rows in a single transaction so a partial
+  // failure doesn't leave half-marked rows with no audit trail.
+  await prisma.$transaction([
+    prisma.pane.updateMany({
+      where: { id: { in: ids } },
+      data: { deletedAt: now },
+    }),
+    prisma.deletionLog.createMany({
+      data: expired.map((s) => ({
+        entityType: "pane",
+        entityId: s.id,
+        ownerHumanId: s.ownerHumanId,
+        ownerAgentId: s.agentId,
+        phase: "soft_deleted",
+        reason: "ttl_expired",
+        at: now,
+      })),
+    }),
+  ]);
 
-  const r = await prisma.pane.deleteMany({ where: { id: { in: ids } } });
+  // Even though the pane row stays, its compiled event-schema validator is
+  // no longer useful (no new events accepted on a soft-deleted pane, see
+  // #305 route filter). Drop the cache entries so a long-running relay
+  // doesn't accumulate stale compilers proportional to total-ever-expired.
   for (const id of ids) invalidateSchemaCache(id);
 
-  // After the pane delete, find anonymous templates whose every version
-  // is now pane-less. `versions.none.panes.some` reads as "no version
-  // has any pane" — exactly the orphan predicate.
-  if (candidateTemplateIds.length > 0) {
-    const orphans = await prisma.template.findMany({
-      where: {
-        id: { in: candidateTemplateIds },
-        name: null,
-        slug: null,
-        versions: { none: { panes: { some: {} } } },
-      },
-      select: { id: true },
-    });
-    if (orphans.length > 0) {
-      await prisma.template.deleteMany({
-        where: { id: { in: orphans.map((t) => t.id) } },
-      });
-    }
-  }
-
-  return r.count;
+  return expired.length;
 }
 
 function startTtlSweeper(config: Config, prisma: PrismaClient): void {
@@ -188,6 +184,39 @@ function startAuthSweeper(prisma: PrismaClient): void {
   };
   setTimeout(tick, intervalSec * 1000 + jitter());
   log.info("auth-sweeper started", { intervalSeconds: intervalSec });
+}
+
+// #304 — hourly hard-delete sweeper. Reclaims soft-deleted entities past
+// their tier-aware retention window. Mirrors startTtlSweeper structurally.
+function startHardDeleteSweeper(
+  config: Config,
+  prisma: PrismaClient,
+  attachmentStore: AttachmentStore,
+): void {
+  const intervalSec = config.HARD_DELETE_SWEEP_SECONDS;
+  if (intervalSec <= 0) {
+    log.info("hard-delete sweeper disabled (HARD_DELETE_SWEEP_SECONDS=0)");
+    return;
+  }
+  const jitter = () =>
+    Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const tick = (): void => {
+    void sweepHardDeletable({ prisma, config, attachmentStore })
+      .catch((e) =>
+        log.warn("hard-delete sweep error", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
+      .finally(() => {
+        setTimeout(tick, intervalSec * 1000 + jitter());
+      });
+  };
+  setTimeout(tick, intervalSec * 1000 + jitter());
+  log.info("hard-delete sweeper started", {
+    intervalSeconds: intervalSec,
+    freeRetentionDays: config.HARD_RETENTION_DAYS_FREE,
+    paidRetentionDays: config.HARD_RETENTION_DAYS_PAID,
+  });
 }
 
 async function main(): Promise<void> {
@@ -294,6 +323,7 @@ async function main(): Promise<void> {
   startTtlSweeper(config, prisma);
   startRecordTombstoneSweeper(config, prisma);
   startAuthSweeper(prisma);
+  startHardDeleteSweeper(config, prisma, blobStore);
 
   // Flush metrics on a graceful shutdown signal. Minimal — the relay otherwise
   // just exits — but a flush lets the last scrape window's data settle.

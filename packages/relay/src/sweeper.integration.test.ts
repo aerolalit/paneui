@@ -1,8 +1,12 @@
 // Integration test for the TTL sweeper (sweepExpiredPanes). Runs against
 // whatever engine DATABASE_URL points at (sqlite file or postgres).
 //
+// #303 — the sweeper now SOFT-DELETES expired panes (sets `deleted_at`
+// and writes a DeletionLog audit row) instead of hard-deleting them. The
+// hard-delete sweeper (#304) reclaims them after the retention window.
+//
 // Regression coverage for #57: the sweeper must invalidate the compiled-
-// validator cache for every pane it deletes, not just panes removed via
+// validator cache for every pane it sweeps, not just panes removed via
 // an explicit DELETE.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -87,7 +91,39 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
     __schemaCacheInternals.clear();
   });
 
-  it("invalidates the validator cache for swept (expired) panes", async () => {
+  it("soft-deletes expired panes (sets deleted_at, leaves the row)", async () => {
+    const expiredId = await seedPane(-1000);
+    const liveId = await seedPane(3_600_000);
+
+    const count = await sweepExpiredPanes(prisma);
+    expect(count).toBe(1);
+
+    // Expired pane is still in the table but marked deleted_at.
+    const expiredRow = await prisma.pane.findUnique({
+      where: { id: expiredId },
+    });
+    expect(expiredRow).not.toBeNull();
+    expect(expiredRow?.deletedAt).not.toBeNull();
+
+    // Live pane untouched.
+    const liveRow = await prisma.pane.findUnique({ where: { id: liveId } });
+    expect(liveRow?.deletedAt).toBeNull();
+  });
+
+  it("writes a DeletionLog row per swept pane (phase=soft_deleted, reason=ttl_expired)", async () => {
+    const expiredId = await seedPane(-1000);
+
+    await sweepExpiredPanes(prisma);
+
+    const auditRow = await prisma.deletionLog.findFirst({
+      where: { entityType: "pane", entityId: expiredId },
+    });
+    expect(auditRow).not.toBeNull();
+    expect(auditRow?.phase).toBe("soft_deleted");
+    expect(auditRow?.reason).toBe("ttl_expired");
+  });
+
+  it("invalidates the validator cache for soft-deleted panes", async () => {
     const expiredId = await seedPane(-1000);
     const liveId = await seedPane(3_600_000);
 
@@ -96,16 +132,25 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(true);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    const count = await sweepExpiredPanes(prisma);
-    expect(count).toBe(1);
+    await sweepExpiredPanes(prisma);
 
-    // The expired pane's compiled validators are gone; the live one stays.
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(false);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
+  });
 
-    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
-      null,
-    );
+  it("is idempotent — a second tick over already soft-deleted rows is a no-op", async () => {
+    const expiredId = await seedPane(-1000);
+    const first = await sweepExpiredPanes(prisma);
+    expect(first).toBe(1);
+
+    const second = await sweepExpiredPanes(prisma);
+    expect(second).toBe(0);
+
+    // Audit table still has exactly one row for this pane — no double-log.
+    const auditCount = await prisma.deletionLog.count({
+      where: { entityType: "pane", entityId: expiredId },
+    });
+    expect(auditCount).toBe(1);
   });
 
   it("is a no-op when nothing is expired", async () => {
@@ -117,10 +162,7 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });
 
-  // ---- anonymous-template orphan cleanup --------------------------------
-
-  it("hard-deletes the anonymous template once its last pane is swept", async () => {
-    // seedPane() uses seedArtifact() with no name/slug — anonymous.
+  it("preserves anonymous templates under soft-delete (orphan reclaim moves to #304)", async () => {
     const expiredId = await seedPane(-1000);
     const paneBefore = await prisma.pane.findUnique({
       where: { id: expiredId },
@@ -134,17 +176,16 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
 
     await sweepExpiredPanes(prisma);
 
-    // Pane + its anonymous template are both gone (template cascade
-    // deletes its versions).
-    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
-      null,
-    );
+    // Anonymous template is preserved under soft-delete — the pane row
+    // still exists so the orphan predicate (versions.none.panes.some)
+    // correctly returns false. The hard-delete sweeper (#304) reclaims
+    // anonymous templates once their last pane is hard-deleted.
     expect(
       await prisma.template.findUnique({ where: { id: templateId } }),
-    ).toBe(null);
+    ).not.toBeNull();
   });
 
-  it("preserves a named template even when its only pane is swept", async () => {
+  it("preserves a named template under soft-delete", async () => {
     const agent = await prisma.agent.create({
       data: {
         name: `agent-${randomBytes(4).toString("hex")}`,
@@ -152,7 +193,6 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
         keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
       },
     });
-    // Named (non-anonymous) template — has a name even if no slug.
     const template = await prisma.template.create({
       data: {
         ownerId: agent.id,
@@ -179,57 +219,14 @@ describe("sweepExpiredPanes (integration, real DB)", () => {
 
     await sweepExpiredPanes(prisma);
 
-    // Pane is swept, but the named template (and its version) survives —
-    // future panes may reference it via id/slug.
-    expect(await prisma.pane.findUnique({ where: { id: paneId } })).toBe(null);
+    // Pane soft-deleted; named template + its version survive.
+    const paneRow = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(paneRow?.deletedAt).not.toBeNull();
     expect(
       await prisma.template.findUnique({ where: { id: template.id } }),
-    ).not.toBe(null);
+    ).not.toBeNull();
     expect(
       await prisma.templateVersion.findUnique({ where: { id: version.id } }),
-    ).not.toBe(null);
-  });
-
-  it("preserves an anonymous template still referenced by an active pane", async () => {
-    // Two panes share the same anonymous template — one expires, one lives.
-    const agent = await prisma.agent.create({
-      data: {
-        name: `agent-${randomBytes(4).toString("hex")}`,
-        keyHash: randomBytes(32).toString("hex"),
-        keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
-      },
-    });
-    const { paneId: expiredId, templateVersionId } = await seedPaneRow(prisma, {
-      agentId: agent.id,
-      eventSchema: SCHEMA as unknown as object,
-      status: "open",
-      expiresAt: new Date(Date.now() - 1000),
-    });
-    const { paneId: liveId } = await seedPaneRow(prisma, {
-      agentId: agent.id,
-      templateVersionId,
-      status: "open",
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
-    const versionRow = await prisma.templateVersion.findUnique({
-      where: { id: templateVersionId },
-      select: { templateId: true },
-    });
-    const templateId = versionRow!.templateId;
-
-    await sweepExpiredPanes(prisma);
-
-    // The expired pane is gone. The live one + the shared anonymous
-    // template both survive — sweep must check that NO pane still
-    // references any of the template's versions, not just the swept one.
-    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
-      null,
-    );
-    expect(await prisma.pane.findUnique({ where: { id: liveId } })).not.toBe(
-      null,
-    );
-    expect(
-      await prisma.template.findUnique({ where: { id: templateId } }),
-    ).not.toBe(null);
+    ).not.toBeNull();
   });
 });
