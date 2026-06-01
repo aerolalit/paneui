@@ -1,4 +1,4 @@
-// `pane records` — CRUD + watch for per-surface mutable record collections
+// `pane records` — CRUD + watch for per-pane mutable record collections
 // (#297). Thin wrapper over the @paneui/core PaneClient + openStream APIs.
 
 import type { ParsedArgs } from "../argv.js";
@@ -12,9 +12,9 @@ import { openStream, type RecordDeltaMessage } from "@paneui/core";
 // Help text
 // ---------------------------------------------------------------------------
 
-export const recordsHelp = `pane records — CRUD + watch for per-surface record collections
+export const recordsHelp = `pane records — CRUD + watch for per-pane record collections
 
-A record is a row in a mutable per-surface collection (posts, comments,
+A record is a row in a mutable per-pane collection (posts, comments,
 reactions, etc.) declared by the template's recordSchema. The deep design is
 at https://github.com/aerolalit/paneui/issues/287.
 
@@ -22,16 +22,16 @@ Usage:
   pane records <verb> [options]
 
 Verbs:
-  list <surface-id> <collection>
+  list <pane-id> <collection>
        [--since <seq>] [--limit <n>] [--include-tombstones]
-  get  <surface-id> <collection> <record-key>
-  upsert <surface-id> <collection>
+  get  <pane-id> <collection> <record-key>
+  upsert <pane-id> <collection>
        --data <path|json> [--key <record-key>]
-  update <surface-id> <collection> <record-key>
+  update <pane-id> <collection> <record-key>
        --data <path|json> [--if-match <version>]
-  delete <surface-id> <collection> <record-key>
+  delete <pane-id> <collection> <record-key>
        [--if-match <version>] [--yes]
-  watch  <surface-id>
+  watch  <pane-id>
        [--collection <name>]... [--since-seq <name>=<n>]...
 
 Output (stdout, JSON-per-line for watch, single JSON for others).
@@ -97,10 +97,10 @@ async function runList(args: ParsedArgs): Promise<void> {
     ["include-tombstones", "help"],
     "pane records list",
   );
-  const surfaceId = args.positionals[0];
+  const paneId = args.positionals[0];
   const collection = args.positionals[1];
-  if (!surfaceId || !collection) {
-    fail("usage: pane records list <surface-id> <collection>", "invalid_args");
+  if (!paneId || !collection) {
+    fail("usage: pane records list <pane-id> <collection>", "invalid_args");
   }
   const since = parseIntFlag(args, "since", 0);
   const limit = parseIntFlag(args, "limit", undefined, { min: 1, max: 200 });
@@ -108,7 +108,7 @@ async function runList(args: ParsedArgs): Promise<void> {
 
   const client = makeClient(args);
   try {
-    const page = await client.listRecords(surfaceId!, collection!, {
+    const page = await client.listRecords(paneId!, collection!, {
       since,
       ...(limit !== undefined ? { limit } : {}),
     });
@@ -131,16 +131,16 @@ async function runList(args: ParsedArgs): Promise<void> {
 
 async function runGet(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, ["url", "api-key"], ["help"], "pane records get");
-  const [surfaceId, collection, recordKey] = args.positionals;
-  if (!surfaceId || !collection || !recordKey) {
+  const [paneId, collection, recordKey] = args.positionals;
+  if (!paneId || !collection || !recordKey) {
     fail(
-      "usage: pane records get <surface-id> <collection> <record-key>",
+      "usage: pane records get <pane-id> <collection> <record-key>",
       "invalid_args",
     );
   }
   const client = makeClient(args);
   try {
-    const row = await client.getRecord(surfaceId!, collection!, recordKey!);
+    const row = await client.getRecord(paneId!, collection!, recordKey!);
     if (!row) {
       fail(
         `no record at key '${recordKey}' in collection '${collection}'`,
@@ -164,10 +164,10 @@ async function runUpsert(args: ParsedArgs): Promise<void> {
     ["help"],
     "pane records upsert",
   );
-  const [surfaceId, collection] = args.positionals;
-  if (!surfaceId || !collection) {
+  const [paneId, collection] = args.positionals;
+  if (!paneId || !collection) {
     fail(
-      "usage: pane records upsert <surface-id> <collection> --data <path|json>",
+      "usage: pane records upsert <pane-id> <collection> --data <path|json>",
       "invalid_args",
     );
   }
@@ -185,7 +185,7 @@ async function runUpsert(args: ParsedArgs): Promise<void> {
   try {
     const body: { record_key?: string; data: unknown } = { data };
     if (key !== undefined) body.record_key = key;
-    const out = await client.upsertRecord(surfaceId!, collection!, body);
+    const out = await client.upsertRecord(paneId!, collection!, body);
     printJson(out);
   } catch (e) {
     failFromError(e);
@@ -203,10 +203,10 @@ async function runUpdate(args: ParsedArgs): Promise<void> {
     ["help"],
     "pane records update",
   );
-  const [surfaceId, collection, recordKey] = args.positionals;
-  if (!surfaceId || !collection || !recordKey) {
+  const [paneId, collection, recordKey] = args.positionals;
+  if (!paneId || !collection || !recordKey) {
     fail(
-      "usage: pane records update <surface-id> <collection> <record-key> --data <path|json>",
+      "usage: pane records update <pane-id> <collection> <record-key> --data <path|json>",
       "invalid_args",
     );
   }
@@ -225,7 +225,7 @@ async function runUpdate(args: ParsedArgs): Promise<void> {
     const body: { data: unknown; if_match?: number } = { data };
     if (ifMatch !== undefined) body.if_match = ifMatch;
     const out = await client.updateRecord(
-      surfaceId!,
+      paneId!,
       collection!,
       recordKey!,
       body,
@@ -247,10 +247,10 @@ async function runDelete(args: ParsedArgs): Promise<void> {
     ["yes", "help"],
     "pane records delete",
   );
-  const [surfaceId, collection, recordKey] = args.positionals;
-  if (!surfaceId || !collection || !recordKey) {
+  const [paneId, collection, recordKey] = args.positionals;
+  if (!paneId || !collection || !recordKey) {
     fail(
-      "usage: pane records delete <surface-id> <collection> <record-key>",
+      "usage: pane records delete <pane-id> <collection> <record-key>",
       "invalid_args",
     );
   }
@@ -258,7 +258,7 @@ async function runDelete(args: ParsedArgs): Promise<void> {
 
   const client = makeClient(args);
   try {
-    await client.deleteRecord(surfaceId!, collection!, recordKey!, {
+    await client.deleteRecord(paneId!, collection!, recordKey!, {
       ...(ifMatch !== undefined ? { ifMatch } : {}),
     });
     printJson({ deleted: true, key: recordKey });
@@ -279,9 +279,9 @@ async function runWatch(args: ParsedArgs): Promise<void> {
     ["help"],
     "pane records watch",
   );
-  const [surfaceId] = args.positionals;
-  if (!surfaceId) {
-    fail("usage: pane records watch <surface-id>", "invalid_args");
+  const [paneId] = args.positionals;
+  if (!paneId) {
+    fail("usage: pane records watch <pane-id>", "invalid_args");
   }
 
   // --collection a,b,c (single comma list) OR repeated --collection foo flags.
@@ -319,7 +319,7 @@ async function runWatch(args: ParsedArgs): Promise<void> {
   const handle = openStream(
     {
       wsBaseUrl: cfg.url.replace(/^http/, "ws"),
-      surfaceId: surfaceId!,
+      paneId: paneId!,
       token: cfg.apiKey,
       subscribeRecords,
       sinceRecordSeq,

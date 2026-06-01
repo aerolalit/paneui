@@ -3,7 +3,7 @@
 //
 // Taste notes are presentation preferences the agent has learned from human
 // feedback ("denser layout", "no rounded corners", "use a dark header") — the
-// kind of guidance that should outlive a single surface. The intended loop:
+// kind of guidance that should outlive a single pane. The intended loop:
 //
 //   1. Before generating a pane template, run `pane taste get` and feed the
 //      `taste` field into the prompt so prior preferences shape the output.
@@ -14,7 +14,7 @@
 //      unbounded into noise).
 //
 // Keep taste notes about *presentation/UI taste only* — colours, density,
-// component preferences. Project context, todos, and per-surface state belong
+// component preferences. Project context, todos, and per-pane state belong
 // somewhere else. Today the attachment is keyed by the agent's API key (per-agent);
 // when pane gains first-class humans, this may move to per-human.
 
@@ -36,7 +36,7 @@ agent has picked up from human feedback ("denser table", "no rounded corners",
 "use a dark header"). Read them before generating a pane template so prior
 feedback shapes the output; rewrite them whenever the human gives new
 presentation feedback. Keep entries about UI/presentation taste only — not
-project context, todos, or surface state.
+project context, todos, or pane state.
 
 Usage:
   pane taste <subcommand> [options]

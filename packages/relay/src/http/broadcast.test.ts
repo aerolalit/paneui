@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { openWaiter, publish, waitForEvent } from "./broadcast.js";
 import type { SerializedEvent } from "../types.js";
 
-function makeEvent(id: string, surfaceId: string): SerializedEvent {
+function makeEvent(id: string, paneId: string): SerializedEvent {
   return {
     id,
-    surface_id: surfaceId,
+    pane_id: paneId,
     author: { kind: "agent", id: "a_0" },
     ts: new Date().toISOString(),
     type: "review.commentAdded",
@@ -17,11 +17,11 @@ function makeEvent(id: string, surfaceId: string): SerializedEvent {
 
 describe("openWaiter", () => {
   it("buffers an event published before wait() is called and delivers it", async () => {
-    const surfaceId = "sur_buffer";
-    const waiter = openWaiter(surfaceId);
+    const paneId = "pan_buffer";
+    const waiter = openWaiter(paneId);
     try {
       // Event arrives during the "query window" — after subscribe, before wait().
-      publish(surfaceId, makeEvent("1", surfaceId));
+      publish(paneId, makeEvent("1", paneId));
       const got = await waiter.wait(50);
       expect(got?.id).toBe("1");
     } finally {
@@ -30,11 +30,11 @@ describe("openWaiter", () => {
   });
 
   it("blocks for the next event when nothing is buffered", async () => {
-    const surfaceId = "sur_block";
-    const waiter = openWaiter(surfaceId);
+    const paneId = "pan_block";
+    const waiter = openWaiter(paneId);
     try {
       const pending = waiter.wait(1000);
-      publish(surfaceId, makeEvent("2", surfaceId));
+      publish(paneId, makeEvent("2", paneId));
       const got = await pending;
       expect(got?.id).toBe("2");
     } finally {
@@ -43,8 +43,8 @@ describe("openWaiter", () => {
   });
 
   it("resolves to null after the timeout when no event arrives", async () => {
-    const surfaceId = "sur_timeout";
-    const waiter = openWaiter(surfaceId);
+    const paneId = "pan_timeout";
+    const waiter = openWaiter(paneId);
     try {
       const got = await waiter.wait(10);
       expect(got).toBeNull();
@@ -54,10 +54,10 @@ describe("openWaiter", () => {
   });
 
   it("does not deliver after close()", async () => {
-    const surfaceId = "sur_closed";
-    const waiter = openWaiter(surfaceId);
+    const paneId = "pan_closed";
+    const waiter = openWaiter(paneId);
     waiter.close();
-    publish(surfaceId, makeEvent("3", surfaceId));
+    publish(paneId, makeEvent("3", paneId));
     const got = await waiter.wait(10);
     expect(got).toBeNull();
   });
@@ -65,7 +65,7 @@ describe("openWaiter", () => {
 
 describe("waitForEvent", () => {
   it("resolves to null after the timeout", async () => {
-    const got = await waitForEvent("sur_none", 10);
+    const got = await waitForEvent("pan_none", 10);
     expect(got).toBeNull();
   });
 });

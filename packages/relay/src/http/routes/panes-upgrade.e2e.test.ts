@@ -1,6 +1,6 @@
-// End-to-end tests for POST /v1/surfaces/:id/upgrade (#267 PR B).
+// End-to-end tests for POST /v1/panes/:id/upgrade (#267 PR B).
 //
-// The route re-points a live surface's templateVersionId to another
+// The route re-points a live pane's templateVersionId to another
 // version of the same template. The schema-compat gate (PR A) refuses
 // when the target schema narrows the old one; compat="force" overrides.
 // Events on disk are unchanged — #268's per-event template_version stamp
@@ -44,13 +44,13 @@ beforeEach(async () => {
   await testDb.truncateAll(prisma);
 });
 
-// Seed an agent + a template with v1, then a fresh surface pinned to v1.
-async function seedSurfaceV1(opts?: { v1Schema?: object }): Promise<{
+// Seed an agent + a template with v1, then a fresh pane pinned to v1.
+async function seedPaneV1(opts?: { v1Schema?: object }): Promise<{
   apiKey: string;
   agentId: string;
   templateId: string;
   v1Id: string;
-  surfaceId: string;
+  paneId: string;
 }> {
   const apiKey = generateApiKey();
   const agent = await prisma.agent.create({
@@ -87,13 +87,13 @@ async function seedSurfaceV1(opts?: { v1Schema?: object }): Promise<{
       },
     },
   });
-  const surfaceId = `sur_${randomBytes(8).toString("hex")}`;
-  await prisma.surface.create({
+  const paneId = `pan_${randomBytes(8).toString("hex")}`;
+  await prisma.pane.create({
     data: {
-      id: surfaceId,
+      id: paneId,
       agentId: agent.id,
       templateVersionId: v1.id,
-      title: "Test surface",
+      title: "Test pane",
       status: "open",
       expiresAt: new Date(Date.now() + 3_600_000),
     },
@@ -103,7 +103,7 @@ async function seedSurfaceV1(opts?: { v1Schema?: object }): Promise<{
     agentId: agent.id,
     templateId: tmpl.id,
     v1Id: v1.id,
-    surfaceId,
+    paneId,
   };
 }
 
@@ -128,12 +128,12 @@ async function publishV2(
 }
 
 function postUpgrade(
-  surfaceId: string,
+  paneId: string,
   apiKey: string,
   body: unknown,
 ): Promise<Response> {
   return app.fetch(
-    new Request(`http://t/v1/surfaces/${surfaceId}/upgrade`, {
+    new Request(`http://t/v1/panes/${paneId}/upgrade`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -144,9 +144,9 @@ function postUpgrade(
   );
 }
 
-describe("POST /v1/surfaces/:id/upgrade — happy path", () => {
-  it("re-points the surface to a compatible newer version", async () => {
-    const { apiKey, templateId, v1Id, surfaceId } = await seedSurfaceV1();
+describe("POST /v1/panes/:id/upgrade — happy path", () => {
+  it("re-points the pane to a compatible newer version", async () => {
+    const { apiKey, templateId, v1Id, paneId } = await seedPaneV1();
     // v2 is a superset of v1: same payload shape, plus a new optional field.
     const { v2Id } = await publishV2(templateId, {
       events: {
@@ -163,7 +163,7 @@ describe("POST /v1/surfaces/:id/upgrade — happy path", () => {
       },
     });
 
-    const res = await postUpgrade(surfaceId, apiKey, {});
+    const res = await postUpgrade(paneId, apiKey, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       template_version_id: string;
@@ -176,22 +176,22 @@ describe("POST /v1/surfaces/:id/upgrade — happy path", () => {
     expect(body.template_version).toBe(2);
     expect(body.breaks).toEqual([]);
 
-    // Surface row is re-pinned.
-    const updated = await prisma.surface.findUnique({
-      where: { id: surfaceId },
+    // Pane row is re-pinned.
+    const updated = await prisma.pane.findUnique({
+      where: { id: paneId },
     });
     expect(updated!.templateVersionId).toBe(v2Id);
     expect(updated!.templateVersionId).not.toBe(v1Id);
 
     // A system event was appended.
     const sysEvents = await prisma.event.findMany({
-      where: { surfaceId, type: "system.template.updated" },
+      where: { paneId, type: "system.template.updated" },
     });
     expect(sysEvents).toHaveLength(1);
   });
 
   it("accepts an explicit template_version body field", async () => {
-    const { apiKey, templateId, surfaceId } = await seedSurfaceV1();
+    const { apiKey, templateId, paneId } = await seedPaneV1();
     // Publish v2 AND v3; the caller pins v2 explicitly.
     await publishV2(templateId, {
       events: {
@@ -219,7 +219,7 @@ describe("POST /v1/surfaces/:id/upgrade — happy path", () => {
       data: { latestVersion: 3 },
     });
 
-    const res = await postUpgrade(surfaceId, apiKey, {
+    const res = await postUpgrade(paneId, apiKey, {
       template_version: 2,
     });
     expect(res.status).toBe(200);
@@ -227,30 +227,30 @@ describe("POST /v1/surfaces/:id/upgrade — happy path", () => {
     expect(body.template_version).toBe(2);
   });
 
-  it("is a no-op when the surface is already on the target version", async () => {
-    const { apiKey, surfaceId, v1Id } = await seedSurfaceV1();
-    const res = await postUpgrade(surfaceId, apiKey, { template_version: 1 });
+  it("is a no-op when the pane is already on the target version", async () => {
+    const { apiKey, paneId, v1Id } = await seedPaneV1();
+    const res = await postUpgrade(paneId, apiKey, { template_version: 1 });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { upgraded: boolean };
     expect(body.upgraded).toBe(false);
 
     // No system event was appended for the no-op.
     const sysEvents = await prisma.event.findMany({
-      where: { surfaceId, type: "system.template.updated" },
+      where: { paneId, type: "system.template.updated" },
     });
     expect(sysEvents).toHaveLength(0);
 
-    // Surface still on v1.
-    const updated = await prisma.surface.findUnique({
-      where: { id: surfaceId },
+    // Pane still on v1.
+    const updated = await prisma.pane.findUnique({
+      where: { id: paneId },
     });
     expect(updated!.templateVersionId).toBe(v1Id);
   });
 });
 
-describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
+describe("POST /v1/panes/:id/upgrade — schema-compat gate", () => {
   it("refuses 422 when the target narrows the schema (strict, default)", async () => {
-    const { apiKey, templateId, surfaceId } = await seedSurfaceV1({
+    const { apiKey, templateId, paneId } = await seedPaneV1({
       v1Schema: {
         events: {
           "feed.logged": {
@@ -270,7 +270,7 @@ describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
       },
     });
 
-    const res = await postUpgrade(surfaceId, apiKey, {});
+    const res = await postUpgrade(paneId, apiKey, {});
     expect(res.status).toBe(422);
     const body = (await res.json()) as {
       error: {
@@ -286,7 +286,7 @@ describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
   });
 
   it("force=force applies the upgrade even with breaks", async () => {
-    const { apiKey, templateId, surfaceId } = await seedSurfaceV1({
+    const { apiKey, templateId, paneId } = await seedPaneV1({
       v1Schema: {
         events: {
           "feed.logged": {
@@ -307,7 +307,7 @@ describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
       },
     });
 
-    const res = await postUpgrade(surfaceId, apiKey, { compat: "force" });
+    const res = await postUpgrade(paneId, apiKey, { compat: "force" });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       upgraded: boolean;
@@ -318,15 +318,15 @@ describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
     expect(body.compat).toBe("force");
     expect(body.breaks.length).toBeGreaterThan(0);
 
-    // Surface was re-pinned despite the break.
-    const updated = await prisma.surface.findUnique({
-      where: { id: surfaceId },
+    // Pane was re-pinned despite the break.
+    const updated = await prisma.pane.findUnique({
+      where: { id: paneId },
     });
     expect(updated!.templateVersionId).toBe(v2Id);
 
     // The system event recorded the breaks for the audit trail.
     const sysEvent = await prisma.event.findFirst({
-      where: { surfaceId, type: "system.template.updated" },
+      where: { paneId, type: "system.template.updated" },
     });
     const data = sysEvent!.data as { breaks: unknown[]; compat: string };
     expect(data.compat).toBe("force");
@@ -334,10 +334,10 @@ describe("POST /v1/surfaces/:id/upgrade — schema-compat gate", () => {
   });
 });
 
-describe("POST /v1/surfaces/:id/upgrade — error envelopes", () => {
-  it("404s on a surface the caller doesn't own", async () => {
-    const owner = await seedSurfaceV1();
-    // Create a second, unrelated agent and try to upgrade owner's surface.
+describe("POST /v1/panes/:id/upgrade — error envelopes", () => {
+  it("404s on a pane the caller doesn't own", async () => {
+    const owner = await seedPaneV1();
+    // Create a second, unrelated agent and try to upgrade owner's pane.
     const intruderKey = generateApiKey();
     await prisma.agent.create({
       data: {
@@ -346,56 +346,55 @@ describe("POST /v1/surfaces/:id/upgrade — error envelopes", () => {
         keyPrefix: keyPrefix(intruderKey),
       },
     });
-    const res = await postUpgrade(owner.surfaceId, intruderKey, {});
+    const res = await postUpgrade(owner.paneId, intruderKey, {});
     expect(res.status).toBe(404);
   });
 
-  it("404s on an unknown surface id", async () => {
-    const { apiKey } = await seedSurfaceV1();
-    const res = await postUpgrade("sur_does_not_exist", apiKey, {});
+  it("404s on an unknown pane id", async () => {
+    const { apiKey } = await seedPaneV1();
+    const res = await postUpgrade("pan_does_not_exist", apiKey, {});
     expect(res.status).toBe(404);
   });
 
   it("404s when the target version doesn't exist", async () => {
-    const { apiKey, surfaceId } = await seedSurfaceV1();
-    const res = await postUpgrade(surfaceId, apiKey, {
+    const { apiKey, paneId } = await seedPaneV1();
+    const res = await postUpgrade(paneId, apiKey, {
       template_version: 99,
     });
     expect(res.status).toBe(404);
   });
 
-  it("410s on a closed surface", async () => {
-    const { apiKey, surfaceId, templateId } = await seedSurfaceV1();
+  it("410s on a closed pane", async () => {
+    const { apiKey, paneId, templateId } = await seedPaneV1();
     await publishV2(templateId, {
       events: {
         "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
       },
     });
-    await prisma.surface.update({
-      where: { id: surfaceId },
+    await prisma.pane.update({
+      where: { id: paneId },
       data: { status: "closed" },
     });
-    const res = await postUpgrade(surfaceId, apiKey, {});
+    const res = await postUpgrade(paneId, apiKey, {});
     expect(res.status).toBe(410);
   });
 
   it("400s on a malformed body (bad compat value)", async () => {
-    const { apiKey, surfaceId } = await seedSurfaceV1();
-    const res = await postUpgrade(surfaceId, apiKey, {
+    const { apiKey, paneId } = await seedPaneV1();
+    const res = await postUpgrade(paneId, apiKey, {
       compat: "yolo",
     });
     expect(res.status).toBe(400);
   });
 });
 
-describe("POST /v1/surfaces/:id/upgrade — event history preservation (#268)", () => {
+describe("POST /v1/panes/:id/upgrade — event history preservation (#268)", () => {
   it("leaves existing events on their original templateVersionId stamp", async () => {
-    const { apiKey, templateId, v1Id, surfaceId, agentId } =
-      await seedSurfaceV1();
+    const { apiKey, templateId, v1Id, paneId, agentId } = await seedPaneV1();
     // Write an event under v1.
     await prisma.event.create({
       data: {
-        surfaceId,
+        paneId,
         authorKind: "agent",
         authorId: agentId,
         type: "feed.logged",
@@ -417,12 +416,12 @@ describe("POST /v1/surfaces/:id/upgrade — event history preservation (#268)", 
         },
       },
     });
-    const res = await postUpgrade(surfaceId, apiKey, {});
+    const res = await postUpgrade(paneId, apiKey, {});
     expect(res.status).toBe(200);
 
     // The v1 event still carries the v1 stamp.
     const events = await prisma.event.findMany({
-      where: { surfaceId, type: "feed.logged" },
+      where: { paneId, type: "feed.logged" },
     });
     expect(events).toHaveLength(1);
     expect(events[0]!.templateVersionId).toBe(v1Id);
@@ -431,7 +430,7 @@ describe("POST /v1/surfaces/:id/upgrade — event history preservation (#268)", 
     // The system event recording the upgrade carries the NEW version's
     // stamp (it was written after the re-pin).
     const sysEvent = await prisma.event.findFirst({
-      where: { surfaceId, type: "system.template.updated" },
+      where: { paneId, type: "system.template.updated" },
     });
     expect(sysEvent!.templateVersionId).toBe(v2Id);
     expect(sysEvent!.templateVersionNum).toBe(2);

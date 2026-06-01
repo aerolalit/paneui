@@ -405,13 +405,13 @@ describe("/v1/templates", () => {
   });
 });
 
-// DELETE /v1/templates/:id — strict cascade: refuse if any surface refs it.
+// DELETE /v1/templates/:id — strict cascade: refuse if any pane refs it.
 describe("DELETE /v1/templates/:id (#137)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("deletes an template that has no referencing surface (204)", async () => {
+  it("deletes an template that has no referencing pane (204)", async () => {
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {
       template_id: string;
@@ -446,11 +446,11 @@ describe("DELETE /v1/templates/:id (#137)", () => {
 
   it("returns 404 artifact_not_found on the second delete (not idempotent at the row level)", async () => {
     // We deliberately DO NOT make this 204-on-already-gone like
-    // DELETE /v1/surfaces, because the resource state semantics differ:
-    // a surface is a stateful row that can transition to 'closed' (still
+    // DELETE /v1/panes, because the resource state semantics differ:
+    // a pane is a stateful row that can transition to 'closed' (still
     // present), whereas an template is fully removed. The second DELETE
     // can't tell "you already deleted it" from "you sent the wrong id"
-    // — surface 404 either way and let the caller decide.
+    // — pane 404 either way and let the caller decide.
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {
       template_id: string;
@@ -469,15 +469,15 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     expect(body.error.code).toBe("artifact_not_found");
   });
 
-  it("refuses with 409 conflict when a surface still references the template", async () => {
-    // Strict-cascade behaviour: any surface (open OR closed) referencing
+  it("refuses with 409 conflict when a pane still references the template", async () => {
+    // Strict-cascade behaviour: any pane (open OR closed) referencing
     // a version blocks deletion. The error envelope carries a count and a
     // hint telling the caller what to do.
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {
       template_id: string;
     };
-    const sessRes = await req("POST", "/v1/surfaces", apiKey, {
+    const sessRes = await req("POST", "/v1/panes", apiKey, {
       template: { id: created.template_id },
     });
     expect(sessRes.status).toBe(201);
@@ -492,27 +492,27 @@ describe("DELETE /v1/templates/:id (#137)", () => {
       error: { code: string; message: string; hint?: string };
     };
     expect(body.error.code).toBe("conflict");
-    expect(body.error.message).toMatch(/1 referencing surface/);
+    expect(body.error.message).toMatch(/1 referencing pane/);
     // The hint points at the recovery action.
-    expect(body.error.hint).toMatch(/pane surface delete/);
+    expect(body.error.hint).toMatch(/pane pane delete/);
   });
 
-  it("refuses with 409 even after the referencing surface is CLOSED", async () => {
-    // 'pane surface delete <surface>' marks the surface status=closed but the row
+  it("refuses with 409 even after the referencing pane is CLOSED", async () => {
+    // 'pane pane delete <pane>' marks the pane status=closed but the row
     // (and its FK to template_version_id) stays. Strict-cascade still
     // refuses; the reporter's "stale test templates" complaint is only
-    // partially addressed until surface rows are actually dropped, but
+    // partially addressed until pane rows are actually dropped, but
     // that's a separate PR (see #137 follow-up).
     const apiKey = await seedAgent();
     const created = (await (await createArtifact(apiKey)).json()) as {
       template_id: string;
     };
-    const sessRes = await req("POST", "/v1/surfaces", apiKey, {
+    const sessRes = await req("POST", "/v1/panes", apiKey, {
       template: { id: created.template_id },
     });
-    const sess = (await sessRes.json()) as { surface_id: string };
+    const sess = (await sessRes.json()) as { pane_id: string };
     expect(
-      (await req("DELETE", `/v1/surfaces/${sess.surface_id}`, apiKey)).status,
+      (await req("DELETE", `/v1/panes/${sess.pane_id}`, apiKey)).status,
     ).toBe(204);
 
     const del = await req(

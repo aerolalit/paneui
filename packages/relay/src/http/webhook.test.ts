@@ -44,7 +44,7 @@ describe("fire (per-attempt timeout)", () => {
 
   const event: SerializedEvent = {
     id: "evt_1",
-    surface_id: "sess_1",
+    pane_id: "sess_1",
     author: { kind: "agent", id: "agent_1" },
     ts: "2026-01-01T00:00:00.000Z",
     type: "review.commentAdded",
@@ -116,7 +116,7 @@ describe("fire (SSRF: redirects are not followed)", () => {
 
   const event: SerializedEvent = {
     id: "evt_1",
-    surface_id: "sess_1",
+    pane_id: "sess_1",
     author: { kind: "agent", id: "agent_1" },
     ts: "2026-01-01T00:00:00.000Z",
     type: "review.commentAdded",
@@ -127,7 +127,7 @@ describe("fire (SSRF: redirects are not followed)", () => {
 
   it("requests fetch with redirect: 'manual' so a 3xx is never chased", async () => {
     // A target that always 302s. With redirect: "manual" the platform fetch
-    // surfaces an opaqueredirect response (status 0) instead of following the
+    // panes an opaqueredirect response (status 0) instead of following the
     // Location — so the relay cannot be bounced to an internal address.
     const inits: RequestInit[] = [];
     const fetchMock = vi
@@ -156,7 +156,7 @@ describe("fire (SSRF: redirects are not followed)", () => {
   });
 
   it("treats a 3xx redirect as a failed delivery and retries (does not return early)", async () => {
-    // A plain 302 (some runtimes surface the status rather than an
+    // A plain 302 (some runtimes pane the status rather than an
     // opaqueredirect). It is NOT a 2xx, so fire() must keep retrying and
     // never treat it as a successful delivery.
     const fetchMock = vi.fn().mockResolvedValue({

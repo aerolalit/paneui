@@ -22,10 +22,10 @@
 //     attachment ids (the owner check is the gate).
 //
 // What this DOESN'T do (known limitation)
-//   * It does NOT enforce SCOPE compatibility. A surface-scope attachment
-//     created for surface A is currently accepted in an event on
-//     surface B as long as the calling agent owns the attachment. Tightening
-//     this to "surface-scope attachment must match THIS surface" is a
+//   * It does NOT enforce SCOPE compatibility. A pane-scope attachment
+//     created for pane A is currently accepted in an event on
+//     pane B as long as the calling agent owns the attachment. Tightening
+//     this to "pane-scope attachment must match THIS pane" is a
 //     follow-up tracked separately — the owner check is the
 //     load-bearing one for the multi-tenant story.
 

@@ -1,7 +1,7 @@
 {
   "name": "@paneui/cli",
   "version": "0.0.9",
-  "description": "Command-line client for the Pane relay: create surfaces, inspect state, send and watch events.",
+  "description": "Command-line client for the Pane relay: create panes, inspect state, send and watch events.",
   "license": "MIT",
   "type": "module",
   "keywords": [

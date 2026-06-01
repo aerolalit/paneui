@@ -1,6 +1,6 @@
 // In-shell record store (#296).
 //
-// The bridge shell owns one of these per surface. Records arrive as
+// The bridge shell owns one of these per pane. Records arrive as
 // `record.upsert` / `record.delete` messages on the WS channel, get folded
 // into this store, and a delta is pushed into the iframe via postMessage
 // (the iframe-routing piece lands in #298 — this PR's scope is the store
@@ -17,7 +17,7 @@
 // (tsconfig.client.json) restricts rootDir to this directory — it cannot
 // import from ../../ws/messages.js. The canonical declarations live in
 // ws/messages.ts (#294); these are structurally identical and must stay in
-// sync. A drift would surface in the record-store.test.ts assertions.
+// sync. A drift would pane in the record-store.test.ts assertions.
 export interface SerializedRecord {
   id: string;
   collection: string;

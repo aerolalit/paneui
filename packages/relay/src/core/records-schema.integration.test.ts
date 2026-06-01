@@ -4,13 +4,13 @@
 // routes ship in #289 / #291 / #292). This file pins the parts of the
 // schema that are easy to regress later:
 //
-//   1. The `record_collections.surface_id` FK is `ON DELETE CASCADE`, so a
-//      surface delete takes its collections (and, transitively, its rows)
+//   1. The `record_collections.pane_id` FK is `ON DELETE CASCADE`, so a
+//      pane delete takes its collections (and, transitively, its rows)
 //      with it. This mirrors the existing `Event` and `Attachment` cascades
-//      and is what guarantees a surface delete leaves no record-table
+//      and is what guarantees a pane delete leaves no record-table
 //      orphans.
 //   2. The `surface_records.collection_id` FK is `ON DELETE CASCADE`, so
-//      deleting a collection (e.g. via the surface cascade above) also
+//      deleting a collection (e.g. via the pane cascade above) also
 //      removes its rows.
 //
 // Engine-agnostic — the cascade behaviour is what matters, not the SQL
@@ -54,7 +54,7 @@ async function seedAgent(): Promise<string> {
   return agent.id;
 }
 
-async function seedSurfaceFor(agentId: string): Promise<string> {
+async function seedPaneFor(agentId: string): Promise<string> {
   const template = await prisma.template.create({
     data: { ownerId: agentId, latestVersion: 1 },
   });
@@ -66,27 +66,27 @@ async function seedSurfaceFor(agentId: string): Promise<string> {
       templateSource: "<html></html>",
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: "sur_" + randomBytes(8).toString("hex"),
+      id: "pan_" + randomBytes(8).toString("hex"),
       agentId,
       templateVersionId: version.id,
-      title: "records cascade test surface",
+      title: "records cascade test pane",
       expiresAt: new Date(Date.now() + 3600_000),
     },
   });
-  return surface.id;
+  return pane.id;
 }
 
 describe("records schema — cascade behaviour", () => {
-  it("RecordCollection cascades on surface delete (and takes its records with it)", async () => {
+  it("RecordCollection cascades on pane delete (and takes its records with it)", async () => {
     const agentId = await seedAgent();
-    const surfaceId = await seedSurfaceFor(agentId);
+    const paneId = await seedPaneFor(agentId);
 
     const collection = await prisma.recordCollection.create({
-      data: { surfaceId, name: "posts", seq: 1 },
+      data: { paneId, name: "posts", seq: 1 },
     });
-    const record = await prisma.surfaceRecord.create({
+    const record = await prisma.paneRecord.create({
       data: {
         collectionId: collection.id,
         recordKey: "post_1",
@@ -104,12 +104,12 @@ describe("records schema — cascade behaviour", () => {
       }),
     ).not.toBeNull();
     expect(
-      await prisma.surfaceRecord.findUnique({ where: { id: record.id } }),
+      await prisma.paneRecord.findUnique({ where: { id: record.id } }),
     ).not.toBeNull();
 
-    await prisma.surface.delete({ where: { id: surfaceId } });
+    await prisma.pane.delete({ where: { id: paneId } });
 
-    // Collection rides the FK to Surface (CASCADE), and its rows ride the
+    // Collection rides the FK to Pane (CASCADE), and its rows ride the
     // FK to RecordCollection (CASCADE) — both are gone.
     expect(
       await prisma.recordCollection.findUnique({
@@ -117,18 +117,18 @@ describe("records schema — cascade behaviour", () => {
       }),
     ).toBeNull();
     expect(
-      await prisma.surfaceRecord.findUnique({ where: { id: record.id } }),
+      await prisma.paneRecord.findUnique({ where: { id: record.id } }),
     ).toBeNull();
   });
 
-  it("SurfaceRecord cascades on RecordCollection delete", async () => {
+  it("PaneRecord cascades on RecordCollection delete", async () => {
     const agentId = await seedAgent();
-    const surfaceId = await seedSurfaceFor(agentId);
+    const paneId = await seedPaneFor(agentId);
 
     const collection = await prisma.recordCollection.create({
-      data: { surfaceId, name: "comments", seq: 1 },
+      data: { paneId, name: "comments", seq: 1 },
     });
-    const r1 = await prisma.surfaceRecord.create({
+    const r1 = await prisma.paneRecord.create({
       data: {
         collectionId: collection.id,
         recordKey: "cmt_a",
@@ -138,7 +138,7 @@ describe("records schema — cascade behaviour", () => {
         authorId: "h_1",
       },
     });
-    const r2 = await prisma.surfaceRecord.create({
+    const r2 = await prisma.paneRecord.create({
       data: {
         collectionId: collection.id,
         recordKey: "cmt_b",
@@ -152,10 +152,10 @@ describe("records schema — cascade behaviour", () => {
     await prisma.recordCollection.delete({ where: { id: collection.id } });
 
     expect(
-      await prisma.surfaceRecord.findUnique({ where: { id: r1.id } }),
+      await prisma.paneRecord.findUnique({ where: { id: r1.id } }),
     ).toBeNull();
     expect(
-      await prisma.surfaceRecord.findUnique({ where: { id: r2.id } }),
+      await prisma.paneRecord.findUnique({ where: { id: r2.id } }),
     ).toBeNull();
   });
 });

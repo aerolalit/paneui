@@ -72,7 +72,7 @@ skill.get("/pane/SKILL.md", (c) =>
 
 // GET /skills/pane/SKILL.md/version — the version-only probe used by
 // `pane skill version` for the "is my local skill stale?" check. Tiny
-// payload (~30 bytes) so an agent can call it at every surface start
+// payload (~30 bytes) so an agent can call it at every pane start
 // without thinking about the bandwidth. Same 1-hour cache as the full
 // skill — they share the same boot-snapshot lifecycle.
 skill.get("/pane/SKILL.md/version", (c) =>

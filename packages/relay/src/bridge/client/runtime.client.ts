@@ -62,7 +62,7 @@ interface PaneApi {
   /**
    * Upload a browser `File` to the relay over the participant token bridge.
    * Returns a `AttachmentRef` the template can attach to a `pane.emit(...)` event
-   * (e.g. `pane.emit('photo', { attachment })`). Scope is forced to `surface` on
+   * (e.g. `pane.emit('photo', { attachment })`). Scope is forced to `pane` on
    * the server — see `POST /s/:participantToken/attachments` in the relay.
    *
    * Resolves with the AttachmentRef on success. Rejects with an `Error` whose
@@ -74,7 +74,7 @@ interface PaneApi {
   uploadBlob(file: File, options?: UploadBlobOpts): Promise<AttachmentRefLike>;
   /**
    * Lazily fetch a attachment's bytes by id. The attachment must be referenced from
-   * this surface — either in the agent's initial `inputData` or in an
+   * this pane — either in the agent's initial `inputData` or in an
    * event the agent has emitted. The shell brokers the fetch with the
    * participant token; the iframe receives a live `Blob` it can render
    * via `URL.createObjectURL(attachment)` (the iframe CSP allows `attachment:` URLs
@@ -92,7 +92,7 @@ interface PaneApi {
   downloadBlob(attachmentId: string): Promise<Blob>;
   /**
    * Trigger a browser save (download to disk / Files / Photos) of a attachment
-   * the surface references. Unlike `downloadBlob` which hands the iframe
+   * the pane references. Unlike `downloadBlob` which hands the iframe
    * the bytes, `saveBlob` only kicks off the OS save flow — the iframe
    * doesn't receive the bytes. Use this for non-image files (PDFs, CSVs,
    * archives) the human is meant to save rather than view inline.
@@ -107,9 +107,9 @@ interface PaneApi {
    */
   saveBlob(attachmentId: string, filename?: string): Promise<void>;
   /**
-   * The surface's per-instance seed data — the `input_data` the agent passed
-   * to `POST /v1/surfaces`, validated by the relay against the template
-   * version's `input_schema`. `null` when the surface was created without
+   * The pane's per-instance seed data — the `input_data` the agent passed
+   * to `POST /v1/panes`, validated by the relay against the template
+   * version's `input_schema`. `null` when the pane was created without
    * `input_data`. Read it to render this instance, e.g. a PR-review template
    * does `window.pane.inputData.prTitle`.
    *
@@ -118,7 +118,7 @@ interface PaneApi {
    */
   readonly inputData: unknown;
   /**
-   * Per-surface mutable record collections (#298). Read API: snapshot the
+   * Per-pane mutable record collections (#298). Read API: snapshot the
    * current rows for a collection or subscribe to live deltas (upserts +
    * deletes). Write API: create-or-upsert, optimistically update, or delete
    * a row via the shell's HTTP CRUD bridge. All operations are sandboxed
@@ -181,7 +181,7 @@ interface PaneApi {
    *
    * The Promise stays pending if the page never receives an `init` frame
    * (e.g. it was loaded outside a Pane shell). Resolves with `void`;
-   * surfaces with no `input_data` still resolve (the resolution signals
+   * panes with no `input_data` still resolve (the resolution signals
    * "init received," not "input_data is non-null").
    */
   readonly ready: Promise<void>;
@@ -247,9 +247,9 @@ declare global {
   let nextUploadId = 1;
   let nextDownloadId = 1;
   let nextSaveId = 1;
-  // The surface's per-instance input_data. Unknown until the 'init' frame
+  // The pane's per-instance input_data. Unknown until the 'init' frame
   // arrives (the relay validated it against the template version's
-  // input_schema at surface-create time). Exposed on the frozen `window.pane`
+  // input_schema at pane-create time). Exposed on the frozen `window.pane`
   // via a getter (see below) so the value can be filled in after `window.pane`
   // is already published — the getter reads this mutable backing variable.
   let inputData: unknown = null;
@@ -421,7 +421,7 @@ declare global {
   function downloadBlob(attachmentId: string): Promise<Blob> {
     if (typeof attachmentId !== "string" || attachmentId.length === 0) {
       // Local rejection — never post a malformed frame. Mirrors the
-      // non-File guard in uploadBlob and the relay's invalid_args surface.
+      // non-File guard in uploadBlob and the relay's invalid_args pane.
       const err: PaneError = new Error(
         "downloadBlob: attachment_id must be a non-empty string",
       );
@@ -454,7 +454,7 @@ declare global {
   }
 
   // window.pane.saveBlob(attachment_id, filename?) — asks the shell to trigger a
-  // browser save (download) for a attachment referenced by this surface. The shell
+  // browser save (download) for a attachment referenced by this pane. The shell
   // does the `<a download>` click from its own (non-sandboxed) document; the
   // sandbox `allow-downloads` flag is NOT sufficient on iOS WebKit, which
   // silently drops sandboxed-iframe downloads even with it. Returning from
@@ -509,10 +509,10 @@ declare global {
       if (m.payload && typeof m.payload.shell_origin === "string") {
         shellOrigin = m.payload.shell_origin;
       }
-      // The init frame carries this surface's `input_data` — the per-instance
-      // seed data the agent passed at surface-create, already validated by the
+      // The init frame carries this pane's `input_data` — the per-instance
+      // seed data the agent passed at pane-create, already validated by the
       // relay against the template version's `input_schema`. Store it so the
-      // `window.pane.inputData` getter can surface it to the template.
+      // `window.pane.inputData` getter can pane it to the template.
       if (m.payload && "input_data" in m.payload) {
         inputData = m.payload.input_data;
       }

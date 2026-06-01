@@ -36,7 +36,7 @@ import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
 import type { Participant, PrismaClient } from "@prisma/client";
-import type { SurfaceWithArtifactVersion } from "../core/events.js";
+import type { PaneWithTemplateVersion } from "../core/events.js";
 
 // Injected dependencies for the WebSocket transport. The WS upgrade path runs
 // outside the Hono request lifecycle, so config + the Prisma client are passed
@@ -52,7 +52,7 @@ export interface WsDeps {
   generalLimiter: SlidingWindowLimiter;
 }
 
-const STREAM_RX = /^\/v1\/surfaces\/([^/]+)\/stream(\?.*)?$/;
+const STREAM_RX = /^\/v1\/panes\/([^/]+)\/stream(\?.*)?$/;
 
 // #295 — cap on rows replayed per collection per connect. Above this, a
 // client sees the first N and then catches up via the GET pagination route
@@ -74,8 +74,8 @@ class RecordSubscriptionError extends Error {}
 // Exposed for unit testing — see ws/parse-record-subscriptions.test.ts.
 export const __recordSubsInternals = {
   RecordSubscriptionError,
-  parse: (url: URL, surface: SurfaceWithArtifactVersion) =>
-    parseRecordSubscriptions(url, surface),
+  parse: (url: URL, pane: PaneWithTemplateVersion) =>
+    parseRecordSubscriptions(url, pane),
 };
 
 // Parse `?subscribe_records=` + `?since_record_seq.<name>=` from the WS
@@ -84,14 +84,14 @@ export const __recordSubsInternals = {
 // silently miss messages because of a typo.
 function parseRecordSubscriptions(
   url: URL,
-  surface: SurfaceWithArtifactVersion,
+  pane: PaneWithTemplateVersion,
 ): RecordSubscriptions | null {
   const raw = url.searchParams.get("subscribe_records");
   if (raw === null) return null;
 
-  // Declared collections from the surface's pinned templateVersion.
+  // Declared collections from the pane's pinned templateVersion.
   const recordSchema = (
-    surface.templateVersion as unknown as { recordSchema: unknown }
+    pane.templateVersion as unknown as { recordSchema: unknown }
   ).recordSchema as Record<string, unknown> | null;
   const xpc =
     recordSchema && typeof recordSchema === "object"
@@ -111,7 +111,7 @@ function parseRecordSubscriptions(
     for (const name of collections) {
       if (!declared.includes(name)) {
         throw new RecordSubscriptionError(
-          `subscribe_records: collection '${name}' is not declared in this surface's template recordSchema (declared: ${declared.join(", ") || "none"})`,
+          `subscribe_records: collection '${name}' is not declared in this pane's template recordSchema (declared: ${declared.join(", ") || "none"})`,
         );
       }
     }
@@ -150,9 +150,9 @@ function parseRecordSubscriptions(
 // reaps the genuinely-dead ones instead of leaving them as ghosts.
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-// `ws` does not surface "did this socket pong recently" — we track it ourselves
-// on the socket object via this property. We also stash the socket's surfaceId
-// so the heartbeat can refresh that surface's Redis presence-hash TTL (the
+// `ws` does not pane "did this socket pong recently" — we track it ourselves
+// on the socket object via this property. We also stash the socket's paneId
+// so the heartbeat can refresh that pane's Redis presence-hash TTL (the
 // ghost-cleanup mechanism — see ws/presence.ts).
 interface AliveWs extends WebSocket {
   isAlive?: boolean;
@@ -181,14 +181,14 @@ export function attachWs(
   // browser connections warm and detects dead peers.
   const heartbeat = setInterval(() => {
     // Sessions with at least one live socket on this replica — their Redis
-    // presence-hash TTL gets refreshed below so an active surface never
-    // expires while a dead replica's surfaces are left to lapse.
+    // presence-hash TTL gets refreshed below so an active pane never
+    // expires while a dead replica's panes are left to lapse.
     const liveSessions = new Set<string>();
     for (const client of wss.clients) {
       const ws = client as AliveWs;
       if (ws.isAlive === false) {
         log.debug("ws heartbeat: terminating unresponsive socket", {
-          surfaceId: ws.paneSessionId,
+          paneId: ws.paneSessionId,
         });
         ws.terminate();
         continue;
@@ -201,10 +201,10 @@ export function attachWs(
         /* socket already closing — next tick's terminate() handles it */
       }
     }
-    // Refresh presence TTLs for every still-live surface. No-op when Redis is
+    // Refresh presence TTLs for every still-live pane. No-op when Redis is
     // off (the in-process Map has no TTL).
-    for (const surfaceId of liveSessions) {
-      void refreshSession(surfaceId);
+    for (const paneId of liveSessions) {
+      void refreshSession(paneId);
     }
   }, HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();
@@ -228,7 +228,7 @@ async function handleUpgrade(
       socket.destroy();
       return;
     }
-    const surfaceId = m[1]!;
+    const paneId = m[1]!;
 
     // Cross-site WebSocket hijacking guard. Browsers always send an `Origin`
     // header on a WS handshake; a `?token=`/`?ticket=` in the query string is
@@ -246,7 +246,7 @@ async function handleUpgrade(
       }
       if (!originOk) {
         sendUpgradeError(socket, 403, "origin mismatch", {
-          surfaceId,
+          paneId,
           origin,
         });
         return;
@@ -265,7 +265,7 @@ async function handleUpgrade(
         config.TRUSTED_PROXY,
       ))
     ) {
-      sendUpgradeError(socket, 429, "rate limit exceeded", { surfaceId });
+      sendUpgradeError(socket, 429, "rate limit exceeded", { paneId });
       return;
     }
 
@@ -278,98 +278,97 @@ async function handleUpgrade(
     // req.url so the relay's own access logs stay redacted.
     const cred = extractCredential(req, url);
     if (!cred) {
-      sendUpgradeError(socket, 401, "missing credential", { surfaceId });
+      sendUpgradeError(socket, 401, "missing credential", { paneId });
       return;
     }
 
     let author: Author;
-    let surface: SurfaceWithArtifactVersion;
+    let pane: PaneWithTemplateVersion;
     let participant: Participant | null = null;
 
     if (cred.kind === "ticket") {
       // The ticket replaces the AUTHENTICATION step only: redeeming it yields
       // the bound Author directly (no resolveBearer DB call). The handler
-      // still needs the Surface row (open/expiry check, passed downstream)
+      // still needs the Pane row (open/expiry check, passed downstream)
       // and, for a participant, the participant row for the joinedAt update —
       // so we load those below exactly as the token path does.
-      const redeemed = redeemTicket(cred.value, surfaceId);
+      const redeemed = redeemTicket(cred.value, paneId);
       if (!redeemed) {
         sendUpgradeError(socket, 401, "ticket invalid or expired", {
-          surfaceId,
+          paneId,
         });
         return;
       }
       author = redeemed;
-      const s = await prisma.surface.findUnique({
-        where: { id: surfaceId },
+      const s = await prisma.pane.findUnique({
+        where: { id: paneId },
         include: { templateVersion: true },
       });
       if (!s) {
-        sendUpgradeError(socket, 404, "surface not found (ticket path)", {
-          surfaceId,
+        sendUpgradeError(socket, 404, "pane not found (ticket path)", {
+          paneId,
         });
         return;
       }
-      surface = s;
+      pane = s;
       if (author.kind !== "agent" || author.id !== s.agentId) {
-        // A non-agent author, or an agent author that is not the surface
+        // A non-agent author, or an agent author that is not the pane
         // owner, is a participant — load its row for the joinedAt update.
         participant = await prisma.participant.findFirst({
-          where: { surfaceId, identityId: author.id },
+          where: { paneId, identityId: author.id },
         });
       }
     } else {
       const resolved = await resolveBearer(prisma, cred.value);
       if (!resolved) {
-        sendUpgradeError(socket, 404, "bearer not resolvable", { surfaceId });
+        sendUpgradeError(socket, 404, "bearer not resolvable", { paneId });
         return;
       }
       if (resolved.kind === "participant") {
-        if (resolved.participant.surfaceId !== surfaceId) {
-          sendUpgradeError(socket, 404, "participant surface mismatch", {
-            surfaceId,
+        if (resolved.participant.paneId !== paneId) {
+          sendUpgradeError(socket, 404, "participant pane mismatch", {
+            paneId,
           });
           return;
         }
         participant = resolved.participant;
-        surface = resolved.surface;
+        pane = resolved.pane;
         author = {
           kind: participant.kind === "agent" ? "agent" : "human",
           id: participant.identityId,
         };
       } else {
-        const s = await prisma.surface.findUnique({
-          where: { id: surfaceId },
+        const s = await prisma.pane.findUnique({
+          where: { id: paneId },
           include: { templateVersion: true },
         });
         if (!s || s.agentId !== resolved.agent.id) {
-          sendUpgradeError(socket, 404, "agent not surface owner", {
-            surfaceId,
+          sendUpgradeError(socket, 404, "agent not pane owner", {
+            paneId,
           });
           return;
         }
-        surface = s;
+        pane = s;
         author = { kind: "agent", id: resolved.agent.id };
       }
     }
 
-    if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
-      sendUpgradeError(socket, 410, "surface closed or expired", {
-        surfaceId,
-        surfaceStatus: surface.status,
+    if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
+      sendUpgradeError(socket, 410, "pane closed or expired", {
+        paneId,
+        paneStatus: pane.status,
       });
       return;
     }
 
-    // Per-surface WebSocket connection cap. Bounds how many concurrent sockets
-    // a single surface/token can hold open, so an abusive client cannot
+    // Per-pane WebSocket connection cap. Bounds how many concurrent sockets
+    // a single pane/token can hold open, so an abusive client cannot
     // exhaust file descriptors / memory by opening connections in a loop.
     if (
-      config.MAX_WS_CONNECTIONS_PER_SESSION > 0 &&
-      (await connectionCount(surfaceId)) >=
-        config.MAX_WS_CONNECTIONS_PER_SESSION
+      config.MAX_WS_CONNECTIONS_PER_PANE > 0 &&
+      (await connectionCount(paneId)) >= config.MAX_WS_CONNECTIONS_PER_PANE
     ) {
-      sendUpgradeError(socket, 429, "connection cap reached", { surfaceId });
+      sendUpgradeError(socket, 429, "connection cap reached", { paneId });
       return;
     }
 
@@ -393,10 +392,10 @@ async function handleUpgrade(
     //   ?since_record_seq.<name>=N    → per-collection replay cursor
     let recordSubscriptions: RecordSubscriptions | null = null;
     try {
-      recordSubscriptions = parseRecordSubscriptions(url, surface);
+      recordSubscriptions = parseRecordSubscriptions(url, pane);
     } catch (err) {
       if (err instanceof RecordSubscriptionError) {
-        sendUpgradeError(socket, 400, err.message, { surfaceId });
+        sendUpgradeError(socket, 400, err.message, { paneId });
         return;
       }
       throw err;
@@ -405,7 +404,7 @@ async function handleUpgrade(
     // Capture in lexical scope so handleConnection (closure-free) can use it.
     const localSubs = recordSubscriptions;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleConnection(ws, deps, surfaceId, author, since, localSubs);
+      void handleConnection(ws, deps, paneId, author, since, localSubs);
     });
   } catch (err) {
     log.error("ws upgrade failed", {
@@ -461,7 +460,7 @@ function extractCredential(
 // info still hits the aggregator) and emit the matching HTTP status line so
 // the WS client sees the same status code that any HTTP caller would. `reason`
 // is a short human-readable tag for operators chasing auth/cap/expiry events;
-// `context` carries the surfaceId (and anything else useful) — both are
+// `context` carries the paneId (and anything else useful) — both are
 // internal-only and never leave the log line.
 function sendUpgradeError(
   socket: Duplex,
@@ -492,20 +491,20 @@ function sendUpgradeError(
 // it for events seen during replay.
 async function withLiveCount(
   e: SerializedEvent,
-  surfaceId: string,
+  paneId: string,
 ): Promise<SerializedEvent> {
   const data =
     e.data && typeof e.data === "object" ? { ...(e.data as object) } : {};
   return {
     ...e,
-    data: { ...data, agentCountLive: await agentCount(surfaceId) },
+    data: { ...data, agentCountLive: await agentCount(paneId) },
   };
 }
 
 async function handleConnection(
   ws: WebSocket,
   deps: WsDeps,
-  surfaceId: string,
+  paneId: string,
   author: Author,
   sinceCursor: number | null,
   recordSubs: RecordSubscriptions | null,
@@ -518,22 +517,22 @@ async function handleConnection(
   // terminates the socket if it's still false on the next tick.
   const alive = ws as AliveWs;
   alive.isAlive = true;
-  // Stash the surfaceId so the heartbeat can refresh this surface's Redis
+  // Stash the paneId so the heartbeat can refresh this pane's Redis
   // presence-hash TTL (ghost cleanup — see ws/presence.ts).
-  alive.paneSessionId = surfaceId;
+  alive.paneSessionId = paneId;
   ws.on("pong", () => {
     alive.isAlive = true;
   });
 
   log.info("ws connected", {
-    surfaceId,
+    paneId,
     authorKind: author.kind,
     authorId: author.id,
   });
 
   ws.on("error", (err: Error) => {
     log.warn("ws error", {
-      surfaceId,
+      paneId,
       authorKind: author.kind,
       error: err.message,
     });
@@ -543,7 +542,7 @@ async function handleConnection(
   // joined event's agentCountLive, so the count reflects this connection too.
   const connId = randomUUID();
   await addConnection(
-    surfaceId,
+    paneId,
     connId,
     author.kind === "agent" ? "agent" : "human",
   );
@@ -553,14 +552,14 @@ async function handleConnection(
   //    the broadcast copy with the live agent count.
   await appendSystemEvent(
     prisma,
-    surfaceId,
+    paneId,
     "system.participant.joined",
     { author: { kind: author.kind, id: author.id } },
-    (e) => withLiveCount(e, surfaceId),
+    (e) => withLiveCount(e, paneId),
   );
 
   // 2) Replay every event since `sinceCursor` (or from the start).
-  const replayWhere: { surfaceId: string; id?: { gt: number } } = { surfaceId };
+  const replayWhere: { paneId: string; id?: { gt: number } } = { paneId };
   if (sinceCursor !== null) replayWhere.id = { gt: sinceCursor };
   const replay = await prisma.event.findMany({
     where: replayWhere,
@@ -581,7 +580,7 @@ async function handleConnection(
     for (const name of recordSubs.collections) {
       const since = recordSubs.sinceByCollection.get(name) ?? 0;
       const col = await prisma.recordCollection.findUnique({
-        where: { surfaceId_name: { surfaceId, name } },
+        where: { paneId_name: { paneId, name } },
       });
       if (!col) {
         // Declared collection with no rows yet — emit only the sentinel so
@@ -590,7 +589,7 @@ async function handleConnection(
         lastReplaySeq.set(name, since);
         continue;
       }
-      const rows = await prisma.surfaceRecord.findMany({
+      const rows = await prisma.paneRecord.findMany({
         where: { collectionId: col.id, seq: { gt: since } },
         orderBy: { seq: "asc" },
         take: MAX_RECORDS_REPLAY_BATCH,
@@ -625,7 +624,7 @@ async function handleConnection(
   const subscribedSet = recordSubs
     ? new Set(recordSubs.collections)
     : new Set<string>();
-  const unsub = subscribe(surfaceId, (m) => {
+  const unsub = subscribe(paneId, (m) => {
     if (isEvent(m)) {
       const n = Number(m.id);
       if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, m);
@@ -654,12 +653,12 @@ async function handleConnection(
       });
       return;
     }
-    await handleFrame(ws, deps, surfaceId, author, msg);
+    await handleFrame(ws, deps, paneId, author, msg);
   });
 
   ws.on("close", (code: number, reason: Buffer) => {
     log.info("ws closed", {
-      surfaceId,
+      paneId,
       authorKind: author.kind,
       authorId: author.id,
       code,
@@ -675,19 +674,19 @@ async function handleConnection(
     // close-event callback's perspective.
     void (async () => {
       try {
-        await removeConnection(surfaceId, connId);
-        // appendSystemEvent persists + broadcasts, and tolerates the surface
+        await removeConnection(paneId, connId);
+        // appendSystemEvent persists + broadcasts, and tolerates the pane
         // having been deleted while this socket was draining (returns null).
         await appendSystemEvent(
           prisma,
-          surfaceId,
+          paneId,
           "system.participant.left",
           { author: { kind: author.kind, id: author.id } },
-          (e) => withLiveCount(e, surfaceId),
+          (e) => withLiveCount(e, paneId),
         );
       } catch (err) {
         log.warn("participant.left event insert failed", {
-          surfaceId,
+          paneId,
           error: String(err),
         });
       }
@@ -709,7 +708,7 @@ function sendJson(ws: WebSocket, obj: unknown): void {
 async function handleFrame(
   ws: WebSocket,
   deps: WsDeps,
-  surfaceId: string,
+  paneId: string,
   author: Author,
   msg: unknown,
 ): Promise<void> {
@@ -756,7 +755,7 @@ async function handleFrame(
     return;
   }
 
-  // Quick byte-cap check before we re-read the surface — saves a round-trip on
+  // Quick byte-cap check before we re-read the pane — saves a round-trip on
   // obviously oversize frames. writeEvent enforces the same cap authoritatively.
   if (
     Buffer.byteLength(JSON.stringify(f.data ?? null), "utf8") >
@@ -769,14 +768,14 @@ async function handleFrame(
     return;
   }
 
-  // Re-read the surface so writeEvent sees the latest schema/status.
-  // (writeEvent itself throws errors.gone() if the surface is closed/expired,
+  // Re-read the pane so writeEvent sees the latest schema/status.
+  // (writeEvent itself throws errors.gone() if the pane is closed/expired,
   // so we don't double-check that here.)
-  const surface = await prisma.surface.findUnique({
-    where: { id: surfaceId },
+  const pane = await prisma.pane.findUnique({
+    where: { id: paneId },
     include: { templateVersion: true },
   });
-  if (!surface) {
+  if (!pane) {
     sendJson(ws, {
       error: serializeApiError(errors.notFound()),
       ...(cid ? { correlation_id: cid } : {}),
@@ -787,7 +786,7 @@ async function handleFrame(
   try {
     const { event, deduped } = await writeEvent(
       { prisma, config },
-      surface,
+      pane,
       author,
       {
         type: f.type,
@@ -811,7 +810,7 @@ async function handleFrame(
       return;
     }
     log.error("ws writeEvent failed", {
-      surfaceId,
+      paneId,
       error: err instanceof Error ? err.message : String(err),
     });
     sendJson(ws, {

@@ -1,6 +1,6 @@
-// End-to-end tests for /surfaces/:id and friends — the cookie-authed owner
+// End-to-end tests for /panes/:id and friends — the cookie-authed owner
 // shell. These mirror the capability-token bridge (/s/:token, /s/:token/content,
-// etc.) but key surfaces by id and gate them on the pane_login cookie.
+// etc.) but key panes by id and gate them on the pane_login cookie.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
@@ -18,7 +18,7 @@ import {
 import { makeDevProvider } from "../../auth/providers/dev.js";
 import {
   generateApiKey,
-  generateSurfaceId,
+  generatePaneId,
   hashKey,
   keyPrefix,
 } from "../../keys.js";
@@ -56,13 +56,13 @@ beforeEach(async () => {
   await testDb.truncateAll(prisma);
 });
 
-// Seed a logged-in human + a claimed agent owning a fresh surface. Returns
+// Seed a logged-in human + a claimed agent owning a fresh pane. Returns
 // every id the tests need plus the cookie value for Authorization-substitute.
-async function seedOwnedSurface(): Promise<{
+async function seedOwnedPane(): Promise<{
   humanId: string;
   cookie: string;
   agentId: string;
-  surfaceId: string;
+  paneId: string;
 }> {
   const human = await prisma.human.create({
     data: { email: "alice@example.com", verifiedAt: new Date() },
@@ -76,7 +76,7 @@ async function seedOwnedSurface(): Promise<{
     },
   });
 
-  // An agent claimed by this human; the surface's ownerHumanId is the human.
+  // An agent claimed by this human; the pane's ownerHumanId is the human.
   const agentKey = generateApiKey();
   const agent = await prisma.agent.create({
     data: {
@@ -88,7 +88,7 @@ async function seedOwnedSurface(): Promise<{
     },
   });
 
-  // Minimal template + version so the surface has something to render.
+  // Minimal template + version so the pane has something to render.
   const template = await prisma.template.create({
     data: {
       name: "Test Template",
@@ -113,13 +113,13 @@ async function seedOwnedSurface(): Promise<{
     },
   });
 
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: generateSurfaceId(),
+      id: generatePaneId(),
       agentId: agent.id,
       ownerHumanId: human.id,
       templateVersionId: templateVersion.id,
-      title: "Test Surface",
+      title: "Test Pane",
       status: "open",
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     },
@@ -129,7 +129,7 @@ async function seedOwnedSurface(): Promise<{
     humanId: human.id,
     cookie,
     agentId: agent.id,
-    surfaceId: surface.id,
+    paneId: pane.id,
   };
 }
 
@@ -137,41 +137,41 @@ function withCookie(cookie: string): RequestInit {
   return { headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` } };
 }
 
-describe("GET /surfaces/:id", () => {
+describe("GET /panes/:id", () => {
   it("returns the shell HTML for the owner", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    const { cookie, paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}`, withCookie(cookie)),
+      new Request(`http://t/panes/${paneId}`, withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    // The shell embeds the surface id in its config JSON.
-    expect(html).toContain(surfaceId);
+    // The shell embeds the pane id in its config JSON.
+    expect(html).toContain(paneId);
     // Iframe src is the id-keyed content URL — no /s/ token anywhere.
-    expect(html).toContain(`src="/surfaces/${surfaceId}/content"`);
+    expect(html).toContain(`src="/panes/${paneId}/content"`);
     expect(html).not.toContain("/s/tok_");
-    // Title pulls from the surface row.
-    expect(html).toContain("Test Surface");
+    // Title pulls from the pane row.
+    expect(html).toContain("Test Pane");
   });
 
   it("embeds the system-pages top nav so the owner can navigate away", async () => {
-    // Without this, /surfaces/:id traps the owner — browser back is the
-    // only way to reach /home, /my-surfaces, etc.
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    // Without this, /panes/:id traps the owner — browser back is the
+    // only way to reach /home, /my-panes, etc.
+    const { cookie, paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}`, withCookie(cookie)),
+      new Request(`http://t/panes/${paneId}`, withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain("top-nav-tabs");
     expect(html).toContain('href="/home"');
-    expect(html).toContain('href="/my-surfaces"');
+    expect(html).toContain('href="/my-panes"');
     expect(html).toContain('href="/my-templates"');
     expect(html).toContain('href="/my-agents"');
     expect(html).toContain('href="/settings"');
-    // The "My surfaces" tab is the active one (we're on a surface page).
+    // The "My panes" tab is the active one (we're on a pane page).
     expect(html).toMatch(
-      /class="top-nav-tab active"[^>]*href="\/my-surfaces"|href="\/my-surfaces"[^>]*aria-current="page"/,
+      /class="top-nav-tab active"[^>]*href="\/my-panes"|href="\/my-panes"[^>]*aria-current="page"/,
     );
     // Owner's email is shown in the account block.
     expect(html).toContain("alice@example.com");
@@ -189,20 +189,20 @@ describe("GET /surfaces/:id", () => {
   });
 
   it("401s when no login cookie is present (API / curl path — no Accept header)", async () => {
-    const { surfaceId } = await seedOwnedSurface();
-    const res = await app.fetch(new Request(`http://t/surfaces/${surfaceId}`));
+    const { paneId } = await seedOwnedPane();
+    const res = await app.fetch(new Request(`http://t/panes/${paneId}`));
     expect(res.status).toBe(401);
     expect(res.headers.get("content-type")).toContain("application/json");
   });
 
   it("302s an anonymous browser to /login?return=… (#269)", async () => {
-    // Previously a browser hitting /surfaces/:id cold got a raw JSON 401,
+    // Previously a browser hitting /panes/:id cold got a raw JSON 401,
     // which renders as a wall of text on the page. The bridge already
     // handles this for identity-bound participants — match the behavior on
     // the owner-shell mount.
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}`, {
+      new Request(`http://t/panes/${paneId}`, {
         headers: { Accept: "text/html,application/xhtml+xml" },
         redirect: "manual",
       }),
@@ -211,7 +211,7 @@ describe("GET /surfaces/:id", () => {
     const loc = res.headers.get("location") ?? "";
     expect(loc.startsWith("/login?return=")).toBe(true);
     expect(decodeURIComponent(loc.slice("/login?return=".length))).toBe(
-      `/surfaces/${surfaceId}`,
+      `/panes/${paneId}`,
     );
   });
 
@@ -219,7 +219,7 @@ describe("GET /surfaces/:id", () => {
     // An expired pane_login cookie is structurally the same problem as no
     // cookie. Browser nav with such a cookie should still bounce, not show
     // a JSON 401 wall.
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     // Plant a login row that's already expired.
     const expiredHuman = await prisma.human.create({
       data: { email: "expired@example.com", verifiedAt: new Date() },
@@ -233,7 +233,7 @@ describe("GET /surfaces/:id", () => {
       },
     });
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}`, {
+      new Request(`http://t/panes/${paneId}`, {
         headers: {
           Accept: "text/html",
           cookie: `${LOGIN_COOKIE_NAME}=${expiredCookie}`,
@@ -249,9 +249,9 @@ describe("GET /surfaces/:id", () => {
     // Only GETs are mis-clicks worth redirecting; a POST to /ws-ticket
     // without a cookie is an XHR that needs the structured error to
     // branch on. The middleware preserves that.
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+      new Request(`http://t/panes/${paneId}/ws-ticket`, {
         method: "POST",
         headers: { Accept: "text/html" },
       }),
@@ -260,9 +260,9 @@ describe("GET /surfaces/:id", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
   });
 
-  it("404s when the logged-in human is not the surface owner", async () => {
-    const { surfaceId } = await seedOwnedSurface();
-    // A second human, with a valid cookie of their own, must NOT see surfaces
+  it("404s when the logged-in human is not the pane owner", async () => {
+    const { paneId } = await seedOwnedPane();
+    // A second human, with a valid cookie of their own, must NOT see panes
     // they don't own.
     const other = await prisma.human.create({
       data: { email: "bob@example.com", verifiedAt: new Date() },
@@ -276,17 +276,17 @@ describe("GET /surfaces/:id", () => {
       },
     });
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}`, withCookie(otherCookie)),
+      new Request(`http://t/panes/${paneId}`, withCookie(otherCookie)),
     );
     expect(res.status).toBe(404);
   });
 });
 
-describe("GET /surfaces/:id/content", () => {
+describe("GET /panes/:id/content", () => {
   it("returns the template body wrapped with the runtime", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    const { cookie, paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/content`, withCookie(cookie)),
+      new Request(`http://t/panes/${paneId}/content`, withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -296,22 +296,19 @@ describe("GET /surfaces/:id/content", () => {
   });
 
   it("401s without a login cookie", async () => {
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/content`),
+      new Request(`http://t/panes/${paneId}/content`),
     );
     expect(res.status).toBe(401);
   });
 });
 
-describe("GET /surfaces/:id/presence", () => {
+describe("GET /panes/:id/presence", () => {
   it("returns the agent-presence JSON for the owner", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    const { cookie, paneId } = await seedOwnedPane();
     const res = await app.fetch(
-      new Request(
-        `http://t/surfaces/${surfaceId}/presence`,
-        withCookie(cookie),
-      ),
+      new Request(`http://t/panes/${paneId}/presence`, withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
@@ -327,13 +324,13 @@ describe("GET /surfaces/:id/presence", () => {
 });
 
 describe("GET /s/:token — logged-in-owner upgrade", () => {
-  it("302s to /surfaces/:id when the caller is logged in as the surface owner", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
+  it("302s to /panes/:id when the caller is logged in as the pane owner", async () => {
+    const { cookie, paneId } = await seedOwnedPane();
     // Mint a participant token directly so we have a /s/:token URL to hit.
     const tok = "tok_h_" + randomBytes(32).toString("base64url");
     await prisma.participant.create({
       data: {
-        surfaceId,
+        paneId,
         kind: "human",
         identityId: "h_shared",
         tokenHash: hashKey(tok),
@@ -347,11 +344,11 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
       }),
     );
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`/surfaces/${surfaceId}`);
+    expect(res.headers.get("location")).toBe(`/panes/${paneId}`);
   });
 
   it("does NOT redirect when the caller is logged in as a different human", async () => {
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     // A second logged-in human, NOT the owner.
     const other = await prisma.human.create({
       data: { email: "bob@example.com", verifiedAt: new Date() },
@@ -367,7 +364,7 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
     const tok = "tok_h_" + randomBytes(32).toString("base64url");
     await prisma.participant.create({
       data: {
-        surfaceId,
+        paneId,
         kind: "human",
         identityId: "h_shared",
         tokenHash: hashKey(tok),
@@ -387,11 +384,11 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
   });
 
   it("does NOT redirect when there is no login cookie", async () => {
-    const { surfaceId } = await seedOwnedSurface();
+    const { paneId } = await seedOwnedPane();
     const tok = "tok_h_" + randomBytes(32).toString("base64url");
     await prisma.participant.create({
       data: {
-        surfaceId,
+        paneId,
         kind: "human",
         identityId: "h_shared",
         tokenHash: hashKey(tok),
@@ -408,19 +405,19 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
   // interaction. The redirect in bridge/routes.ts runs BEFORE the
   // identity-bound participant gate, so if the owner clicks a token URL that
   // happens to be bound to a *different* human, ownership wins: they get a
-  // 302 to /surfaces/<id> rather than a 403 wrong_account. Without this
+  // 302 to /panes/<id> rather than a 403 wrong_account. Without this
   // ordering the owner would be locked out of a URL they could legitimately
   // open via the clean route.
   it("redirects the owner even when the token's participant is bound to a different human", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
-    // A second human (bob), unrelated to the surface — token belongs to bob.
+    const { cookie, paneId } = await seedOwnedPane();
+    // A second human (bob), unrelated to the pane — token belongs to bob.
     const bob = await prisma.human.create({
       data: { email: "bob@example.com", verifiedAt: new Date() },
     });
     const tok = "tok_h_" + randomBytes(32).toString("base64url");
     await prisma.participant.create({
       data: {
-        surfaceId,
+        paneId,
         kind: "human",
         identityId: "h_bob",
         tokenHash: hashKey(tok),
@@ -428,7 +425,7 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
         humanId: bob.id,
       },
     });
-    // Owner (alice) hits bob's token URL while signed in as the surface owner.
+    // Owner (alice) hits bob's token URL while signed in as the pane owner.
     const res = await app.fetch(
       new Request(`http://t/s/${tok}`, {
         ...withCookie(cookie),
@@ -436,22 +433,22 @@ describe("GET /s/:token — logged-in-owner upgrade", () => {
       }),
     );
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`/surfaces/${surfaceId}`);
+    expect(res.headers.get("location")).toBe(`/panes/${paneId}`);
   });
 });
 
-describe("POST /surfaces/:id/ws-ticket", () => {
+describe("POST /panes/:id/ws-ticket", () => {
   it("mints a ticket for the owner and lazy-creates their Participant row", async () => {
-    const { cookie, surfaceId, humanId } = await seedOwnedSurface();
+    const { cookie, paneId, humanId } = await seedOwnedPane();
 
     // No participant rows yet — proves we're lazy-minting.
     const before = await prisma.participant.findMany({
-      where: { surfaceId },
+      where: { paneId },
     });
     expect(before.length).toBe(0);
 
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+      new Request(`http://t/panes/${paneId}/ws-ticket`, {
         method: "POST",
         ...withCookie(cookie),
       }),
@@ -463,7 +460,7 @@ describe("POST /surfaces/:id/ws-ticket", () => {
 
     // The owner's identity-bound participant exists after the call.
     const after = await prisma.participant.findMany({
-      where: { surfaceId },
+      where: { paneId },
     });
     expect(after.length).toBe(1);
     expect(after[0]!).toMatchObject({
@@ -474,16 +471,16 @@ describe("POST /surfaces/:id/ws-ticket", () => {
   });
 
   it("reuses the same identity-id on a second call", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    const { cookie, paneId } = await seedOwnedPane();
     const r1 = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+      new Request(`http://t/panes/${paneId}/ws-ticket`, {
         method: "POST",
         ...withCookie(cookie),
       }),
     );
     expect(r1.status).toBe(201);
     const r2 = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+      new Request(`http://t/panes/${paneId}/ws-ticket`, {
         method: "POST",
         ...withCookie(cookie),
       }),
@@ -491,22 +488,22 @@ describe("POST /surfaces/:id/ws-ticket", () => {
     expect(r2.status).toBe(201);
     // Still exactly one participant — the second call reused it.
     const rows = await prisma.participant.findMany({
-      where: { surfaceId },
+      where: { paneId },
     });
     expect(rows.length).toBe(1);
   });
 
   it("never mints duplicate owner participants under concurrent calls", async () => {
     // Race fix regression: two concurrent ws-ticket calls (e.g. two tabs the
-    // owner opened at once) must collide on the (surfaceId, identityId)
+    // owner opened at once) must collide on the (paneId, identityId)
     // unique constraint and resolve to a single Participant row. Without
     // that, the lazy-mint's findFirst+create can race into duplicates and
     // the owner's identity-id flips between rows on subsequent reconnects.
-    const { cookie, surfaceId } = await seedOwnedSurface();
+    const { cookie, paneId } = await seedOwnedPane();
     const results = await Promise.all(
       [0, 1, 2, 3, 4].map(() =>
         app.fetch(
-          new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+          new Request(`http://t/panes/${paneId}/ws-ticket`, {
             method: "POST",
             ...withCookie(cookie),
           }),
@@ -515,20 +512,20 @@ describe("POST /surfaces/:id/ws-ticket", () => {
     );
     for (const r of results) expect(r.status).toBe(201);
     const rows = await prisma.participant.findMany({
-      where: { surfaceId, kind: "human" },
+      where: { paneId, kind: "human" },
     });
     expect(rows.length).toBe(1);
     expect(rows[0]!.identityId).toBe("h_owner");
   });
 
-  it("returns 410 for a closed surface", async () => {
-    const { cookie, surfaceId } = await seedOwnedSurface();
-    await prisma.surface.update({
-      where: { id: surfaceId },
+  it("returns 410 for a closed pane", async () => {
+    const { cookie, paneId } = await seedOwnedPane();
+    await prisma.pane.update({
+      where: { id: paneId },
       data: { status: "closed" },
     });
     const res = await app.fetch(
-      new Request(`http://t/surfaces/${surfaceId}/ws-ticket`, {
+      new Request(`http://t/panes/${paneId}/ws-ticket`, {
         method: "POST",
         ...withCookie(cookie),
       }),

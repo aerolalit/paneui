@@ -10,7 +10,7 @@ import { fail, failFromError, printJson } from "../output.js";
 const KNOWN_FLAGS = [
   "file",
   "scope",
-  "surface-id",
+  "pane-id",
   "template-id",
   "filename",
   "mime",
@@ -26,8 +26,8 @@ Required:
   --file <path>          Local file to upload.
 
 Scope (default: agent):
-  --scope <s>            "agent" | "surface" | "template".
-  --surface-id <id>      Required when --scope=surface.
+  --scope <s>            "agent" | "pane" | "template".
+  --pane-id <id>      Required when --scope=pane.
   --template-id <id>     Required when --scope=template.
 
 Optional:
@@ -61,19 +61,15 @@ export async function runBlobUpload(args: ParsedArgs): Promise<void> {
     );
   }
   const scopeRaw = args.flags.get("scope") ?? "agent";
-  if (
-    scopeRaw !== "agent" &&
-    scopeRaw !== "surface" &&
-    scopeRaw !== "template"
-  ) {
+  if (scopeRaw !== "agent" && scopeRaw !== "pane" && scopeRaw !== "template") {
     fail(
-      `unknown --scope '${scopeRaw}' — expected one of: agent, surface, template`,
+      `unknown --scope '${scopeRaw}' — expected one of: agent, pane, template`,
       "invalid_args",
     );
   }
-  const scope = scopeRaw as "agent" | "surface" | "template";
-  if (scope === "surface" && !args.flags.get("surface-id")) {
-    fail("--scope=surface requires --surface-id <id>", "invalid_args");
+  const scope = scopeRaw as "agent" | "pane" | "template";
+  if (scope === "pane" && !args.flags.get("pane-id")) {
+    fail("--scope=pane requires --pane-id <id>", "invalid_args");
   }
   if (scope === "template" && !args.flags.get("template-id")) {
     fail("--scope=template requires --template-id <id>", "invalid_args");
@@ -83,7 +79,7 @@ export async function runBlobUpload(args: ParsedArgs): Promise<void> {
   try {
     const ref = await client.uploadBlob(bytes, {
       scope,
-      surfaceId: args.flags.get("surface-id"),
+      paneId: args.flags.get("pane-id"),
       templateId: args.flags.get("template-id"),
       filename: args.flags.get("filename") ?? basename(filePath),
       mime: args.flags.get("mime"),

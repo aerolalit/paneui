@@ -334,14 +334,14 @@ parallel code path.
 
 ```json
 {
-  "session_id": "sur_...",
+  "session_id": "pan_...",
   "tokens": {
     "humans": ["tok_h_..."],
     "agent":  "tok_a_..."
   },
   "urls": {
     "humans":       ["https://pane.relay/s/tok_h_..."],
-    "agent_stream": "wss://pane.relay/v1/sessions/sur_.../stream"
+    "agent_stream": "wss://pane.relay/v1/sessions/pan_.../stream"
   },
   "expires_at": "2026-05-13T..."
 }
@@ -356,7 +356,7 @@ agents 1 ──< artifacts 1 ──< artifact_versions 1 ──< sessions 1 ─�
 ```
 
 > **Records (#287)** — a third first-class data shape was added after v1's
-> initial release. `record_collections` and `surface_records` back per-surface
+> initial release. `record_collections` and `surface_records` back per-pane
 > mutable record collections (posts, comments, reactions, etc.) declared via
 > a JSON Schema 2020-12 document on `artifact_versions.record_schema`. Wire
 > shapes, routes, and config knobs are summarised in the **Records** section
@@ -514,7 +514,7 @@ Principle: the OSS version must do the whole job, end to end, for one user, on t
 
 ## Records (#287)
 
-Per-surface mutable record collections. Third first-class data shape alongside events and attachments. Use records when the **current value** of structured rows is what matters and the history isn't; keep events for the **journal of interactions** (audit trail, activity feed).
+Per-pane mutable record collections. Third first-class data shape alongside events and attachments. Use records when the **current value** of structured rows is what matters and the history isn't; keep events for the **journal of interactions** (audit trail, activity feed).
 
 ### Decision rule
 
@@ -522,7 +522,7 @@ Per-surface mutable record collections. Third first-class data shape alongside e
 |---|---|
 | Current value is what matters; history isn't | History is the point (audit, replay) |
 | Multiple participants edit different rows concurrently | Writers serialise naturally and order matters |
-| Hundreds-to-thousands of items in the collection | Dozens of writes total per surface |
+| Hundreds-to-thousands of items in the collection | Dozens of writes total per pane |
 | Partial-row mutations, paginated reads | Immutable facts, stream reads |
 
 ### Schema declaration — JSON Schema 2020-12 + `x-pane-collections`
@@ -546,17 +546,17 @@ Set on the template via `record_schema` at create / version time. Validated by `
 ### HTTP routes
 
 ```http
-GET    /v1/surfaces/:id/records/:collection?since=&limit=
-POST   /v1/surfaces/:id/records/:collection
-PATCH  /v1/surfaces/:id/records/:collection/:recordKey
-DELETE /v1/surfaces/:id/records/:collection/:recordKey
+GET    /v1/panes/:id/records/:collection?since=&limit=
+POST   /v1/panes/:id/records/:collection
+PATCH  /v1/panes/:id/records/:collection/:recordKey
+DELETE /v1/panes/:id/records/:collection/:recordKey
 ```
 
 `dualAuth` (agent owner or participant token). POST is **create-or-return-existing** (duplicate `record_key` → 200 with `deduped: true`, no version bump). PATCH and DELETE accept `if_match: <version>`; on mismatch return **409** with the current row in `error.details.current`. GET pagination via `?since=<seq>` includes tombstones.
 
 ### WebSocket messages
 
-Records flow over the same `/v1/surfaces/:id/stream` channel as events. The wire shapes (defined in `ws/messages.ts`) are discriminated by the top-level `kind` field — events have no `kind`, every other shape does:
+Records flow over the same `/v1/panes/:id/stream` channel as events. The wire shapes (defined in `ws/messages.ts`) are discriminated by the top-level `kind` field — events have no `kind`, every other shape does:
 
 ```json
 { "kind": "record.upsert",          "collection": "comments", "record": { ... } }
@@ -580,11 +580,11 @@ Subscribe with `?subscribe_records=*` (all declared collections) or `?subscribe_
 
 | Step | Rule |
 |---|---|
-| 1 | Token resolves to an `Author` and `Surface` (`dualAuth`) |
-| 2 | `surface.status === "open" && expiresAt > now` |
+| 1 | Token resolves to an `Author` and `Pane` (`dualAuth`) |
+| 2 | `pane.status === "open" && expiresAt > now` |
 | 3 | `author.kind` (mapped to `agent` / `page`) ∈ `write` / `delete` |
 | 4 | `delete: ["author"]` → `row.authorId === author.id` |
-| 5 | Attachment refs scoped to `surface.agentId` (mirrors event-write) |
+| 5 | Attachment refs scoped to `pane.agentId` (mirrors event-write) |
 
 ### Out of scope (open questions)
 

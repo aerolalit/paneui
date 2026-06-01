@@ -9,10 +9,10 @@
 //
 // At process startup there are, by definition, zero live WebSocket connections:
 // the in-memory presence registry is empty. So any `joined` on a still-open
-// surface that has no matching `left` is provably stale. We emit one synthetic
+// pane that has no matching `left` is provably stale. We emit one synthetic
 // `system.participant.left` per surplus `joined` to close the log out.
 //
-// Pairing is per (surfaceId, author): each surface can have one agent author
+// Pairing is per (paneId, author): each pane can have one agent author
 // plus N human authors, and each may connect/disconnect repeatedly, so we
 // compare counts rather than assuming a single join.
 
@@ -34,7 +34,7 @@ function authorOf(data: unknown): AuthorRef | null {
 }
 
 // Emit a synthetic `system.participant.left` for every `joined` that has no
-// matching `left`, across all still-open surfaces. Returns the number of
+// matching `left`, across all still-open panes. Returns the number of
 // synthetic events written. Best-effort: a failure is logged, not thrown, so a
 // reconciliation hiccup never blocks relay startup.
 //
@@ -44,11 +44,11 @@ export async function reconcileOrphanedParticipants(
 ): Promise<number> {
   let written = 0;
   try {
-    const openSessions = await prisma.surface.findMany({
+    const openSessions = await prisma.pane.findMany({
       where: { status: "open" },
       select: {
         id: true,
-        // #268 — stamp the surface's currently-pinned templateVersion onto
+        // #268 — stamp the pane's currently-pinned templateVersion onto
         // every synthetic participant.left we emit, same as live writes.
         // Selecting it here saves a per-event lookup inside the inner loop.
         templateVersionId: true,
@@ -56,11 +56,11 @@ export async function reconcileOrphanedParticipants(
       },
     });
 
-    for (const surface of openSessions) {
-      const surfaceId = surface.id;
+    for (const pane of openSessions) {
+      const paneId = pane.id;
       const events = await prisma.event.findMany({
         where: {
-          surfaceId,
+          paneId,
           authorKind: "system",
           type: {
             in: ["system.participant.joined", "system.participant.left"],
@@ -86,13 +86,13 @@ export async function reconcileOrphanedParticipants(
         for (let i = 0; i < net; i++) {
           await prisma.event.create({
             data: {
-              surfaceId,
+              paneId,
               authorKind: "system",
               authorId: "system",
               type: "system.participant.left",
               data: { author } as object,
-              templateVersionId: surface.templateVersionId,
-              templateVersionNum: surface.templateVersion.version,
+              templateVersionId: pane.templateVersionId,
+              templateVersionNum: pane.templateVersion.version,
             },
           });
           written++;

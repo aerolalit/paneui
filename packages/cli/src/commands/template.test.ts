@@ -58,7 +58,7 @@ vi.mock("../config.js", () => ({
   makeClient: () => fakeClient,
 }));
 
-import { runArtifact } from "./template.js";
+import { runTemplate } from "./template.js";
 import { parseArgs } from "../argv.js";
 
 const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
@@ -99,13 +99,13 @@ afterEach(() => {
 /** Run a command, swallowing the synthetic exit throw from fail(). */
 async function run(tokens: string[]): Promise<void> {
   try {
-    await runArtifact(argv(tokens));
+    await runTemplate(argv(tokens));
   } catch (e) {
     if (!(e instanceof Error && e.message.startsWith("__exit_"))) throw e;
   }
 }
 
-describe("runArtifact dispatch", () => {
+describe("runTemplate dispatch", () => {
   it("rejects a missing subcommand", async () => {
     await run([]);
     expect(exitCode).toBe(1);
@@ -323,17 +323,12 @@ describe("template publish (#279 PR C)", () => {
   });
 
   it("parses --scopes as a comma-separated array", async () => {
-    await run([
-      "publish",
-      "pr-review",
-      "--scopes",
-      "read:agent, write:surface",
-    ]);
+    await run(["publish", "pr-review", "--scopes", "read:agent, write:pane"]);
     expect(exitCode).toBeUndefined();
     expect(calls).toEqual([
       {
         method: "publishTemplate",
-        args: ["pr-review", { scopes: ["read:agent", "write:surface"] }],
+        args: ["pr-review", { scopes: ["read:agent", "write:pane"] }],
       },
     ]);
   });

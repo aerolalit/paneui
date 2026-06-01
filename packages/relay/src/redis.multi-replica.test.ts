@@ -34,10 +34,10 @@ const REDIS_URL =
 // Gate: skip the whole suite when no Redis is configured.
 const describeRedis = REDIS_URL ? describe : describe.skip;
 
-function makeEvent(id: string, surfaceId: string): SerializedEvent {
+function makeEvent(id: string, paneId: string): SerializedEvent {
   return {
     id,
-    surface_id: surfaceId,
+    pane_id: paneId,
     author: { kind: "agent", id: "a_0" },
     ts: new Date().toISOString(),
     type: "review.commentAdded",
@@ -70,7 +70,7 @@ describeRedis("Redis-backed multi-replica integration", () => {
   });
 
   it("broadcast: an event publishes across replicas and is delivered exactly once", async () => {
-    const channel = "pane:events:sur_xrep";
+    const channel = "pane:events:pan_xrep";
     // Replica A: pub + sub. Replica B: sub only.
     const pubA = new IORedis(REDIS_URL);
     const subA = new IORedis(REDIS_URL);
@@ -89,7 +89,7 @@ describeRedis("Redis-backed multi-replica integration", () => {
       await wait(50);
 
       // Replica A publishes once.
-      await pubA.publish(channel, JSON.stringify(makeEvent("1", "sur_xrep")));
+      await pubA.publish(channel, JSON.stringify(makeEvent("1", "pan_xrep")));
       await wait(100);
 
       // The publishing replica (A) gets it back via Redis loopback — exactly
@@ -134,16 +134,16 @@ describeRedis("Redis-backed multi-replica integration", () => {
       await redis.redisPub().flushdb?.();
       const presence = await import("./ws/presence.js");
       // "Replica A" adds two connections.
-      await presence.addConnection("sur_p", "cA", "agent");
-      await presence.addConnection("sur_p", "cB", "human");
+      await presence.addConnection("pan_p", "cA", "agent");
+      await presence.addConnection("pan_p", "cB", "human");
       // "Replica B" reads the count — sees both.
-      expect(await presence.connectionCount("sur_p")).toBe(2);
-      expect(await presence.agentCount("sur_p")).toBe(1);
-      expect(await presence.humanCount("sur_p")).toBe(1);
+      expect(await presence.connectionCount("pan_p")).toBe(2);
+      expect(await presence.agentCount("pan_p")).toBe(1);
+      expect(await presence.humanCount("pan_p")).toBe(1);
       expect(await presence.totalConnections()).toBe(2);
 
-      await presence.removeConnection("sur_p", "cA");
-      expect(await presence.connectionCount("sur_p")).toBe(1);
+      await presence.removeConnection("pan_p", "cA");
+      expect(await presence.connectionCount("pan_p")).toBe(1);
     } finally {
       await redis.shutdownRedis();
       redis._resetRedisForTests();

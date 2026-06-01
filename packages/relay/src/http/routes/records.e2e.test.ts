@@ -1,4 +1,4 @@
-// E2E tests for /v1/surfaces/:id/records/:collection (#292).
+// E2E tests for /v1/panes/:id/records/:collection (#292).
 //
 // The deep writer semantics live in core/records.test.ts (31 unit tests).
 // These tests cover the route layer: auth, body parsing, query-param
@@ -75,7 +75,7 @@ async function seedAgent(): Promise<{ apiKey: string; agentId: string }> {
   return { apiKey, agentId: agent.id };
 }
 
-async function seedSurfaceWithRecords(agentId: string): Promise<string> {
+async function seedPaneWithRecords(agentId: string): Promise<string> {
   const template = await prisma.template.create({
     data: { ownerId: agentId, latestVersion: 1 },
   });
@@ -88,16 +88,16 @@ async function seedSurfaceWithRecords(agentId: string): Promise<string> {
       recordSchema,
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: `sur_${randomBytes(8).toString("hex")}`,
+      id: `pan_${randomBytes(8).toString("hex")}`,
       agentId,
       templateVersionId: version.id,
-      title: "records routes e2e surface",
+      title: "records routes e2e pane",
       expiresAt: new Date(Date.now() + 3600_000),
     },
   });
-  return surface.id;
+  return pane.id;
 }
 
 function agentBearer(apiKey: string): Record<string, string> {
@@ -126,13 +126,13 @@ function req(
 // POST /
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/surfaces/:id/records/:collection", () => {
+describe("POST /v1/panes/:id/records/:collection", () => {
   it("creates a record and returns 201 with the persisted row", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
       { record_key: "cmt_1", data: { body: "hi" } },
     );
@@ -143,14 +143,14 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 
   it("returns 200 + deduped:true on duplicate record_key", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_dup",
       data: { body: "v1" },
     });
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
       { record_key: "cmt_dup", data: { body: "v2-ignored" } },
     );
@@ -161,10 +161,10 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 
   it("rejects invalid body with 400 invalid_request", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
       { record_key: 42 }, // wrong type — should be string
     );
@@ -175,10 +175,10 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 
   it("rejects schema-violating data with 422 record_schema_violation", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
       { data: { wrong: "no body" } },
     );
@@ -189,10 +189,10 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 
   it("returns 404 with record_collection_not_found on undeclared collection", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/unknown`,
+      `/v1/panes/${paneId}/records/unknown`,
       apiKey,
       { data: { body: "x" } },
     );
@@ -203,9 +203,9 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 
   it("rejects unauthenticated request with 401", async () => {
     const { agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/records/comments`, {
+      new Request(`http://t/v1/panes/${paneId}/records/comments`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ data: { body: "x" } }),
@@ -214,13 +214,13 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects an agent that doesn't own the surface with 403/404", async () => {
+  it("rejects an agent that doesn't own the pane with 403/404", async () => {
     const owner = await seedAgent();
     const intruder = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(owner.agentId);
+    const paneId = await seedPaneWithRecords(owner.agentId);
     const res = await req(
       "POST",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       intruder.apiKey,
       { data: { body: "x" } },
     );
@@ -234,13 +234,13 @@ describe("POST /v1/surfaces/:id/records/:collection", () => {
 // GET /
 // ---------------------------------------------------------------------------
 
-describe("GET /v1/surfaces/:id/records/:collection", () => {
+describe("GET /v1/panes/:id/records/:collection", () => {
   it("returns an empty page for an unwritten collection", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
     );
     expect(res.status).toBe(200);
@@ -254,16 +254,16 @@ describe("GET /v1/surfaces/:id/records/:collection", () => {
 
   it("paginates with ?since= and ?limit=", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     for (let i = 0; i < 5; i++) {
-      await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+      await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
         record_key: `c_${i}`,
         data: { body: String(i) },
       });
     }
     const res = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments?since=0&limit=2`,
+      `/v1/panes/${paneId}/records/comments?since=0&limit=2`,
       apiKey,
     );
     expect(res.status).toBe(200);
@@ -277,7 +277,7 @@ describe("GET /v1/surfaces/:id/records/:collection", () => {
 
     const res2 = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments?since=${body.next_since}&limit=10`,
+      `/v1/panes/${paneId}/records/comments?since=${body.next_since}&limit=10`,
       apiKey,
     );
     const body2 = (await res2.json()) as { records: { key: string }[] };
@@ -286,10 +286,10 @@ describe("GET /v1/surfaces/:id/records/:collection", () => {
 
   it("rejects invalid ?since with 400", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments?since=-1`,
+      `/v1/panes/${paneId}/records/comments?since=-1`,
       apiKey,
     );
     expect(res.status).toBe(400);
@@ -297,10 +297,10 @@ describe("GET /v1/surfaces/:id/records/:collection", () => {
 
   it("rejects ?limit over 200 with 400", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments?limit=999`,
+      `/v1/panes/${paneId}/records/comments?limit=999`,
       apiKey,
     );
     expect(res.status).toBe(400);
@@ -311,17 +311,17 @@ describe("GET /v1/surfaces/:id/records/:collection", () => {
 // PATCH /:recordKey
 // ---------------------------------------------------------------------------
 
-describe("PATCH /v1/surfaces/:id/records/:collection/:recordKey", () => {
+describe("PATCH /v1/panes/:id/records/:collection/:recordKey", () => {
   it("updates a record and returns 200 with the new version", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_u",
       data: { body: "v1" },
     });
     const res = await req(
       "PATCH",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_u`,
+      `/v1/panes/${paneId}/records/comments/cmt_u`,
       apiKey,
       { data: { body: "v2" } },
     );
@@ -332,14 +332,14 @@ describe("PATCH /v1/surfaces/:id/records/:collection/:recordKey", () => {
 
   it("returns 409 with details.current on if_match mismatch", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_l",
       data: { body: "v1" },
     });
     const res = await req(
       "PATCH",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_l`,
+      `/v1/panes/${paneId}/records/comments/cmt_l`,
       apiKey,
       { data: { body: "v2" }, if_match: 99 },
     );
@@ -357,10 +357,10 @@ describe("PATCH /v1/surfaces/:id/records/:collection/:recordKey", () => {
 
   it("returns 404 when the record does not exist", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
+    const paneId = await seedPaneWithRecords(agentId);
     const res = await req(
       "PATCH",
-      `/v1/surfaces/${surfaceId}/records/comments/never_created`,
+      `/v1/panes/${paneId}/records/comments/never_created`,
       apiKey,
       { data: { body: "x" } },
     );
@@ -374,17 +374,17 @@ describe("PATCH /v1/surfaces/:id/records/:collection/:recordKey", () => {
 // DELETE /:recordKey
 // ---------------------------------------------------------------------------
 
-describe("DELETE /v1/surfaces/:id/records/:collection/:recordKey", () => {
+describe("DELETE /v1/panes/:id/records/:collection/:recordKey", () => {
   it("soft-deletes a record and returns 204", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_d",
       data: { body: "to delete" },
     });
     const res = await req(
       "DELETE",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_d`,
+      `/v1/panes/${paneId}/records/comments/cmt_d`,
       apiKey,
     );
     expect(res.status).toBe(204);
@@ -392,7 +392,7 @@ describe("DELETE /v1/surfaces/:id/records/:collection/:recordKey", () => {
     // Tombstone is visible via GET.
     const getRes = await req(
       "GET",
-      `/v1/surfaces/${surfaceId}/records/comments`,
+      `/v1/panes/${paneId}/records/comments`,
       apiKey,
     );
     const body = (await getRes.json()) as {
@@ -404,14 +404,14 @@ describe("DELETE /v1/surfaces/:id/records/:collection/:recordKey", () => {
 
   it("returns 409 with details.current on if_match mismatch", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_dl",
       data: { body: "v1" },
     });
     const res = await req(
       "DELETE",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_dl`,
+      `/v1/panes/${paneId}/records/comments/cmt_dl`,
       apiKey,
       { if_match: 99 },
     );
@@ -420,19 +420,15 @@ describe("DELETE /v1/surfaces/:id/records/:collection/:recordKey", () => {
 
   it("returns 404 on already-deleted record", async () => {
     const { apiKey, agentId } = await seedAgent();
-    const surfaceId = await seedSurfaceWithRecords(agentId);
-    await req("POST", `/v1/surfaces/${surfaceId}/records/comments`, apiKey, {
+    const paneId = await seedPaneWithRecords(agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
       record_key: "cmt_g",
       data: { body: "v1" },
     });
-    await req(
-      "DELETE",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_g`,
-      apiKey,
-    );
+    await req("DELETE", `/v1/panes/${paneId}/records/comments/cmt_g`, apiKey);
     const res = await req(
       "DELETE",
-      `/v1/surfaces/${surfaceId}/records/comments/cmt_g`,
+      `/v1/panes/${paneId}/records/comments/cmt_g`,
       apiKey,
     );
     expect(res.status).toBe(404);

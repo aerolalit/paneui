@@ -56,7 +56,7 @@ export function detectInstallMethod(entryPath: string): InstallMethod {
   }
   // npx caches the package under ~/Library/Caches/_npx (macOS) or
   // ~/.npm/_npx (Linux) and runs it from a node_modules inside that dir.
-  // Surface this distinctly from a real vendored install: with an npx
+  // Pane this distinctly from a real vendored install: with an npx
   // execution there is no project package.json owning the version and no
   // global to upgrade — the user runs `npx @paneui/cli@<version>` each
   // time, so the right answer is "ask the human / re-run with a newer

@@ -4,7 +4,7 @@ import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { printJson, fail, failFromError } from "../output.js";
 
-const CREATE_FLAGS = ["type", "message", "surface-id"];
+const CREATE_FLAGS = ["type", "message", "pane-id"];
 const LIST_FLAGS = ["limit", "before"];
 const NO_BOOLS: string[] = [];
 
@@ -29,7 +29,7 @@ Options for 'create':
   --type <bug|feature|note>   Feedback category. Required.
   --message <text|->          Message body. Pass '-' to read from stdin.
                               1..4000 chars after trim.
-  --surface-id <id>           Optional surface this feedback relates to;
+  --pane-id <id>           Optional pane this feedback relates to;
                               must belong to YOUR agent.
 
 Options for 'list':
@@ -42,7 +42,7 @@ Global:
   -h, --help                  Show this help.
 
 Examples:
-  pane feedback create --type bug --message "watch hangs on empty surface"
+  pane feedback create --type bug --message "watch hangs on empty pane"
   echo "long-form note..." | pane feedback create --type note --message -
   pane feedback list --limit 20
 
@@ -63,7 +63,7 @@ async function runFeedbackCreate(args: ParsedArgs): Promise<void> {
 
   const type = args.flags.get("type");
   const rawMessage = args.flags.get("message");
-  const surfaceId = args.flags.get("surface-id");
+  const paneId = args.flags.get("pane-id");
 
   if (type === undefined) {
     fail(
@@ -109,7 +109,7 @@ async function runFeedbackCreate(args: ParsedArgs): Promise<void> {
     const res = await client.submitFeedback({
       type: type as FeedbackType,
       message,
-      ...(surfaceId !== undefined ? { surfaceId } : {}),
+      ...(paneId !== undefined ? { paneId } : {}),
     });
     printJson(res);
   } catch (e) {

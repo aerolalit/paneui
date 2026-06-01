@@ -1,9 +1,9 @@
-// Human-readable formatter for `pane surface create` output.
+// Human-readable formatter for `pane create` output.
 //
 // The CLI is JSON-first — that's how agents call it. But humans run it too:
 // the agent dev iterating on a template, the operator smoke-testing a relay,
 // the developer who fires `pane create` once a day to grab a URL and hand
-// it to themselves on their phone. Dumping `{ surface_id, urls, tokens, ... }`
+// it to themselves on their phone. Dumping `{ pane_id, urls, tokens, ... }`
 // at them is a downgrade in every case where the next step is "open the
 // URL in a browser".
 //
@@ -22,12 +22,12 @@
 import qrcode from "qrcode-terminal";
 
 /**
- * The interesting subset of CreateSessionResponse this module formats.
+ * The interesting subset of CreatePaneResponse this module formats.
  * Typed locally (vs. re-importing from @paneui/core) so the formatter
  * keeps working if peripheral fields evolve — only these few are load-bearing.
  */
-export interface SurfaceCreatedView {
-  surface_id: string;
+export interface PaneCreatedView {
+  pane_id: string;
   created?: boolean;
   title: string;
   expires_at: string;
@@ -41,7 +41,7 @@ export interface SurfaceCreatedView {
 /** ANSI helpers. Only applied when writing to a TTY; harmless characters
  *  otherwise. We deliberately don't pull in a colour library — the CLI has
  *  one runtime dep today (qrcode-terminal) and we'd like to keep the
- *  surface area tight. */
+ *  pane area tight. */
 const ANSI = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
@@ -88,10 +88,10 @@ export function humanCountdown(iso: string, nowMs = Date.now()): string {
   return `in ${secs}s`;
 }
 
-/** Render the surface-created response for a human reader. Returns the
+/** Render the pane-created response for a human reader. Returns the
  *  full multi-line string; the caller writes it to stdout. */
-export function formatSurfaceCreated(
-  res: SurfaceCreatedView,
+export function formatPaneCreated(
+  res: PaneCreatedView,
   opts: { color?: boolean } = {},
 ): string {
   const c = opts.color ?? false;
@@ -102,24 +102,24 @@ export function formatSurfaceCreated(
   const r = c ? ANSI.reset : "";
 
   const title = safe(res.title);
-  const surfaceId = safe(res.surface_id);
+  const paneId = safe(res.pane_id);
   const expiresIn = humanCountdown(res.expires_at);
   const expiresAt = safe(res.expires_at);
   const humanUrls = res.urls.humans.map(safe);
   const agentStream = safe(res.urls.agent_stream);
 
   const lines: string[] = [];
-  // Header — "Surface created" vs. "Existing surface reused" if `created`
+  // Header — "Pane created" vs. "Existing pane reused" if `created`
   // is explicitly false. Dedup hits from #262 carry created=false and the
   // human shouldn't think they made a fresh row.
   const headline =
     res.created === false
-      ? `${b}${cy}Existing surface reused${r}`
-      : `${b}${g}Pane surface created${r}`;
+      ? `${b}${cy}Existing pane reused${r}`
+      : `${b}${g}Pane pane created${r}`;
   lines.push(headline);
   lines.push("");
   lines.push(`  ${d}Title:${r}    ${title}`);
-  lines.push(`  ${d}Surface:${r}  ${surfaceId}`);
+  lines.push(`  ${d}Pane:${r}  ${paneId}`);
   lines.push(`  ${d}Expires:${r}  ${expiresIn} ${d}(${expiresAt})${r}`);
   if (res.context_key) {
     lines.push(`  ${d}Key:${r}      ${safe(res.context_key)}`);
@@ -127,11 +127,11 @@ export function formatSurfaceCreated(
   lines.push("");
 
   if (humanUrls.length === 0) {
-    // Dedup-on-existing-surface path doesn't re-mint human URLs. Surface
+    // Dedup-on-existing-pane path doesn't re-mint human URLs. Pane
     // the situation explicitly rather than rendering a blank section.
     lines.push(
       `${d}No human URLs minted on this response — fetch them with ` +
-        `\`pane surface participants ${surfaceId}\`.${r}`,
+        `\`pane participants ${paneId}\`.${r}`,
     );
   } else {
     const label =

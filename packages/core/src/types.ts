@@ -6,14 +6,14 @@
 // stays pure and framework-free — no Prisma, no Hono, no server deps.
 
 import type { z } from "zod";
-import type { createSessionSchema } from "./schemas.js";
+import type { createPaneSchema } from "./schemas.js";
 
 export type AuthorKind = "human" | "agent" | "system";
 
 /** A single event envelope as emitted by the relay. */
 export interface PaneEvent {
   id: string;
-  surface_id: string;
+  pane_id: string;
   author: { kind: AuthorKind; id: string };
   ts: string;
   type: string;
@@ -21,12 +21,12 @@ export interface PaneEvent {
   causation_id: string | null;
   idempotency_key: string | null;
   /**
-   * The template version this event was written under — the surface's pinned
+   * The template version this event was written under — the pane's pinned
    * templateVersionId at the moment of the write. Stamped at write time and
    * never rewritten, so a downstream upgrade (#267) can read old events
    * under the new schema (Level 1 polymorphic render). Nullable for events
    * written before #268 landed; the relay's one-shot migration backfilled
-   * those from the surface's current pin where possible.
+   * those from the pane's current pin where possible.
    */
   template_version_id: string | null;
   /** Denormalised integer version number for `template_version_id`. */
@@ -86,31 +86,31 @@ export interface Callback {
 }
 
 /**
- * Request body for POST /v1/surfaces. Derived from `createSessionSchema` so the
+ * Request body for POST /v1/panes. Derived from `createPaneSchema` so the
  * runtime validator and the static type cannot drift.
  */
-export type CreateSessionRequest = z.infer<typeof createSessionSchema>;
+export type CreatePaneRequest = z.infer<typeof createPaneSchema>;
 
-/** Response from POST /v1/surfaces. */
-export interface CreateSessionResponse {
-  surface_id: string;
+/** Response from POST /v1/panes. */
+export interface CreatePaneResponse {
+  pane_id: string;
   tokens: { humans: string[]; agent: string };
   urls: { humans: string[]; agent_stream: string };
   expires_at: string;
-  /** The resolved tab title persisted on the surface (the agent's value, or
+  /** The resolved tab title persisted on the pane (the agent's value, or
    * the Template.name fallback). */
   title: string;
 }
 
-/** Response from GET /v1/surfaces/:id. */
-export interface SurfaceState {
-  surface_id: string;
+/** Response from GET /v1/panes/:id. */
+export interface PaneState {
+  pane_id: string;
   status: string;
-  /** The template version this surface is pinned to. */
+  /** The template version this pane is pinned to. */
   template_id: string;
   template_version_id: string;
   template_version: number;
-  /** The tab title this surface was created with (frozen for its lifetime). */
+  /** The tab title this pane was created with (frozen for its lifetime). */
   title: string;
   metadata: Record<string, unknown> | null;
   input_data: Record<string, unknown> | null;
@@ -118,13 +118,13 @@ export interface SurfaceState {
   expires_at: string;
 }
 
-/** Response from GET /v1/surfaces/:id/events. */
+/** Response from GET /v1/panes/:id/events. */
 export interface EventsPage {
   events: PaneEvent[];
   next_cursor: string | null;
 }
 
-/** A non-secret summary of one participant on a surface — safe to list. */
+/** A non-secret summary of one participant on a pane — safe to list. */
 export interface ParticipantSummary {
   /** The revoke handle (Participant.id). */
   participant_id: string;
@@ -138,9 +138,9 @@ export interface ParticipantSummary {
   revoked_at: string | null;
 }
 
-/** A row in the GET /v1/surfaces list response (no secrets, lean). */
-export interface SurfaceSummary {
-  surface_id: string;
+/** A row in the GET /v1/panes list response (no secrets, lean). */
+export interface PaneSummary {
+  pane_id: string;
   /** Tab title (required column; agent input or Template.name fallback). */
   title: string;
   /** Effective status — respects expiresAt projection (the column may say
@@ -151,33 +151,33 @@ export interface SurfaceSummary {
   template_version_id: string;
   template_version: number;
   /** Count of active (non-revoked) human participants. The full participant
-   *  array is intentionally NOT inlined here — agents with many surfaces
+   *  array is intentionally NOT inlined here — agents with many panes
    *  would pay the bandwidth on every list call. Fetch
-   *  `GET /v1/surfaces/:id/participants` when you need the rows. */
+   *  `GET /v1/panes/:id/participants` when you need the rows. */
   active_human_participants: number;
   created_at: string;
   expires_at: string;
-  /** Whether the surface has a webhook callback configured (URL is NOT
+  /** Whether the pane has a webhook callback configured (URL is NOT
    *  returned — it may carry a secret in the path). */
   has_callback: boolean;
 }
 
-/** Response from GET /v1/surfaces/:id/participants — every participant on
- *  one surface (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+/** Response from GET /v1/panes/:id/participants — every participant on
+ *  one pane (active and revoked). Bounded by MAX_PARTICIPANTS_PER_PANE
  *  on the relay so no pagination is needed. */
 export interface ParticipantsList {
-  surface_id: string;
+  pane_id: string;
   items: ParticipantSummary[];
 }
 
-/** Response from GET /v1/surfaces. */
-export interface SurfacesPage {
-  items: SurfaceSummary[];
+/** Response from GET /v1/panes. */
+export interface PanesPage {
+  items: PaneSummary[];
   /** Opaque cursor for the next page; null when no more rows. */
   next_cursor: string | null;
 }
 
-/** Response from POST /v1/surfaces/:id/participants — one-shot, includes the
+/** Response from POST /v1/panes/:id/participants — one-shot, includes the
  *  plaintext token exactly once. The relay stores only the hash. */
 export interface MintParticipantResponse {
   participant_id: string;
@@ -284,7 +284,7 @@ export interface FeedbackRecord {
   id: string;
   type: FeedbackType;
   message: string;
-  surface_id: string | null;
+  pane_id: string | null;
   created_at: string;
 }
 

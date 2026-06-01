@@ -1,4 +1,4 @@
-// End-to-end tests for POST /v1/surfaces under the reusable-templates model:
+// End-to-end tests for POST /v1/panes under the reusable-templates model:
 // the inline form (relay creates an anonymous template) and the reference form
 // (instances an existing named template, optionally pinning a version).
 
@@ -63,14 +63,14 @@ function bearer(apiKey: string): Record<string, string> {
 }
 
 function post(path: string, apiKey: string, body: unknown): Promise<Response> {
-  // Auto-fill `title` on POST /v1/surfaces so the broad set of existing tests
+  // Auto-fill `title` on POST /v1/panes so the broad set of existing tests
   // (which predate the required-title rule from #158) doesn't need to repeat
   // it everywhere. Tests that specifically exercise the title rules pass an
   // explicit `title` (or `title: undefined` to drop it before serialization).
   let payload: unknown = body;
-  if (path === "/v1/surfaces" && body && typeof body === "object") {
+  if (path === "/v1/panes" && body && typeof body === "object") {
     const b = body as Record<string, unknown>;
-    if (!("title" in b)) payload = { ...b, title: "Test surface" };
+    if (!("title" in b)) payload = { ...b, title: "Test pane" };
   }
   return app.fetch(
     new Request(`http://t${path}`, {
@@ -81,14 +81,14 @@ function post(path: string, apiKey: string, body: unknown): Promise<Response> {
   );
 }
 
-describe("POST /v1/surfaces — inline form", () => {
+describe("POST /v1/panes — inline form", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("creates a surface and a transparent anonymous template", async () => {
+  it("creates a pane and a transparent anonymous template", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -96,8 +96,8 @@ describe("POST /v1/surfaces — inline form", () => {
       },
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { surface_id: string };
-    expect(body.surface_id).toBeTruthy();
+    const body = (await res.json()) as { pane_id: string };
+    expect(body.pane_id).toBeTruthy();
 
     // An anonymous template (name null) was created behind it.
     const templates = await prisma.template.findMany();
@@ -106,9 +106,9 @@ describe("POST /v1/surfaces — inline form", () => {
     expect(templates[0]!.slug).toBeNull();
   });
 
-  it("stores input_data on the surface", async () => {
+  it("stores input_data on the pane", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -117,9 +117,9 @@ describe("POST /v1/surfaces — inline form", () => {
       input_data: { prTitle: "Fix the bug" },
     });
     expect(res.status).toBe(201);
-    const { surface_id } = (await res.json()) as { surface_id: string };
+    const { pane_id } = (await res.json()) as { pane_id: string };
     const get = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface_id}`, {
+      new Request(`http://t/v1/panes/${pane_id}`, {
         headers: bearer(apiKey),
       }),
     );
@@ -133,7 +133,7 @@ describe("POST /v1/surfaces — inline form", () => {
 
   it("rejects html-ref with 400", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-ref",
         source: "https://example.com/x",
@@ -144,7 +144,7 @@ describe("POST /v1/surfaces — inline form", () => {
   });
 });
 
-describe("POST /v1/surfaces — reference form", () => {
+describe("POST /v1/panes — reference form", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -163,7 +163,7 @@ describe("POST /v1/surfaces — reference form", () => {
   it("instances an existing template by id", async () => {
     const apiKey = await seedAgent();
     const templateId = await createNamedArtifact(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
     });
     expect(res.status).toBe(201);
@@ -172,7 +172,7 @@ describe("POST /v1/surfaces — reference form", () => {
   it("instances an existing template by slug", async () => {
     const apiKey = await seedAgent();
     await createNamedArtifact(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: "pr-review" },
     });
     expect(res.status).toBe(201);
@@ -186,13 +186,13 @@ describe("POST /v1/surfaces — reference form", () => {
       type: "html-inline",
       event_schema: eventSchema,
     });
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId, version: 1 },
     });
     expect(res.status).toBe(201);
-    const { surface_id } = (await res.json()) as { surface_id: string };
+    const { pane_id } = (await res.json()) as { pane_id: string };
     const get = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface_id}`, {
+      new Request(`http://t/v1/panes/${pane_id}`, {
         headers: bearer(apiKey),
       }),
     );
@@ -209,12 +209,12 @@ describe("POST /v1/surfaces — reference form", () => {
       type: "html-inline",
       event_schema: eventSchema,
     });
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
     });
-    const { surface_id } = (await res.json()) as { surface_id: string };
+    const { pane_id } = (await res.json()) as { pane_id: string };
     const get = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface_id}`, {
+      new Request(`http://t/v1/panes/${pane_id}`, {
         headers: bearer(apiKey),
       }),
     );
@@ -225,7 +225,7 @@ describe("POST /v1/surfaces — reference form", () => {
 
   it("404s for an unknown template id", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: "art_does_not_exist" },
     });
     expect(res.status).toBe(404);
@@ -234,7 +234,7 @@ describe("POST /v1/surfaces — reference form", () => {
   it("404s for a missing version", async () => {
     const apiKey = await seedAgent();
     const templateId = await createNamedArtifact(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId, version: 99 },
     });
     expect(res.status).toBe(404);
@@ -244,20 +244,20 @@ describe("POST /v1/surfaces — reference form", () => {
     const owner = await seedAgent();
     const other = await seedAgent();
     const templateId = await createNamedArtifact(owner);
-    const res = await post("/v1/surfaces", other, {
+    const res = await post("/v1/panes", other, {
       template: { id: templateId },
     });
     expect(res.status).toBe(404);
   });
 
-  it("bumps the template's last_used_at on surface create", async () => {
+  it("bumps the template's last_used_at on pane create", async () => {
     const apiKey = await seedAgent();
     const templateId = await createNamedArtifact(apiKey);
     const before = await prisma.template.findUniqueOrThrow({
       where: { id: templateId },
     });
     expect(before.lastUsedAt).toBeNull();
-    await post("/v1/surfaces", apiKey, { template: { id: templateId } });
+    await post("/v1/panes", apiKey, { template: { id: templateId } });
     const after = await prisma.template.findUniqueOrThrow({
       where: { id: templateId },
     });
@@ -265,9 +265,9 @@ describe("POST /v1/surfaces — reference form", () => {
   });
 });
 
-// Phase C — POST /v1/surfaces validates the surface's `input_data` against the
-// pinned template version's `input_schema` before the surface row is created.
-describe("POST /v1/surfaces — input_schema validation", () => {
+// Phase C — POST /v1/panes validates the pane's `input_data` against the
+// pinned template version's `input_schema` before the pane row is created.
+describe("POST /v1/panes — input_schema validation", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -298,20 +298,20 @@ describe("POST /v1/surfaces — input_schema validation", () => {
     return ((await res.json()) as { template_id: string }).template_id;
   }
 
-  it("accepts a surface whose input_data satisfies the input_schema", async () => {
+  it("accepts a pane whose input_data satisfies the input_schema", async () => {
     const apiKey = await seedAgent();
     const templateId = await createArtifactWithInputSchema(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
       input_data: { prTitle: "Fix the bug", diffUrl: "https://x/diff" },
     });
     expect(res.status).toBe(201);
   });
 
-  it("rejects a surface whose input_data violates the input_schema", async () => {
+  it("rejects a pane whose input_data violates the input_schema", async () => {
     const apiKey = await seedAgent();
     const templateId = await createArtifactWithInputSchema(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
       input_data: { prTitle: 123 },
     });
@@ -320,30 +320,30 @@ describe("POST /v1/surfaces — input_schema validation", () => {
     expect(body.error.code).toBe("input_schema_violation");
   });
 
-  it("rejects a surface that omits input_data a required field needs", async () => {
+  it("rejects a pane that omits input_data a required field needs", async () => {
     const apiKey = await seedAgent();
     const templateId = await createArtifactWithInputSchema(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
     });
     expect(res.status).toBe(422);
-    // No surface row created — validation runs before the insert.
-    expect(await prisma.surface.count()).toBe(0);
+    // No pane row created — validation runs before the insert.
+    expect(await prisma.pane.count()).toBe(0);
   });
 
   it("rejects an unexpected property when the schema forbids it", async () => {
     const apiKey = await seedAgent();
     const templateId = await createArtifactWithInputSchema(apiKey);
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: { id: templateId },
       input_data: { prTitle: "ok", bogus: true },
     });
     expect(res.status).toBe(422);
   });
 
-  it("accepts a surface with no input_data when the version has no input_schema", async () => {
+  it("accepts a pane with no input_data when the version has no input_schema", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -355,7 +355,7 @@ describe("POST /v1/surfaces — input_schema validation", () => {
 
   it("accepts arbitrary input_data unvalidated when the version has no input_schema", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -366,7 +366,7 @@ describe("POST /v1/surfaces — input_schema validation", () => {
     expect(res.status).toBe(201);
   });
 
-  it("rejects a malformed input_schema at template-write time, not surface-create", async () => {
+  it("rejects a malformed input_schema at template-write time, not pane-create", async () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/templates", apiKey, {
       name: "Bad",
@@ -380,15 +380,15 @@ describe("POST /v1/surfaces — input_schema validation", () => {
   });
 });
 
-// Inline-form surfaces can ALSO carry an input_schema (#208). Pre-fix the
+// Inline-form panes can ALSO carry an input_schema (#208). Pre-fix the
 // relay's inline branch hardcoded `inputSchema: Prisma.JsonNull`, silently
 // dropping any schema sent on the wire — which made attachment refs in
 // `input_data` unreachable from the page because the participant attachment-
 // download bridge walks input_data against the template version's
 // inputSchema. These tests pin the new behaviour: the schema is persisted,
-// it gates input_data validation, and it surfaces attachment-id sites to the
+// it gates input_data validation, and it panes attachment-id sites to the
 // reachability walker just like the named-template path.
-describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
+describe("POST /v1/panes — inline form with input_schema (#208)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -405,7 +405,7 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
 
   it("persists input_schema on the auto-created template version", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -423,9 +423,9 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
     expect(versions[0]!.inputSchema).toEqual(inputSchema);
   });
 
-  it("accepts inline surface whose input_data satisfies the schema", async () => {
+  it("accepts inline pane whose input_data satisfies the schema", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -437,9 +437,9 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
     expect(res.status).toBe(201);
   });
 
-  it("rejects inline surface whose input_data violates the schema", async () => {
+  it("rejects inline pane whose input_data violates the schema", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -451,13 +451,13 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("input_schema_violation");
-    // Validation runs before the insert; no surface row created.
-    expect(await prisma.surface.count()).toBe(0);
+    // Validation runs before the insert; no pane row created.
+    expect(await prisma.pane.count()).toBe(0);
   });
 
   it("rejects a missing required field in input_data", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -467,12 +467,12 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
       // input_data omitted entirely → validated as {} → required prTitle fails
     });
     expect(res.status).toBe(422);
-    expect(await prisma.surface.count()).toBe(0);
+    expect(await prisma.pane.count()).toBe(0);
   });
 
-  it("rejects a malformed inline input_schema at surface-create time", async () => {
+  it("rejects a malformed inline input_schema at pane-create time", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -481,14 +481,14 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
       },
     });
     expect(res.status).toBe(400);
-    // No template + no surface leaked on the failed validation.
+    // No template + no pane leaked on the failed validation.
     expect(await prisma.template.count()).toBe(0);
-    expect(await prisma.surface.count()).toBe(0);
+    expect(await prisma.pane.count()).toBe(0);
   });
 
   it("input_schema is absent => no input contract (regression guard for the pre-fix default)", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -503,45 +503,45 @@ describe("POST /v1/surfaces — inline form with input_schema (#208)", () => {
 });
 
 // View-only templates: an inline template created with NO event_schema declares
-// an empty, strictly-enforced event vocabulary. The surface rejects every
+// an empty, strictly-enforced event vocabulary. The pane rejects every
 // page/agent emit; system events keep flowing; input_schema is independent.
-describe("POST /v1/surfaces — view-only template (no event_schema)", () => {
+describe("POST /v1/panes — view-only template (no event_schema)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  // Create a view-only surface (inline form, omitting event_schema) and return
+  // Create a view-only pane (inline form, omitting event_schema) and return
   // its id + the agent participant token.
   async function createViewOnlySession(
     apiKey: string,
     extra: Record<string, unknown> = {},
-  ): Promise<{ surfaceId: string; agentToken: string }> {
-    const res = await post("/v1/surfaces", apiKey, {
+  ): Promise<{ paneId: string; agentToken: string }> {
+    const res = await post("/v1/panes", apiKey, {
       template: { type: "html-inline", source: "<html>report</html>" },
       ...extra,
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      surface_id: string;
+      pane_id: string;
       tokens: { agent: string };
     };
-    return { surfaceId: body.surface_id, agentToken: body.tokens.agent };
+    return { paneId: body.pane_id, agentToken: body.tokens.agent };
   }
 
-  it("creates a surface when the inline template omits event_schema", async () => {
+  it("creates a pane when the inline template omits event_schema", async () => {
     const apiKey = await seedAgent();
-    const { surfaceId } = await createViewOnlySession(apiKey);
-    expect(surfaceId).toBeTruthy();
+    const { paneId } = await createViewOnlySession(apiKey);
+    expect(paneId).toBeTruthy();
     // The pinned version persisted a null event_schema.
     const version = await prisma.templateVersion.findFirstOrThrow();
     expect(version.eventSchema).toBeNull();
   });
 
-  it("rejects an agent emit on a view-only surface with 422 unknown_event_type", async () => {
+  it("rejects an agent emit on a view-only pane with 422 unknown_event_type", async () => {
     const apiKey = await seedAgent();
-    const { surfaceId, agentToken } = await createViewOnlySession(apiKey);
+    const { paneId, agentToken } = await createViewOnlySession(apiKey);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({ type: "anything.atall", data: {} }),
@@ -552,24 +552,24 @@ describe("POST /v1/surfaces — view-only template (no event_schema)", () => {
     expect(body.error.code).toBe("unknown_event_type");
   });
 
-  it("still emits system events on a view-only surface (Invariant 1)", async () => {
+  it("still emits system events on a view-only pane (Invariant 1)", async () => {
     const apiKey = await seedAgent();
-    const { surfaceId, agentToken } = await createViewOnlySession(apiKey);
-    // DELETE writes a system.surface.expired event directly.
+    const { paneId, agentToken } = await createViewOnlySession(apiKey);
+    // DELETE writes a system.pane.expired event directly.
     const del = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}`, {
+      new Request(`http://t/v1/panes/${paneId}`, {
         method: "DELETE",
         headers: bearer(apiKey),
       }),
     );
     expect(del.status).toBe(204);
     const get = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events?since=0`, {
+      new Request(`http://t/v1/panes/${paneId}/events?since=0`, {
         headers: bearer(agentToken),
       }),
     );
     const body = (await get.json()) as { events: { type: string }[] };
-    expect(body.events.some((e) => e.type === "system.surface.expired")).toBe(
+    expect(body.events.some((e) => e.type === "system.pane.expired")).toBe(
       true,
     );
   });
@@ -593,7 +593,7 @@ describe("POST /v1/surfaces — view-only template (no event_schema)", () => {
     const { template_id } = (await created.json()) as { template_id: string };
 
     // input_data that violates the input_schema is rejected.
-    const bad = await post("/v1/surfaces", apiKey, {
+    const bad = await post("/v1/panes", apiKey, {
       template: { id: template_id },
       input_data: { quarter: 4 },
     });
@@ -603,7 +603,7 @@ describe("POST /v1/surfaces — view-only template (no event_schema)", () => {
     );
 
     // input_data that satisfies it is accepted.
-    const ok = await post("/v1/surfaces", apiKey, {
+    const ok = await post("/v1/panes", apiKey, {
       template: { id: template_id },
       input_data: { quarter: "Q4" },
     });
@@ -611,11 +611,11 @@ describe("POST /v1/surfaces — view-only template (no event_schema)", () => {
   });
 });
 
-// Title is required on every surface — the bridge shell renders it into
-// <title>, so the relay refuses to mint a surface without one. The reference
+// Title is required on every pane — the bridge shell renders it into
+// <title>, so the relay refuses to mint a pane without one. The reference
 // form has one ergonomic fallback: a named template's `name` is used when the
 // caller omits `title`.
-describe("POST /v1/surfaces — title", () => {
+describe("POST /v1/panes — title", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -642,18 +642,18 @@ describe("POST /v1/surfaces — title", () => {
   ): Promise<string> {
     if (name === null) {
       // Anonymous template: name + slug null. The only way to create one is
-      // via the inline-surface path that transparently spins one up. Re-use
+      // via the inline-pane path that transparently spins one up. Re-use
       // that flow to get an template_id we can reference.
-      const res = await post("/v1/surfaces", apiKey, {
+      const res = await post("/v1/panes", apiKey, {
         template: {
           type: "html-inline",
           source: "<html>x</html>",
           event_schema: eventSchema,
         },
       });
-      const { surface_id } = (await res.json()) as { surface_id: string };
-      const sess = await prisma.surface.findUnique({
-        where: { id: surface_id },
+      const { pane_id } = (await res.json()) as { pane_id: string };
+      const sess = await prisma.pane.findUnique({
+        where: { id: pane_id },
         include: { templateVersion: true },
       });
       return sess!.templateVersion.templateId;
@@ -669,7 +669,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("rejects the inline form with 400 when title is missing", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -686,7 +686,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("accepts the inline form when title is provided and echoes it back", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -695,11 +695,11 @@ describe("POST /v1/surfaces — title", () => {
       title: "My pane",
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { title: string; surface_id: string };
+    const body = (await res.json()) as { title: string; pane_id: string };
     expect(body.title).toBe("My pane");
     // GET also returns it.
     const get = await app.fetch(
-      new Request(`http://t/v1/surfaces/${body.surface_id}`, {
+      new Request(`http://t/v1/panes/${body.pane_id}`, {
         headers: bearer(apiKey),
       }),
     );
@@ -709,7 +709,7 @@ describe("POST /v1/surfaces — title", () => {
   it("falls back to Template.name when reference-form title is omitted", async () => {
     const apiKey = await seedAgent();
     await createNamedArtifact(apiKey, "PR Review");
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: { id: "PR Review".toLowerCase() }, // resolve by id below
     });
     // The slug lookup needs the actual id since we didn't set a slug. Re-issue
@@ -718,7 +718,7 @@ describe("POST /v1/surfaces — title", () => {
       const head = await prisma.template.findFirst({
         where: { name: "PR Review" },
       });
-      const res2 = await postRaw("/v1/surfaces", apiKey, {
+      const res2 = await postRaw("/v1/panes", apiKey, {
         template: { id: head!.id },
       });
       expect(res2.status).toBe(201);
@@ -734,7 +734,7 @@ describe("POST /v1/surfaces — title", () => {
   it("rejects reference form with 400 when template has no name AND no title given", async () => {
     const apiKey = await seedAgent();
     const anonId = await createNamedArtifact(apiKey, null);
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: { id: anonId },
     });
     expect(res.status).toBe(400);
@@ -751,7 +751,7 @@ describe("POST /v1/surfaces — title", () => {
     const head = await prisma.template.findFirst({
       where: { name: "Template Name" },
     });
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: { id: head!.id },
       title: "Explicit title",
     });
@@ -763,7 +763,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("rejects a title with control characters (400)", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -779,7 +779,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("rejects a title longer than 80 chars (400)", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -792,7 +792,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("rejects a whitespace-only title that trims to empty (400)", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -805,7 +805,7 @@ describe("POST /v1/surfaces — title", () => {
 
   it("trims surrounding whitespace before storing", async () => {
     const apiKey = await seedAgent();
-    const res = await postRaw("/v1/surfaces", apiKey, {
+    const res = await postRaw("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -818,7 +818,7 @@ describe("POST /v1/surfaces — title", () => {
   });
 });
 
-describe("POST /v1/surfaces — preamble", () => {
+describe("POST /v1/panes — preamble", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
@@ -832,9 +832,9 @@ describe("POST /v1/surfaces — preamble", () => {
     },
   };
 
-  it("persists a valid preamble onto the surface row", async () => {
+  it("persists a valid preamble onto the pane row", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -844,16 +844,16 @@ describe("POST /v1/surfaces — preamble", () => {
       preamble: "Your CI bot wants you to approve a deploy.",
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { surface_id: string };
-    const row = await prisma.surface.findUnique({
-      where: { id: body.surface_id },
+    const body = (await res.json()) as { pane_id: string };
+    const row = await prisma.pane.findUnique({
+      where: { id: body.pane_id },
     });
     expect(row?.preamble).toBe("Your CI bot wants you to approve a deploy.");
   });
 
   it("treats an empty / whitespace-only preamble as omitted", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -863,16 +863,16 @@ describe("POST /v1/surfaces — preamble", () => {
       preamble: "   ",
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { surface_id: string };
-    const row = await prisma.surface.findUnique({
-      where: { id: body.surface_id },
+    const body = (await res.json()) as { pane_id: string };
+    const row = await prisma.pane.findUnique({
+      where: { id: body.pane_id },
     });
     expect(row?.preamble).toBeNull();
   });
 
   it("rejects a preamble longer than 280 chars with 400", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",
@@ -888,7 +888,7 @@ describe("POST /v1/surfaces — preamble", () => {
 
   it("rejects a preamble containing non-newline control chars with 400", async () => {
     const apiKey = await seedAgent();
-    const res = await post("/v1/surfaces", apiKey, {
+    const res = await post("/v1/panes", apiKey, {
       template: {
         type: "html-inline",
         source: "<html></html>",

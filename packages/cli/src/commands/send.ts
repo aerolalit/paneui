@@ -1,4 +1,4 @@
-// `pane surface send <id>` — append an agent event to a surface.
+// `pane send <id>` — append an agent event to a pane.
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -17,23 +17,23 @@ const KNOWN_FLAGS = [
 ];
 const KNOWN_BOOLS: string[] = [];
 
-export const sendHelp = `pane surface send — emit an agent event into a surface
+export const sendHelp = `pane send — emit an agent event into a pane
 
 Usage:
-  pane surface send <surface-id> --type <event-type> --data <path|json> [options]
-  pane surface send <surface-id> --type <event-type> --attachment <file-path> [options]
+  pane send <pane-id> --type <event-type> --data <path|json> [options]
+  pane send <pane-id> --type <event-type> --attachment <file-path> [options]
 
-POSTs an event to /v1/surfaces/:id/events. The event is stamped as authored by
+POSTs an event to /v1/panes/:id/events. The event is stamped as authored by
 the agent (the relay derives identity from the API key — it cannot be spoofed).
 
 Required:
-  --type <t>          Event type. Must exist in the surface's event schema
+  --type <t>          Event type. Must exist in the pane's event schema
                       with the agent in its emittedBy list.
   --data <v>          Event payload: a file path to a .json file, or inline
                       JSON. Use --data 'null' or --data '{}' for no payload.
 
   ALTERNATIVE to --data:
-  --attachment <path>       One-shot: upload <path> as a surface-scope attachment, then
+  --attachment <path>       One-shot: upload <path> as a pane-scope attachment, then
                       send an event whose payload is the AttachmentRef. The event
                       data is { attachment: <AttachmentRef> }; declare it in your event
                       schema with \`format: pane-attachment-id\` on \`attachment.attachment_id\`.
@@ -49,10 +49,10 @@ Output (stdout, JSON):
   { event, deduped }`;
 
 export async function runSend(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface send");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane send");
 
-  const surfaceId = args.positionals[0];
-  if (!surfaceId) fail("missing <surface-id>", "invalid_args");
+  const paneId = args.positionals[0];
+  if (!paneId) fail("missing <pane-id>", "invalid_args");
 
   const type = args.flags.get("type");
   if (!type) fail("missing --type", "invalid_args");
@@ -69,8 +69,8 @@ export async function runSend(args: ParsedArgs): Promise<void> {
 
   const client = makeClient(args);
 
-  // --attachment path: upload the file as a surface-scope attachment, then send an
-  // event whose data is { attachment: <AttachmentRef> }. The surface's event schema
+  // --attachment path: upload the file as a pane-scope attachment, then send an
+  // event whose data is { attachment: <AttachmentRef> }. The pane's event schema
   // is expected to declare a attachment field with format: pane-attachment-id.
   if (blobPath !== undefined) {
     let bytes: Buffer;
@@ -84,11 +84,11 @@ export async function runSend(args: ParsedArgs): Promise<void> {
     }
     try {
       const ref = await client.uploadBlob(bytes, {
-        scope: "surface",
-        surfaceId: surfaceId!,
+        scope: "pane",
+        paneId: paneId!,
         filename: basename(blobPath),
       });
-      const res = await client.sendEvent(surfaceId!, {
+      const res = await client.sendEvent(paneId!, {
         type: type!,
         data: { attachment: ref },
         causationId: args.flags.get("causation-id"),
@@ -109,7 +109,7 @@ export async function runSend(args: ParsedArgs): Promise<void> {
   }
 
   try {
-    const res = await client.sendEvent(surfaceId!, {
+    const res = await client.sendEvent(paneId!, {
       type: type!,
       data,
       causationId: args.flags.get("causation-id"),

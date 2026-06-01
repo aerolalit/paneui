@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { log } from "../../log.js";
-import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import { comparePaneSchemas } from "../../core/schema-compat.js";
 import {
   createArtifactSchema,
   createArtifactVersionSchema,
@@ -42,7 +42,7 @@ function validateVersionContent(
     throw errors.payloadTooLarge();
   }
   if (content.type === "html-ref") {
-    // Mirrors the surface route: v1 does not serve html-ref templates (a blank
+    // Mirrors the pane route: v1 does not serve html-ref templates (a blank
     // iframe with no error — issue #24). Reject at create time.
     throw errors.invalidRequest(
       "template type 'html-ref' is not supported in this release",
@@ -162,7 +162,7 @@ templates.post("/", async (c) => {
     record_schema,
   });
 
-  // Per-agent template cap (count-then-create — a soft cap, see the surface
+  // Per-agent template cap (count-then-create — a soft cap, see the pane
   // route's identical note).
   if (config.MAX_ARTIFACTS_PER_AGENT > 0) {
     const count = await prisma.template.count({
@@ -367,7 +367,7 @@ export async function advanceFollowInstalls(
   for (const install of installs) {
     const fromRow = await getVersion(install.installedVersion);
     if (!fromRow) continue;
-    const breaks = compareSurfaceSchemas({
+    const breaks = comparePaneSchemas({
       oldEventSchema: fromRow.eventSchema as unknown as EventSchema | null,
       newEventSchema: toRow.eventSchema as unknown as EventSchema | null,
       oldInputSchema: fromRow.inputSchema as Record<string, unknown> | null,
@@ -543,11 +543,11 @@ templates.get("/:id/versions/:version", async (c) => {
 
 // DELETE /v1/templates/:id — remove an template (and, via Prisma's
 // onDelete:Cascade on TemplateVersion, all its versions). Strict cascade:
-// the deletion is REFUSED with 409 conflict if any surface in any state
+// the deletion is REFUSED with 409 conflict if any pane in any state
 // references any version of this template. The reporter (#137) wanted a
 // way to clean up test/stale templates — strict mode is the safe first
-// cut: it never drops surface history that a human or operator might
-// care about. Users delete the referencing surfaces first, then the
+// cut: it never drops pane history that a human or operator might
+// care about. Users delete the referencing panes first, then the
 // template. A future PR may add a `cascade=true` flag or a separate
 // "purge everything" semantic; that's a one-direction change so we
 // don't want to bake it in by default.
@@ -572,19 +572,19 @@ templates.delete("/:id", async (c) => {
   });
   if (!template) throw errors.artifactNotFound();
 
-  // Strict-cascade refuse: any surface (open OR closed) that pins one of
+  // Strict-cascade refuse: any pane (open OR closed) that pins one of
   // this template's versions blocks the delete. We count rather than fetch
-  // a representative surface — the count is cheap with the index on
-  // `surfaces.template_version_id` and the agent doesn't need surface ids
+  // a representative pane — the count is cheap with the index on
+  // `panes.template_version_id` and the agent doesn't need pane ids
   // to act on the refusal.
-  const referencingSessions = await prisma.surface.count({
+  const referencingSessions = await prisma.pane.count({
     where: { templateVersion: { templateId: template.id } },
   });
   if (referencingSessions > 0) {
     throw errors.conflict(
-      `template has ${referencingSessions} referencing surface(s) — delete or wait for them to expire first`,
+      `template has ${referencingSessions} referencing pane(s) — delete or wait for them to expire first`,
       false,
-      `run 'pane surface show <surface-id>' or 'pane surface delete <surface-id>' on each referencing surface before deleting the template; closed/expired surfaces count too and must be removed by the TTL sweeper or an explicit DELETE`,
+      `run 'pane pane show <pane-id>' or 'pane pane delete <pane-id>' on each referencing pane before deleting the template; closed/expired panes count too and must be removed by the TTL sweeper or an explicit DELETE`,
     );
   }
 

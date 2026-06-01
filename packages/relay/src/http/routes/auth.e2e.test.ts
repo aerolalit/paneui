@@ -4,7 +4,7 @@
 // logger output. Tests reach into the test DB to read the MagicLink row
 // directly when they need to verify storage shape (token-hash invariant,
 // expiry, etc.); the request-link → verify → cookie flow is exercised
-// through the real HTTP surface.
+// through the real HTTP pane.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";

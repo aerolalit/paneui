@@ -1,7 +1,7 @@
 // `pane attachment` — manage binary attachments (attachments) on the relay.
 //
 // A attachment is a typed binary file (image, PDF, audio, video, etc.) owned by an
-// agent and optionally bound to a surface or template. Pages reference attachments
+// agent and optionally bound to a pane or template. Pages reference attachments
 // by id with `format: pane-attachment-id`; participants can fetch a attachment through a
 // minted capability URL (/b/<token>) without needing the agent's API key.
 //
@@ -27,8 +27,8 @@ export const blobHelp = `pane attachment — manage attachments (binary attachme
 A attachment is a typed binary file (image, PDF, audio, video, ...) the agent has
 uploaded to the relay. Blobs are scoped:
 
-  agent     — reusable across the agent's surfaces (default)
-  surface   — bound to one surface; deleted with it
+  agent     — reusable across the agent's panes (default)
+  pane   — bound to one pane; deleted with it
   template  — bound to a reusable template; deleted with it
 
 Pages reference attachments by id (the relay's schema validates the id with
@@ -40,7 +40,7 @@ Usage:
 
 Verbs:
   upload                 Upload a local file. Required: --file. Optional:
-                         --scope, --surface-id, --template-id, --filename,
+                         --scope, --pane-id, --template-id, --filename,
                          --mime. Prints { attachment_id, scope, mime, size, sha256,
                          ... }.
 
@@ -70,12 +70,12 @@ Output: stdout is machine-readable JSON. Errors go to stderr as
  * Build a new ParsedArgs with the leading positional (the verb) stripped.
  * The downstream verb runners read their primary positional (the attachment_id)
  * at positionals[0], so we hand them an args object that looks exactly like
- * they were called directly — mirrors surface.ts's shiftPositionals.
+ * they were called directly — mirrors pane.ts's shiftPositionals.
  */
 function shiftPositionals(args: ParsedArgs): ParsedArgs {
   // Propagate danglingValueFlags so the leaf runner's assertKnownFlags
   // can still distinguish "unknown flag" from "missing value" — see the
-  // matching note in surface.ts's shiftPositionals.
+  // matching note in pane.ts's shiftPositionals.
   const out: ParsedArgs = {
     positionals: args.positionals.slice(1),
     flags: args.flags,
@@ -103,7 +103,7 @@ export async function runBlob(args: ParsedArgs): Promise<void> {
     return;
   }
   // `pane attachment list --help` — same pattern (list takes no required positional
-  // so the general pre-empt would already fire, but for parity with surface.ts
+  // so the general pre-empt would already fire, but for parity with pane.ts
   // we route through here when args carry the "list" positional explicitly).
   if (
     verb === "list" &&

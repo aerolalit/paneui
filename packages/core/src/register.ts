@@ -4,7 +4,7 @@
 // the call that *obtains* one. Whether the relay endpoint is reachable depends
 // on its REGISTRATION_MODE: a `secret`-mode relay requires the shared
 // registration secret to be passed as a Bearer token (see the `secret` option
-// below). Abuse is bounded server-side by a per-IP rate limit (a 429 surfaces
+// below). Abuse is bounded server-side by a per-IP rate limit (a 429 panes
 // here as a PaneApiError with status 429).
 
 import { PaneApiError } from "./client.js";

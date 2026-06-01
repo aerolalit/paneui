@@ -1,5 +1,5 @@
 // End-to-end tests for the Phase D system pages — /login, /home,
-// /my-surfaces, /my-templates, /my-agents, /settings.
+// /my-panes, /my-templates, /my-agents, /settings.
 //
 // These pages serve raw HTML, so the assertions check status codes,
 // content-type, and presence of key DOM landmarks (account email,
@@ -140,7 +140,7 @@ describe("GET /login", () => {
     // Hero block tells the story before the form.
     expect(html).toContain("A real UI for the human in the loop");
     expect(html).toContain('id="login-form"');
-    // The email-magic-link form remains the actual sign-in surface.
+    // The email-magic-link form remains the actual sign-in pane.
     expect(html).toContain('class="login-hero"');
     expect(html).toContain('class="login-form-card');
   });
@@ -178,7 +178,7 @@ describe("GET /login", () => {
 describe("logged-out access to gated pages", () => {
   it.each([
     "/home",
-    "/my-surfaces",
+    "/my-panes",
     "/my-templates",
     "/my-agents",
     "/apps",
@@ -200,30 +200,30 @@ describe("GET /home (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("alice@example.com");
-    expect(html).toContain("My surfaces");
+    expect(html).toContain("My panes");
     expect(html).toContain("My agents");
     expect(html).toContain("My templates");
     expect(html).toContain("Settings");
   });
 });
 
-describe("GET /my-surfaces (signed in)", () => {
-  it("renders the empty state when the human owns no surfaces", async () => {
+describe("GET /my-panes (signed in)", () => {
+  it("renders the empty state when the human owns no panes", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
     // First-touch empty state — headline, explanation, and two CTAs
     // (Claim an agent / Browse apps) point a new human at the next step.
     expect(html).toContain('class="empty-state"');
-    expect(html).toContain("No surfaces yet");
+    expect(html).toContain("No panes yet");
     expect(html).toContain("Claim an agent");
     expect(html).toContain("Browse apps");
   });
 
-  it("renders a surface card with title, template, agent, and id", async () => {
+  it("renders a pane card with title, template, agent, and id", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const agent = await prisma.agent.create({
       data: {
@@ -243,9 +243,9 @@ describe("GET /my-surfaces (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    await prisma.surface.create({
+    await prisma.pane.create({
       data: {
-        id: "sur_test_one",
+        id: "pan_test_one",
         agentId: agent.id,
         ownerHumanId: humanId,
         templateVersionId: tv.id,
@@ -254,22 +254,22 @@ describe("GET /my-surfaces (signed in)", () => {
       },
     });
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('class="surface-card"');
+    expect(html).toContain('class="pane-card"');
     // The page's escapeHtml only encodes &, <, >, " — apostrophe stays literal,
     // matching the existing behaviour of every other title rendered into the
     // signed-in pages.
     expect(html).toContain("Alice's PR review");
-    expect(html).toContain("sur_test_one");
-    // The new card surfaces the template name + the agent that created it
-    // so the human can tell two surfaces of the same template apart.
+    expect(html).toContain("pan_test_one");
+    // The new card panes the template name + the agent that created it
+    // so the human can tell two panes of the same template apart.
     expect(html).toContain("PR Review");
     expect(html).toContain("deploy-bot");
     // The avatar tile carries hash-derived hue + the template initials.
-    expect(html).toContain("surface-card-tile");
+    expect(html).toContain("pane-card-tile");
     expect(html).toContain("--tile-h:");
     expect(html).toMatch(/>PR<\/div>/);
   });
@@ -280,7 +280,7 @@ describe("GET /my-surfaces (signed in)", () => {
       data: { name: "a", keyHash: "y".repeat(64), keyPrefix: "y" },
     });
     // Anonymous template (no name, no slug) — created by the inline
-    // POST /v1/surfaces path. The card should still render with a
+    // POST /v1/panes path. The card should still render with a
     // useful label rather than a blank.
     const tmpl = await prisma.template.create({
       data: { ownerId: agent.id },
@@ -293,9 +293,9 @@ describe("GET /my-surfaces (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    await prisma.surface.create({
+    await prisma.pane.create({
       data: {
-        id: "sur_anon",
+        id: "pan_anon",
         agentId: agent.id,
         ownerHumanId: humanId,
         templateVersionId: tv.id,
@@ -304,13 +304,13 @@ describe("GET /my-surfaces (signed in)", () => {
       },
     });
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain("ad-hoc template");
   });
 
-  // #301 — /my-surfaces should reflect every surface the human has access
+  // #301 — /my-panes should reflect every pane the human has access
   // to, not just ones they own. Pre-fix only ownerHumanId rows surfaced
   // here; a human who joined a colleague's surface had no recovery path.
   it("includes surfaces opened as a (non-revoked) participant, not just owned ones", async () => {
@@ -335,7 +335,7 @@ describe("GET /my-surfaces (signed in)", () => {
     });
     // Surface owned by someone else (no ownerHumanId pointing at our human),
     // but our human is identity-bound on it via a non-revoked participant.
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_invited",
         agentId: ownerAgent.id,
@@ -346,7 +346,7 @@ describe("GET /my-surfaces (signed in)", () => {
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -356,7 +356,7 @@ describe("GET /my-surfaces (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -383,18 +383,18 @@ describe("GET /my-surfaces (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_kicked",
         agentId: ownerAgent.id,
         templateVersionId: tv.id,
-        title: "Surface Carol was kicked from",
+        title: "Pane Carol was kicked from",
         expiresAt: new Date(Date.now() + 60_000),
       },
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -405,12 +405,12 @@ describe("GET /my-surfaces (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     const html = await res.text();
-    expect(html).not.toContain("Surface Carol was kicked from");
+    expect(html).not.toContain("Pane Carol was kicked from");
     // Empty-state should render — no surfaces.
-    expect(html).toContain("No surfaces yet");
+    expect(html).toContain("No panes yet");
   });
 
   it("does not double-list a surface where the human is BOTH owner and participant", async () => {
@@ -432,19 +432,19 @@ describe("GET /my-surfaces (signed in)", () => {
         templateSource: "<p/>",
       },
     });
-    const surface = await prisma.surface.create({
+    const surface = await prisma.pane.create({
       data: {
         id: "sur_self",
         agentId: agent.id,
         ownerHumanId: humanId,
         templateVersionId: tv.id,
-        title: "Self surface",
+        title: "Self pane",
         expiresAt: new Date(Date.now() + 60_000),
       },
     });
     await prisma.participant.create({
       data: {
-        surfaceId: surface.id,
+        paneId: surface.id,
         kind: "human",
         identityId: humanId,
         humanId,
@@ -454,7 +454,7 @@ describe("GET /my-surfaces (signed in)", () => {
     });
 
     const res = await app.fetch(
-      new Request("http://t/my-surfaces", withCookie(cookie)),
+      new Request("http://t/my-panes", withCookie(cookie)),
     );
     const html = await res.text();
     // The surface card appears exactly once — count the title or the id.
@@ -464,7 +464,7 @@ describe("GET /my-surfaces (signed in)", () => {
     // couple of occurrences inside one card; verify the title is exactly
     // once which is the user-visible signal.
     expect(matches.length).toBeGreaterThan(0);
-    const titleMatches = html.match(/Self surface/g) ?? [];
+    const titleMatches = html.match(/Self pane/g) ?? [];
     expect(titleMatches).toHaveLength(1);
   });
 });

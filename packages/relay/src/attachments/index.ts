@@ -1,4 +1,4 @@
-// Public surface of the attachments module. Route handlers + tests import from
+// Public pane of the attachments module. Route handlers + tests import from
 // here, never reach into individual implementations directly.
 
 export {

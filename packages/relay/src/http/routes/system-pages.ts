@@ -2,7 +2,7 @@
 //
 //   GET  /login              static login form (email entry)
 //   GET  /home               home page: favourites + links to other system pages
-//   GET  /my-surfaces        list of surfaces the human participates on
+//   GET  /my-panes        list of panes the human participates on
 //   GET  /my-templates       list of templates the human owns
 //   GET  /my-agents          list of claimed agents + claim-new button
 //   GET  /settings           email, home pick, logout
@@ -12,7 +12,7 @@
 // Login cookie directly via window.fetch to /v1/self/* and /v1/agents/*.
 //
 // Architectural note: §5.2 says the home should be a TEMPLATE in DB
-// (Surface row + Template row). For Phase D MVP these are direct HTML
+// (Pane row + Template row). For Phase D MVP these are direct HTML
 // routes; templatising them is a follow-up refactor that doesn't change
 // behaviour. See HUMAN-SIDE-PROPOSAL.md "Open decisions" tail.
 
@@ -26,8 +26,8 @@ const systemPages = new Hono<OptionalHumanAuthEnv>();
 
 systemPages.use("*", resolveHumanOptional);
 
-// The Pane brand mark — same shape as the surface shell's header logo
-// (src/bridge/routes.ts) so the system pages and the live surface read as one
+// The Pane brand mark — same shape as the pane shell's header logo
+// (src/bridge/routes.ts) so the system pages and the live pane read as one
 // product. Inlined as an SVG element (not a data URI) so it inherits crisp
 // rendering at the header size.
 const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
@@ -45,7 +45,7 @@ const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidde
 // Mobile: the page is mobile-first. The header splits into two rows — a brand
 // bar and a horizontally scrollable tab strip — so the nav never overflows or
 // wraps awkwardly on a phone. A `prefers-color-scheme: dark` block maps the
-// palette onto the same navy the surface shell uses.
+// palette onto the same navy the pane shell uses.
 function layout(args: {
   title: string;
   email: string | null;
@@ -199,7 +199,7 @@ function layout(args: {
   @media (max-width: 879px) { .login-form-card { margin: 0 auto; } }
 
   /* Mock artifact preview — a CSS-rendered representation of what a Pane
-     surface looks like in the wild. Static; aria-hidden so screen readers
+     pane looks like in the wild. Static; aria-hidden so screen readers
      skip it. The look mirrors the bridge's iframe shell (chrome bar,
      preamble band, content) so the lede + preview cohere. */
   .hero-mock { margin-top: 24px; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow); }
@@ -215,23 +215,23 @@ function layout(args: {
   .hero-mock-btn { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); font-size: 13px; font-weight: 500; }
   .hero-mock-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-  /* Surface cards — /my-surfaces switched from a text list to one card
-     per surface, with a hash-coloured tile (template initials) on the
-     left so the eye can lock onto a particular surface at a glance.
+  /* Pane cards — /my-panes switched from a text list to one card
+     per pane, with a hash-coloured tile (template initials) on the
+     left so the eye can lock onto a particular pane at a glance.
      The .list rule above survives for the other pages that don't need
      this density. */
-  .surface-cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
-  .surface-card { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--bg); border: 1px solid var(--rule); border-radius: 12px; }
-  @media (min-width: 640px) { .surface-card { padding: 16px 18px; gap: 18px; } }
-  .surface-card-tile { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: #fff; background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%); flex: none; user-select: none; }
-  .surface-card-main { min-width: 0; }
-  .surface-card-title { font-weight: 600; font-size: 15.5px; overflow-wrap: anywhere; }
-  .surface-card-meta { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; margin-top: 2px; }
-  .surface-card-meta-dim { color: var(--muted); }
-  .surface-card-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .pane-cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .pane-card { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--bg); border: 1px solid var(--rule); border-radius: 12px; }
+  @media (min-width: 640px) { .pane-card { padding: 16px 18px; gap: 18px; } }
+  .pane-card-tile { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: #fff; background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%); flex: none; user-select: none; }
+  .pane-card-main { min-width: 0; }
+  .pane-card-title { font-weight: 600; font-size: 15.5px; overflow-wrap: anywhere; }
+  .pane-card-meta { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; margin-top: 2px; }
+  .pane-card-meta-dim { color: var(--muted); }
+  .pane-card-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
   @media (max-width: 540px) {
-    .surface-card { grid-template-columns: 44px 1fr; }
-    .surface-card-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 4px; border-top: 1px dashed var(--rule); }
+    .pane-card { grid-template-columns: 44px 1fr; }
+    .pane-card-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 4px; border-top: 1px dashed var(--rule); }
   }
 
   button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
@@ -264,7 +264,7 @@ function layout(args: {
   <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
     ${nav("apps", "Apps", "/apps")}
-    ${nav("surfaces", "My surfaces", "/my-surfaces")}
+    ${nav("panes", "My panes", "/my-panes")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
     ${nav("settings", "Settings", "/settings")}
@@ -286,9 +286,9 @@ function layout(args: {
 }
 
 // Two-character "avatar" derived from the template name. Used as the
-// colored tile on each /my-surfaces card so visually scanning a long list
+// colored tile on each /my-panes card so visually scanning a long list
 // is faster than reading titles. Falls back to "?" for blank input.
-export function surfaceInitials(name: string): string {
+export function paneInitials(name: string): string {
   const trimmed = name.trim();
   if (trimmed.length === 0) return "?";
   // Strip leading non-alphanumerics, then take the first two word-starts.
@@ -300,10 +300,10 @@ export function surfaceInitials(name: string): string {
   return ((words[0]?.[0] ?? "") + (words[1]?.[0] ?? "")).toUpperCase();
 }
 
-// Stable hue in [0, 360) derived from the surface id. Each card gets a
+// Stable hue in [0, 360) derived from the pane id. Each card gets a
 // distinct background tile without having to track per-template color
-// metadata in the DB; same surface always renders the same hue.
-export function surfaceHue(seed: string): number {
+// metadata in the DB; same pane always renders the same hue.
+export function paneHue(seed: string): number {
   // djb2 — good enough for visual differentiation; no security claim.
   let h = 5381;
   for (let i = 0; i < seed.length; i++) {
@@ -362,7 +362,7 @@ systemPages.get("/", (c) => {
     : `<span style="color:var(--muted);font-size:14px;">Human login is disabled on this relay (<code>EMAIL_PROVIDER=none</code>). The agent API is still available.</span>`;
   const body = `<div class="card" style="max-width:560px;margin:24px auto 0;padding:32px 28px;">
       <h1 style="margin:0 0 14px;font-size:28px;letter-spacing:-0.015em;">Pane relay</h1>
-      <p style="color:var(--muted);font-size:15px;margin:0 0 18px;">A round-trip UI channel between agents and humans. An agent renders an HTML surface, the relay hands a human the URL, the human's interactions come back to the agent as structured events.</p>
+      <p style="color:var(--muted);font-size:15px;margin:0 0 18px;">A round-trip UI channel between agents and humans. An agent renders an HTML pane, the relay hands a human the URL, the human's interactions come back to the agent as structured events.</p>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 22px;">${signInCta}</div>
       <h2 style="font-size:14px;letter-spacing:0.04em;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;">For agents</h2>
       <ul class="list">
@@ -395,7 +395,7 @@ systemPages.get("/login", (c) => {
   const body = !provider.available
     ? `<div class="card">
         <h1>Human-side login is disabled</h1>
-        <p>This relay is configured with <code>EMAIL_PROVIDER=none</code>; only the agent API and capability-URL surfaces are available.</p>
+        <p>This relay is configured with <code>EMAIL_PROVIDER=none</code>; only the agent API and capability-URL panes are available.</p>
         <p>If you're operating this relay, configure an email provider (Azure, SMTP, or Resend) and restart.</p>
        </div>`
     : `<div class="login-grid">
@@ -472,8 +472,8 @@ systemPages.get("/home", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  // Show a few recent surfaces the human owns, as quick links.
-  const recent = await prisma.surface.findMany({
+  // Show a few recent panes the human owns, as quick links.
+  const recent = await prisma.pane.findMany({
     where: { ownerHumanId: human.id },
     orderBy: { createdAt: "desc" },
     take: 5,
@@ -481,7 +481,7 @@ systemPages.get("/home", async (c) => {
   });
   const recentBlock =
     recent.length === 0
-      ? `<p class="empty">No surfaces yet.</p>`
+      ? `<p class="empty">No panes yet.</p>`
       : `<ul class="list">${recent
           .map(
             (s) =>
@@ -493,14 +493,14 @@ systemPages.get("/home", async (c) => {
   <div class="card">
     <h2>Jump in</h2>
     <ul class="list">
-      <li><div><div class="title">My surfaces</div><div class="meta">Surfaces you own or are a participant on</div></div><a class="btn ghost" href="/my-surfaces">Open</a></li>
+      <li><div><div class="title">My panes</div><div class="meta">Panes you own or are a participant on</div></div><a class="btn ghost" href="/my-panes">Open</a></li>
       <li><div><div class="title">My templates</div><div class="meta">Templates owned by your agents</div></div><a class="btn ghost" href="/my-templates">Open</a></li>
       <li><div><div class="title">My agents</div><div class="meta">Agents you've claimed</div></div><a class="btn ghost" href="/my-agents">Open</a></li>
       <li><div><div class="title">Settings</div><div class="meta">Email, claim codes</div></div><a class="btn ghost" href="/settings">Open</a></li>
     </ul>
   </div>
   <div class="card">
-    <h2>Recent surfaces</h2>
+    <h2>Recent panes</h2>
     ${recentBlock}
   </div>`;
   return c.html(
@@ -514,25 +514,25 @@ systemPages.get("/home", async (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /my-surfaces — list of surfaces the human owns
+// GET /my-panes — list of panes the human owns
 // ----------------------------------------------------------------------
-systemPages.get("/my-surfaces", async (c) => {
+systemPages.get("/my-panes", async (c) => {
   const human = c.get("human");
   if (!human) {
     return c.html(
-      layout({ title: "My surfaces", email: null, body: loggedOutPrompt() }),
+      layout({ title: "My panes", email: null, body: loggedOutPrompt() }),
     );
   }
   const prisma = c.get("prisma");
-  // #301 — show every surface this human has access to: ones they own AND
+  // #301 — show every pane this human has access to: ones they own AND
   // ones they joined as a participant. Previously only ownerHumanId rows
-  // surfaced here, so a human who opened someone else's invited surface had
+  // surfaced here, so a human who opened someone else's invited pane had
   // no "where did that go" page. The dedup-by-id is implicit via Prisma
   // findMany on a single table — a human who is BOTH owner and identity-
-  // bound participant on the same surface shows up exactly once. Revoked
-  // participants are filtered out so a kicked human's surfaces don't linger
+  // bound participant on the same pane shows up exactly once. Revoked
+  // participants are filtered out so a kicked human's panes don't linger
   // on their list.
-  const surfaces = await prisma.surface.findMany({
+  const panes = await prisma.pane.findMany({
     where: {
       OR: [
         { ownerHumanId: human.id },
@@ -554,18 +554,18 @@ systemPages.get("/my-surfaces", async (c) => {
       },
     },
   });
-  const body = `<h1>My surfaces</h1>
-  <p style="color:var(--muted);font-size:14.5px;">Surfaces you own. Surfaces created by claimed agents on your behalf appear here.</p>
+  const body = `<h1>My panes</h1>
+  <p style="color:var(--muted);font-size:14.5px;">Panes you own. Panes created by claimed agents on your behalf appear here.</p>
   <div class="card">
     ${
-      surfaces.length === 0
+      panes.length === 0
         ? `<div class="empty-state">
             <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".7" fill="currentColor"/><circle cx="10" cy="6" r=".7" fill="currentColor"/></svg>
-            <h3 class="empty-state-headline">No surfaces yet</h3>
-            <p class="empty-state-body">A surface is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
+            <h3 class="empty-state-headline">No panes yet</h3>
+            <p class="empty-state-body">A pane is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
             <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/apps">Browse apps</a></div>
           </div>`
-        : `<ul class="surface-cards">${surfaces
+        : `<ul class="pane-cards">${panes
             .map((s) => {
               const isActive =
                 s.status === "open" && s.expiresAt.getTime() > Date.now();
@@ -573,28 +573,28 @@ systemPages.get("/my-surfaces", async (c) => {
                 ? `<span class="pill good">Active</span>`
                 : `<span class="pill muted">Closed</span>`;
               // Open is an actual link to the cookie-authed owner shell
-              // (/surfaces/:id) — distinct from the share-link path
+              // (/panes/:id) — distinct from the share-link path
               // (/s/:token). No participant token in the URL; the pane_login
               // cookie does the auth, so a stolen URL is inert.
               const openAction = isActive
-                ? `<a class="btn ghost" href="/surfaces/${encodeURIComponent(s.id)}" style="padding:6px 14px;font-size:13px;">Open</a>`
+                ? `<a class="btn ghost" href="/panes/${encodeURIComponent(s.id)}" style="padding:6px 14px;font-size:13px;">Open</a>`
                 : "";
               const templateName =
                 s.templateVersion.template.name ??
                 s.templateVersion.template.slug ??
                 "ad-hoc template";
               const agentName = s.agent.name;
-              const initials = surfaceInitials(templateName);
-              const hue = surfaceHue(s.id);
+              const initials = paneInitials(templateName);
+              const hue = paneHue(s.id);
               const createdLabel = formatRelativeDate(s.createdAt, new Date());
-              return `<li class="surface-card">
-                <div class="surface-card-tile" style="--tile-h:${hue};" aria-hidden="true">${escapeHtml(initials)}</div>
-                <div class="surface-card-main">
-                  <div class="surface-card-title">${escapeHtml(s.title)}</div>
-                  <div class="surface-card-meta">${escapeHtml(templateName)} · ${escapeHtml(agentName)}</div>
-                  <div class="surface-card-meta surface-card-meta-dim"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(createdLabel)}</div>
+              return `<li class="pane-card">
+                <div class="pane-card-tile" style="--tile-h:${hue};" aria-hidden="true">${escapeHtml(initials)}</div>
+                <div class="pane-card-main">
+                  <div class="pane-card-title">${escapeHtml(s.title)}</div>
+                  <div class="pane-card-meta">${escapeHtml(templateName)} · ${escapeHtml(agentName)}</div>
+                  <div class="pane-card-meta pane-card-meta-dim"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(createdLabel)}</div>
                 </div>
-                <div class="surface-card-actions">${statusBadge}${openAction}</div>
+                <div class="pane-card-actions">${statusBadge}${openAction}</div>
               </li>`;
             })
             .join("")}</ul>`
@@ -602,10 +602,10 @@ systemPages.get("/my-surfaces", async (c) => {
   </div>`;
   return c.html(
     layout({
-      title: "My surfaces",
+      title: "My panes",
       email: human.email,
       body,
-      active: "surfaces",
+      active: "panes",
     }),
   );
 });
@@ -710,7 +710,7 @@ systemPages.get("/my-templates", async (c) => {
                 <details class="pub-form" style="margin-top:6px;">
                   <summary style="cursor:pointer;font-size:13px;color:var(--accent);">${btnLabel}</summary>
                   <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-                    <label style="font-size:12.5px;color:var(--muted);">Scopes (comma-separated, e.g. <code>read:agent, write:surface</code>)</label>
+                    <label style="font-size:12.5px;color:var(--muted);">Scopes (comma-separated, e.g. <code>read:agent, write:pane</code>)</label>
                     <textarea class="scopes" rows="2" style="width:100%;border:1px solid var(--rule);border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;" placeholder="leave blank to keep current scopes">${escapeHtml(scopesCsv)}</textarea>
                     <div style="display:flex;gap:8px;align-items:center;">
                       <button class="btn" data-act="${btnAct}" type="button">${btnLabel}</button>
@@ -804,7 +804,7 @@ systemPages.get("/apps", (c) => {
     );
   }
   const body = `<h1>Apps</h1>
-  <p style="color:var(--muted);font-size:14.5px;">Mini apps published by other agents. Install one to make it available to your own agents — they can then create surfaces from it for you.</p>
+  <p style="color:var(--muted);font-size:14.5px;">Mini apps published by other agents. Install one to make it available to your own agents — they can then create panes from it for you.</p>
   <div class="card">
     <input id="apps-search" type="text" placeholder="Search apps by name, description, or tag" autocomplete="off" />
     <div id="apps-results" style="margin-top:14px;"></div>

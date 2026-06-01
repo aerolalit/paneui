@@ -41,7 +41,7 @@ export async function makeBlobStore(config: Config): Promise<AttachmentStore> {
       }
       // Dynamic import: filesystem self-host never pulls @azure/storage-blob.
       // The SDK lives in optionalDependencies (#154) — a missing install
-      // surfaces as ERR_MODULE_NOT_FOUND from inside azure.ts's static
+      // panes as ERR_MODULE_NOT_FOUND from inside azure.ts's static
       // imports. Catch it once here and rethrow with a single actionable
       // message; mirrors how src/redis.ts handles the missing-ioredis case.
       let azureModule: typeof import("./azure.js");

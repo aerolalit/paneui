@@ -232,24 +232,24 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.feedback.deleteMany();
         await p.event.deleteMany();
         await p.participant.deleteMany();
-        // #288 — record children before parents. SurfaceRecord FK
-        // RecordCollection (CASCADE), and RecordCollection FK Surface
-        // (CASCADE), so deleting Surface would take both with it — but
+        // #288 — record children before parents. PaneRecord FK
+        // RecordCollection (CASCADE), and RecordCollection FK Pane
+        // (CASCADE), so deleting Pane would take both with it — but
         // doing it explicitly first keeps the order safe under future
-        // refactors and matches the per-table-then-Surface pattern used
+        // refactors and matches the per-table-then-Pane pattern used
         // for attachments above.
-        await p.surfaceRecord.deleteMany();
+        await p.paneRecord.deleteMany();
         await p.recordCollection.deleteMany();
         // Blobs FK agent with ON DELETE RESTRICT (an agent cannot be deleted
         // while it still owns attachments) — must go before the agent purge. Blobs
-        // also FK surface + template (ON DELETE CASCADE), so per-table order
+        // also FK pane + template (ON DELETE CASCADE), so per-table order
         // for those doesn't matter for the attachment rows themselves.
         // AttachmentTokens FK attachment with CASCADE; deleting attachment rows takes them
         // along, but doing it explicitly first keeps the row counts honest
         // when tests assert on token counts.
         await p.attachmentToken.deleteMany();
         await p.attachment.deleteMany();
-        await p.surface.deleteMany();
+        await p.pane.deleteMany();
         await p.templateVersion.deleteMany();
         await p.template.deleteMany();
         // Phase A + B: human-side child rows must go before humans (FKs to it).
@@ -298,7 +298,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "surface_records", "record_collections", "surfaces", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "pane_records", "record_collections", "panes", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {

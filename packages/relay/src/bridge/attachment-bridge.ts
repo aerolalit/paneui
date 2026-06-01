@@ -64,7 +64,7 @@ blobBridge.get("/:token", async (c) => {
   const cache = c.get("blobRevokeCache");
 
   if (!store) {
-    // Misconfiguration — surface a real error rather than a generic 404.
+    // Misconfiguration — pane a real error rather than a generic 404.
     throw errors.invalidRequest(
       "attachment storage is not configured on this relay",
     );
@@ -171,7 +171,7 @@ blobBridge.get("/:token", async (c) => {
   }
 
   // 6. Hardened headers — same set as GET /v1/attachments/:id. Capability-URL
-  // surface is the riskier of the two (the URL itself IS the credential)
+  // pane is the riskier of the two (the URL itself IS the credential)
   // so the defences here are non-negotiable. Content-Length is the
   // PLAINTEXT size (`tok.attachment.size`) regardless of encryption.
   c.header("Content-Type", tok.attachment.mime);
@@ -191,7 +191,7 @@ blobBridge.get("/:token", async (c) => {
   // Content-Disposition: inline, since the response is reachable to
   // them). Two headers because some older browsers still rely on
   // X-Frame-Options; both have the same intent here. Aligns with the
-  // rest of the relay's surface (shell, error pages) which already
+  // rest of the relay's pane (shell, error pages) which already
   // CSP-gate their HTML — see ERROR_CSP in routes.ts.
   c.header("Content-Security-Policy", BLOB_CSP);
   c.header("X-Frame-Options", "DENY");

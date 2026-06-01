@@ -40,7 +40,7 @@ pane/
 ```
 
 - **`@paneui/core`** holds the relay API contract: the `PaneClient` HTTP helper
-  (`call()` + typed `createSession` / `getSession` / `getEvents` / `sendEvent`)
+  (`call()` + typed `createPane` / `getPane` / `getEvents` / `sendEvent`)
   and `openStream` — a WebSocket client for `WS /v1/sessions/:id/stream` with
   replay-on-connect. It is pure: no argv, no `process.env`, no MCP. Any client
   (the CLI, a future LangChain tool) builds on it.
@@ -87,7 +87,7 @@ the three operations) now lives in `@paneui/core` and is reused unchanged.
   stderr as `{"error":{"code","message"}}` with a non-zero exit. Every command
   has a concise `--help`; a model that has never seen `pane` self-serves from it.
 
-### Command surface
+### Command pane
 
 Four commands.
 
@@ -142,10 +142,10 @@ matching line lands on stdout, because the process exits 0 at that point.
 - Env: `PANE_URL` (the relay base URL), `PANE_API_KEY` (the agent key). Either
   can be overridden per invocation with `--url` / `--api-key`. A command that
   needs the relay refuses to run without both, with a `config_error`.
-- Relay errors surface verbatim as the relay's error envelope on stderr
+- Relay errors pane verbatim as the relay's error envelope on stderr
   (`{"error":{"code","message","details"}}`) with exit 1 — `code` is the relay's
   own (`author_not_allowed`, `payload_too_large`, `schema_violation`,
-  `not_found`, …), so callers can branch on it. Network failures surface as
+  `not_found`, …), so callers can branch on it. Network failures pane as
   `fetch_error`.
 
 ## Dockerfile / deploy
@@ -245,9 +245,9 @@ may change or disappear."
 - **Image registry**: GHCR vs Docker Hub for the published image. OPEN, low
   stakes.
 - TTL sweeper design (interval + lazy-read), the CLI replacing the MCP server,
-  the npm-workspaces monorepo, the four-command surface
+  the npm-workspaces monorepo, the four-command pane
   (`create` / `state` / `send` / `watch`), JSON-lines stdout as the contract,
   Docker base (`node:20-slim`): all **DECIDED** above.
 - **MCP**: dropped in v1. An MCP-server wrapper around `@paneui/core` remains a
   viable later addition for hosts that want native tools, but the CLI covers
-  the same agents with less surface. Reconsider in v2 if there is demand.
+  the same agents with less pane. Reconsider in v2 if there is demand.

@@ -21,20 +21,20 @@ export const callbackSchema = z.object({
   secret: z.string().min(8),
 });
 
-// The inline template form for POST /v1/surfaces — carries the event schema
+// The inline template form for POST /v1/panes — carries the event schema
 // INSIDE the template object (one-off, no registered template). The relay
 // transparently creates an anonymous template behind it.
 const inlineArtifactSchema = z.object({
   source: z.string().min(1),
   type: artifactTypeSchema,
   // Optional: omit for a view-only one-off (a report/dashboard the human only
-  // views — the surface then accepts no page/agent events).
+  // views — the pane then accepts no page/agent events).
   event_schema: z.unknown().optional(),
-  // Optional: when present, the surface's `input_data` is validated against
-  // this JSON Schema before the surface row is created — and any attachment refs
+  // Optional: when present, the pane's `input_data` is validated against
+  // this JSON Schema before the pane row is created — and any attachment refs
   // declared at `format: pane-attachment-id` sites become reachable from the page
   // via `window.pane.downloadBlob()`. Without this, attachment refs in
-  // `input_data` are silently unreachable for inline surfaces (the
+  // `input_data` are silently unreachable for inline panes (the
   // participant attachment-download bridge walks input_data against the template
   // version's inputSchema; no schema means no walkable sites). See #208.
   input_schema: z.record(z.string(), z.unknown()).optional(),
@@ -45,7 +45,7 @@ const inlineArtifactSchema = z.object({
   record_schema: z.unknown().optional(),
 });
 
-// The reference form for POST /v1/surfaces — instances an existing named
+// The reference form for POST /v1/panes — instances an existing named
 // template. `id` accepts the template id or its slug; `version` is optional
 // and defaults to the template's latest version.
 const refArtifactSchema = z.object({
@@ -53,10 +53,10 @@ const refArtifactSchema = z.object({
   version: z.number().int().positive().optional(),
 });
 
-// The surface-create `template` field: exactly one of the two forms. A union
+// The pane-create `template` field: exactly one of the two forms. A union
 // (not a discriminated union — the two forms share no discriminant key) with a
 // refine enforcing exactly-one-of `id` / `source`.
-const surfaceTemplateSchema = z
+const paneTemplateSchema = z
   .union([refArtifactSchema, inlineArtifactSchema])
   .refine(
     (a) => {
@@ -70,8 +70,8 @@ const surfaceTemplateSchema = z
     },
   );
 
-export const createSessionSchema = z.object({
-  template: surfaceTemplateSchema,
+export const createPaneSchema = z.object({
+  template: paneTemplateSchema,
   input_data: z.record(z.string(), z.unknown()).optional(),
   participants: z.object({ humans: z.number().int().positive() }).optional(),
   ttl: z.number().int().positive().optional(),
@@ -87,7 +87,7 @@ export const createSessionSchema = z.object({
   // leave the relay's trimmed 280-char rejection as the one callers see.
   preamble: z.string().max(300).optional(),
   // Phase G — natural-key dedup. When set, the relay collapses repeated
-  // creates with the same (template, owner, context_key) into one surface
+  // creates with the same (template, owner, context_key) into one pane
   // row. NULL = ad-hoc, no dedup. See HUMAN-SIDE-PROPOSAL.md §7.1.
   context_key: z
     .string()
@@ -142,43 +142,43 @@ export const submitFeedbackSchema = z.object({
     .string()
     .transform((s) => s.trim())
     .pipe(z.string().min(1).max(4000)),
-  surface_id: z.string().min(1).optional(),
+  pane_id: z.string().min(1).optional(),
 });
 
-/** @deprecated use `CreateSessionRequest` from ./types.js (same type). */
-export type CreateSessionInput = z.infer<typeof createSessionSchema>;
+/** @deprecated use `CreatePaneRequest` from ./types.js (same type). */
+export type CreatePaneInput = z.infer<typeof createPaneSchema>;
 
-// GET /v1/surfaces — list the calling agent's surfaces. The relay also
+// GET /v1/panes — list the calling agent's panes. The relay also
 // re-parses these on its side (defence in depth); this schema is for the CLI
 // to fail fast with a clear error before a round trip.
-export const listSessionsStatusSchema = z.enum(["open", "closed", "all"]);
-export type ListSessionsStatus = z.infer<typeof listSessionsStatusSchema>;
+export const listPanesStatusSchema = z.enum(["open", "closed", "all"]);
+export type ListPanesStatus = z.infer<typeof listPanesStatusSchema>;
 
-export const listSessionsQuerySchema = z.object({
-  status: listSessionsStatusSchema.optional(),
+export const listPanesQuerySchema = z.object({
+  status: listPanesStatusSchema.optional(),
   limit: z.number().int().positive().max(200).optional(),
   cursor: z.string().min(1).optional(),
   template_id: z.string().min(1).optional(),
 });
-export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
+export type ListPanesQuery = z.infer<typeof listPanesQuerySchema>;
 
-// POST /v1/surfaces/:id/participants — mint a fresh participant URL for an
-// existing surface. v1 supports human participants only (the agent token is
-// minted at surface-create and cannot be re-minted via this endpoint).
+// POST /v1/panes/:id/participants — mint a fresh participant URL for an
+// existing pane. v1 supports human participants only (the agent token is
+// minted at pane-create and cannot be re-minted via this endpoint).
 export const mintParticipantSchema = z.object({
   kind: z.literal("human"),
 });
 export type MintParticipantInput = z.infer<typeof mintParticipantSchema>;
 
-// POST /v1/surfaces/:id/upgrade — re-pin a live surface to a newer version
+// POST /v1/panes/:id/upgrade — re-pin a live pane to a newer version
 // of the same template (#267). `template_version` is optional; the relay
 // defaults to the template's latest version. `compat` defaults to "strict",
 // which makes the relay refuse 422 if the target schema isn't a superset
 // of the current one (events written under the old schema would no longer
 // validate). "force" overrides the gate — used sparingly when the operator
 // knows data loss is acceptable.
-export const upgradeSurfaceSchema = z.object({
+export const upgradePaneSchema = z.object({
   template_version: z.number().int().positive().optional(),
   compat: z.enum(["strict", "force"]).optional(),
 });
-export type UpgradeSurfaceInput = z.infer<typeof upgradeSurfaceSchema>;
+export type UpgradePaneInput = z.infer<typeof upgradePaneSchema>;

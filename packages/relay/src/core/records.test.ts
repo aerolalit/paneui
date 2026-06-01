@@ -23,7 +23,7 @@ import {
   listRecords,
   updateRecord,
   writeRecord,
-  type SurfaceWithRecordSchema,
+  type PaneWithRecordSchema,
 } from "./records.js";
 import type { Author } from "../types.js";
 
@@ -92,8 +92,8 @@ const FIXTURE_RECORD_SCHEMA = {
   },
 };
 
-async function seedSurfaceWithRecordSchema(): Promise<{
-  surface: SurfaceWithRecordSchema;
+async function seedPaneWithRecordSchema(): Promise<{
+  pane: PaneWithRecordSchema;
   agentId: string;
   agentAuthor: Author;
   pageAuthor: Author;
@@ -117,32 +117,32 @@ async function seedSurfaceWithRecordSchema(): Promise<{
       recordSchema: FIXTURE_RECORD_SCHEMA,
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: `sur_${randomBytes(8).toString("hex")}`,
+      id: `pan_${randomBytes(8).toString("hex")}`,
       agentId: agent.id,
       templateVersionId: version.id,
-      title: "records writer test surface",
+      title: "records writer test pane",
       expiresAt: new Date(Date.now() + 3600_000),
     },
     include: { templateVersion: true },
   });
   return {
-    surface: surface as SurfaceWithRecordSchema,
+    pane: pane as PaneWithRecordSchema,
     agentId: agent.id,
     agentAuthor: { kind: "agent", id: agent.id },
     pageAuthor: { kind: "human", id: "h_alice" },
   };
 }
 
-// Helper: capture every message published to a surface for assertion. Returns
+// Helper: capture every message published to a pane for assertion. Returns
 // a `messages` array + an `unsub` to clean up.
-function captureBroadcast(surfaceId: string): {
+function captureBroadcast(paneId: string): {
   messages: unknown[];
   unsub: () => void;
 } {
   const messages: unknown[] = [];
-  const unsub = subscribe(surfaceId, (m) => {
+  const unsub = subscribe(paneId, (m) => {
     messages.push(m);
   });
   return { messages, unsub };
@@ -154,8 +154,8 @@ function captureBroadcast(surfaceId: string): {
 
 describe("writeRecord", () => {
   it("creates a new record with version=1 and seq=1", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const r = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const r = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_1",
       data: { body: "hi" },
@@ -171,8 +171,8 @@ describe("writeRecord", () => {
   });
 
   it("generates rec_<cuid> key when caller omits record_key", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const r = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const r = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       data: { body: "no key" },
     });
@@ -181,13 +181,13 @@ describe("writeRecord", () => {
   });
 
   it("is idempotent on duplicate record_key — second POST returns existing, no seq bump", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const first = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const first = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_dup",
       data: { body: "v1" },
     });
-    const second = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const second = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_dup",
       data: { body: "v2-ignored" },
@@ -198,16 +198,16 @@ describe("writeRecord", () => {
     expect(second.record.data).toEqual({ body: "v1" }); // unchanged
     // seq cursor on the collection was NOT bumped a second time
     const col = await prisma.recordCollection.findFirstOrThrow({
-      where: { surfaceId: f.surface.id, name: "comments" },
+      where: { paneId: f.pane.id, name: "comments" },
     });
     expect(col.seq).toBe(1);
   });
 
   it("publishes record.upsert on broadcast — fires after txn commits", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const cap = captureBroadcast(f.surface.id);
+    const f = await seedPaneWithRecordSchema();
+    const cap = captureBroadcast(f.pane.id);
     try {
-      await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      await writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_pub",
         data: { body: "broadcast me" },
@@ -227,15 +227,15 @@ describe("writeRecord", () => {
   });
 
   it("does NOT publish on idempotent dedup", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_d",
       data: { body: "first" },
     });
-    const cap = captureBroadcast(f.surface.id);
+    const cap = captureBroadcast(f.pane.id);
     try {
-      await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      await writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_d",
         data: { body: "ignored" },
@@ -247,9 +247,9 @@ describe("writeRecord", () => {
   });
 
   it("rejects schema-violating payload with 422 record_schema_violation", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         data: { wrong: "shape" }, // missing required `body`
       }),
@@ -260,9 +260,9 @@ describe("writeRecord", () => {
   });
 
   it("rejects agent writing to a page-only collection (author_not_allowed)", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      writeRecord({ prisma }, f.surface, f.agentAuthor, {
+      writeRecord({ prisma }, f.pane, f.agentAuthor, {
         collectionName: "comments", // write: ["page"]
         data: { body: "agent tried" },
       }),
@@ -273,9 +273,9 @@ describe("writeRecord", () => {
   });
 
   it("rejects page writing to an agent-only collection", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "notes", // write: ["agent"]
         data: { text: "page tried" },
       }),
@@ -286,9 +286,9 @@ describe("writeRecord", () => {
   });
 
   it("returns 404 when the collection is not declared in the recordSchema", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "unknown",
         data: { body: "nope" },
       }),
@@ -298,16 +298,16 @@ describe("writeRecord", () => {
     });
   });
 
-  it("returns 410 gone on a closed surface", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await prisma.surface.update({
-      where: { id: f.surface.id },
+  it("returns 410 gone on a closed pane", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await prisma.pane.update({
+      where: { id: f.pane.id },
       data: { status: "closed" },
     });
-    const closed = (await prisma.surface.findUniqueOrThrow({
-      where: { id: f.surface.id },
+    const closed = (await prisma.pane.findUniqueOrThrow({
+      where: { id: f.pane.id },
       include: { templateVersion: true },
-    })) as SurfaceWithRecordSchema;
+    })) as PaneWithRecordSchema;
     await expect(
       writeRecord({ prisma }, closed, f.pageAuthor, {
         collectionName: "comments",
@@ -317,32 +317,32 @@ describe("writeRecord", () => {
   });
 
   it("writes to NO row in the events table (records are not events)", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       data: { body: "hi" },
     });
     const eventCount = await prisma.event.count({
-      where: { surfaceId: f.surface.id },
+      where: { paneId: f.pane.id },
     });
     expect(eventCount).toBe(0);
   });
 
   it("publish does NOT fire on synthetic transaction failure", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     // Force a P2002 on the underlying insert by pre-creating a row with the
     // same (collectionId, recordKey) AFTER manually creating the collection.
     // Then a second writeRecord call against the same key takes the
     // dedup path — which deliberately does NOT publish. That's the
     // observable contract: publish only on a fresh persist.
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_x",
       data: { body: "original" },
     });
-    const cap = captureBroadcast(f.surface.id);
+    const cap = captureBroadcast(f.pane.id);
     try {
-      const result = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      const result = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_x",
         data: { body: "would-be-collision" },
@@ -361,8 +361,8 @@ describe("writeRecord", () => {
 
 describe("updateRecord", () => {
   it("bumps version + seq, replaces data, preserves original authorship", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const created = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const created = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_u",
       data: { body: "v1" },
@@ -371,7 +371,7 @@ describe("updateRecord", () => {
     // A different page author updates — the row's `author` field must
     // remain the ORIGINAL creator.
     const otherPage: Author = { kind: "human", id: "h_bob" };
-    const updated = await updateRecord({ prisma }, f.surface, otherPage, {
+    const updated = await updateRecord({ prisma }, f.pane, otherPage, {
       collectionName: "comments",
       recordKey: "cmt_u",
       data: { body: "v2" },
@@ -384,15 +384,15 @@ describe("updateRecord", () => {
   });
 
   it("returns 409 with current row on if_match mismatch", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_lock",
       data: { body: "v1" },
     });
     let caught: unknown;
     try {
-      await updateRecord({ prisma }, f.surface, f.pageAuthor, {
+      await updateRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_lock",
         data: { body: "v2" },
@@ -413,13 +413,13 @@ describe("updateRecord", () => {
   });
 
   it("succeeds with matching if_match", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_ok",
       data: { body: "v1" },
     });
-    const r = await updateRecord({ prisma }, f.surface, f.pageAuthor, {
+    const r = await updateRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_ok",
       data: { body: "v2" },
@@ -429,9 +429,9 @@ describe("updateRecord", () => {
   });
 
   it("404s when the record does not exist", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      updateRecord({ prisma }, f.surface, f.pageAuthor, {
+      updateRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "never_created",
         data: { body: "x" },
@@ -440,18 +440,18 @@ describe("updateRecord", () => {
   });
 
   it("404s when the record was soft-deleted", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_gone",
       data: { body: "v1" },
     });
-    await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_gone",
     });
     await expect(
-      updateRecord({ prisma }, f.surface, f.pageAuthor, {
+      updateRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_gone",
         data: { body: "v2" },
@@ -460,15 +460,15 @@ describe("updateRecord", () => {
   });
 
   it("publishes record.upsert with the updated row", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_p",
       data: { body: "v1" },
     });
-    const cap = captureBroadcast(f.surface.id);
+    const cap = captureBroadcast(f.pane.id);
     try {
-      await updateRecord({ prisma }, f.surface, f.pageAuthor, {
+      await updateRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_p",
         data: { body: "v2" },
@@ -489,17 +489,17 @@ describe("updateRecord", () => {
 
 describe("deleteRecord", () => {
   it("soft-deletes: sets deletedAt, bumps seq, does NOT bump version, does NOT remove row", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const created = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const created = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_del",
       data: { body: "to-delete" },
     });
-    await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_del",
     });
-    const row = await prisma.surfaceRecord.findUniqueOrThrow({
+    const row = await prisma.paneRecord.findUniqueOrThrow({
       where: { id: created.record.id },
     });
     expect(row.deletedAt).not.toBeNull();
@@ -508,15 +508,15 @@ describe("deleteRecord", () => {
   });
 
   it("publishes a record.delete tombstone with the deleted row's ref", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const created = await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    const created = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_t",
       data: { body: "x" },
     });
-    const cap = captureBroadcast(f.surface.id);
+    const cap = captureBroadcast(f.pane.id);
     try {
-      await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+      await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_t",
       });
@@ -537,15 +537,15 @@ describe("deleteRecord", () => {
   });
 
   it('author rule: non-author cannot delete a row in delete:["author"]', async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments", // delete: ["author"]
       recordKey: "cmt_owned",
       data: { body: "alice's comment" },
     });
     const bob: Author = { kind: "human", id: "h_bob" };
     await expect(
-      deleteRecord({ prisma }, f.surface, bob, {
+      deleteRecord({ prisma }, f.pane, bob, {
         collectionName: "comments",
         recordKey: "cmt_owned",
       }),
@@ -553,14 +553,14 @@ describe("deleteRecord", () => {
   });
 
   it('author rule: author CAN delete their own row in delete:["author"]', async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_mine",
       data: { body: "alice's" },
     });
     await expect(
-      deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+      deleteRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_mine",
       }),
@@ -568,15 +568,15 @@ describe("deleteRecord", () => {
   });
 
   it('agent CAN force-delete any row in delete:["agent", "author"]', async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     // A page creates a post, the agent then force-deletes it.
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "posts", // delete: ["agent", "author"]
       recordKey: "post_x",
       data: { title: "t", body: "b" },
     });
     await expect(
-      deleteRecord({ prisma }, f.surface, f.agentAuthor, {
+      deleteRecord({ prisma }, f.pane, f.agentAuthor, {
         collectionName: "posts",
         recordKey: "post_x",
       }),
@@ -584,15 +584,15 @@ describe("deleteRecord", () => {
   });
 
   it("returns 409 with current row on if_match mismatch", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_ifm",
       data: { body: "v1" },
     });
     let caught: unknown;
     try {
-      await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+      await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_ifm",
         ifMatch: 99,
@@ -605,18 +605,18 @@ describe("deleteRecord", () => {
   });
 
   it("404s on already-deleted record", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_d2",
       data: { body: "x" },
     });
-    await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_d2",
     });
     await expect(
-      deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+      deleteRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: "cmt_d2",
       }),
@@ -624,18 +624,18 @@ describe("deleteRecord", () => {
   });
 
   it("writes to NO row in the events table on delete", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_e",
       data: { body: "x" },
     });
-    await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_e",
     });
     const eventCount = await prisma.event.count({
-      where: { surfaceId: f.surface.id },
+      where: { paneId: f.pane.id },
     });
     expect(eventCount).toBe(0);
   });
@@ -647,8 +647,8 @@ describe("deleteRecord", () => {
 
 describe("listRecords", () => {
   it("returns an empty page for a declared-but-unwritten collection", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    const out = await listRecords(prisma, f.surface, "comments", {
+    const f = await seedPaneWithRecordSchema();
+    const out = await listRecords(prisma, f.pane, "comments", {
       since: 0,
       limit: 100,
     });
@@ -657,15 +657,15 @@ describe("listRecords", () => {
   });
 
   it("returns rows in seq order with has_more on overflow", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     for (let i = 0; i < 5; i++) {
-      await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+      await writeRecord({ prisma }, f.pane, f.pageAuthor, {
         collectionName: "comments",
         recordKey: `cmt_${i}`,
         data: { body: String(i) },
       });
     }
-    const out = await listRecords(prisma, f.surface, "comments", {
+    const out = await listRecords(prisma, f.pane, "comments", {
       since: 0,
       limit: 3,
     });
@@ -673,7 +673,7 @@ describe("listRecords", () => {
     expect(out.has_more).toBe(true);
     expect(out.records.map((r) => r.key)).toEqual(["cmt_0", "cmt_1", "cmt_2"]);
 
-    const next = await listRecords(prisma, f.surface, "comments", {
+    const next = await listRecords(prisma, f.pane, "comments", {
       since: out.next_since,
       limit: 3,
     });
@@ -682,23 +682,23 @@ describe("listRecords", () => {
   });
 
   it("includes tombstones (soft-deleted rows have deleted_at set)", async () => {
-    const f = await seedSurfaceWithRecordSchema();
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_alive",
       data: { body: "alive" },
     });
-    await writeRecord({ prisma }, f.surface, f.pageAuthor, {
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_doomed",
       data: { body: "doomed" },
     });
-    await deleteRecord({ prisma }, f.surface, f.pageAuthor, {
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
       collectionName: "comments",
       recordKey: "cmt_doomed",
     });
 
-    const out = await listRecords(prisma, f.surface, "comments", {
+    const out = await listRecords(prisma, f.pane, "comments", {
       since: 0,
       limit: 100,
     });
@@ -708,9 +708,9 @@ describe("listRecords", () => {
   });
 
   it("404s on undeclared collection", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     await expect(
-      listRecords(prisma, f.surface, "unknown", { since: 0, limit: 10 }),
+      listRecords(prisma, f.pane, "unknown", { since: 0, limit: 10 }),
     ).rejects.toMatchObject({
       status: 404,
       code: "record_collection_not_found",
@@ -724,11 +724,11 @@ describe("listRecords", () => {
 
 describe("concurrency", () => {
   it("per-collection seq is strictly monotonic + unique under N concurrent writes", async () => {
-    const f = await seedSurfaceWithRecordSchema();
+    const f = await seedPaneWithRecordSchema();
     const N = 25;
     const writes = await Promise.all(
       Array.from({ length: N }, (_, i) =>
-        writeRecord({ prisma }, f.surface, f.pageAuthor, {
+        writeRecord({ prisma }, f.pane, f.pageAuthor, {
           collectionName: "comments",
           recordKey: `cmt_c_${i}`,
           data: { body: `c${i}` },
@@ -741,7 +741,7 @@ describe("concurrency", () => {
       expect(seqs[i]).toBeGreaterThan(seqs[i - 1]!);
     }
     const col = await prisma.recordCollection.findFirstOrThrow({
-      where: { surfaceId: f.surface.id, name: "comments" },
+      where: { paneId: f.pane.id, name: "comments" },
     });
     expect(col.seq).toBe(N);
   });

@@ -1,8 +1,8 @@
-// Integration test for the TTL sweeper (sweepExpiredSurfaces). Runs against
+// Integration test for the TTL sweeper (sweepExpiredPanes). Runs against
 // whatever engine DATABASE_URL points at (sqlite file or postgres).
 //
 // Regression coverage for #57: the sweeper must invalidate the compiled-
-// validator cache for every surface it deletes, not just surfaces removed via
+// validator cache for every pane it deletes, not just panes removed via
 // an explicit DELETE.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -10,11 +10,11 @@ import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { EventSchema } from "./types.js";
 import { setupTestDb, type TestDb } from "./test-helpers/db.js";
-import { seedSurfaceRow } from "./test-helpers/seed.js";
+import { seedPaneRow } from "./test-helpers/seed.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
-let sweepExpiredSurfaces: typeof import("./index.js").sweepExpiredSurfaces;
+let sweepExpiredPanes: typeof import("./index.js").sweepExpiredPanes;
 let validateEvent: typeof import("./core/validation.js").validateEvent;
 let __schemaCacheInternals: typeof import("./core/validation.js").__schemaCacheInternals;
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
   prisma = createPrismaClient(testDb.dbUrl);
   await testDb.applyMigration(prisma);
 
-  ({ sweepExpiredSurfaces } = await import("./index.js"));
+  ({ sweepExpiredPanes } = await import("./index.js"));
   ({ validateEvent, __schemaCacheInternals } =
     await import("./core/validation.js"));
 });
@@ -52,7 +52,7 @@ afterAll(async () => {
   await testDb.cleanup();
 });
 
-async function seedSurface(expiresInMs: number): Promise<string> {
+async function seedPane(expiresInMs: number): Promise<string> {
   const agent = await prisma.agent.create({
     data: {
       name: `agent-${randomBytes(4).toString("hex")}`,
@@ -60,19 +60,19 @@ async function seedSurface(expiresInMs: number): Promise<string> {
       keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
     },
   });
-  const { surfaceId } = await seedSurfaceRow(prisma, {
+  const { paneId } = await seedPaneRow(prisma, {
     agentId: agent.id,
     eventSchema: SCHEMA as unknown as object,
     status: "open",
     expiresAt: new Date(Date.now() + expiresInMs),
   });
-  return surfaceId;
+  return paneId;
 }
 
-// Populate the compiled-validator cache for a surface by validating an event.
-function warmCache(surfaceId: string): void {
+// Populate the compiled-validator cache for a pane by validating an event.
+function warmCache(paneId: string): void {
   validateEvent({
-    surfaceId,
+    paneId,
     schemaVersion: 1,
     schema: SCHEMA,
     type: "review.commentAdded",
@@ -81,62 +81,62 @@ function warmCache(surfaceId: string): void {
   });
 }
 
-describe("sweepExpiredSurfaces (integration, real DB)", () => {
+describe("sweepExpiredPanes (integration, real DB)", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
     __schemaCacheInternals.clear();
   });
 
-  it("invalidates the validator cache for swept (expired) surfaces", async () => {
-    const expiredId = await seedSurface(-1000);
-    const liveId = await seedSurface(3_600_000);
+  it("invalidates the validator cache for swept (expired) panes", async () => {
+    const expiredId = await seedPane(-1000);
+    const liveId = await seedPane(3_600_000);
 
     warmCache(expiredId);
     warmCache(liveId);
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(true);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    const count = await sweepExpiredSurfaces(prisma);
+    const count = await sweepExpiredPanes(prisma);
     expect(count).toBe(1);
 
-    // The expired surface's compiled validators are gone; the live one stays.
+    // The expired pane's compiled validators are gone; the live one stays.
     expect(__schemaCacheInternals.has(expiredId, 1)).toBe(false);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
 
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
+    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
       null,
     );
   });
 
   it("is a no-op when nothing is expired", async () => {
-    const liveId = await seedSurface(3_600_000);
+    const liveId = await seedPane(3_600_000);
     warmCache(liveId);
 
-    const count = await sweepExpiredSurfaces(prisma);
+    const count = await sweepExpiredPanes(prisma);
     expect(count).toBe(0);
     expect(__schemaCacheInternals.has(liveId, 1)).toBe(true);
   });
 
   // ---- anonymous-template orphan cleanup --------------------------------
 
-  it("hard-deletes the anonymous template once its last surface is swept", async () => {
-    // seedSurface() uses seedArtifact() with no name/slug — anonymous.
-    const expiredId = await seedSurface(-1000);
-    const surfaceBefore = await prisma.surface.findUnique({
+  it("hard-deletes the anonymous template once its last pane is swept", async () => {
+    // seedPane() uses seedArtifact() with no name/slug — anonymous.
+    const expiredId = await seedPane(-1000);
+    const paneBefore = await prisma.pane.findUnique({
       where: { id: expiredId },
       select: { templateVersionId: true },
     });
     const versionBefore = await prisma.templateVersion.findUnique({
-      where: { id: surfaceBefore!.templateVersionId },
+      where: { id: paneBefore!.templateVersionId },
       select: { templateId: true },
     });
     const templateId = versionBefore!.templateId;
 
-    await sweepExpiredSurfaces(prisma);
+    await sweepExpiredPanes(prisma);
 
-    // Surface + its anonymous template are both gone (template cascade
+    // Pane + its anonymous template are both gone (template cascade
     // deletes its versions).
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
+    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
       null,
     );
     expect(
@@ -144,7 +144,7 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
     ).toBe(null);
   });
 
-  it("preserves a named template even when its only surface is swept", async () => {
+  it("preserves a named template even when its only pane is swept", async () => {
     const agent = await prisma.agent.create({
       data: {
         name: `agent-${randomBytes(4).toString("hex")}`,
@@ -170,20 +170,18 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
         eventSchema: SCHEMA as unknown as object,
       },
     });
-    const { surfaceId } = await seedSurfaceRow(prisma, {
+    const { paneId } = await seedPaneRow(prisma, {
       agentId: agent.id,
       templateVersionId: version.id,
       status: "open",
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await sweepExpiredSurfaces(prisma);
+    await sweepExpiredPanes(prisma);
 
-    // Surface is swept, but the named template (and its version) survives —
-    // future surfaces may reference it via id/slug.
-    expect(await prisma.surface.findUnique({ where: { id: surfaceId } })).toBe(
-      null,
-    );
+    // Pane is swept, but the named template (and its version) survives —
+    // future panes may reference it via id/slug.
+    expect(await prisma.pane.findUnique({ where: { id: paneId } })).toBe(null);
     expect(
       await prisma.template.findUnique({ where: { id: template.id } }),
     ).not.toBe(null);
@@ -192,8 +190,8 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
     ).not.toBe(null);
   });
 
-  it("preserves an anonymous template still referenced by an active surface", async () => {
-    // Two surfaces share the same anonymous template — one expires, one lives.
+  it("preserves an anonymous template still referenced by an active pane", async () => {
+    // Two panes share the same anonymous template — one expires, one lives.
     const agent = await prisma.agent.create({
       data: {
         name: `agent-${randomBytes(4).toString("hex")}`,
@@ -201,16 +199,13 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
         keyPrefix: `pane_${randomBytes(3).toString("hex")}`,
       },
     });
-    const { surfaceId: expiredId, templateVersionId } = await seedSurfaceRow(
-      prisma,
-      {
-        agentId: agent.id,
-        eventSchema: SCHEMA as unknown as object,
-        status: "open",
-        expiresAt: new Date(Date.now() - 1000),
-      },
-    );
-    const { surfaceId: liveId } = await seedSurfaceRow(prisma, {
+    const { paneId: expiredId, templateVersionId } = await seedPaneRow(prisma, {
+      agentId: agent.id,
+      eventSchema: SCHEMA as unknown as object,
+      status: "open",
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const { paneId: liveId } = await seedPaneRow(prisma, {
       agentId: agent.id,
       templateVersionId,
       status: "open",
@@ -222,15 +217,15 @@ describe("sweepExpiredSurfaces (integration, real DB)", () => {
     });
     const templateId = versionRow!.templateId;
 
-    await sweepExpiredSurfaces(prisma);
+    await sweepExpiredPanes(prisma);
 
-    // The expired surface is gone. The live one + the shared anonymous
-    // template both survive — sweep must check that NO surface still
+    // The expired pane is gone. The live one + the shared anonymous
+    // template both survive — sweep must check that NO pane still
     // references any of the template's versions, not just the swept one.
-    expect(await prisma.surface.findUnique({ where: { id: expiredId } })).toBe(
+    expect(await prisma.pane.findUnique({ where: { id: expiredId } })).toBe(
       null,
     );
-    expect(await prisma.surface.findUnique({ where: { id: liveId } })).not.toBe(
+    expect(await prisma.pane.findUnique({ where: { id: liveId } })).not.toBe(
       null,
     );
     expect(

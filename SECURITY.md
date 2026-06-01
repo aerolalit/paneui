@@ -104,7 +104,7 @@ Trusted-proxy / forwarded-IP configuration is tracked as future work on the road
 
 ### Blob attachment hardening
 
-Pane's blob-attachment surface (uploads served via `/v1/blobs` and
+Pane's blob-attachment pane (uploads served via `/v1/blobs` and
 `/b/<token>`) gets specific hardening on top of the general posture:
 
 - **Polyglot defense** — every normalisable image (JPEG / PNG / GIF /

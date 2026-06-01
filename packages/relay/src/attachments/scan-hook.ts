@@ -41,7 +41,7 @@ export interface ScanVerdict {
 
 export interface ScanRequestBody {
   attachment_id: string;
-  scope: "agent" | "surface" | "template";
+  scope: "agent" | "pane" | "template";
   mime: string;
   size: number;
   sha256: string;

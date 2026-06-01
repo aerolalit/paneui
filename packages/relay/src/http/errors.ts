@@ -11,7 +11,7 @@ const SPEC = "https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md";
 const DOCS = {
   auth: `${SPEC}#auth-three-layers-only-1-and-2-in-v1`,
   api: `${SPEC}#http-api-v1`,
-  schema: `${SPEC}#per-surface-event-schema`,
+  schema: `${SPEC}#per-pane-event-schema`,
   validation: `${SPEC}#validation-flow`,
   event: `${SPEC}#event-the-only-primitive`,
   rateLimit: `${SPEC}#security-checklist`,
@@ -58,7 +58,7 @@ export const errors = {
 
   // Generic 404 — still used for endpoints where the missing resource kind
   // isn't worth distinguishing (e.g. a bridge token). For templates, template
-  // versions, and surfaces, prefer the dedicated constructors below so an
+  // versions, and panes, prefer the dedicated constructors below so an
   // agent can branch on the code instead of parsing the hint.
   notFound: () =>
     new ApiError(
@@ -72,7 +72,7 @@ export const errors = {
     ),
 
   // Distinct from `not_found` so an agent can act differently when the
-  // missing thing is a surface (likely expired/cleaned up) vs an template
+  // missing thing is a pane (likely expired/cleaned up) vs an template
   // (likely wrong slug/id) vs an template version (likely wrong --version).
   sessionNotFound: () =>
     new ApiError(
@@ -80,7 +80,7 @@ export const errors = {
       "session_not_found",
       undefined,
       undefined,
-      "the surface id may be wrong, or the surface expired and was cleaned up; verify the id and create a new surface if needed",
+      "the pane id may be wrong, or the pane expired and was cleaned up; verify the id and create a new pane if needed",
       false,
       DOCS.api,
     ),
@@ -152,13 +152,13 @@ export const errors = {
       DOCS.api,
     ),
 
-  gone: (message = "surface is closed") =>
+  gone: (message = "pane is closed") =>
     new ApiError(
       410,
       "gone",
       message,
       undefined,
-      "the surface is closed or expired and cannot accept new events; create a new surface to continue",
+      "the pane is closed or expired and cannot accept new events; create a new pane to continue",
       false,
       DOCS.api,
     ),
@@ -170,13 +170,13 @@ export const errors = {
       undefined,
       details,
       hint ??
-        "the event does not satisfy the surface's event schema; check the event type and payload against the declared schema",
+        "the event does not satisfy the pane's event schema; check the event type and payload against the declared schema",
       false,
       DOCS.schema,
     ),
 
-  // #267 — POST /v1/surfaces/:id/upgrade refused because the target
-  // template version's schema isn't a superset of the surface's current
+  // #267 — POST /v1/panes/:id/upgrade refused because the target
+  // template version's schema isn't a superset of the pane's current
   // pinned version. Past events would no longer validate under the new
   // schema. `details.breaks` is the list of specific narrowings from
   // src/core/schema-compat.ts; the operator either resolves them (publish
@@ -190,7 +190,7 @@ export const errors = {
       "schema_incompatible_upgrade",
       undefined,
       { breaks },
-      "the target template version narrows the surface's current schema in one or more places; either publish a wider template version that's a superset, or retry with compat=\"force\" to skip the gate (events written under the old schema may no longer validate)",
+      "the target template version narrows the pane's current schema in one or more places; either publish a wider template version that's a superset, or retry with compat=\"force\" to skip the gate (events written under the old schema may no longer validate)",
       false,
       DOCS.schema,
     ),
@@ -212,7 +212,7 @@ export const errors = {
 
   // Returned when a /s/:participantToken/* route is hit with a token that
   // doesn't resolve to a live participant. Collapses all "this token won't
-  // work" cases (malformed, unknown, revoked, surface-gone) into one code
+  // work" cases (malformed, unknown, revoked, pane-gone) into one code
   // so a probing client can't distinguish them.
   participantTokenInvalid: () =>
     new ApiError(
@@ -220,7 +220,7 @@ export const errors = {
       "participant_token_invalid",
       undefined,
       undefined,
-      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/surfaces or by revoking + re-creating the surface",
+      "the participant token is unknown, malformed, or revoked; the agent can mint a fresh one via POST /v1/panes or by revoking + re-creating the pane",
       false,
       DOCS.auth,
     ),
@@ -310,9 +310,9 @@ export const errors = {
       DOCS.api,
     ),
 
-  // A attachment_id baked into an event payload or surface input_data points to
+  // A attachment_id baked into an event payload or pane input_data points to
   // a attachment the calling agent can't access (wrong id, wrong owner, or
-  // soft-deleted). Surfaces *after* Ajv shape validation has passed but
+  // soft-deleted). Panes *after* Ajv shape validation has passed but
   // *before* the row hits Prisma — see packages/relay/src/attachments/ref-access.ts
   // for the walker + batch check. 422 because the payload is structurally
   // valid but semantically broken: it references a attachment that does not
@@ -330,10 +330,10 @@ export const errors = {
 
   // The READ-side counterpart of blobRefNotAccessible. Used by
   // `GET /s/:participantToken/attachments/:attachment_id` (follow-up D of #156): the
-  // requested attachment isn't referenced from this surface (or was deleted,
+  // requested attachment isn't referenced from this pane (or was deleted,
   // or never existed). Same `code` so a single error branch covers both
-  // the write-time "ref dangling" surface and the read-time "ref not
-  // reachable from your token" surface; 404 here because the resource
+  // the write-time "ref dangling" pane and the read-time "ref not
+  // reachable from your token" pane; 404 here because the resource
   // isn't found from the caller's vantage point — the request itself
   // is structurally fine (vs the 422 write-side path, where the request
   // body was malformed at the ref site).
@@ -343,14 +343,14 @@ export const errors = {
       "attachment_ref_not_accessible",
       `attachment ref not accessible: ${attachmentId}`,
       { attachment_id: attachmentId },
-      "the participant token does not have read access to this attachment_id from the current surface; the attachment must be referenced from this surface's events or initial input_data and not be soft-deleted",
+      "the participant token does not have read access to this attachment_id from the current pane; the attachment must be referenced from this pane's events or initial input_data and not be soft-deleted",
       false,
       DOCS.api,
     ),
 
-  // Per-scope aggregate quota exceeded (per-agent, per-surface, or
+  // Per-scope aggregate quota exceeded (per-agent, per-pane, or
   // per-template). `scope` carries which one.
-  quotaExceeded: (scope: "agent" | "surface" | "template", maxBytes: number) =>
+  quotaExceeded: (scope: "agent" | "pane" | "template", maxBytes: number) =>
     new ApiError(
       413,
       "quota_exceeded",

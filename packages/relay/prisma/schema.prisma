@@ -9,7 +9,7 @@
 //     packages/relay/prisma.config.ts and packages/relay/src/db.ts.
 //   - The legacy `prisma-client-js` generator is still accepted in 7 and
 //     emits to node_modules/@prisma/client/ as before, so the relay's
-//     `import { ... } from "@prisma/client"` import surface stays unchanged.
+//     `import { ... } from "@prisma/client"` import API stays unchanged.
 
 generator client {
   provider = "prisma-client-js"
@@ -33,18 +33,18 @@ model Agent {
 
   // Optional human owner (claim flow). NULL = standalone agent (today's
   // model — CI bots, scratch scripts). Non-null = claimed by this human;
-  // surfaces and templates created by this agent flow into that human's
+  // panes and templates created by this agent flow into that human's
   // "my-*" catalogs (see Human-side proposal §6).
   ownerHumanId    String?   @map("owner_human_id")
   ownerHuman      Human?    @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
   claimedAt       DateTime? @map("claimed_at")
 
-  surfaces    Surface[]
+  panes    Pane[]
   templates   Template[]
   feedback    Feedback[]
   attachments Attachment[]
   // Back-relation from Participant.agent (Phase A polymorphic participants).
-  // Named relation avoids the collision with Agent <- Surface.agentId above.
+  // Named relation avoids the collision with Agent <- Pane.agentId above.
   participantOf Participant[] @relation("ParticipantAgent")
 
   // #302 — soft-delete timestamp. NULL = active. Set by hard-delete on demand
@@ -81,9 +81,9 @@ model Human {
   claimedAgents  Agent[]
   templateInstalls HumanTemplateInstall[]
   claimCodes     ClaimCode[]
-  // Surfaces owned by this human (Phase A — Surface.ownerHumanId)
-  ownedSurfaces  Surface[]
-  // Participations where this human is identity-bound on a surface
+  // Panes owned by this human (Phase A — Pane.ownerHumanId)
+  ownedPanes  Pane[]
+  // Participations where this human is identity-bound on a pane
   participantOf  Participant[]
 
   // #302 — soft-delete + retention policy.
@@ -111,7 +111,7 @@ model Human {
 }
 
 // One logged-in state for one human. Backs an HTTP-only cookie on the
-// relay's bridge origin. Distinct from "Surface" (the data row formerly
+// relay's bridge origin. Distinct from "Pane" (the data row formerly
 // called "Session" in pane), hence the name `Login` not `Session`.
 model Login {
   id          String    @id @default(cuid())
@@ -168,7 +168,7 @@ model MagicLink {
   // Set when the token is redeemed. Once-only by construction.
   consumedAt  DateTime? @map("consumed_at")
   // Optional return URL captured at /login. The relay redirects here on
-  // successful verify so "log in to see this surface" deep links work.
+  // successful verify so "log in to see this pane" deep links work.
   returnUrl   String?   @map("return_url")
   createdAt   DateTime  @default(now()) @map("created_at")
 
@@ -195,7 +195,7 @@ model HumanTemplateInstall {
   //   "pin"     (default): stay on installedVersion until the human
   //             explicitly upgrades via POST /v1/templates/:id/upgrade.
   //   "follow": auto-advance to the new version when the author publishes,
-  //             gated by the same schema-compat check the surface-upgrade
+  //             gated by the same schema-compat check the pane-upgrade
   //             route uses. An advance blocked by incompat sets
   //             upgrade_blocked_at + upgrade_blocked_reason; the human
   //             sees a yellow pill on /my-templates and can resolve
@@ -215,12 +215,12 @@ model Feedback {
   agentId        String?  @map("agent_id")
   type           String
   message        String
-  surfaceId      String?  @map("surface_id")
+  paneId      String?  @map("pane_id")
   githubIssueUrl String?  @map("github_issue_url")
   createdAt      DateTime @default(now()) @map("created_at")
 
   agent   Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  surface Surface? @relation(fields: [surfaceId], references: [id], onDelete: SetNull)
+  pane Pane? @relation(fields: [paneId], references: [id], onDelete: SetNull)
 
   @@index([agentId, createdAt])
   @@index([createdAt])
@@ -230,7 +230,7 @@ model Feedback {
 // A reusable, versioned template owned by an agent. The head row carries the
 // mutable identity (name, slug, description, tags); the per-version content
 // lives in TemplateVersion. An anonymous template (name/slug null) is created
-// transparently for an inline one-off surface.
+// transparently for an inline one-off pane.
 model Template {
   id            String            @id @default(cuid())
   ownerId       String            @map("owner_id")
@@ -246,7 +246,7 @@ model Template {
   versions      TemplateVersion[]
 
   // "view" | "interactive". `view` templates have no event vocabulary and
-  // their surfaces skip event-log persistence (rendered against live relay
+  // their panes skip event-log persistence (rendered against live relay
   // state via the runtime API). `interactive` is today's default — events
   // and event log fully apply. See Human-side proposal §3.2.
   shape         String            @default("interactive")
@@ -277,7 +277,7 @@ model Template {
 }
 
 // One immutable version of a template's content. Editing a template appends
-// a new row; existing rows are never mutated. A surface pins exactly one of
+// a new row; existing rows are never mutated. A pane pins exactly one of
 // these.
 model TemplateVersion {
   id             String    @id @default(cuid())
@@ -295,8 +295,8 @@ model TemplateVersion {
   // follow-up issues (#289 / #291 / #292).
   recordSchema   Json?     @map("record_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
-  surfaces       Surface[]
-  // Back-relation for Event.templateVersion (#268). Stamping the surface's
+  panes       Pane[]
+  // Back-relation for Event.templateVersion (#268). Stamping the pane's
   // pinned templateVersionId on each event at write-time lets a future
   // upgrade (#267) read old events under the new schema (Level 1
   // polymorphic render).
@@ -307,45 +307,45 @@ model TemplateVersion {
   @@map("template_versions")
 }
 
-enum SurfaceStatus {
+enum PaneStatus {
   open
   closed
 }
 
-model Surface {
+model Pane {
   id              String        @id
   agentId         String        @map("agent_id")
   agent           Agent         @relation(fields: [agentId], references: [id])
 
   // Phase A additions — human-side ownership. NULL = today's behavior
   // (agent-owned via agentId). Non-null = human-owned (claimed agent's
-  // surface, or human-instantiated via a template). Eventually
+  // pane, or human-instantiated via a template). Eventually
   // (Phase D) agentId becomes redundant and the agent moves to being
   // just a Participant, but for now both columns coexist.
   ownerHumanId    String?       @map("owner_human_id")
   ownerHuman      Human?        @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
   // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
-  // NULL = ad-hoc surface, no dedup. Used by surface-create to dedupe
+  // NULL = ad-hoc pane, no dedup. Used by pane-create to dedupe
   // (template, owner, contextKey) into a single row.
   contextKey      String?       @map("context_key")
-  // Audit-only — who actually instantiated the surface. Not load-bearing
+  // Audit-only — who actually instantiated the pane. Not load-bearing
   // (privilege flows from owner + participants).
   creatorKind     String?       @map("creator_kind")
   creatorId       String?       @map("creator_id")
-  // Per-surface invitation policy override (see Human-side proposal §7.2).
+  // Per-pane invitation policy override (see Human-side proposal §7.2).
   // JSON shape: { humansCanInviteHumans: bool, humansCanInviteAgents: bool }.
   // NULL = permissive Google-Docs default.
   invitePolicy    Json?         @map("invite_policy")
 
-  // The pinned template version this surface instantiates.
+  // The pinned template version this pane instantiates.
   templateVersionId String          @map("template_version_id")
   templateVersion   TemplateVersion @relation(fields: [templateVersionId], references: [id])
 
   // This instance's render data — validated against the version's input_schema.
   inputData         Json?         @map("input_data")
 
-  // Per-surface tab title shown in the browser's <title>. Required for every
-  // surface; supplied by the agent (or resolved server-side from the named
+  // Per-pane tab title shown in the browser's <title>. Required for every
+  // pane; supplied by the agent (or resolved server-side from the named
   // template's `name`). Trust boundary: untrusted agent input — rendered
   // (HTML-escaped) into the bridge shell's <title>.
   title           String
@@ -356,7 +356,7 @@ model Surface {
   // boundary: untrusted agent input; escaped at render. Max 280 chars; one
   // `\n` permitted, other control chars rejected at the route.
   preamble        String?
-  status          SurfaceStatus @default(open)
+  status          PaneStatus @default(open)
   createdAt       DateTime      @default(now()) @map("created_at")
   expiresAt       DateTime      @map("expires_at")
   metadata        Json?
@@ -370,7 +370,7 @@ model Surface {
   events          Event[]
   feedback        Feedback[]
   attachments     Attachment[]
-  // #288 — per-surface mutable record collections.
+  // #288 — per-pane mutable record collections.
   recordCollections RecordCollection[]
 
   // #302 — soft-delete timestamp. NULL = active. When the TTL sweeper
@@ -388,16 +388,16 @@ model Surface {
   @@index([ownerHumanId])
   @@index([deletedAt])
   // Dedup index — (templateVersionId, ownerHumanId, contextKey) is unique
-  // for human-owned surfaces with a contextKey. Surfaces without a
+  // for human-owned panes with a contextKey. Panes without a
   // contextKey are not deduped (ad-hoc).
-  @@unique([templateVersionId, ownerHumanId, contextKey], name: "Surface_owner_dedup")
-  @@map("surfaces")
+  @@unique([templateVersionId, ownerHumanId, contextKey])
+  @@map("panes")
 }
 
 model Participant {
   id           String    @id @default(cuid())
-  surfaceId    String    @map("surface_id")
-  surface      Surface   @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  paneId    String    @map("pane_id")
+  pane      Pane   @relation(fields: [paneId], references: [id], onDelete: Cascade)
   // "human" | "agent". Polymorphic FKs:
   //   kind = 'human' AND humanId NULL  → anonymous capability human (legacy + share-link)
   //   kind = 'human' AND humanId set   → identity-bound human (email invite)
@@ -416,19 +416,19 @@ model Participant {
   joinedAt     DateTime? @map("joined_at")
   revokedAt    DateTime? @map("revoked_at")
 
-  // The (surfaceId, identityId) pair must be unique even across revoked
+  // The (paneId, identityId) pair must be unique even across revoked
   // rows. The mint route derives identityId monotonically from the
   // ever-minted human count (#206 / #201), but two concurrent POSTs to
-  // `/v1/surfaces/:id/participants` can both read the same count and
+  // `/v1/panes/:id/participants` can both read the same count and
   // both attempt `h_${N}`. The constraint serialises the write at the
   // DB layer (P2002 on the loser); the route catches the error and
   // retries against the new count. Without the constraint, the race
-  // surfaces as silently aliased identityIds — the WS handler's
-  // `findFirst({ where: { surfaceId, identityId } })` would then
+  // panes as silently aliased identityIds — the WS handler's
+  // `findFirst({ where: { paneId, identityId } })` would then
   // non-deterministically resolve events to whichever row sorted first.
   // See #215.
-  @@unique([surfaceId, identityId])
-  @@index([surfaceId])
+  @@unique([paneId, identityId])
+  @@index([paneId])
   @@index([tokenHash])
   @@map("participants")
 }
@@ -440,8 +440,8 @@ model Event {
   // layer. The wire cursor is opaque (a string), so we can override to `@db.BigInt`
   // on the Postgres build later without breaking clients.
   id              Int      @id @default(autoincrement())
-  surfaceId       String   @map("surface_id")
-  surface         Surface  @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  paneId       String   @map("pane_id")
+  pane         Pane  @relation(fields: [paneId], references: [id], onDelete: Cascade)
   authorKind      String   @map("author_kind")
   authorId        String   @map("author_id")
   type            String
@@ -450,13 +450,13 @@ model Event {
   idempotencyKey  String?  @map("idempotency_key")
   ts              DateTime @default(now())
 
-  // #268 — stamp the surface's pinned template_version at write time so a
+  // #268 — stamp the pane's pinned template_version at write time so a
   // downstream upgrade (#267) can read old events under the new schema. Both
   // fields are nullable to handle two cases: events written before this
   // column existed (the migration backfills them, but tolerate a
   // SET NULL on cascade so a TemplateVersion delete doesn't cascade-
   // delete the historical event log), and the brief race-window in which a
-  // system event is written before the surface's templateVersion can be
+  // system event is written before the pane's templateVersion can be
   // loaded (logged + treated as best-effort, see appendSystemEvent).
   //
   // `templateVersionNum` is the denormalised integer version number
@@ -468,30 +468,30 @@ model Event {
   templateVersion    TemplateVersion?  @relation(fields: [templateVersionId], references: [id], onDelete: SetNull)
   templateVersionNum Int?              @map("template_version_num")
 
-  @@index([surfaceId, id])
-  @@unique([surfaceId, authorId, idempotencyKey])
+  @@index([paneId, id])
+  @@unique([paneId, authorId, idempotencyKey])
   @@map("events")
 }
 
 
-// #288 — A per-surface, named mutable record collection. There is no row
-// for a collection until the first SurfaceRecord is written into it
-// (collections are created implicitly on first write). The `(surfaceId, name)`
+// #288 — A per-pane, named mutable record collection. There is no row
+// for a collection until the first PaneRecord is written into it
+// (collections are created implicitly on first write). The `(paneId, name)`
 // pair is the natural key clients use.
 //
 // `seq` is the per-collection monotonic write cursor, bumped on every upsert
 // or soft-delete. Clients reconnecting via `?since=<seq>` fetch deltas with
 // a single `WHERE collection_id = ? AND seq > ?` select against
-// SurfaceRecord. See the epic in issue #287 for the full design.
+// PaneRecord. See the epic in issue #287 for the full design.
 model RecordCollection {
   id          String          @id @default(cuid())
-  surfaceId   String          @map("surface_id")
-  surface     Surface         @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  paneId   String          @map("pane_id")
+  pane     Pane         @relation(fields: [paneId], references: [id], onDelete: Cascade)
   name        String
   seq         Int             @default(0)
-  records     SurfaceRecord[]
+  records     PaneRecord[]
 
-  @@unique([surfaceId, name])
+  @@unique([paneId, name])
   @@map("record_collections")
 }
 
@@ -506,7 +506,7 @@ model RecordCollection {
 // so clients reconnecting after the delete still observe the tombstone.
 // Hard cleanup runs out of a background sweeper after RECORD_TOMBSTONE_TTL
 // (separate issue).
-model SurfaceRecord {
+model PaneRecord {
   id           String           @id @default(cuid())
   collectionId String           @map("collection_id")
   collection   RecordCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
@@ -523,24 +523,24 @@ model SurfaceRecord {
 
   @@unique([collectionId, recordKey])
   @@index([collectionId, seq])
-  @@map("surface_records")
+  @@map("pane_records")
 }
 
-// A binary attachment scoped to a template, a surface, or an agent's reusable
+// A binary attachment scoped to a template, a pane, or an agent's reusable
 // asset library. The bytes themselves live in the configured AttachmentStore
 // (filesystem self-host or Azure Attachment hosted); this row is the metadata,
 // authz anchor, and lifecycle hook.
 //
 // Scopes:
-//   - "agent"    — reusable across the agent's surfaces. templateId + surfaceId
+//   - "agent"    — reusable across the agent's panes. templateId + paneId
 //                  both null. Lives until explicit delete or LRU eviction.
-//   - "surface"  — bound to one surface. surfaceId set, templateId null. Dies
-//                  with the surface (cascade).
+//   - "pane"  — bound to one pane. paneId set, templateId null. Dies
+//                  with the pane (cascade).
 //   - "template" — bound to one reusable template (the head, not a specific
-//                  version). templateId set, surfaceId null. Dies with the
+//                  version). templateId set, paneId null. Dies with the
 //                  template.
 //
-// Exactly one of (templateId set, surfaceId set, neither set) is true; the
+// Exactly one of (templateId set, paneId set, neither set) is true; the
 // scope column is the source of truth and the application layer enforces this.
 // Cross-tenant access is denied at the route layer — ownerId is the authz
 // anchor, never the storageKey or the FK columns.
@@ -548,17 +548,17 @@ model Attachment {
   id            String    @id @default(cuid())
 
   // Ownership. Pane has no human-identity concept yet, so the agent IS the
-  // owner. Participant uploads are credited to the surface's owning agent
+  // owner. Participant uploads are credited to the pane's owning agent
   // (the participant token authorises the action, not ownership).
   ownerId       String    @map("owner_id")
   owner         Agent     @relation(fields: [ownerId], references: [id])
 
-  // Scope: "agent" | "surface" | "template". See model-level comment.
+  // Scope: "agent" | "pane" | "template". See model-level comment.
   scope         String
 
-  // Set when scope = "surface". Cascades on surface delete/expire.
-  surfaceId     String?   @map("surface_id")
-  surface       Surface?  @relation(fields: [surfaceId], references: [id], onDelete: Cascade)
+  // Set when scope = "pane". Cascades on pane delete/expire.
+  paneId     String?   @map("pane_id")
+  pane       Pane?  @relation(fields: [paneId], references: [id], onDelete: Cascade)
 
   // Set when scope = "template". Cascades on template delete.
   templateId    String?   @map("template_id")
@@ -607,7 +607,7 @@ model Attachment {
 
   @@index([ownerId])
   @@index([scope, ownerId])
-  @@index([surfaceId])
+  @@index([paneId])
   @@index([templateId])
   @@map("attachments")
 
@@ -621,7 +621,7 @@ model Attachment {
 // A token's lifetime is bound to its attachment's scope (see proposal #152):
 //
 //   - template-scope: token TTL = ATTACHMENT_TOKEN_TTL_TEMPLATE_SECONDS (30d default)
-//   - surface-scope:  token TTL = the surface's TTL (cascades on surface delete)
+//   - pane-scope:  token TTL = the pane's TTL (cascades on pane delete)
 //   - agent-scope:    token TTL = ATTACHMENT_TOKEN_TTL_AGENT_SECONDS (24h default)
 //
 // `once = true` deletes the token on its first successful GET — for the

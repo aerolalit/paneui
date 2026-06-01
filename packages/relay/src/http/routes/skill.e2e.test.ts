@@ -95,7 +95,7 @@ describe("GET /skills/pane/SKILL.md/version", () => {
     // four lines in SKILL.md itself — the real version, the vX.Y.Z
     // documentation example, the snippet's own literal pattern, and a
     // prose mention — so an agent running the snippet got a multi-line
-    // LOCAL_VER and re-downloaded every surface.
+    // LOCAL_VER and re-downloaded every pane.
     //
     // We mirror the snippet's two-step logic in JS here (rather than
     // shell out) and assert it returns a single, non-empty value that

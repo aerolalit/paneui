@@ -4,7 +4,7 @@ import type { AuthorKind, SerializedEvent } from "../types.js";
 export function serializeEvent(e: EventRow): SerializedEvent {
   return {
     id: String(e.id),
-    surface_id: e.surfaceId,
+    pane_id: e.paneId,
     author: { kind: e.authorKind as AuthorKind, id: e.authorId },
     ts: e.ts.toISOString(),
     type: e.type,
@@ -12,7 +12,7 @@ export function serializeEvent(e: EventRow): SerializedEvent {
     causation_id: e.causationId,
     idempotency_key: e.idempotencyKey,
     // #268 — passthrough of the stamped template version. Both nullable for
-    // pre-#268 events (the migration backfilled most from the surface's
+    // pre-#268 events (the migration backfilled most from the pane's
     // current pin; any that slipped through stay null).
     template_version_id: e.templateVersionId,
     template_version: e.templateVersionNum,

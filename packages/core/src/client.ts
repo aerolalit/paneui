@@ -7,8 +7,8 @@ import type {
   TemplateType,
   TemplateVersion,
   CreateArtifactResponse,
-  CreateSessionRequest,
-  CreateSessionResponse,
+  CreatePaneRequest,
+  CreatePaneResponse,
   EventsPage,
   FeedbackPage,
   FeedbackSubmission,
@@ -18,11 +18,11 @@ import type {
   PaneEvent,
   ParticipantsList,
   SerializedRecord,
-  SurfaceState,
-  SurfacesPage,
+  PaneState,
+  PanesPage,
   TasteInfo,
 } from "./types.js";
-import type { ListSessionsQuery } from "./schemas.js";
+import type { ListPanesQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
 
 export interface ClientOptions {
@@ -187,7 +187,7 @@ export class PaneClient {
           data = JSON.parse(text);
         } catch {
           // Body was not JSON (HTML error page, plain-text proxy error, …).
-          // Don't discard it — surface the raw text so callers can diagnose.
+          // Don't discard it — pane the raw text so callers can diagnose.
           const snippet =
             text.length > MAX_RESPONSE_SNIPPET_LENGTH
               ? text.slice(0, MAX_RESPONSE_SNIPPET_LENGTH) + "…"
@@ -249,11 +249,9 @@ export class PaneClient {
     );
   }
 
-  /** POST /v1/surfaces — create a surface. */
-  async createSession(
-    req: CreateSessionRequest,
-  ): Promise<CreateSessionResponse> {
-    const r = await this.call("POST", "/v1/surfaces", {
+  /** POST /v1/panes — create a pane. */
+  async createPane(req: CreatePaneRequest): Promise<CreatePaneResponse> {
+    const r = await this.call("POST", "/v1/panes", {
       template: req.template,
       title: req.title,
       preamble: req.preamble,
@@ -264,26 +262,23 @@ export class PaneClient {
       callback: req.callback,
     });
     if (!r.ok) this.fail(r);
-    return this.asObject<CreateSessionResponse>(r);
+    return this.asObject<CreatePaneResponse>(r);
   }
 
-  /** GET /v1/surfaces/:id — non-blocking surface metadata. */
-  async getSession(surfaceId: string): Promise<SurfaceState> {
-    const r = await this.call(
-      "GET",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}`,
-    );
+  /** GET /v1/panes/:id — non-blocking pane metadata. */
+  async getPane(paneId: string): Promise<PaneState> {
+    const r = await this.call("GET", `/v1/panes/${encodeURIComponent(paneId)}`);
     if (!r.ok) this.fail(r);
-    return this.asObject<SurfaceState>(r);
+    return this.asObject<PaneState>(r);
   }
 
   /**
-   * GET /v1/surfaces/:id/events — fetch the event log.
+   * GET /v1/panes/:id/events — fetch the event log.
    * `since` is an opaque cursor; `waitSeconds` enables the relay long-poll
    * (0 = non-blocking, capped at 30 by the relay).
    */
   async getEvents(
-    surfaceId: string,
+    paneId: string,
     opts: { since?: string | null; waitSeconds?: number } = {},
   ): Promise<EventsPage> {
     const q = new URLSearchParams();
@@ -294,7 +289,7 @@ export class PaneClient {
     const qs = q.toString();
     const r = await this.call(
       "GET",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/events${qs ? "?" + qs : ""}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/events${qs ? "?" + qs : ""}`,
     );
     if (!r.ok) this.fail(r);
     return this.asObject<EventsPage>(r);
@@ -303,12 +298,12 @@ export class PaneClient {
   // ----- #297: records CRUD ---------------------------------------------
 
   /**
-   * GET /v1/surfaces/:id/records/:collection — cursor-paginated list.
+   * GET /v1/panes/:id/records/:collection — cursor-paginated list.
    * Includes tombstones (`deleted_at` set) so reconnecting clients can
    * observe deletions.
    */
   async listRecords(
-    surfaceId: string,
+    paneId: string,
     collection: string,
     opts: { since?: number; limit?: number } = {},
   ): Promise<{
@@ -322,7 +317,7 @@ export class PaneClient {
     const qs = q.toString();
     const r = await this.call(
       "GET",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}${qs ? "?" + qs : ""}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}${qs ? "?" + qs : ""}`,
     );
     if (!r.ok) this.fail(r);
     return this.asObject(r);
@@ -335,13 +330,13 @@ export class PaneClient {
    * a route. Fine for typical CLI use; not appropriate for hot paths.
    */
   async getRecord(
-    surfaceId: string,
+    paneId: string,
     collection: string,
     recordKey: string,
   ): Promise<SerializedRecord | null> {
     let since: number | undefined;
     for (;;) {
-      const page = await this.listRecords(surfaceId, collection, {
+      const page = await this.listRecords(paneId, collection, {
         since,
         limit: 200,
       });
@@ -353,17 +348,17 @@ export class PaneClient {
   }
 
   /**
-   * POST /v1/surfaces/:id/records/:collection — create-or-return-existing.
+   * POST /v1/panes/:id/records/:collection — create-or-return-existing.
    * Duplicate `recordKey` returns the existing row with `deduped: true`.
    */
   async upsertRecord(
-    surfaceId: string,
+    paneId: string,
     collection: string,
     body: { record_key?: string; data: unknown },
   ): Promise<{ record: SerializedRecord; deduped: boolean }> {
     const r = await this.call(
       "POST",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}`,
       body,
     );
     if (!r.ok) this.fail(r);
@@ -375,18 +370,18 @@ export class PaneClient {
   }
 
   /**
-   * PATCH /v1/surfaces/:id/records/:collection/:recordKey — optimistic
+   * PATCH /v1/panes/:id/records/:collection/:recordKey — optimistic
    * update. On 409 the relay returns the current row in `details.current`.
    */
   async updateRecord(
-    surfaceId: string,
+    paneId: string,
     collection: string,
     recordKey: string,
     body: { data: unknown; if_match?: number },
   ): Promise<{ record: SerializedRecord }> {
     const r = await this.call(
       "PATCH",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
       body,
     );
     if (!r.ok) this.fail(r);
@@ -394,11 +389,11 @@ export class PaneClient {
   }
 
   /**
-   * DELETE /v1/surfaces/:id/records/:collection/:recordKey — soft-delete.
+   * DELETE /v1/panes/:id/records/:collection/:recordKey — soft-delete.
    * Optional `if_match` returns 409 + `details.current` on mismatch.
    */
   async deleteRecord(
-    surfaceId: string,
+    paneId: string,
     collection: string,
     recordKey: string,
     opts: { ifMatch?: number } = {},
@@ -406,15 +401,15 @@ export class PaneClient {
     const body = opts.ifMatch != null ? { if_match: opts.ifMatch } : undefined;
     const r = await this.call(
       "DELETE",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
       body,
     );
     if (!r.ok) this.fail(r);
   }
 
-  /** POST /v1/surfaces/:id/events — append an agent event. */
+  /** POST /v1/panes/:id/events — append an agent event. */
   async sendEvent(
-    surfaceId: string,
+    paneId: string,
     ev: {
       type: string;
       data: unknown;
@@ -424,7 +419,7 @@ export class PaneClient {
   ): Promise<{ event: PaneEvent; deduped: boolean }> {
     const r = await this.call(
       "POST",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/events`,
+      `/v1/panes/${encodeURIComponent(paneId)}/events`,
       {
         type: ev.type,
         data: ev.data,
@@ -569,7 +564,7 @@ export class PaneClient {
    * POST /v1/agents/claim — bind this agent to a human via a one-shot
    * claim code the human generated in their settings UI. After a
    * successful claim the agent's existing API key continues to work,
-   * but the agent (and its surfaces/templates) now belong to the
+   * but the agent (and its panes/templates) now belong to the
    * claiming human. One-way operation — there is no unclaim in v1.
    */
   async claimAgent(
@@ -627,12 +622,12 @@ export class PaneClient {
   async submitFeedback(req: {
     type: FeedbackType;
     message: string;
-    surfaceId?: string;
+    paneId?: string;
   }): Promise<FeedbackSubmission> {
     const r = await this.call("POST", "/v1/feedback", {
       type: req.type,
       message: req.message,
-      surface_id: req.surfaceId,
+      pane_id: req.paneId,
     });
     if (!r.ok) this.fail(r);
     return this.asObject<FeedbackSubmission>(r);
@@ -655,14 +650,14 @@ export class PaneClient {
   }
 
   /**
-   * GET /v1/surfaces — list the calling agent's surfaces. Default filter is
+   * GET /v1/panes — list the calling agent's panes. Default filter is
    * `status=open` (effective status — respects expiresAt). Response items
    * carry NO secrets: no participant token plaintext, no callback URL, no
    * metadata or input_data. Use `participant_id` from the list as the handle
    * for {@link revokeParticipant}; use {@link mintParticipant} to issue a
    * fresh URL when the original was lost.
    */
-  async listSessions(opts: ListSessionsQuery = {}): Promise<SurfacesPage> {
+  async listPanes(opts: ListPanesQuery = {}): Promise<PanesPage> {
     const q = new URLSearchParams();
     if (opts.status !== undefined) q.set("status", opts.status);
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
@@ -671,31 +666,31 @@ export class PaneClient {
     if (opts.template_id !== undefined && opts.template_id !== "")
       q.set("template_id", opts.template_id);
     const qs = q.toString();
-    const r = await this.call("GET", `/v1/surfaces${qs ? "?" + qs : ""}`);
+    const r = await this.call("GET", `/v1/panes${qs ? "?" + qs : ""}`);
     if (!r.ok) this.fail(r);
-    return this.asObject<SurfacesPage>(r);
+    return this.asObject<PanesPage>(r);
   }
 
   /**
-   * GET /v1/surfaces/:id/participants — list every participant on one
-   * surface (active and revoked). Bounded by MAX_PARTICIPANTS_PER_SESSION
+   * GET /v1/panes/:id/participants — list every participant on one
+   * pane (active and revoked). Bounded by MAX_PARTICIPANTS_PER_PANE
    * on the relay, so the full list is returned with no pagination.
    * Use this to find the `participant_id` you need to pass to
    * {@link revokeParticipant}, or to audit revoked rows.
    */
-  async listParticipants(surfaceId: string): Promise<ParticipantsList> {
+  async listParticipants(paneId: string): Promise<ParticipantsList> {
     const r = await this.call(
       "GET",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants`,
+      `/v1/panes/${encodeURIComponent(paneId)}/participants`,
     );
     if (!r.ok) this.fail(r);
     return this.asObject<ParticipantsList>(r);
   }
 
   /**
-   * POST /v1/surfaces/:id/participants — mint a fresh participant URL for an
-   * existing surface. The one-shot recovery primitive when the original URL
-   * was dropped: the surface keeps its event log, template pin, and created_at.
+   * POST /v1/panes/:id/participants — mint a fresh participant URL for an
+   * existing pane. The one-shot recovery primitive when the original URL
+   * was dropped: the pane keeps its event log, template pin, and created_at.
    * v1 supports `kind: "human"` only.
    *
    * The plaintext token is returned EXACTLY ONCE in the response — the relay
@@ -703,12 +698,12 @@ export class PaneClient {
    * delivering the URL to the human.
    */
   async mintParticipant(
-    surfaceId: string,
+    paneId: string,
     opts: { kind?: "human" } = {},
   ): Promise<MintParticipantResponse> {
     const r = await this.call(
       "POST",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants`,
+      `/v1/panes/${encodeURIComponent(paneId)}/participants`,
       { kind: opts.kind ?? "human" },
     );
     if (!r.ok) this.fail(r);
@@ -716,43 +711,40 @@ export class PaneClient {
   }
 
   /**
-   * DELETE /v1/surfaces/:id/participants/:participant_id — revoke a single
-   * participant URL. The surface's other participants (and the agent's own
+   * DELETE /v1/panes/:id/participants/:participant_id — revoke a single
+   * participant URL. The pane's other participants (and the agent's own
    * WebSocket) are untouched. Idempotent: revoking an unknown or already-
    * revoked participant returns 204. The agent participant cannot be revoked
-   * via this endpoint — use {@link deleteSession} instead.
+   * via this endpoint — use {@link deletePane} instead.
    *
    * Existing WebSocket connections held under the revoked token are NOT
    * actively kicked in v1; new HTTP and WS connections are refused.
    */
   async revokeParticipant(
-    surfaceId: string,
+    paneId: string,
     participantId: string,
   ): Promise<void> {
     const r = await this.call(
       "DELETE",
-      `/v1/surfaces/${encodeURIComponent(surfaceId)}/participants/${encodeURIComponent(participantId)}`,
+      `/v1/panes/${encodeURIComponent(paneId)}/participants/${encodeURIComponent(participantId)}`,
     );
     if (!r.ok) this.fail(r);
   }
 
   /**
-   * DELETE /v1/surfaces/:id — close/delete a surface. Idempotent on the relay
-   * side (an already-closed surface still returns 204 with no body).
+   * DELETE /v1/panes/:id — close/delete a pane. Idempotent on the relay
+   * side (an already-closed pane still returns 204 with no body).
    */
-  async deleteSession(id: string): Promise<void> {
-    const r = await this.call(
-      "DELETE",
-      `/v1/surfaces/${encodeURIComponent(id)}`,
-    );
+  async deletePane(id: string): Promise<void> {
+    const r = await this.call("DELETE", `/v1/panes/${encodeURIComponent(id)}`);
     if (!r.ok) this.fail(r);
   }
 
   /**
    * DELETE /v1/templates/:id — remove an template and (server-side) all its
    * versions. Strict cascade: the relay refuses with 409 conflict if any
-   * surface in any state still references one of the template's versions —
-   * surface that as a typed PaneApiError so the CLI can render a hint
+   * pane in any state still references one of the template's versions —
+   * pane that as a typed PaneApiError so the CLI can render a hint
    * instead of swallowing it.
    */
   async deleteArtifact(idOrSlug: string): Promise<void> {
@@ -854,9 +846,9 @@ export class PaneClient {
    * in event payloads (the relay's `format: pane-attachment-id` schema vocab
    * validates the id) or in `pane create --input-data`.
    *
-   * Scope defaults to "agent" (reusable across the agent's surfaces). For
-   * `scope: "surface"` pass `surfaceId`; for `scope: "template"` pass
-   * `templateId`. The agent must own the referenced surface / template;
+   * Scope defaults to "agent" (reusable across the agent's panes). For
+   * `scope: "pane"` pass `paneId`; for `scope: "template"` pass
+   * `templateId`. The agent must own the referenced pane / template;
    * cross-tenant attempts return attachment_not_found.
    *
    * MIME is inferred from `mime` if supplied; otherwise the relay sniffs
@@ -894,7 +886,7 @@ export class PaneClient {
     }
     fd.set("file", attachment, opts.filename ?? "attachment");
     if (opts.scope) fd.set("scope", opts.scope);
-    if (opts.surfaceId) fd.set("surface_id", opts.surfaceId);
+    if (opts.paneId) fd.set("pane_id", opts.paneId);
     if (opts.templateId) fd.set("template_id", opts.templateId);
     if (opts.filename) fd.set("filename", opts.filename);
 
@@ -985,7 +977,7 @@ export class PaneClient {
 
   /**
    * Mint a `/b/<token>` capability URL for `attachmentId`. Default TTL is set by
-   * the relay (24h agent, surface-TTL surface, 30d template). `once: true`
+   * the relay (24h agent, pane-TTL pane, 30d template). `once: true`
    * tokens self-delete on first GET.
    */
   async mintBlobToken(
@@ -1069,7 +1061,7 @@ export class PaneClient {
       size: opts.size,
       sha256: opts.sha256,
       scope: opts.scope,
-      surface_id: opts.surfaceId,
+      pane_id: opts.paneId,
       template_id: opts.templateId,
       filename: opts.filename,
     });
@@ -1095,7 +1087,7 @@ export class PaneClient {
 /** Per-attachment metadata as returned by `POST /v1/attachments` and friends. */
 export interface AttachmentRef {
   attachment_id: string;
-  scope: "agent" | "surface" | "template";
+  scope: "agent" | "pane" | "template";
   mime: string;
   size: number;
   sha256: string;
@@ -1104,7 +1096,7 @@ export interface AttachmentRef {
   height?: number | null;
   filename?: string | null;
   status?: string;
-  surface_id?: string | null;
+  pane_id?: string | null;
   template_id?: string | null;
   created_at?: string;
   confirmed_at?: string | null;
@@ -1112,8 +1104,8 @@ export interface AttachmentRef {
 }
 
 export interface UploadBlobOptions {
-  scope?: "agent" | "surface" | "template";
-  surfaceId?: string;
+  scope?: "agent" | "pane" | "template";
+  paneId?: string;
   templateId?: string;
   /** Declared Content-Type. Defaults to `application/octet-stream`. The
    *  relay sniffs leading bytes and may reject with `mime_mismatch`. */
@@ -1126,8 +1118,8 @@ export interface PresignBlobOptions {
   mime: string;
   size: number;
   sha256: string;
-  scope?: "agent" | "surface" | "template";
-  surfaceId?: string;
+  scope?: "agent" | "pane" | "template";
+  paneId?: string;
   templateId?: string;
   filename?: string;
 }

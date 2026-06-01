@@ -95,14 +95,14 @@ export async function initTelemetry(
   }
 
   provider = new MeterProvider({ resource, readers });
-  // Register as the global MeterProvider so the OTel API surface is consistent;
+  // Register as the global MeterProvider so the OTel API pane is consistent;
   // we still hold our own reference for shutdown/serialization.
   metrics.setGlobalMeterProvider(provider as unknown as ApiMeterProvider);
 
   const meter: Meter = provider.getMeter("pane-relay");
 
   surfacesCreated = meter.createCounter("pane_surfaces_created_total", {
-    description: "Total UI surfaces created via POST /v1/surfaces.",
+    description: "Total UI panes created via POST /v1/panes.",
   });
   eventsWritten = meter.createCounter("pane_events_written_total", {
     description: "Total events persisted, labelled by author kind.",
@@ -137,7 +137,7 @@ export async function initTelemetry(
       }
     });
 
-  // pane_surfaces_open — ObservableGauge that counts currently-open surfaces on
+  // pane_surfaces_open — ObservableGauge that counts currently-open panes on
   // each collection. The exporter reads it periodically, so one count query per
   // collection is acceptable. The callback is resilient: a DB error is logged
   // and the observation is simply skipped, never thrown out of the callback.
@@ -147,7 +147,7 @@ export async function initTelemetry(
     })
     .addCallback(async (result) => {
       try {
-        const count = await prisma.surface.count({
+        const count = await prisma.pane.count({
           where: { status: "open", expiresAt: { gt: new Date() } },
         });
         result.observe(count);
@@ -167,7 +167,7 @@ export async function initTelemetry(
 // --- instrument helpers ------------------------------------------------------
 // All helpers are cheap no-ops when metrics are disabled.
 
-/** Increment after a surface is successfully created. */
+/** Increment after a pane is successfully created. */
 export function recordSessionCreated(): void {
   surfacesCreated?.add(1);
 }

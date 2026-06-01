@@ -10,7 +10,7 @@
 // `.meta.json` next to the attachment so `head()` is a cheap stat+read without
 // re-hashing the bytes. The sidecar is the source of truth for size + sha256
 // after write completes; if the sidecar and the real file disagree, that's a
-// corruption the TOCTOU check at confirm-time will surface.
+// corruption the TOCTOU check at confirm-time will pane.
 //
 // Sidecar field naming. The sidecar `sha256` represents the hash of the
 // bytes that LIVE ON DISK — when BLOB_ENCRYPT_AT_REST=true those bytes are

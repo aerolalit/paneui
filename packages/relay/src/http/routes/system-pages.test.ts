@@ -1,56 +1,52 @@
 import { describe, it, expect } from "vitest";
-import {
-  surfaceInitials,
-  surfaceHue,
-  formatRelativeDate,
-} from "./system-pages.js";
+import { paneInitials, paneHue, formatRelativeDate } from "./system-pages.js";
 
-describe("surfaceInitials", () => {
+describe("paneInitials", () => {
   it("returns the first letter of two words upper-cased", () => {
-    expect(surfaceInitials("PR Review")).toBe("PR");
-    expect(surfaceInitials("deploy approval")).toBe("DA");
+    expect(paneInitials("PR Review")).toBe("PR");
+    expect(paneInitials("deploy approval")).toBe("DA");
   });
 
   it("returns the first two letters of a single word", () => {
-    expect(surfaceInitials("approve")).toBe("AP");
-    expect(surfaceInitials("X")).toBe("X");
+    expect(paneInitials("approve")).toBe("AP");
+    expect(paneInitials("X")).toBe("X");
   });
 
   it("treats common separators as word breaks", () => {
-    expect(surfaceInitials("pr-review")).toBe("PR");
-    expect(surfaceInitials("pr_review")).toBe("PR");
-    expect(surfaceInitials("pr.review.v2")).toBe("PR");
-    expect(surfaceInitials("pr/review")).toBe("PR");
+    expect(paneInitials("pr-review")).toBe("PR");
+    expect(paneInitials("pr_review")).toBe("PR");
+    expect(paneInitials("pr.review.v2")).toBe("PR");
+    expect(paneInitials("pr/review")).toBe("PR");
   });
 
   it("falls back to '?' for empty / whitespace input", () => {
-    expect(surfaceInitials("")).toBe("?");
-    expect(surfaceInitials("   ")).toBe("?");
+    expect(paneInitials("")).toBe("?");
+    expect(paneInitials("   ")).toBe("?");
   });
 
   it("uses the leading two characters when nothing is alphanumeric", () => {
-    expect(surfaceInitials("@#")).toBe("@#");
+    expect(paneInitials("@#")).toBe("@#");
   });
 });
 
-describe("surfaceHue", () => {
+describe("paneHue", () => {
   it("returns a hue in [0, 360)", () => {
-    for (const seed of ["sur_a", "sur_b", "sur_abc123", "literally anything"]) {
-      const h = surfaceHue(seed);
+    for (const seed of ["pan_a", "pan_b", "pan_abc123", "literally anything"]) {
+      const h = paneHue(seed);
       expect(h).toBeGreaterThanOrEqual(0);
       expect(h).toBeLessThan(360);
     }
   });
 
   it("is deterministic for a given seed", () => {
-    expect(surfaceHue("sur_xyz")).toBe(surfaceHue("sur_xyz"));
+    expect(paneHue("pan_xyz")).toBe(paneHue("pan_xyz"));
   });
 
   it("yields different hues for visually distinct seeds (probabilistic)", () => {
     // Not a guarantee for any specific pair, but across a handful of
-    // surface ids we should see at least two distinct values.
+    // pane ids we should see at least two distinct values.
     const hues = new Set(
-      ["sur_a", "sur_b", "sur_c", "sur_d", "sur_e"].map(surfaceHue),
+      ["pan_a", "pan_b", "pan_c", "pan_d", "pan_e"].map(paneHue),
     );
     expect(hues.size).toBeGreaterThanOrEqual(2);
   });

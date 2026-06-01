@@ -62,7 +62,7 @@ and minor / major bumps require manual review + a fresh corpus run.
 
 ### Operator note: SVG
 
-If your surface renders SVGs inline in untrusted UI (e.g. as `<img>` from
+If your pane renders SVGs inline in untrusted UI (e.g. as `<img>` from
 a `/b/<token>` URL inside a participant page), **remove `image/svg+xml`
 from the allowlist** until v0.2's SVG sanitiser ships:
 

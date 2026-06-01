@@ -118,7 +118,7 @@ describe("POST /v1/templates/:id/publish (agent)", () => {
           "content-type": "application/json",
           authorization: `Bearer ${owner.apiKey}`,
         },
-        body: JSON.stringify({ scopes: ["read:surfaces", "write:events"] }),
+        body: JSON.stringify({ scopes: ["read:panes", "write:events"] }),
       }),
     );
     expect(res.status).toBe(200);
@@ -128,7 +128,7 @@ describe("POST /v1/templates/:id/publish (agent)", () => {
       scopes: string[];
     };
     expect(body.published_at).not.toBeNull();
-    expect(body.scopes).toEqual(["read:surfaces", "write:events"]);
+    expect(body.scopes).toEqual(["read:panes", "write:events"]);
     const after = await prisma.template.findUnique({ where: { id: tmpl.id } });
     expect(after?.publishedAt).not.toBeNull();
   });
@@ -158,7 +158,7 @@ describe("POST /v1/templates/:id/unpublish (agent)", () => {
         ownerId: owner.id,
         name: "t",
         publishedAt: new Date(),
-        scopes: ["read:surfaces"] as unknown as object,
+        scopes: ["read:panes"] as unknown as object,
       },
     });
     const res = await app.fetch(
@@ -839,7 +839,7 @@ describe("POST /v1/my-templates/:id/publish (human, #279 PR B)", () => {
       new Request(`http://t/v1/my-templates/${tpl.id}/publish`, {
         method: "POST",
         headers: { ...withCookie(cookie), "content-type": "application/json" },
-        body: JSON.stringify({ scopes: ["read:agent", "write:surface"] }),
+        body: JSON.stringify({ scopes: ["read:agent", "write:pane"] }),
       }),
     );
     expect(res.status).toBe(200);
@@ -848,10 +848,10 @@ describe("POST /v1/my-templates/:id/publish (human, #279 PR B)", () => {
       scopes: string[];
     };
     expect(body.published_at).not.toBeNull();
-    expect(body.scopes).toEqual(["read:agent", "write:surface"]);
+    expect(body.scopes).toEqual(["read:agent", "write:pane"]);
     const after = await prisma.template.findUnique({ where: { id: tpl.id } });
     expect(after!.publishedAt).not.toBeNull();
-    expect(after!.scopes).toEqual(["read:agent", "write:surface"]);
+    expect(after!.scopes).toEqual(["read:agent", "write:pane"]);
   });
 
   it("rejects malformed scopes (verb:noun grammar)", async () => {

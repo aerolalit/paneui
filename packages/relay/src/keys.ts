@@ -25,11 +25,11 @@ export function generateHumanParticipantToken(): string {
   return HUMAN_TOKEN_PREFIX + randomBytes(32).toString("base64url");
 }
 
-// Surfaces were historically called "sessions" — the wire-format prefix
-// `sur_` matches the current vocabulary. Pre-rename rows still carry the
-// old `ses_` prefix; IDs are opaque downstream so they continue to work.
-export function generateSurfaceId(): string {
-  return "sur_" + randomBytes(12).toString("base64url");
+// Panes were historically called "sessions" — the wire-format prefix
+// `pan_` matches the current vocabulary. Pre-rename rows still carry the
+// old `pan_` prefix; IDs are opaque downstream so they continue to work.
+export function generatePaneId(): string {
+  return "pan_" + randomBytes(12).toString("base64url");
 }
 
 export function hashKey(value: string): string {

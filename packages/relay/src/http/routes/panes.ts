@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import {
-  createSessionSchema,
-  listSessionsQuerySchema,
+  createPaneSchema,
+  listPanesQuerySchema,
   mintParticipantSchema,
-  upgradeSurfaceSchema,
+  upgradePaneSchema,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
 import {
-  generateSurfaceId,
+  generatePaneId,
   generateAgentParticipantToken,
   generateHumanParticipantToken,
   hashKey,
@@ -18,7 +18,7 @@ import {
 import { dualAuth, requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
-import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import { comparePaneSchemas } from "../../core/schema-compat.js";
 import type { EventSchema } from "../../types.js";
 import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
@@ -39,9 +39,9 @@ import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
 
-const surfaces = new Hono<AuthEnv>();
+const panes = new Hono<AuthEnv>();
 
-// `createSessionSchema` (request shape for POST /v1/surfaces) is the single
+// `createPaneSchema` (request shape for POST /v1/panes) is the single
 // source of truth in @paneui/core/schemas — the relay imports it so the
 // server-side validator and the client-facing types can never drift. See
 // packages/core/src/schemas.ts.
@@ -52,39 +52,39 @@ function publicWsUrl(config: Config): string {
   return u.toString().replace(/\/$/, "");
 }
 
-// #283 — assert the caller may act on this surface. A surface is in scope
+// #283 — assert the caller may act on this pane. A pane is in scope
 // for any agent claimed to the same human as its owning agent. Throws
-// sessionNotFound when the surface is missing or owned by a strictly
-// unrelated agent (no shared human); throws forbidden when the surface
+// sessionNotFound when the pane is missing or owned by a strictly
+// unrelated agent (no shared human); throws forbidden when the pane
 // belongs to a different human (so the caller knows they hit a real id
 // that just isn't theirs to act on, which is the debugging hint the
 // issue called out).
-type SurfaceScopeFields = { agentId: string; ownerHumanId: string | null };
+type PaneScopeFields = { agentId: string; ownerHumanId: string | null };
 
-// Returns the narrowed (non-null) surface so callers can continue working
-// with the surface in a type-safe way without re-asserting.
-async function assertSurfaceInScope<T extends SurfaceScopeFields>(
+// Returns the narrowed (non-null) pane so callers can continue working
+// with the pane in a type-safe way without re-asserting.
+async function assertPaneInScope<T extends PaneScopeFields>(
   prisma: PrismaClient,
-  surface: T | null,
+  pane: T | null,
   me: { id: string; ownerHumanId: string | null },
 ): Promise<T> {
-  if (!surface) throw errors.sessionNotFound();
-  if (surface.agentId === me.id) return surface;
+  if (!pane) throw errors.sessionNotFound();
+  if (pane.agentId === me.id) return pane;
   const scope = await agentScope(prisma, me);
-  if (scope.has(surface.agentId)) return surface;
-  if (surface.ownerHumanId !== null) {
+  if (scope.has(pane.agentId)) return pane;
+  if (pane.ownerHumanId !== null) {
     throw errors.forbidden(
       "forbidden_cross_human",
-      "this surface belongs to a different human's agents",
+      "this pane belongs to a different human's agents",
     );
   }
   throw errors.sessionNotFound();
 }
 
-// #259 — mint a kind="agent" Participant for the calling agent on a surface
+// #259 — mint a kind="agent" Participant for the calling agent on a pane
 // they don't yet own, so the cross-agent Phase G dedup hands back a usable
 // credential. Returns the freshly-minted plaintext token, or null when the
-// calling agent already has a non-revoked agent participant on this surface
+// calling agent already has a non-revoked agent participant on this pane
 // (either because they're the owning agent, or because a previous dedup
 // already minted one).
 //
@@ -95,17 +95,17 @@ async function assertSurfaceInScope<T extends SurfaceScopeFields>(
 //
 // Concurrency: two parallel cross-agent dedup hits from the SAME agent both
 // see no existing participant and both attempt the create with
-// identityId === agent.id. The `(surfaceId, identityId)` unique constraint
+// identityId === agent.id. The `(paneId, identityId)` unique constraint
 // serialises; the loser's P2002 collapses to the same "already has access"
 // shape (null token), which is correct — the winner's create succeeded.
 export async function mintCrossAgentParticipantIfNeeded(
   prisma: PrismaClient,
-  surfaceId: string,
+  paneId: string,
   agent: { id: string },
 ): Promise<{ token: string | null }> {
   const existing = await prisma.participant.findFirst({
     where: {
-      surfaceId,
+      paneId,
       kind: "agent",
       identityId: agent.id,
       revokedAt: null,
@@ -118,7 +118,7 @@ export async function mintCrossAgentParticipantIfNeeded(
   try {
     await prisma.participant.create({
       data: {
-        surfaceId,
+        paneId,
         kind: "agent",
         identityId: agent.id,
         tokenHash: hashKey(token),
@@ -136,12 +136,12 @@ export async function mintCrossAgentParticipantIfNeeded(
   }
 }
 
-// Default page size for GET /v1/surfaces. The upper bound (200) lives on
-// `listSessionsQuerySchema` in @paneui/core so the validation site is the
+// Default page size for GET /v1/panes. The upper bound (200) lives on
+// `listPanesQuerySchema` in @paneui/core so the validation site is the
 // single source of truth.
 const LIST_DEFAULT_LIMIT = 50;
 
-// Opaque cursor for GET /v1/surfaces. We encode `{ created_at, id }` as
+// Opaque cursor for GET /v1/panes. We encode `{ created_at, id }` as
 // base64url JSON so the ordering tuple is captured verbatim and a row can be
 // found again across pages without depending on a wall-clock comparison.
 // Stability: ordering is `(createdAt DESC, id DESC)`, so the next page is
@@ -175,20 +175,20 @@ function decodeCursor(s: string): ListCursor | null {
   }
 }
 
-// GET /v1/surfaces — list the calling agent's surfaces.
+// GET /v1/panes — list the calling agent's panes.
 //
 // Lean, agent-scoped. NO secrets in the response: no participant token
 // plaintext (impossible — only the hash is stored), no callback_url (may
 // contain a webhook secret in the path), no metadata / input_data (large
-// and potentially sensitive — fetch via GET /v1/surfaces/:id when needed).
+// and potentially sensitive — fetch via GET /v1/panes/:id when needed).
 //
 // Mounted before GET /:id; Hono matches by literal path, so the order here
 // is for readability, not correctness.
-surfaces.get("/", requireAgent, async (c) => {
+panes.get("/", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const me = c.get("agent");
 
-  const parsed = listSessionsQuerySchema.safeParse({
+  const parsed = listPanesQuerySchema.safeParse({
     status: c.req.query("status"),
     limit:
       c.req.query("limit") !== undefined
@@ -219,12 +219,12 @@ surfaces.get("/", requireAgent, async (c) => {
     }
   }
 
-  // Status projection. The surface column may say "open" while expiresAt is
-  // in the past — GET /v1/surfaces/:id projects that as "closed" at read
+  // Status projection. The pane column may say "open" while expiresAt is
+  // in the past — GET /v1/panes/:id projects that as "closed" at read
   // time, and the list must do the same to stay consistent. We translate the
   // effective-status filter into a SQL predicate over (status, expiresAt).
   const now = new Date();
-  const statusWhere = ((): Prisma.SurfaceWhereInput => {
+  const statusWhere = ((): Prisma.PaneWhereInput => {
     if (status === "all") return {};
     if (status === "open") {
       // Effective open = column open AND not yet expired.
@@ -237,16 +237,16 @@ surfaces.get("/", requireAgent, async (c) => {
   })();
 
   // template_id filter: match the template_version.templateId (the head's id).
-  // Only the caller's own templates can match — Surface.agentId filter already
+  // Only the caller's own templates can match — Pane.agentId filter already
   // restricts that, but the template filter is exposed as a convenience.
-  const artifactWhere: Prisma.SurfaceWhereInput =
+  const artifactWhere: Prisma.PaneWhereInput =
     parsed.data.template_id !== undefined
       ? { templateVersion: { templateId: parsed.data.template_id } }
       : {};
 
   // Cursor predicate. Ordering is (createdAt DESC, id DESC); "next page" is
   // rows strictly before the cursor row in that tuple ordering.
-  const cursorWhere: Prisma.SurfaceWhereInput =
+  const cursorWhere: Prisma.PaneWhereInput =
     cursor !== null
       ? {
           OR: [
@@ -262,7 +262,7 @@ surfaces.get("/", requireAgent, async (c) => {
   // #283 — once an agent is claimed, the list spans every agent
   // claimed to the same human. Unclaimed agents stay self-scoped.
   const scope = await agentScope(prisma, me);
-  const rows = await prisma.surface.findMany({
+  const rows = await prisma.pane.findMany({
     where: {
       agentId: { in: [...scope] },
       ...statusWhere,
@@ -284,10 +284,10 @@ surfaces.get("/", requireAgent, async (c) => {
         },
       },
       // Don't pull full participant rows for the list — agents with many
-      // surfaces × many humans would pay the bandwidth on every list call.
+      // panes × many humans would pay the bandwidth on every list call.
       // Just count active humans so the row shows occupancy at a glance;
       // for the full participant array (with participant_id + token_prefix
-      // + revoked_at), call `GET /v1/surfaces/:id/participants`.
+      // + revoked_at), call `GET /v1/panes/:id/participants`.
       _count: {
         select: {
           participants: { where: { kind: "human", revokedAt: null } },
@@ -306,14 +306,14 @@ surfaces.get("/", requireAgent, async (c) => {
       s.templateVersion.template.name === null &&
       s.templateVersion.template.slug === null;
     return {
-      surface_id: s.id,
+      pane_id: s.id,
       title: s.title,
       status: (isExpired ? "closed" : s.status) as "open" | "closed",
       template_id: isAnonymous ? null : s.templateVersion.templateId,
       template_version_id: s.templateVersionId,
       template_version: s.templateVersion.version,
       // Count of active (non-revoked) human participants. For the full
-      // participant array call GET /v1/surfaces/:id/participants.
+      // participant array call GET /v1/panes/:id/participants.
       active_human_participants: s._count.participants,
       created_at: s.createdAt.toISOString(),
       expires_at: s.expiresAt.toISOString(),
@@ -333,12 +333,12 @@ surfaces.get("/", requireAgent, async (c) => {
   });
 });
 
-surfaces.post("/", requireAgent, async (c) => {
+panes.post("/", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
   const agent = c.get("agent");
   const body = await c.req.json().catch(() => null);
-  const parsed = createSessionSchema.safeParse(body);
+  const parsed = createPaneSchema.safeParse(body);
   if (!parsed.success) {
     throw errors.invalidRequest(
       "invalid body",
@@ -362,9 +362,9 @@ surfaces.post("/", requireAgent, async (c) => {
   const resolvedPreamble = validateSessionPreamble(preamble);
 
   const requestedHumans = participants?.humans ?? 1;
-  if (requestedHumans > config.MAX_PARTICIPANTS_PER_SESSION) {
+  if (requestedHumans > config.MAX_PARTICIPANTS_PER_PANE) {
     throw errors.invalidRequest(
-      `participants.humans must be <= ${config.MAX_PARTICIPANTS_PER_SESSION}`,
+      `participants.humans must be <= ${config.MAX_PARTICIPANTS_PER_PANE}`,
     );
   }
 
@@ -373,7 +373,7 @@ surfaces.post("/", requireAgent, async (c) => {
   }
 
   // Resolve (reference form) or create (inline form) the template version this
-  // surface pins. Either path ends with a concrete template_version_id.
+  // pane pins. Either path ends with a concrete template_version_id.
   let templateVersionId: string;
   let templateId: string;
   // The pinned version's input_schema, if it declares one. Null = the version
@@ -428,7 +428,7 @@ surfaces.post("/", requireAgent, async (c) => {
     }
     // An absent event_schema = a view-only one-off (a report/dashboard the
     // human only views). Skip schema-shape validation and persist null; the
-    // surface then rejects every page/agent emit. A present-but-malformed
+    // pane then rejects every page/agent emit. A present-but-malformed
     // schema is still rejected as today.
     let eventSchema: EventSchema | null = null;
     if (inline.event_schema !== undefined) {
@@ -438,14 +438,14 @@ surfaces.post("/", requireAgent, async (c) => {
       });
       eventSchema = validateSchemaShape(inline.event_schema);
     }
-    // An absent input_schema = no input contract; the surface accepts any
+    // An absent input_schema = no input contract; the pane accepts any
     // input_data (or none) and the participant attachment-download bridge has no
     // walkable sites for `format: pane-attachment-id` in input_data. When present,
     // the schema is compiled with the same Ajv pipeline used by named
     // templates (`assertValidInputSchema`), persisted on the auto-created
     // template version below, and surfaced to the downstream input_data
     // validator + attachment-ref access check via the outer `inputSchema` var.
-    // Before this branch existed, inline surfaces hardcoded inputSchema to
+    // Before this branch existed, inline panes hardcoded inputSchema to
     // Prisma.JsonNull — making attachment refs in input_data silently unreachable
     // even when the agent owned the attachment (#208).
     if (inline.input_schema !== undefined) {
@@ -458,7 +458,7 @@ surfaces.post("/", requireAgent, async (c) => {
     }
     // #289 — validate record_schema shape on inline templates. Validation-only
     // for this PR (persistence lands once #288 adds the Prisma column); a 400
-    // here surfaces a malformed agent-supplied record_schema instead of
+    // here panes a malformed agent-supplied record_schema instead of
     // silently dropping it.
     if (inline.record_schema !== undefined) {
       assertSchemaWithinLimits(inline.record_schema, {
@@ -494,12 +494,12 @@ surfaces.post("/", requireAgent, async (c) => {
     templateId = created.headId;
   }
 
-  // Resolve the per-surface tab title. The relay treats title as required at
-  // the storage layer (Surface.title is NOT NULL), but offers one ergonomic
-  // fallback: a reference-form surface against a named template picks up the
+  // Resolve the per-pane tab title. The relay treats title as required at
+  // the storage layer (Pane.title is NOT NULL), but offers one ergonomic
+  // fallback: a reference-form pane against a named template picks up the
   // template's `name`. Inline form has no name to fall back to and must carry
   // `title` explicitly. Both paths funnel through validateSessionTitle so an
-  // over-long Template.name still surfaces a clear error rather than truncating
+  // over-long Template.name still panes a clear error rather than truncating
   // silently.
   let resolvedTitle: string;
   if (title !== undefined) {
@@ -510,13 +510,13 @@ surfaces.post("/", requireAgent, async (c) => {
     throw errors.invalidRequest(
       "title is required",
       undefined,
-      "pass `title` on the request body (or `--title` on `pane surface create`); reference-form surfaces can omit it only when the template has a `name`",
+      "pass `title` on the request body (or `--title` on `pane pane create`); reference-form panes can omit it only when the template has a `name`",
     );
   }
 
   // Phase C — input contract enforcement. If the pinned version declares an
-  // `input_schema`, the surface's `input_data` must satisfy it; validate now,
-  // BEFORE the surface row is created, so a bad request creates nothing. A
+  // `input_schema`, the pane's `input_data` must satisfy it; validate now,
+  // BEFORE the pane row is created, so a bad request creates nothing. A
   // missing `input_data` is validated as `{}` so the schema's `required`
   // fields fail naturally. When the version has NO `input_schema` there is no
   // input contract — `input_data` (if supplied) passes through unvalidated.
@@ -540,7 +540,7 @@ surfaces.post("/", requireAgent, async (c) => {
   //                    silently clamp this, but an automated agent reading
   //                    a 24-hour `expires_at` after asking for 7 days has
   //                    no easy way to notice the discrepancy until the
-  //                    surface is already gone (#137). An authoritative
+  //                    pane is already gone (#137). An authoritative
   //                    400 is friendlier — the agent can pass the cap-or-
   //                    lower value explicitly.
   //   in range     → used as-is.
@@ -556,26 +556,26 @@ surfaces.post("/", requireAgent, async (c) => {
   const ttlSeconds = Math.max(1, ttlRequested);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
-  // Per-agent surface cap: bound how many open surfaces a single agent can
+  // Per-agent pane cap: bound how many open panes a single agent can
   // hold so a compromised/abusive key cannot exhaust storage. Closed/expired
-  // surfaces do not count — they are reclaimed by the TTL sweeper.
+  // panes do not count — they are reclaimed by the TTL sweeper.
   // This is a count-then-create check, so it is a SOFT cap — concurrent
-  // POST /v1/surfaces from one agent can race past it and overshoot by
+  // POST /v1/panes from one agent can race past it and overshoot by
   // roughly the number of inflight requests. Acceptable: the cap bounds
   // abuse to ~N, not an exact count, and the limit is deliberately generous.
-  if (config.MAX_SESSIONS_PER_AGENT > 0) {
-    const openCount = await prisma.surface.count({
+  if (config.MAX_PANES_PER_AGENT > 0) {
+    const openCount = await prisma.pane.count({
       where: { agentId: agent.id, status: "open" },
     });
-    if (openCount >= config.MAX_SESSIONS_PER_AGENT) {
+    if (openCount >= config.MAX_PANES_PER_AGENT) {
       throw errors.tooManyRequests(
-        `open surface cap reached (max ${config.MAX_SESSIONS_PER_AGENT} per agent); close an existing surface before creating a new one`,
+        `open pane cap reached (max ${config.MAX_PANES_PER_AGENT} per agent); close an existing pane before creating a new one`,
       );
     }
   }
 
   // Phase G — contextKey dedup. When the caller supplies a context_key and
-  // the calling agent is claimed by a human, look up an existing surface
+  // the calling agent is claimed by a human, look up an existing pane
   // owned by that human for the same (templateVersionId, ownerHumanId,
   // contextKey). If found, return it instead of creating a new one. The
   // unique index defined in Phase A's schema enforces this at the DB
@@ -587,7 +587,7 @@ surfaces.post("/", requireAgent, async (c) => {
   const dedupKey = context_key ?? null;
   const ownerHumanId = agent.ownerHumanId;
   if (dedupKey && ownerHumanId) {
-    const existing = await prisma.surface.findFirst({
+    const existing = await prisma.pane.findFirst({
       where: {
         templateVersionId,
         ownerHumanId,
@@ -601,9 +601,9 @@ surfaces.post("/", requireAgent, async (c) => {
     });
     if (existing) {
       // Cross-agent dedup (#259): if the calling agent isn't yet a
-      // participant on the matched surface, mint a fresh kind="agent"
+      // participant on the matched pane, mint a fresh kind="agent"
       // Participant for them and return its token. Without this the
-      // dedup branch hands the caller a surface_id they have no
+      // dedup branch hands the caller a pane_id they have no
       // credential to use — the dedup contract was leaking under the
       // realistic "human owns A and B, both call create with the same
       // context_key" case.
@@ -615,20 +615,20 @@ surfaces.post("/", requireAgent, async (c) => {
       const { token: dedupAgentToken } =
         await mintCrossAgentParticipantIfNeeded(prisma, existing.id, agent);
       // Human-side participant tokens are stored hashed and cannot be
-      // re-emitted; the caller lists them via /v1/surfaces/:id/participants
-      // and mints fresh ones with /v1/surfaces/:id/participants when needed.
+      // re-emitted; the caller lists them via /v1/panes/:id/participants
+      // and mints fresh ones with /v1/panes/:id/participants when needed.
       const existingHumanCount = existing.participants.filter(
         (p) => p.kind === "human",
       ).length;
       const wsBase = publicWsUrl(config);
       return c.json(
         {
-          surface_id: existing.id,
+          pane_id: existing.id,
           created: false,
           tokens: { humans: [], agent: dedupAgentToken },
           urls: {
             humans: [],
-            agent_stream: `${wsBase}/v1/surfaces/${existing.id}/stream`,
+            agent_stream: `${wsBase}/v1/panes/${existing.id}/stream`,
           },
           expires_at: existing.expiresAt.toISOString(),
           title: existing.title,
@@ -640,7 +640,7 @@ surfaces.post("/", requireAgent, async (c) => {
     }
   }
 
-  const surfaceId = generateSurfaceId();
+  const paneId = generatePaneId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
     generateHumanParticipantToken(),
   );
@@ -648,20 +648,20 @@ surfaces.post("/", requireAgent, async (c) => {
 
   // `input_data` was validated above against the pinned version's
   // `input_schema` (when the version declares one) — it is safe to store.
-  // For human-owned surfaces (claimed agent), set ownerHumanId so dedup
-  // and the human-side catalogs (my-surfaces, …) see this row.
+  // For human-owned panes (claimed agent), set ownerHumanId so dedup
+  // and the human-side catalogs (my-panes, …) see this row.
   //
-  // P2002 catch on the create: the `Surface_owner_dedup` unique index
-  // (`@@unique([templateVersionId, ownerHumanId, contextKey])` on Surface)
+  // P2002 catch on the create: the `panes_template_version_id_owner_human_id_context_key_key` unique index
+  // (`@@unique([templateVersionId, ownerHumanId, contextKey])` on Pane)
   // is the load-bearing guarantee here — two concurrent creates with the
   // same dedup key both pass the `findFirst` above and race into `create`;
   // the loser hits P2002 and we resolve to the winner's row, returning the
   // same dedup-hit shape the pre-check would have. Without this the second
   // caller bubbles a 500 and the dedup contract leaks under concurrency.
   try {
-    await prisma.surface.create({
+    await prisma.pane.create({
       data: {
-        id: surfaceId,
+        id: paneId,
         agentId: agent.id,
         ownerHumanId,
         contextKey: dedupKey,
@@ -707,7 +707,7 @@ surfaces.post("/", requireAgent, async (c) => {
     }
     // Concurrent dedup race — the winner's row exists. Re-read and return
     // the same shape as the pre-check above.
-    const winner = await prisma.surface.findFirst({
+    const winner = await prisma.pane.findFirst({
       where: {
         templateVersionId,
         ownerHumanId,
@@ -719,15 +719,15 @@ surfaces.post("/", requireAgent, async (c) => {
     });
     if (!winner) {
       // The constraint fired but the row isn't visible — almost certainly
-      // means it was deleted between the P2002 and our re-read. Surface
+      // means it was deleted between the P2002 and our re-read. Pane
       // the original error so the operator notices rather than 200-ing
       // with stale data.
       throw e;
     }
     // #259 — same cross-agent participant mint as the pre-check dedup
     // branch above. The retry path can also be the FIRST time a peer
-    // agent sees this surface (their create lost the create race AND the
-    // matched surface belongs to a different agent owned by the same
+    // agent sees this pane (their create lost the create race AND the
+    // matched pane belongs to a different agent owned by the same
     // human), so we run the same helper here. See its doc-comment for
     // the same-agent vs cross-agent behaviour split.
     const { token: dedupAgentToken } = await mintCrossAgentParticipantIfNeeded(
@@ -741,12 +741,12 @@ surfaces.post("/", requireAgent, async (c) => {
     const wsBase = publicWsUrl(config);
     return c.json(
       {
-        surface_id: winner.id,
+        pane_id: winner.id,
         created: false,
         tokens: { humans: [], agent: dedupAgentToken },
         urls: {
           humans: [],
-          agent_stream: `${wsBase}/v1/surfaces/${winner.id}/stream`,
+          agent_stream: `${wsBase}/v1/panes/${winner.id}/stream`,
         },
         expires_at: winner.expiresAt.toISOString(),
         title: winner.title,
@@ -768,7 +768,7 @@ surfaces.post("/", requireAgent, async (c) => {
   const wsBase = publicWsUrl(config);
   return c.json(
     {
-      surface_id: surfaceId,
+      pane_id: paneId,
       created: true,
       tokens: {
         humans: humanTokens,
@@ -776,7 +776,7 @@ surfaces.post("/", requireAgent, async (c) => {
       },
       urls: {
         humans: humanTokens.map((t) => `${config.publicUrl}/s/${t}`),
-        agent_stream: `${wsBase}/v1/surfaces/${surfaceId}/stream`,
+        agent_stream: `${wsBase}/v1/panes/${paneId}/stream`,
       },
       expires_at: expiresAt.toISOString(),
       title: resolvedTitle,
@@ -793,20 +793,20 @@ surfaces.post("/", requireAgent, async (c) => {
 // there leaks into upstream proxy access logs. The browser flow is therefore:
 // authenticate HERE with the real token, get a ticket, then open the WS with
 // `?ticket=`. A leaked ticket is worthless (30s TTL, single-use, bound to one
-// identity + surface). See src/ws/ticket.ts and issue #8.
+// identity + pane). See src/ws/ticket.ts and issue #8.
 //
 // Auth is DUAL — agent OR participant — exactly like the events endpoints: a
 // participant holding a share-link token, or the owning agent, must both be
-// able to mint a ticket for THEIR surface. `dualAuth` already enforces that
-// the `:id` path param matches the surface the token authorizes (participant
-// .surfaceId === :id; agent owns the surface).
-surfaces.post("/:id/ws-ticket", dualAuth, (c) => {
-  const surface = c.get("surface");
+// able to mint a ticket for THEIR pane. `dualAuth` already enforces that
+// the `:id` path param matches the pane the token authorizes (participant
+// .paneId === :id; agent owns the pane).
+panes.post("/:id/ws-ticket", dualAuth, (c) => {
+  const pane = c.get("pane");
   const author = c.get("author");
-  if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
+  if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }
-  const ticket = issueTicket(author, surface.id);
+  const ticket = issueTicket(author, pane.id);
   return c.json(
     {
       ticket,
@@ -816,39 +816,39 @@ surfaces.post("/:id/ws-ticket", dualAuth, (c) => {
   );
 });
 
-surfaces.get("/:id", requireAgent, async (c) => {
+panes.get("/:id", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
-  const surfaceRaw = await prisma.surface.findUnique({
+  const paneRaw = await prisma.pane.findUnique({
     where: { id },
     include: { templateVersion: true },
   });
-  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
-  const isExpired = surface.expiresAt.getTime() < Date.now();
+  const pane = await assertPaneInScope(prisma, paneRaw, me);
+  const isExpired = pane.expiresAt.getTime() < Date.now();
   return c.json({
-    surface_id: surface.id,
-    status: isExpired ? "closed" : surface.status,
-    template_id: surface.templateVersion.templateId,
-    template_version_id: surface.templateVersionId,
-    template_version: surface.templateVersion.version,
-    title: surface.title,
-    metadata: surface.metadata,
-    input_data: surface.inputData,
-    created_at: surface.createdAt.toISOString(),
-    expires_at: surface.expiresAt.toISOString(),
+    pane_id: pane.id,
+    status: isExpired ? "closed" : pane.status,
+    template_id: pane.templateVersion.templateId,
+    template_version_id: pane.templateVersionId,
+    template_version: pane.templateVersion.version,
+    title: pane.title,
+    metadata: pane.metadata,
+    input_data: pane.inputData,
+    created_at: pane.createdAt.toISOString(),
+    expires_at: pane.expiresAt.toISOString(),
   });
 });
 
-// POST /v1/surfaces/:id/upgrade — re-pin a live surface to a newer (or
+// POST /v1/panes/:id/upgrade — re-pin a live pane to a newer (or
 // other) version of the same template (#267). The schema-compat gate (see
 // src/core/schema-compat.ts) refuses by default when the target schema
-// narrows the surface's current one; compat="force" overrides.
+// narrows the pane's current one; compat="force" overrides.
 //
 // Events on disk are never rewritten — #268 stamps the version on each
 // event at write time, so a downstream polymorphic-render can read old
 // events under their original schema even after the upgrade.
-surfaces.post("/:id/upgrade", requireAgent, async (c) => {
+panes.post("/:id/upgrade", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
@@ -857,7 +857,7 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
   let body;
   try {
     const raw = await c.req.json().catch(() => ({}));
-    body = upgradeSurfaceSchema.parse(raw);
+    body = upgradePaneSchema.parse(raw);
   } catch (e) {
     throw errors.invalidRequest(
       "invalid body",
@@ -867,28 +867,26 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
   }
   const compat = body.compat ?? "strict";
 
-  // Surface — must exist, must be owned by the calling agent (or a
+  // Pane — must exist, must be owned by the calling agent (or a
   // same-human sibling agent — #283), must be live.
-  const surfaceRaw = await prisma.surface.findUnique({
+  const paneRaw = await prisma.pane.findUnique({
     where: { id },
     include: { templateVersion: { include: { template: true } } },
   });
-  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
-  if (surface.status === "closed" || surface.expiresAt.getTime() < Date.now()) {
-    throw errors.gone(
-      "surface is closed — upgrading a closed surface has no effect",
-    );
+  const pane = await assertPaneInScope(prisma, paneRaw, me);
+  if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
+    throw errors.gone("pane is closed — upgrading a closed pane has no effect");
   }
 
   // Target version. Defaults to the template head's latestVersion. Must
   // belong to the SAME template (the route doesn't support cross-template
-  // re-pointing — that'd be a different surface, conceptually).
+  // re-pointing — that'd be a different pane, conceptually).
   const targetVersionNum =
-    body.template_version ?? surface.templateVersion.template.latestVersion;
+    body.template_version ?? pane.templateVersion.template.latestVersion;
   const targetVersion = await prisma.templateVersion.findUnique({
     where: {
       templateId_version: {
-        templateId: surface.templateVersion.templateId,
+        templateId: pane.templateVersion.templateId,
         version: targetVersionNum,
       },
     },
@@ -897,13 +895,13 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
     throw errors.artifactVersionNotFound();
   }
 
-  // No-op: the surface is already on the target version. Return the
+  // No-op: the pane is already on the target version. Return the
   // current state with upgraded=false; idempotent retry-safe.
-  if (targetVersion.id === surface.templateVersionId) {
+  if (targetVersion.id === pane.templateVersionId) {
     return c.json({
-      surface_id: id,
-      template_version_id: surface.templateVersionId,
-      template_version: surface.templateVersion.version,
+      pane_id: id,
+      template_version_id: pane.templateVersionId,
+      template_version: pane.templateVersion.version,
       upgraded: false,
       breaks: [],
       compat,
@@ -912,11 +910,11 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
 
   // Compat gate. PR A's library does the schema diff; this route just
   // decides what to do with the result.
-  const breaks = compareSurfaceSchemas({
-    oldEventSchema: surface.templateVersion
+  const breaks = comparePaneSchemas({
+    oldEventSchema: pane.templateVersion
       .eventSchema as unknown as EventSchema | null,
     newEventSchema: targetVersion.eventSchema as unknown as EventSchema | null,
-    oldInputSchema: surface.templateVersion.inputSchema as Record<
+    oldInputSchema: pane.templateVersion.inputSchema as Record<
       string,
       unknown
     > | null,
@@ -924,7 +922,7 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
     // #290 — record-schema diff. Reaches into the recordSchema column added
     // by #288; a missing column reads as null, which compareRecordSchema
     // treats as additive-only.
-    oldRecordSchema: surface.templateVersion.recordSchema as Record<
+    oldRecordSchema: pane.templateVersion.recordSchema as Record<
       string,
       unknown
     > | null,
@@ -939,28 +937,28 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
 
   // Apply the re-pin. Events on disk are unchanged — they keep their
   // original templateVersionId stamp (#268).
-  await prisma.surface.update({
+  await prisma.pane.update({
     where: { id },
     data: { templateVersionId: targetVersion.id },
   });
 
   // Audit-log the upgrade as a system event. The full breaks list goes
   // into the event payload (even on strict success, where breaks=[])
-  // so an operator reviewing the surface log can see exactly what
+  // so an operator reviewing the pane log can see exactly what
   // changed. Logged at warn level on a force-with-breaks for the
   // operator's monitor to pick up.
   if (compat === "force" && breaks.length > 0) {
-    log.warn("surface upgrade with compat=force skipped schema gate", {
-      surfaceId: id,
+    log.warn("pane upgrade with compat=force skipped schema gate", {
+      paneId: id,
       agentId: me.id,
-      fromVersion: surface.templateVersion.version,
+      fromVersion: pane.templateVersion.version,
       toVersion: targetVersion.version,
       breakCount: breaks.length,
     });
   }
   await appendSystemEvent(prisma, id, "system.template.updated", {
-    from_version_id: surface.templateVersionId,
-    from_version: surface.templateVersion.version,
+    from_version_id: pane.templateVersionId,
+    from_version: pane.templateVersion.version,
     to_version_id: targetVersion.id,
     to_version: targetVersion.version,
     compat,
@@ -968,7 +966,7 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
   });
 
   return c.json({
-    surface_id: id,
+    pane_id: id,
     template_version_id: targetVersion.id,
     template_version: targetVersion.version,
     upgraded: true,
@@ -977,32 +975,32 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
   });
 });
 
-surfaces.delete("/:id", requireAgent, async (c) => {
+panes.delete("/:id", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const store = c.get("blobStore");
   const id = c.req.param("id");
   const me = c.get("agent");
-  const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
-  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
-  if (surface.status === "closed") return c.body(null, 204);
-  await prisma.surface.update({
+  const paneRaw = await prisma.pane.findUnique({ where: { id } });
+  const pane = await assertPaneInScope(prisma, paneRaw, me);
+  if (pane.status === "closed") return c.body(null, 204);
+  await prisma.pane.update({
     where: { id },
     data: { status: "closed", expiresAt: new Date() },
   });
 
-  // Cascade-delete surface-scope attachments (issue #209). The Blob.surface relation
-  // declares `onDelete: Cascade`, but surface delete is a SOFT close (status
+  // Cascade-delete pane-scope attachments (issue #209). The Blob.pane relation
+  // declares `onDelete: Cascade`, but pane delete is a SOFT close (status
   // flip + expiresAt=now), not a row delete, so the cascade never fires. Mirror
-  // it explicitly: every surface-scope attachment still attached to this surface
+  // it explicitly: every pane-scope attachment still attached to this pane
   // becomes status="deleted" / deletedAt=now, which is the same shape `DELETE
   // /v1/attachments/:id` produces. Capability tokens minted against these attachments stop
   // working automatically — attachment-bridge.ts gates GET on
   // `status === "ready" && deletedAt === null`, so the soft-delete closes the
-  // /b/<token> surface without us touching AttachmentToken rows.
+  // /b/<token> pane without us touching AttachmentToken rows.
   const liveBlobs = await prisma.attachment.findMany({
     where: {
-      scope: "surface",
-      surfaceId: id,
+      scope: "pane",
+      paneId: id,
       status: { not: "deleted" },
     },
     select: { id: true, storageKey: true },
@@ -1011,7 +1009,7 @@ surfaces.delete("/:id", requireAgent, async (c) => {
     // Best-effort backend delete first, then mark rows. Mirrors the per-attachment
     // DELETE handler: a backend failure orphans the bytes for the janitor to
     // sweep but does not block the soft-delete (the caller's intent — the
-    // surface is gone, the attachments are gone — is satisfied at the row level).
+    // pane is gone, the attachments are gone — is satisfied at the row level).
     if (store) {
       await Promise.all(
         liveBlobs.map((b) =>
@@ -1027,30 +1025,30 @@ surfaces.delete("/:id", requireAgent, async (c) => {
     });
   }
 
-  await appendSystemEvent(prisma, id, "system.surface.expired", {});
+  await appendSystemEvent(prisma, id, "system.pane.expired", {});
   return c.body(null, 204);
 });
 
-// GET /v1/surfaces/:id/participants — list the participants on one surface.
+// GET /v1/panes/:id/participants — list the participants on one pane.
 //
-// Bounded by MAX_PARTICIPANTS_PER_SESSION so the response is always small
+// Bounded by MAX_PARTICIPANTS_PER_PANE so the response is always small
 // enough to return whole (no pagination). Includes BOTH active and revoked
 // rows — revoked rows carry `revoked_at !== null` and are useful for
-// auditing past leaks. Owner-scoped: a cross-agent surface id returns 404
-// for existence-oracle parity with the other surface-scoped endpoints.
-surfaces.get("/:id/participants", requireAgent, async (c) => {
+// auditing past leaks. Owner-scoped: a cross-agent pane id returns 404
+// for existence-oracle parity with the other pane-scoped endpoints.
+panes.get("/:id/participants", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const id = c.req.param("id");
   const me = c.get("agent");
 
-  const surfaceRaw = await prisma.surface.findUnique({
+  const paneRaw = await prisma.pane.findUnique({
     where: { id },
     select: { agentId: true, ownerHumanId: true },
   });
-  await assertSurfaceInScope(prisma, surfaceRaw, me);
+  await assertPaneInScope(prisma, paneRaw, me);
 
   const participants = await prisma.participant.findMany({
-    where: { surfaceId: id },
+    where: { paneId: id },
     select: {
       id: true,
       kind: true,
@@ -1064,7 +1062,7 @@ surfaces.get("/:id/participants", requireAgent, async (c) => {
   });
 
   return c.json({
-    surface_id: id,
+    pane_id: id,
     items: participants.map((p) => ({
       participant_id: p.id,
       kind: (p.kind === "agent" ? "agent" : "human") as "agent" | "human",
@@ -1075,15 +1073,15 @@ surfaces.get("/:id/participants", requireAgent, async (c) => {
   });
 });
 
-// POST /v1/surfaces/:id/participants — mint a fresh human participant URL.
+// POST /v1/panes/:id/participants — mint a fresh human participant URL.
 //
 // The recovery primitive for the "I dropped the create response and lost the
-// URL" case. The surface keeps its id, event log, template pin, and
+// URL" case. The pane keeps its id, event log, template pin, and
 // createdAt; the human just gets a new entry door.
 //
 // One-shot contract: the plaintext token is returned exactly once. The relay
 // stores only the hash. Do not log the token plaintext.
-surfaces.post("/:id/participants", requireAgent, async (c) => {
+panes.post("/:id/participants", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
   const id = c.req.param("id");
@@ -1099,15 +1097,15 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
     );
   }
 
-  const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
-  const surface = await assertSurfaceInScope(prisma, surfaceRaw, me);
+  const paneRaw = await prisma.pane.findUnique({ where: { id } });
+  const pane = await assertPaneInScope(prisma, paneRaw, me);
 
-  // Effectively-closed surfaces cannot be revived by minting a new URL —
+  // Effectively-closed panes cannot be revived by minting a new URL —
   // tell the agent to `pane create` instead. The check matches the
-  // projection used by GET /v1/surfaces/:id and the list endpoint.
-  if (surface.status === "closed" || surface.expiresAt.getTime() < Date.now()) {
+  // projection used by GET /v1/panes/:id and the list endpoint.
+  if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone(
-      "surface is closed — minting a new participant on a closed surface would not make it reachable",
+      "pane is closed — minting a new participant on a closed pane would not make it reachable",
     );
   }
 
@@ -1120,10 +1118,10 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
   //     participants. Counting only active humans (the pre-#201 behaviour)
   //     produced `identityId` collisions after a revoke + mint cycle:
   //     two non-revoked rows could share `h_1`, and the WS handler's
-  //     `findFirst({ where: { surfaceId, identityId } })` would non-
+  //     `findFirst({ where: { paneId, identityId } })` would non-
   //     deterministically resolve events to whichever row sorted first.
   //
-  // The (surfaceId, identityId) unique constraint (#215) is the belt-and-
+  // The (paneId, identityId) unique constraint (#215) is the belt-and-
   // braces on this: two concurrent POSTs can both read everMintedHumans=N
   // and both try `h_${N}`, and the DB serialises the write so exactly one
   // wins on the constraint. The loser sees P2002 and the catch block below
@@ -1140,28 +1138,28 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
   // tiny caps where the cap check itself prevents the race.
   const token = generateHumanParticipantToken();
   let participant;
-  const MAX_MINT_ATTEMPTS = Math.max(5, config.MAX_PARTICIPANTS_PER_SESSION);
+  const MAX_MINT_ATTEMPTS = Math.max(5, config.MAX_PARTICIPANTS_PER_PANE);
   for (let attempt = 0; ; attempt++) {
     const [activeHumans, everMintedHumans] = await Promise.all([
       prisma.participant.count({
-        where: { surfaceId: id, kind: "human", revokedAt: null },
+        where: { paneId: id, kind: "human", revokedAt: null },
       }),
       prisma.participant.count({
-        where: { surfaceId: id, kind: "human" },
+        where: { paneId: id, kind: "human" },
       }),
     ]);
-    if (activeHumans >= config.MAX_PARTICIPANTS_PER_SESSION) {
+    if (activeHumans >= config.MAX_PARTICIPANTS_PER_PANE) {
       throw errors.conflict(
-        `surface already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_SESSION}); revoke one before minting another`,
+        `pane already has ${activeHumans} active human participants (max ${config.MAX_PARTICIPANTS_PER_PANE}); revoke one before minting another`,
         false,
-        "revoke an existing participant first with DELETE /v1/surfaces/:id/participants/:participant_id (CLI: `pane participant revoke`), then retry",
+        "revoke an existing participant first with DELETE /v1/panes/:id/participants/:participant_id (CLI: `pane participant revoke`), then retry",
       );
     }
 
     try {
       participant = await prisma.participant.create({
         data: {
-          surfaceId: id,
+          paneId: id,
           kind: "human",
           identityId: `h_${everMintedHumans}`,
           tokenHash: hashKey(token),
@@ -1172,11 +1170,11 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
     } catch (e) {
       // Prisma's known-error code for unique constraint violation is P2002.
       // The collision fingerprint differs across Prisma versions + engines:
-      //   - Prisma 6 (Rust engine): `meta.target = ["surface_id", "identity_id"]`
+      //   - Prisma 6 (Rust engine): `meta.target = ["pane_id", "identity_id"]`
       //     on SQLite; constraint name on Postgres.
       //   - Prisma 7 (driver adapter): `meta.target` is empty / absent;
       //     the field list is carried in the message body
-      //     ("Unique constraint failed on the fields: (`surface_id`, `identity_id`)").
+      //     ("Unique constraint failed on the fields: (`pane_id`, `identity_id`)").
       // Match either shape so the catch survives engine churn.
       const code = (e as { code?: string } | null)?.code;
       const target = (e as { meta?: { target?: unknown } } | null)?.meta
@@ -1209,65 +1207,61 @@ surfaces.post("/:id/participants", requireAgent, async (c) => {
   );
 });
 
-// DELETE /v1/surfaces/:id/participants/:participant_id — revoke a single
+// DELETE /v1/panes/:id/participants/:participant_id — revoke a single
 // participant URL.
 //
-// Idempotent: an unknown / already-revoked / cross-surface participant id
+// Idempotent: an unknown / already-revoked / cross-pane participant id
 // resolves to a 204, matching the attachment-token revoke contract (an agent
 // retrying after a network blip must not see a different result). The
 // bridge route already 404s on a revoked tokenHash (loadByToken in
 // bridge/routes.ts), so this is the only HTTP change needed.
-surfaces.delete(
-  "/:id/participants/:participant_id",
-  requireAgent,
-  async (c) => {
-    const prisma = c.get("prisma");
-    const id = c.req.param("id");
-    const participantId = c.req.param("participant_id");
-    const me = c.get("agent");
+panes.delete("/:id/participants/:participant_id", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const participantId = c.req.param("participant_id");
+  const me = c.get("agent");
 
-    // Owner check on the surface first — cross-agent ids must 404 like every
-    // other surface-scoped endpoint (existence-oracle parity with DELETE
-    // /v1/surfaces/:id).
-    const surfaceRaw = await prisma.surface.findUnique({ where: { id } });
-    await assertSurfaceInScope(prisma, surfaceRaw, me);
+  // Owner check on the pane first — cross-agent ids must 404 like every
+  // other pane-scoped endpoint (existence-oracle parity with DELETE
+  // /v1/panes/:id).
+  const paneRaw = await prisma.pane.findUnique({ where: { id } });
+  await assertPaneInScope(prisma, paneRaw, me);
 
-    const participant = await prisma.participant.findUnique({
-      where: { id: participantId },
-    });
+  const participant = await prisma.participant.findUnique({
+    where: { id: participantId },
+  });
 
-    // Idempotent miss path: an unknown participant id, or one belonging to
-    // another surface, is silently a 204. This matches the agent's recovery
-    // flow (revoke, possibly re-run after a partial failure) — surfacing a
-    // 404 here would force the agent to handle two outcomes for what is
-    // semantically the same "make sure this URL is dead" intent.
-    if (!participant || participant.surfaceId !== id) {
-      return c.body(null, 204);
-    }
-
-    // The surface's agent participant is load-bearing for the agent's own
-    // WebSocket; revoking it would silently break the agent without closing
-    // the surface. Reject explicitly with a hint pointing at the right verb.
-    if (participant.kind === "agent") {
-      throw errors.invalidRequest(
-        "cannot revoke the agent participant",
-        undefined,
-        "the agent participant carries the surface's own websocket auth; to tear the surface down, call DELETE /v1/surfaces/:id (CLI: `pane delete <surface-id>`) instead",
-      );
-    }
-
-    if (participant.revokedAt !== null) {
-      // Already revoked — idempotent 204.
-      return c.body(null, 204);
-    }
-
-    await prisma.participant.update({
-      where: { id: participant.id },
-      data: { revokedAt: new Date() },
-    });
-
+  // Idempotent miss path: an unknown participant id, or one belonging to
+  // another pane, is silently a 204. This matches the agent's recovery
+  // flow (revoke, possibly re-run after a partial failure) — surfacing a
+  // 404 here would force the agent to handle two outcomes for what is
+  // semantically the same "make sure this URL is dead" intent.
+  if (!participant || participant.paneId !== id) {
     return c.body(null, 204);
-  },
-);
+  }
 
-export default surfaces;
+  // The pane's agent participant is load-bearing for the agent's own
+  // WebSocket; revoking it would silently break the agent without closing
+  // the pane. Reject explicitly with a hint pointing at the right verb.
+  if (participant.kind === "agent") {
+    throw errors.invalidRequest(
+      "cannot revoke the agent participant",
+      undefined,
+      "the agent participant carries the pane's own websocket auth; to tear the pane down, call DELETE /v1/panes/:id (CLI: `pane delete <pane-id>`) instead",
+    );
+  }
+
+  if (participant.revokedAt !== null) {
+    // Already revoked — idempotent 204.
+    return c.body(null, 204);
+  }
+
+  await prisma.participant.update({
+    where: { id: participant.id },
+    data: { revokedAt: new Date() },
+  });
+
+  return c.body(null, 204);
+});
+
+export default panes;

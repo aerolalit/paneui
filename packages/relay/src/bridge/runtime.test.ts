@@ -230,7 +230,7 @@ describe("pane.uploadBlob", () => {
 
   const fakeBlobRef = {
     attachment_id: "attachment_abc",
-    scope: "surface" as const,
+    scope: "pane" as const,
     mime: "image/jpeg",
     size: 1234,
     sha256: "f".repeat(64),
@@ -238,7 +238,7 @@ describe("pane.uploadBlob", () => {
     width: 64,
     height: 64,
     status: "ready",
-    surface_id: "sur_x",
+    pane_id: "pan_x",
     template_id: null,
     created_at: "2026-05-21T00:00:00.000Z",
     confirmed_at: "2026-05-21T00:00:00.000Z",
@@ -281,7 +281,7 @@ describe("pane.uploadBlob", () => {
 
     await expect(p).resolves.toMatchObject({
       attachment_id: "attachment_abc",
-      scope: "surface",
+      scope: "pane",
     });
   });
 

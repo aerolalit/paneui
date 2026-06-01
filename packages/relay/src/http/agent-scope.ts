@@ -2,7 +2,7 @@
 //
 // Once two agents are claimed to the same human, they form a fungible
 // fleet over the human's resources: any of them can read/write any
-// surface or template owned by any of the human's claimed agents.
+// pane or template owned by any of the human's claimed agents.
 // Unclaimed agents stay strictly self-scoped.
 
 import type { Agent, PrismaClient } from "@prisma/client";

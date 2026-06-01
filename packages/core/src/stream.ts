@@ -1,4 +1,4 @@
-// WebSocket client for WS /v1/surfaces/:id/stream.
+// WebSocket client for WS /v1/panes/:id/stream.
 //
 // The relay protocol (see the relay's src/ws/handler.ts):
 //   - on connect, the relay replays every event since `?since=` (or from the
@@ -21,15 +21,15 @@ import { MAX_FRAME_SNIPPET_LENGTH } from "./limits.js";
 export interface OpenStreamOptions {
   /** WebSocket base URL, e.g. wss://pane.example.com (no trailing slash). */
   wsBaseUrl: string;
-  /** Surface id. */
-  surfaceId: string;
+  /** Pane id. */
+  paneId: string;
   /** Agent (or participant) bearer token. */
   token: string;
   /** Opaque cursor: replay only events strictly after this id. */
   since?: string | null;
   /**
    * #297 — subscribe to record-collection deltas. `"*"` expands to every
-   * declared collection on the surface's template; a comma list filters
+   * declared collection on the pane's template; a comma list filters
    * to those names. Absent = no record traffic (legacy event-only stream).
    */
   subscribeRecords?: string;
@@ -68,7 +68,7 @@ export interface StreamHandlers {
 
 /** A live handle to an open stream. */
 export interface StreamHandle {
-  /** Send an event frame into the surface. */
+  /** Send an event frame into the pane. */
   send(frame: {
     type: string;
     data?: unknown;
@@ -82,7 +82,7 @@ export interface StreamHandle {
 }
 
 /**
- * Open a WebSocket stream to a Pane surface. Replays on connect, then streams
+ * Open a WebSocket stream to a Pane pane. Replays on connect, then streams
  * live. Returns a handle for sending frames and closing.
  */
 export function openStream(
@@ -91,7 +91,7 @@ export function openStream(
 ): StreamHandle {
   const base = opts.wsBaseUrl.replace(/\/$/, "");
   const u = new URL(
-    `${base}/v1/surfaces/${encodeURIComponent(opts.surfaceId)}/stream`,
+    `${base}/v1/panes/${encodeURIComponent(opts.paneId)}/stream`,
   );
   if (opts.since != null && opts.since !== "") {
     u.searchParams.set("since", opts.since);
@@ -117,7 +117,7 @@ export function openStream(
       msg = JSON.parse(text);
     } catch (e) {
       // A malformed frame must never be silently dropped — a dropped event
-      // makes `watch --type X` hang forever. Surface it as a transport error.
+      // makes `watch --type X` hang forever. Pane it as a transport error.
       const snippet =
         text.length > MAX_FRAME_SNIPPET_LENGTH
           ? text.slice(0, MAX_FRAME_SNIPPET_LENGTH) + "…"
@@ -152,7 +152,7 @@ export function openStream(
       return;
     }
     if ("ack" in obj) {
-      // Ack for a frame we sent; nothing to surface by default.
+      // Ack for a frame we sent; nothing to pane by default.
       return;
     }
     // #297 — record deltas. record.upsert / record.delete / record.replay.complete.

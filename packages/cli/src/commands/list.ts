@@ -1,12 +1,12 @@
-// `pane surface list` — enumerate YOUR agent's surfaces.
+// `pane list` — enumerate YOUR agent's panes.
 //
 // The recovery primitive when the create-response was dropped: the URL itself
 // is unrecoverable (the relay stores only the token hash), but every other
-// field of the surface is intact and listable here. Pair with
-// `pane surface participant new` to mint a fresh URL on a surface whose
+// field of the pane is intact and listable here. Pair with
+// `pane participant new` to mint a fresh URL on a pane whose
 // original was lost.
 
-import type { ListSessionsStatus } from "@paneui/core";
+import type { ListPanesStatus } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
@@ -15,14 +15,14 @@ import { printJson, fail, failFromError } from "../output.js";
 const KNOWN_FLAGS = ["status", "limit", "cursor", "template-id"];
 const KNOWN_BOOLS: string[] = [];
 
-export const listHelp = `pane surface list — list YOUR agent's surfaces
+export const listHelp = `pane list — list YOUR agent's panes
 
-Prints surfaces (newest first) with no secrets in the response. Participant
-tokens are stored hashed and CANNOT be recovered — if you lost a surface URL,
-mint a fresh one with 'pane surface participant new <surface-id>'.
+Prints panes (newest first) with no secrets in the response. Participant
+tokens are stored hashed and CANNOT be recovered — if you lost a pane URL,
+mint a fresh one with 'pane participant new <pane-id>'.
 
 Usage:
-  pane surface list [options]
+  pane list [options]
 
 Options:
   --status <s>      open | closed | all. Default: open. The status reported
@@ -30,7 +30,7 @@ Options:
                     is reported as 'closed' even if not yet swept.
   --limit <N>       Page size (default 50, max 200).
   --cursor <c>      Opaque cursor from a previous page's next_cursor.
-  --template-id <i> Filter to surfaces instantiated from a specific named
+  --template-id <i> Filter to panes instantiated from a specific named
                     template (head id; not version id). Inline (anonymous)
                     templates cannot be filtered this way — they have no
                     stable handle.
@@ -38,20 +38,20 @@ Options:
   --api-key <key>   Agent API key (overrides PANE_API_KEY).
   -h, --help        Show this help.
 
-Recovery recipe (lost the URL but the surface is still alive):
-  pane surface list                                       # find the
-                                                          #   surface_id +
+Recovery recipe (lost the URL but the pane is still alive):
+  pane list                                       # find the
+                                                          #   pane_id +
                                                           #   participant_id
                                                           #   you lost
-  pane surface participant new <surface-id>               # mint a fresh URL
-  pane surface participant revoke <surface-id> <p-id>     # invalidate the
+  pane participant new <pane-id>               # mint a fresh URL
+  pane participant revoke <pane-id> <p-id>     # invalidate the
                                                           #   old URL
 
 Output (stdout, JSON):
   {
     items: [
       {
-        surface_id, title, status, template_id, template_version_id,
+        pane_id, title, status, template_id, template_version_id,
         template_version, participants: [...], created_at, expires_at,
         has_callback
       },
@@ -60,13 +60,13 @@ Output (stdout, JSON):
     next_cursor: <opaque|null>
   }`;
 
-const STATUSES: readonly ListSessionsStatus[] = ["open", "closed", "all"];
+const STATUSES: readonly ListPanesStatus[] = ["open", "closed", "all"];
 
 export async function runList(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface list");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane list");
 
   const opts: {
-    status?: ListSessionsStatus;
+    status?: ListPanesStatus;
     limit?: number;
     cursor?: string;
     template_id?: string;
@@ -74,13 +74,13 @@ export async function runList(args: ParsedArgs): Promise<void> {
 
   const status = args.flags.get("status");
   if (status !== undefined) {
-    if (!STATUSES.includes(status as ListSessionsStatus)) {
+    if (!STATUSES.includes(status as ListPanesStatus)) {
       fail(
         `--status must be one of: ${STATUSES.join(", ")} (got '${status}')`,
         "invalid_args",
       );
     }
-    opts.status = status as ListSessionsStatus;
+    opts.status = status as ListPanesStatus;
   }
 
   const limitRaw = args.flags.get("limit");
@@ -105,7 +105,7 @@ export async function runList(args: ParsedArgs): Promise<void> {
 
   const client = makeClient(args);
   try {
-    const page = await client.listSessions(opts);
+    const page = await client.listPanes(opts);
     printJson(page);
   } catch (e) {
     failFromError(e);

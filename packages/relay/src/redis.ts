@@ -29,7 +29,7 @@
 //     be worse than one that refuses to start.
 //   - Mid-flight: a connection blip is logged via the `error` handler and
 //     ioredis auto-reconnects. We do NOT crash the process for a transient
-//     Redis error; individual operations surface their own failures to their
+//     Redis error; individual operations pane their own failures to their
 //     callers, which degrade gracefully (see broadcast/rate-limit/presence).
 
 import { loadConfig } from "./config.js";
@@ -168,7 +168,7 @@ function openConnection(
       settled = true;
       resolve(conn);
     });
-    // The very first connect attempt: surface failure so initRedis() rejects
+    // The very first connect attempt: pane failure so initRedis() rejects
     // and the relay exits rather than booting with no shared state.
     void (conn as unknown as { connect(): Promise<void> })
       .connect()

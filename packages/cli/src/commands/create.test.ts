@@ -1,17 +1,17 @@
-// Tests for `pane surface create` — the inline and reference template forms.
+// Tests for `pane create` — the inline and reference template forms.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const calls: { method: string; args: unknown[] }[] = [];
 const fakeClient = {
-  createSession: vi.fn((req: unknown) => {
-    calls.push({ method: "createSession", args: [req] });
+  createPane: vi.fn((req: unknown) => {
+    calls.push({ method: "createPane", args: [req] });
     return Promise.resolve({
-      surface_id: "sur_1",
+      pane_id: "pan_1",
       tokens: { humans: [], agent: "t" },
       urls: { humans: [], agent_stream: "ws" },
       expires_at: "2026-01-01T00:00:00Z",
-      title: "Test surface",
+      title: "Test pane",
     });
   }),
 };
@@ -81,7 +81,7 @@ describe("create — inline template form", () => {
       source: "<html></html>",
       event_schema: { events: {} },
     });
-    expect(JSON.parse(stdout).surface_id).toBe("sur_1");
+    expect(JSON.parse(stdout).pane_id).toBe("pan_1");
   });
 
   it("accepts --input-data on the inline path", async () => {
@@ -107,7 +107,7 @@ describe("create — inline template form", () => {
       source: "<html></html>",
     });
     expect("event_schema" in req.template).toBe(false);
-    expect(JSON.parse(stdout).surface_id).toBe("sur_1");
+    expect(JSON.parse(stdout).pane_id).toBe("pan_1");
   });
 
   it("plumbs --input-schema into template.input_schema (inline JSON) — #208", async () => {
@@ -312,14 +312,14 @@ describe("create — --context-key flag (#262)", () => {
 
   it("omits context_key from the body when --context-key is not given", async () => {
     // Without the flag, no dedup — the relay treats absent context_key as
-    // the legacy "every create is a fresh surface" behaviour.
+    // the legacy "every create is a fresh pane" behaviour.
     await run(["--template", "<html></html>", "--title", "ad-hoc"]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as Record<string, unknown>;
     expect(req).not.toHaveProperty("context_key");
   });
 
-  it("surfaces schema rejection of an invalid context_key under the right flag", async () => {
+  it("panes schema rejection of an invalid context_key under the right flag", async () => {
     // The shared @paneui/core schema enforces charset + length on
     // context_key; a bad value rejects BEFORE we hit the wire, and the
     // CLI's schema-path-to-flag mapping translates the rejection's
@@ -343,11 +343,11 @@ describe("create — --context-key flag (#262)", () => {
 // TTY-output tests we replace its implementation so the formatter has a
 // real URL + an expires_at to render against.
 const ttySample = {
-  surface_id: "sur_tty",
+  pane_id: "pan_tty",
   tokens: { humans: ["tok_h_one"], agent: "tok_a_x" },
   urls: {
     humans: ["https://relay.test/s/tok_h_one"],
-    agent_stream: "wss://relay.test/v1/surfaces/sur_tty/stream",
+    agent_stream: "wss://relay.test/v1/panes/pan_tty/stream",
   },
   expires_at: new Date(Date.now() + 3600_000).toISOString(),
   title: "PR review",
@@ -357,8 +357,8 @@ describe("create — output mode (TTY vs --json)", () => {
   let originalIsTty: unknown;
   beforeEach(() => {
     originalIsTty = (process.stdout as unknown as { isTTY?: boolean }).isTTY;
-    fakeClient.createSession.mockImplementation((req: unknown) => {
-      calls.push({ method: "createSession", args: [req] });
+    fakeClient.createPane.mockImplementation((req: unknown) => {
+      calls.push({ method: "createPane", args: [req] });
       return Promise.resolve(ttySample);
     });
   });
@@ -395,20 +395,20 @@ describe("create — output mode (TTY vs --json)", () => {
       "--json",
     ]);
     const parsed = JSON.parse(stdout);
-    expect(parsed.surface_id).toBe("sur_tty");
+    expect(parsed.pane_id).toBe("pan_tty");
   });
 
   it("emits JSON when stdout is not a TTY (piped)", async () => {
     setTty(false);
     await run(["--template", "<html></html>", "--title", "PR review"]);
     const parsed = JSON.parse(stdout);
-    expect(parsed.surface_id).toBe("sur_tty");
+    expect(parsed.pane_id).toBe("pan_tty");
   });
 });
 
 describe("create — unknown-flag rejection (#224)", () => {
   it("rejects an unknown value-flag and never reaches the relay", async () => {
-    // Pre-#224 the CLI silently dropped the flag and created the surface.
+    // Pre-#224 the CLI silently dropped the flag and created the pane.
     // Now it must throw an ArgvError before makeClient is touched — the
     // top-level main().catch translates that to an invalid_args envelope.
     await expect(

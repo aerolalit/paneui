@@ -1,8 +1,8 @@
 // End-to-end tests for Phase E — human-authenticated participant mints.
 //
 // Covers:
-//   POST /v1/surfaces/:id/identity-link   (identity-bound human, §7.3 A)
-//   POST /v1/surfaces/:id/public-link    (anonymous capability, §7.3 B)
+//   POST /v1/panes/:id/identity-link   (identity-bound human, §7.3 A)
+//   POST /v1/panes/:id/public-link    (anonymous capability, §7.3 B)
 //   Bridge auth — identity-bound tokens redirect to /login when no cookie,
 //                 403 wrong_account when cookie is for a different human.
 
@@ -66,7 +66,7 @@ async function seedLoggedInHuman(email = "alice@example.com"): Promise<{
   return { humanId: human.id, cookie };
 }
 
-async function seedAgentOwnedSurface(humanId: string): Promise<string> {
+async function seedAgentOwnedPane(humanId: string): Promise<string> {
   const agent = await prisma.agent.create({
     data: {
       name: "claimed",
@@ -87,9 +87,9 @@ async function seedAgentOwnedSurface(humanId: string): Promise<string> {
       templateSource: "<p>hi</p>",
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: `sur_${randomBytes(6).toString("hex")}`,
+      id: `pan_${randomBytes(6).toString("hex")}`,
       agentId: agent.id,
       ownerHumanId: humanId,
       templateVersionId: tv.id,
@@ -97,17 +97,17 @@ async function seedAgentOwnedSurface(humanId: string): Promise<string> {
       expiresAt: new Date(Date.now() + 60_000),
     },
   });
-  return surface.id;
+  return pane.id;
 }
 
 function withCookie(cookie: string): { cookie: string } {
   return { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` };
 }
 
-describe("POST /v1/surfaces/:id/identity-link", () => {
+describe("POST /v1/panes/:id/identity-link", () => {
   it("requires a login cookie", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/sur_x/identity-link", {
+      new Request("http://t/v1/panes/pan_x/identity-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: "bob@example.com" }),
@@ -118,11 +118,11 @@ describe("POST /v1/surfaces/:id/identity-link", () => {
 
   it("rejects non-owners with 404 (no oracle)", async () => {
     const { humanId } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     // Different human, not owner
     const other = await seedLoggedInHuman("eve@example.com");
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -136,9 +136,9 @@ describe("POST /v1/surfaces/:id/identity-link", () => {
 
   it("creates the human + identity-bound participant", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: { "content-type": "application/json", ...withCookie(cookie) },
         body: JSON.stringify({ email: "  Bob@Example.COM  " }),
@@ -166,14 +166,14 @@ describe("POST /v1/surfaces/:id/identity-link", () => {
       where: { id: body.participant_id },
     });
     expect(participant?.humanId).toBe(target?.id);
-    expect(participant?.surfaceId).toBe(surfaceId);
+    expect(participant?.paneId).toBe(paneId);
   });
 
   it("rejects malformed email", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: { "content-type": "application/json", ...withCookie(cookie) },
         body: JSON.stringify({ email: "not-an-email" }),
@@ -183,10 +183,10 @@ describe("POST /v1/surfaces/:id/identity-link", () => {
   });
 });
 
-describe("POST /v1/surfaces/:id/public-link", () => {
+describe("POST /v1/panes/:id/public-link", () => {
   it("requires a login cookie", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/sur_x/public-link", {
+      new Request("http://t/v1/panes/pan_x/public-link", {
         method: "POST",
       }),
     );
@@ -195,9 +195,9 @@ describe("POST /v1/surfaces/:id/public-link", () => {
 
   it("creates an anonymous capability participant (humanId null)", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/public-link`, {
+      new Request(`http://t/v1/panes/${paneId}/public-link`, {
         method: "POST",
         headers: withCookie(cookie),
       }),
@@ -223,9 +223,9 @@ describe("POST /v1/surfaces/:id/public-link", () => {
 describe("bridge auth — identity-bound participants (§4.6)", () => {
   it("anonymous capability tokens still work without a cookie", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const linkRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/public-link`, {
+      new Request(`http://t/v1/panes/${paneId}/public-link`, {
         method: "POST",
         headers: withCookie(cookie),
       }),
@@ -240,9 +240,9 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
 
   it("identity-bound tokens redirect to /login when no cookie", async () => {
     const { humanId, cookie: aliceCookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -263,9 +263,9 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
 
   it("identity-bound tokens return 403 wrong_account on cookie mismatch", async () => {
     const { humanId, cookie: aliceCookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -291,11 +291,11 @@ describe("bridge auth — identity-bound participants (§4.6)", () => {
 
   it("identity-bound tokens succeed on cookie match", async () => {
     const { humanId, cookie: aliceCookie } = await seedLoggedInHuman();
-    const surfaceId = await seedAgentOwnedSurface(humanId);
+    const paneId = await seedAgentOwnedPane(humanId);
 
     // Alice invites bob; verify Bob can access by logging in as bob
     const inviteRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/identity-link`, {
+      new Request(`http://t/v1/panes/${paneId}/identity-link`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

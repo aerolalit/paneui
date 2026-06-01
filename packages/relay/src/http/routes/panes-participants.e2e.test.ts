@@ -1,5 +1,5 @@
-// End-to-end tests for POST /v1/surfaces/:id/participants and
-// DELETE /v1/surfaces/:id/participants/:participant_id — the mint + revoke
+// End-to-end tests for POST /v1/panes/:id/participants and
+// DELETE /v1/panes/:id/participants/:participant_id — the mint + revoke
 // primitives added in issue #161. Together they replace the destructive
 // `pane delete + create` workaround for the lost-URL case.
 
@@ -31,7 +31,7 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
-      MAX_PARTICIPANTS_PER_SESSION: String(CAP),
+      MAX_PARTICIPANTS_PER_PANE: String(CAP),
     }),
     prisma,
   );
@@ -67,9 +67,9 @@ const eventSchema = {
   },
 };
 
-async function createSession(apiKey: string): Promise<string> {
+async function createPane(apiKey: string): Promise<string> {
   const res = await app.fetch(
-    new Request("http://t/v1/surfaces", {
+    new Request("http://t/v1/panes", {
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify({
@@ -83,7 +83,7 @@ async function createSession(apiKey: string): Promise<string> {
     }),
   );
   expect(res.status).toBe(201);
-  return ((await res.json()) as { surface_id: string }).surface_id;
+  return ((await res.json()) as { pane_id: string }).pane_id;
 }
 
 interface MintResponse {
@@ -96,14 +96,14 @@ interface MintResponse {
 
 async function mint(
   apiKey: string,
-  surfaceId: string,
+  paneId: string,
   body: unknown = { kind: "human" },
 ): Promise<{
   status: number;
   body: MintResponse | { error: { code: string } };
 }> {
   const res = await app.fetch(
-    new Request(`http://t/v1/surfaces/${surfaceId}/participants`, {
+    new Request(`http://t/v1/panes/${paneId}/participants`, {
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify(body),
@@ -117,37 +117,37 @@ async function mint(
 
 async function revoke(
   apiKey: string,
-  surfaceId: string,
+  paneId: string,
   participantId: string,
 ): Promise<{ status: number }> {
   const res = await app.fetch(
-    new Request(
-      `http://t/v1/surfaces/${surfaceId}/participants/${participantId}`,
-      { method: "DELETE", headers: bearer(apiKey) },
-    ),
+    new Request(`http://t/v1/panes/${paneId}/participants/${participantId}`, {
+      method: "DELETE",
+      headers: bearer(apiKey),
+    }),
   );
   return { status: res.status };
 }
 
-// Fetch the agent participant id for a surface — used by the "cannot revoke
+// Fetch the agent participant id for a pane — used by the "cannot revoke
 // the agent participant" test.
-async function agentParticipantId(surfaceId: string): Promise<string> {
+async function agentParticipantId(paneId: string): Promise<string> {
   const p = await prisma.participant.findFirst({
-    where: { surfaceId, kind: "agent" },
+    where: { paneId, kind: "agent" },
   });
   return p!.id;
 }
 
 // Same for a default human participant.
-async function humanParticipantId(surfaceId: string): Promise<string> {
+async function humanParticipantId(paneId: string): Promise<string> {
   const p = await prisma.participant.findFirst({
-    where: { surfaceId, kind: "human" },
+    where: { paneId, kind: "human" },
   });
   return p!.id;
 }
 
 interface ParticipantsListResponse {
-  surface_id: string;
+  pane_id: string;
   items: Array<{
     participant_id: string;
     kind: "agent" | "human";
@@ -159,10 +159,10 @@ interface ParticipantsListResponse {
 
 async function listParticipants(
   apiKey: string,
-  surfaceId: string,
+  paneId: string,
 ): Promise<{ status: number; body: ParticipantsListResponse }> {
   const res = await app.fetch(
-    new Request(`http://t/v1/surfaces/${surfaceId}/participants`, {
+    new Request(`http://t/v1/panes/${paneId}/participants`, {
       headers: bearer(apiKey),
     }),
   );
@@ -172,14 +172,14 @@ async function listParticipants(
   };
 }
 
-describe("GET /v1/surfaces/:id/participants — list", () => {
+describe("GET /v1/panes/:id/participants — list", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("returns every participant on the surface (agent + humans, active + revoked)", async () => {
+  it("returns every participant on the pane (agent + humans, active + revoked)", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     // Mint one extra human + revoke it so we exercise the revoked-rows path.
     const minted = (await mint(a.apiKey, sid)).body as MintResponse;
     expect((await revoke(a.apiKey, sid, minted.participant_id)).status).toBe(
@@ -188,7 +188,7 @@ describe("GET /v1/surfaces/:id/participants — list", () => {
 
     const { status, body } = await listParticipants(a.apiKey, sid);
     expect(status).toBe(200);
-    expect(body.surface_id).toBe(sid);
+    expect(body.pane_id).toBe(sid);
     // 1 agent + 1 default human + 1 minted-then-revoked human = 3 rows.
     expect(body.items).toHaveLength(3);
     const agentRows = body.items.filter((p) => p.kind === "agent");
@@ -202,7 +202,7 @@ describe("GET /v1/surfaces/:id/participants — list", () => {
 
   it("does NOT leak token plaintext — only token_prefix", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const { body } = await listParticipants(a.apiKey, sid);
     const raw = JSON.stringify(body);
     // A token plaintext is 49 chars (6-char marker + 43-char base64url body).
@@ -214,12 +214,12 @@ describe("GET /v1/surfaces/:id/participants — list", () => {
     }
   });
 
-  it("404s when the surface belongs to a different agent", async () => {
+  it("404s when the pane belongs to a different agent", async () => {
     const a = await seedAgent();
     const b = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${sid}/participants`, {
+      new Request(`http://t/v1/panes/${sid}/participants`, {
         headers: bearer(b.apiKey),
       }),
     );
@@ -228,22 +228,22 @@ describe("GET /v1/surfaces/:id/participants — list", () => {
 
   it("requires bearer auth", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${sid}/participants`),
+      new Request(`http://t/v1/panes/${sid}/participants`),
     );
     expect(res.status).toBe(401);
   });
 });
 
-describe("POST /v1/surfaces/:id/participants — mint", () => {
+describe("POST /v1/panes/:id/participants — mint", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("mints a fresh human URL on an existing surface", async () => {
+  it("mints a fresh human URL on an existing pane", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
 
     const res = await mint(a.apiKey, sid);
     expect(res.status).toBe(201);
@@ -262,7 +262,7 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
 
   it("rejects unauthenticated requests with 401", async () => {
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces/sur_nope/participants", {
+      new Request("http://t/v1/panes/pan_nope/participants", {
         method: "POST",
         body: "{}",
       }),
@@ -270,26 +270,26 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
     expect(res.status).toBe(401);
   });
 
-  it("404s when the surface belongs to a different agent (existence-oracle parity)", async () => {
+  it("404s when the pane belongs to a different agent (existence-oracle parity)", async () => {
     const a = await seedAgent();
     const b = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const res = await mint(b.apiKey, sid);
     expect(res.status).toBe(404);
   });
 
-  it("410s on an effectively-closed surface (expired or DELETE'd)", async () => {
+  it("410s on an effectively-closed pane (expired or DELETE'd)", async () => {
     const a = await seedAgent();
-    const expiredSid = await createSession(a.apiKey);
-    await prisma.surface.update({
+    const expiredSid = await createPane(a.apiKey);
+    await prisma.pane.update({
       where: { id: expiredSid },
       data: { expiresAt: new Date(Date.now() - 1_000) },
     });
     expect((await mint(a.apiKey, expiredSid)).status).toBe(410);
 
-    const closedSid = await createSession(a.apiKey);
+    const closedSid = await createPane(a.apiKey);
     const delRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${closedSid}`, {
+      new Request(`http://t/v1/panes/${closedSid}`, {
         method: "DELETE",
         headers: bearer(a.apiKey),
       }),
@@ -300,15 +300,15 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
 
   it("rejects body kinds other than 'human' with 400", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     expect((await mint(a.apiKey, sid, { kind: "agent" })).status).toBe(400);
     expect((await mint(a.apiKey, sid, {})).status).toBe(400);
   });
 
   it("409s at the active-human cap; revoking a participant frees a slot", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
-    // Surface was created with 1 default human. Cap is CAP — mint CAP-1 more
+    const sid = await createPane(a.apiKey);
+    // Pane was created with 1 default human. Cap is CAP — mint CAP-1 more
     // to fill it.
     for (let i = 0; i < CAP - 1; i++) {
       expect((await mint(a.apiKey, sid)).status).toBe(201);
@@ -329,18 +329,18 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
     // was derived from `count({ revokedAt: null })`, which is not
     // monotonic — revoking participant h_0 made the next mint reuse
     // `h_1` (already held by the still-active second participant), and
-    // the WS handler's `findFirst({ where: { surfaceId, identityId } })`
+    // the WS handler's `findFirst({ where: { paneId, identityId } })`
     // would non-deterministically resolve events to whichever row sorted
     // first. The fix counts ALL human participants (including revoked)
-    // for the index so labels never alias within a surface.
+    // for the index so labels never alias within a pane.
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
 
-    // Mint a second human so the surface has h_0 (default) + h_1.
+    // Mint a second human so the pane has h_0 (default) + h_1.
     expect((await mint(a.apiKey, sid)).status).toBe(201);
 
     const initial = await prisma.participant.findMany({
-      where: { surfaceId: sid, kind: "human" },
+      where: { paneId: sid, kind: "human" },
       orderBy: { id: "asc" }, // cuid is time-monotonic → insertion order
       select: { id: true, identityId: true, revokedAt: true },
     });
@@ -352,7 +352,7 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
     expect((await mint(a.apiKey, sid)).status).toBe(201);
 
     const all = await prisma.participant.findMany({
-      where: { surfaceId: sid, kind: "human" },
+      where: { paneId: sid, kind: "human" },
       orderBy: { id: "asc" }, // cuid is time-monotonic → insertion order
       select: { identityId: true, revokedAt: true },
     });
@@ -368,15 +368,15 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
     // and both try `h_${N}`. Pre-#215 the second would have succeeded
     // anyway and silently aliased h_N (corrupting downstream
     // findFirst({ identityId }) attribution). Post-#215 the DB's
-    // (surfaceId, identityId) unique index serialises the write — exactly
+    // (paneId, identityId) unique index serialises the write — exactly
     // one wins on first try; the loser sees P2002, re-reads the count,
     // and retries to get `h_${N+1}`. Both succeed; both rows are distinct.
     //
-    // Test config caps the surface at CAP humans total (3). Surface is
+    // Test config caps the pane at CAP humans total (3). Pane is
     // created with 1 default (h_0), so we fire CAP-1=2 concurrent mints
     // to fill the cap without ever bumping into it.
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
 
     const N = CAP - 1; // 2 — exercises the race without tripping the cap
     const responses = await Promise.all(
@@ -393,7 +393,7 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
     // assert at the row level so a future refactor that routes around the
     // constraint (e.g. soft-deleting and re-inserting) trips the test.
     const allHumans = await prisma.participant.findMany({
-      where: { surfaceId: sid, kind: "human" },
+      where: { paneId: sid, kind: "human" },
       select: { identityId: true },
     });
     expect(allHumans).toHaveLength(N + 1); // +1 for the default h_0
@@ -407,14 +407,14 @@ describe("POST /v1/surfaces/:id/participants — mint", () => {
   });
 });
 
-describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () => {
+describe("DELETE /v1/panes/:id/participants/:participant_id — revoke", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
   it("revokes a human participant; bridge /s/:token then 404s", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const minted = (await mint(a.apiKey, sid)).body as MintResponse;
 
     // Token works first.
@@ -435,7 +435,7 @@ describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () =
 
   it("is idempotent — revoking twice still returns 204", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const pid = await humanParticipantId(sid);
 
     expect((await revoke(a.apiKey, sid, pid)).status).toBe(204);
@@ -444,14 +444,14 @@ describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () =
 
   it("unknown participant id returns 204 (idempotent miss)", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     expect((await revoke(a.apiKey, sid, "p_doesnotexist")).status).toBe(204);
   });
 
-  it("cross-surface participant id returns 204 (idempotent miss)", async () => {
+  it("cross-pane participant id returns 204 (idempotent miss)", async () => {
     const a = await seedAgent();
-    const sid1 = await createSession(a.apiKey);
-    const sid2 = await createSession(a.apiKey);
+    const sid1 = await createPane(a.apiKey);
+    const sid2 = await createPane(a.apiKey);
     const pidOfSid1 = await humanParticipantId(sid1);
     // Asking sid2 to revoke a participant that belongs to sid1 is treated as
     // a no-op miss, not a 404 with information leakage.
@@ -465,10 +465,10 @@ describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () =
 
   it("rejects revoking the agent participant with 400 (load-bearing for WS)", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const agentPid = await agentParticipantId(sid);
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${sid}/participants/${agentPid}`, {
+      new Request(`http://t/v1/panes/${sid}/participants/${agentPid}`, {
         method: "DELETE",
         headers: bearer(a.apiKey),
       }),
@@ -480,10 +480,10 @@ describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () =
     expect(body.error.code).toBe("invalid_request");
   });
 
-  it("404s when the surface belongs to a different agent", async () => {
+  it("404s when the pane belongs to a different agent", async () => {
     const a = await seedAgent();
     const b = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
     const pid = await humanParticipantId(sid);
     expect((await revoke(b.apiKey, sid, pid)).status).toBe(404);
   });
@@ -502,12 +502,12 @@ describe("DELETE /v1/surfaces/:id/participants/:participant_id — revoke", () =
 // which never exercises this regime — the racing test there fires
 // N=CAP-1=2 mints, well inside any sane budget. This block re-builds the
 // app with a production-shaped cap and fires N=CAP-1 contenders to assert
-// the budget actually scales. The helpers below (`mint`, `createSession`,
+// the budget actually scales. The helpers below (`mint`, `createPane`,
 // `humanParticipantId`) close over the module-level `app`, so re-binding
 // it here propagates to all of them automatically — same pattern
 // register-modes.e2e.test.ts uses for its multi-config layout.
 // ---------------------------------------------------------------------------
-describe("POST /v1/surfaces/:id/participants — high-contention mint (#231)", () => {
+describe("POST /v1/panes/:id/participants — high-contention mint (#231)", () => {
   const BIG_CAP = 20;
 
   beforeAll(() => {
@@ -515,10 +515,10 @@ describe("POST /v1/surfaces/:id/participants — high-contention mint (#231)", (
       loadConfig({
         DATABASE_URL: testDb.dbUrl,
         PUBLIC_URL: "http://localhost:3000",
-        MAX_PARTICIPANTS_PER_SESSION: String(BIG_CAP),
+        MAX_PARTICIPANTS_PER_PANE: String(BIG_CAP),
         // The general per-IP rate limiter would 429-bomb a Promise.all of
         // 19 mints from the same in-process source. Disable it for this
-        // describe; rate-limit.e2e.test.ts owns coverage for that surface.
+        // describe; rate-limit.e2e.test.ts owns coverage for that pane.
         RATE_LIMIT: "0",
       }),
       prisma,
@@ -531,7 +531,7 @@ describe("POST /v1/surfaces/:id/participants — high-contention mint (#231)", (
 
   it("BIG_CAP-1 concurrent mints all return 201 with distinct identityIds — no P2002 leaks as 500", async () => {
     const a = await seedAgent();
-    const sid = await createSession(a.apiKey);
+    const sid = await createPane(a.apiKey);
 
     const N = BIG_CAP - 1; // 19 — room left over the implicit h_0 from create
     const responses = await Promise.all(
@@ -550,10 +550,10 @@ describe("POST /v1/surfaces/:id/participants — high-contention mint (#231)", (
     // bypasses the constraint (e.g. soft-deleting + re-inserting) still
     // trips this assert.
     const allHumans = await prisma.participant.findMany({
-      where: { surfaceId: sid, kind: "human" },
+      where: { paneId: sid, kind: "human" },
       select: { identityId: true },
     });
-    expect(allHumans).toHaveLength(N + 1); // +1 for h_0 from surface-create
+    expect(allHumans).toHaveLength(N + 1); // +1 for h_0 from pane-create
     const identityIds = allHumans.map((p) => p.identityId).sort();
     expect(new Set(identityIds).size).toBe(identityIds.length);
     expect(identityIds).toEqual(

@@ -45,7 +45,7 @@ Its only outbound channel is `window.parent.postMessage`. The shell receives tho
 
 The relay injects a small script into the wrapped inner document that defines `window.pane` before any of the agent's markup or scripts run. **Inlined** (not an external `bridge.js`) so there's no extra round trip and the CSP can stay tight (allowed via a per-response nonce in `script-src`). **DECIDED**: inline + nonce.
 
-API surface (v1):
+API pane (v1):
 
 ```ts
 pane.emit(
@@ -107,7 +107,7 @@ Live events pushed by the WS (from any author) are forwarded to the iframe as `{
 
 The shell, on load, after authing the human via the URL-path token:
 
-1. Opens `WS /v1/sessions/:session_id/stream?token=<participant_token>`. (Browsers don't allow `Authorization` headers on `new WebSocket()`; the participant token rides as a query param. The relay extracts it on upgrade.) **OPEN**: query-string token vs a one-shot `POST /v1/sessions/:id/connect` that returns a short-lived WS-only cookie. Lean: query-string for v1; revisit if the URL-leak surface bothers us.
+1. Opens `WS /v1/sessions/:session_id/stream?token=<participant_token>`. (Browsers don't allow `Authorization` headers on `new WebSocket()`; the participant token rides as a query param. The relay extracts it on upgrade.) **OPEN**: query-string token vs a one-shot `POST /v1/sessions/:id/connect` that returns a short-lived WS-only cookie. Lean: query-string for v1; revisit if the URL-leak pane bothers us.
 2. Receives the event-log replay, accumulates it in a local buffer.
 3. On `{kind:"system.replay.complete"}` (control frame, not stored), sends the iframe the `init` message with the schema and the replay buffer.
 4. Forwards every subsequent live event to the iframe.
@@ -169,7 +169,7 @@ Token hygiene: the participant token lives in the URL **path** for `/s/:token` (
 ## Interfaces (what phase 3 must expose)
 
 - `GET /s/:token` → the shell HTML (above headers). If the token doesn't match a `Participant.tokenHash` → `404`. If the session is `closed` → still serve the shell, but it shows the terminal state instead of an interactive iframe (it can replay the historical event log read-only).
-- `GET /s/:token/content` → the wrapped agent artifact (above headers). `404` if no session / participant. If `status != "open"`, serve it read-only (the iframe renders the historical state via the replayed event log; emits get a `410 gone` from the WS and the runtime surfaces it as `pane.emit` rejecting).
+- `GET /s/:token/content` → the wrapped agent artifact (above headers). `404` if no session / participant. If `status != "open"`, serve it read-only (the iframe renders the historical state via the replayed event log; emits get a `410 gone` from the WS and the runtime panes it as `pane.emit` rejecting).
 - The `pane` global available inside the iframe: `pane.emit(type, data, opts?)`, `pane.on(type, handler)`, `pane.state`, with the `ready` → `init` handshake automatic.
 - The postMessage wire format above (the `__pane` / `v` / `kind` envelope).
 - The WS connection lifecycle (open with query-string token, replay, live, reconnect-on-drop, artifact-reload-on-update).
