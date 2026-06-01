@@ -60,6 +60,9 @@ export {
 export type {
   AuthorKind,
   PaneEvent,
+  SerializedRecord,
+  DeletedRecordRef,
+  RecordDeltaMessage,
   Template,
   TemplateType,
   TemplateVersion,

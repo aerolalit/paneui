@@ -17,6 +17,7 @@ import type {
   MintParticipantResponse,
   PaneEvent,
   ParticipantsList,
+  SerializedRecord,
   SurfaceState,
   SurfacesPage,
   TasteInfo,
@@ -297,6 +298,118 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<EventsPage>(r);
+  }
+
+  // ----- #297: records CRUD ---------------------------------------------
+
+  /**
+   * GET /v1/surfaces/:id/records/:collection — cursor-paginated list.
+   * Includes tombstones (`deleted_at` set) so reconnecting clients can
+   * observe deletions.
+   */
+  async listRecords(
+    surfaceId: string,
+    collection: string,
+    opts: { since?: number; limit?: number } = {},
+  ): Promise<{
+    records: SerializedRecord[];
+    next_since: number;
+    has_more: boolean;
+  }> {
+    const q = new URLSearchParams();
+    if (opts.since != null) q.set("since", String(opts.since));
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    const r = await this.call(
+      "GET",
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}${qs ? "?" + qs : ""}`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject(r);
+  }
+
+  /**
+   * Convenience: walk listRecords until the named recordKey is found OR
+   * the collection is exhausted. The relay has no dedicated single-get
+   * route today; this client-side scan trades round trips for not adding
+   * a route. Fine for typical CLI use; not appropriate for hot paths.
+   */
+  async getRecord(
+    surfaceId: string,
+    collection: string,
+    recordKey: string,
+  ): Promise<SerializedRecord | null> {
+    let since: number | undefined;
+    for (;;) {
+      const page = await this.listRecords(surfaceId, collection, {
+        since,
+        limit: 200,
+      });
+      const hit = page.records.find((r) => r.key === recordKey);
+      if (hit) return hit;
+      if (!page.has_more) return null;
+      since = page.next_since;
+    }
+  }
+
+  /**
+   * POST /v1/surfaces/:id/records/:collection — create-or-return-existing.
+   * Duplicate `recordKey` returns the existing row with `deduped: true`.
+   */
+  async upsertRecord(
+    surfaceId: string,
+    collection: string,
+    body: { record_key?: string; data: unknown },
+  ): Promise<{ record: SerializedRecord; deduped: boolean }> {
+    const r = await this.call(
+      "POST",
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    const out = this.asObject<{
+      record: SerializedRecord;
+      deduped?: boolean;
+    }>(r);
+    return { record: out.record, deduped: out.deduped ?? false };
+  }
+
+  /**
+   * PATCH /v1/surfaces/:id/records/:collection/:recordKey — optimistic
+   * update. On 409 the relay returns the current row in `details.current`.
+   */
+  async updateRecord(
+    surfaceId: string,
+    collection: string,
+    recordKey: string,
+    body: { data: unknown; if_match?: number },
+  ): Promise<{ record: SerializedRecord }> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<{ record: SerializedRecord }>(r);
+  }
+
+  /**
+   * DELETE /v1/surfaces/:id/records/:collection/:recordKey — soft-delete.
+   * Optional `if_match` returns 409 + `details.current` on mismatch.
+   */
+  async deleteRecord(
+    surfaceId: string,
+    collection: string,
+    recordKey: string,
+    opts: { ifMatch?: number } = {},
+  ): Promise<void> {
+    const body = opts.ifMatch != null ? { if_match: opts.ifMatch } : undefined;
+    const r = await this.call(
+      "DELETE",
+      `/v1/surfaces/${encodeURIComponent(surfaceId)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
   }
 
   /** POST /v1/surfaces/:id/events — append an agent event. */

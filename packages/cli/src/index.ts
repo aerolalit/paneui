@@ -33,6 +33,7 @@ import { runFeedback, feedbackHelp } from "./commands/feedback.js";
 import { runConfig, configHelp } from "./commands/config.js";
 import { runBlob, blobHelp } from "./commands/attachment.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
+import { runRecords, recordsHelp } from "./commands/records.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
 import { failUpgradeRequired } from "./output.js";
@@ -141,6 +142,7 @@ async function main(): Promise<void> {
     agent: agentHelp,
     config: configHelp,
     skill: skillHelp,
+    records: recordsHelp,
   };
 
   if (!(noun in helps)) {
@@ -191,6 +193,9 @@ async function main(): Promise<void> {
       break;
     case "skill":
       await runSkill(args);
+      break;
+    case "records":
+      await runRecords(args);
       break;
   }
 }
