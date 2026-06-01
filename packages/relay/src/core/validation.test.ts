@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   validateEvent,
   validateSchemaShape,
+  validateRecordSchemaShape,
   validateInputData,
   validateSessionTitle,
   validateSessionPreamble,
@@ -90,6 +91,275 @@ describe("validateSchemaShape", () => {
         },
       }),
     ).toThrow();
+  });
+});
+
+describe("validateRecordSchemaShape", () => {
+  // Minimal valid recordSchema reused across the happy-path + rejection cases.
+  const validDoc = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $defs: {
+      Comment: {
+        type: "object",
+        properties: { body: { type: "string", maxLength: 4000 } },
+        required: ["body"],
+      },
+    },
+    "x-pane-collections": {
+      comments: {
+        schema: { $ref: "#/$defs/Comment" },
+        write: ["page"],
+        delete: ["author"],
+      },
+    },
+  };
+
+  it("accepts a minimal valid recordSchema", () => {
+    expect(() => validateRecordSchemaShape(validDoc)).not.toThrow();
+  });
+
+  it("accepts a richer recordSchema with multiple collections + all principal kinds", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: {
+          Post: {
+            type: "object",
+            properties: { title: { type: "string" } },
+            required: ["title"],
+          },
+          Comment: {
+            type: "object",
+            properties: { body: { type: "string" } },
+          },
+        },
+        "x-pane-collections": {
+          posts: {
+            schema: { $ref: "#/$defs/Post" },
+            write: ["agent", "page"],
+            delete: ["agent", "page", "author"],
+          },
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects non-object input", () => {
+    expect(() => validateRecordSchemaShape(null)).toThrow(/must be an object/);
+    expect(() => validateRecordSchemaShape([])).toThrow(/must be an object/);
+    expect(() => validateRecordSchemaShape("hello")).toThrow(
+      /must be an object/,
+    );
+  });
+
+  it("rejects an unknown top-level key", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        ...validDoc,
+        events: { "foo.bar": {} },
+      }),
+    ).toThrow(/unknown top-level key 'events'/);
+  });
+
+  it("rejects missing x-pane-collections", () => {
+    expect(() => validateRecordSchemaShape({ $defs: validDoc.$defs })).toThrow(
+      /x-pane-collections.* is required/,
+    );
+  });
+
+  it("rejects empty x-pane-collections", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {},
+      }),
+    ).toThrow(/must declare at least one collection/);
+  });
+
+  it("rejects an unknown sub-key under a collection entry", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["author"],
+            unknownKey: true,
+          },
+        },
+      }),
+    ).toThrow(/unknown key 'unknownKey'/);
+  });
+
+  it("rejects an unknown principal in write", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["everyone"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/write values must be/);
+  });
+
+  it("rejects 'author' in write (only valid in delete)", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["author"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/write values must be 'agent' or 'page'/);
+  });
+
+  it("rejects an unknown principal in delete", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["everyone"],
+          },
+        },
+      }),
+    ).toThrow(/delete values must be/);
+  });
+
+  it("rejects an empty write array", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: [],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/write must be a non-empty array/);
+  });
+
+  it("rejects a $ref that does not resolve under $defs", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Missing" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/does not resolve under \$defs/);
+  });
+
+  it("rejects a cross-doc $ref (anything not under #/$defs/...)", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "https://example.com/Comment.json" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/must match '#\/\$defs\/<Name>'/);
+  });
+
+  it("rejects a row schema under $defs that doesn't compile as JSON Schema", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: { Bad: { type: "not-a-real-type" } },
+        "x-pane-collections": {
+          comments: {
+            schema: { $ref: "#/$defs/Bad" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/does not compile as JSON Schema 2020-12/);
+  });
+
+  it("rejects a collection name with uppercase", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          Comments: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/collection name 'Comments' must match/);
+  });
+
+  it("rejects a collection name starting with a digit", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          "1comments": {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/must match/);
+  });
+
+  it("rejects a collection name longer than 64 chars", () => {
+    const longName = "a".repeat(65);
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          [longName]: {
+            schema: { $ref: "#/$defs/Comment" },
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/must match/);
+  });
+
+  it("rejects a missing schema.$ref", () => {
+    expect(() =>
+      validateRecordSchemaShape({
+        $defs: validDoc.$defs,
+        "x-pane-collections": {
+          comments: {
+            schema: {},
+            write: ["page"],
+            delete: ["author"],
+          },
+        },
+      }),
+    ).toThrow(/\$ref is required and must be a string/);
   });
 });
 

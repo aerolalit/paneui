@@ -38,6 +38,11 @@ const inlineArtifactSchema = z.object({
   // participant attachment-download bridge walks input_data against the template
   // version's inputSchema; no schema means no walkable sites). See #208.
   input_schema: z.record(z.string(), z.unknown()).optional(),
+  // Optional JSON Schema 2020-12 document with an `x-pane-collections`
+  // extension declaring the template's record collections (#287 / #289).
+  // Validated by the relay at create time. Persistence ships once the
+  // schema migration (#288) lands.
+  record_schema: z.unknown().optional(),
 });
 
 // The reference form for POST /v1/surfaces — instances an existing named
@@ -103,6 +108,8 @@ export const createArtifactSchema = z.object({
   // Optional: omit for a view-only template (no event vocabulary).
   event_schema: z.unknown().optional(),
   input_schema: z.record(z.string(), z.unknown()).optional(),
+  // Optional records declaration (#287 / #289). See inlineArtifactSchema above.
+  record_schema: z.unknown().optional(),
 });
 
 // POST /v1/templates/:id/versions — append a new version (content only).
@@ -112,6 +119,8 @@ export const createArtifactVersionSchema = z.object({
   // Optional: omit for a view-only template (no event vocabulary).
   event_schema: z.unknown().optional(),
   input_schema: z.record(z.string(), z.unknown()).optional(),
+  // Optional records declaration (#287 / #289). See inlineArtifactSchema above.
+  record_schema: z.unknown().optional(),
 });
 
 // PATCH /v1/templates/:id — update head metadata only (never content).

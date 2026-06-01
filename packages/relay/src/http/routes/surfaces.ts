@@ -25,6 +25,7 @@ import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import {
   assertSchemaWithinLimits,
   assertValidInputSchema,
+  validateRecordSchemaShape,
   validateSchemaShape,
   validateInputData,
   validateSessionTitle,
@@ -411,6 +412,7 @@ surfaces.post("/", requireAgent, async (c) => {
       type: "html-inline" | "html-ref";
       event_schema?: unknown;
       input_schema?: unknown;
+      record_schema?: unknown;
     };
     if (Buffer.byteLength(inline.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
       throw errors.payloadTooLarge();
@@ -453,6 +455,17 @@ surfaces.post("/", requireAgent, async (c) => {
       });
       assertValidInputSchema(inline.input_schema);
       inputSchema = inline.input_schema;
+    }
+    // #289 — validate record_schema shape on inline templates. Validation-only
+    // for this PR (persistence lands once #288 adds the Prisma column); a 400
+    // here surfaces a malformed agent-supplied record_schema instead of
+    // silently dropping it.
+    if (inline.record_schema !== undefined) {
+      assertSchemaWithinLimits(inline.record_schema, {
+        maxBytes: config.MAX_SCHEMA_BYTES,
+        maxDepth: config.MAX_SCHEMA_DEPTH,
+      });
+      validateRecordSchemaShape(inline.record_schema);
     }
 
     const created = await prisma.$transaction(async (tx) => {
