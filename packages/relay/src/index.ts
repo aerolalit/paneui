@@ -25,7 +25,9 @@ import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { sweepRecordTombstones } from "./core/records.js";
 import { sweepAuthTokens, authSweepIntervalSeconds } from "./auth-sweeper.js";
+import { sweepHardDeletable } from "./hard-delete-sweeper.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
+import type { AttachmentStore } from "./attachments/store.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
 
@@ -192,6 +194,39 @@ function startAuthSweeper(prisma: PrismaClient): void {
   log.info("auth-sweeper started", { intervalSeconds: intervalSec });
 }
 
+// #304 — hourly hard-delete sweeper. Reclaims soft-deleted entities past
+// their tier-aware retention window. Mirrors startTtlSweeper structurally.
+function startHardDeleteSweeper(
+  config: Config,
+  prisma: PrismaClient,
+  attachmentStore: AttachmentStore,
+): void {
+  const intervalSec = config.HARD_DELETE_SWEEP_SECONDS;
+  if (intervalSec <= 0) {
+    log.info("hard-delete sweeper disabled (HARD_DELETE_SWEEP_SECONDS=0)");
+    return;
+  }
+  const jitter = () =>
+    Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const tick = (): void => {
+    void sweepHardDeletable({ prisma, config, attachmentStore })
+      .catch((e) =>
+        log.warn("hard-delete sweep error", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
+      .finally(() => {
+        setTimeout(tick, intervalSec * 1000 + jitter());
+      });
+  };
+  setTimeout(tick, intervalSec * 1000 + jitter());
+  log.info("hard-delete sweeper started", {
+    intervalSeconds: intervalSec,
+    freeRetentionDays: config.HARD_RETENTION_DAYS_FREE,
+    paidRetentionDays: config.HARD_RETENTION_DAYS_PAID,
+  });
+}
+
 async function main(): Promise<void> {
   // The single process-wide config + Prisma client. main() is the ONLY place a
   // relay singleton is constructed; everything downstream receives them via
@@ -296,6 +331,7 @@ async function main(): Promise<void> {
   startTtlSweeper(config, prisma);
   startRecordTombstoneSweeper(config, prisma);
   startAuthSweeper(prisma);
+  startHardDeleteSweeper(config, prisma, blobStore);
 
   // Flush metrics on a graceful shutdown signal. Minimal — the relay otherwise
   // just exits — but a flush lets the last scrape window's data settle.
