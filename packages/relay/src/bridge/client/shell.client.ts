@@ -453,6 +453,48 @@ interface SerializedEvent {
     frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
   }
 
+  // #298 — push a record delta (the shell's store already did the merge +
+  // stale-seq check; we just forward to the iframe so the runtime can fire
+  // pane.records.on handlers).
+  function pushRecordDeltaToIframe(
+    op: "upsert" | "delete",
+    collection: string,
+    record: unknown,
+  ): void {
+    if (!iframeReady || !frame || !frame.contentWindow) return;
+    const frameMsg = {
+      __pane: 1 as const,
+      v: 1 as const,
+      kind: "record-delta" as const,
+      op,
+      collection,
+      record,
+      // The op-discriminator type lives in protocol.ts but cast here is fine —
+      // both sides agree on the wire shape, postMessage is structural-clone.
+    } as unknown as OutboundFrame;
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
+  }
+
+  // #298 — push the initial record-snapshot to the iframe (one frame, all
+  // collections). Sent right after `init` so the template's first
+  // pane.records.snapshot() call sees the replayed state without waiting.
+  function pushRecordSnapshotToIframe(): void {
+    if (!iframeReady || !frame || !frame.contentWindow) return;
+    // Build { collection -> RecordRow[] } from the store. The store doesn't
+    // expose its collection list; iterate over what's been observed.
+    const collections: Record<string, unknown[]> = {};
+    for (const name of recordStore.observedCollections()) {
+      collections[name] = recordStore.snapshot(name);
+    }
+    const frameMsg = {
+      __pane: 1 as const,
+      v: 1 as const,
+      kind: "record-snapshot" as const,
+      collections,
+    } as unknown as OutboundFrame;
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
+  }
+
   // Schedule exactly one reconnect attempt. Coalesces: if a timer is already
   // pending (e.g. a stray second close fired) we do not stack another.
   function scheduleReconnect(): void {
@@ -605,15 +647,31 @@ interface SerializedEvent {
       // for these is #298's scope.
       const kind = msg["kind"];
       if (kind === "record.upsert") {
-        recordStore.applyUpsert(
+        const delta = recordStore.applyUpsert(
           msg as unknown as Parameters<RecordStore["applyUpsert"]>[0],
         );
+        // #298 — forward only non-stale deltas to the iframe so pane.records.on
+        // fires once per real change (the store returns null on stale-seq).
+        if (delta) {
+          pushRecordDeltaToIframe(
+            "upsert",
+            delta.collection,
+            (delta as { record: unknown }).record,
+          );
+        }
         return;
       }
       if (kind === "record.delete") {
-        recordStore.applyDelete(
+        const delta = recordStore.applyDelete(
           msg as unknown as Parameters<RecordStore["applyDelete"]>[0],
         );
+        if (delta) {
+          pushRecordDeltaToIframe(
+            "delete",
+            delta.collection,
+            (delta as { record: unknown }).record,
+          );
+        }
         return;
       }
       if (kind === "record.replay.complete") {
@@ -703,6 +761,9 @@ interface SerializedEvent {
     if (m.kind === "ready") {
       iframeReady = true;
       sendIframeInit();
+      // #298 — push the initial record snapshot right after init so the
+      // template's first pane.records.snapshot() reflects the replayed state.
+      pushRecordSnapshotToIframe();
       return;
     }
     // upload-attachment-request: the iframe is asking the shell to POST a file to

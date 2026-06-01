@@ -122,6 +122,15 @@ export class RecordStore {
     return parts.join("&");
   }
 
+  /**
+   * Names of every collection that has had at least one observed delta on
+   * this store. Used by #298 to enumerate collections for the initial
+   * snapshot push into the iframe.
+   */
+  observedCollections(): string[] {
+    return Array.from(this.lastSeq.keys());
+  }
+
   /** Test-only — drop all state. Not part of the public API. */
   __resetForTests(): void {
     this.byCollection.clear();
