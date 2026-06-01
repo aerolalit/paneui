@@ -39,7 +39,7 @@ test.afterAll(async () => {
 test("phase-3 shell: loads, holds one stable WS, renders template, round-trips emit", async ({
   page,
 }) => {
-  const surface = await createSession(relay.baseUrl);
+  const pane = await createSession(relay.baseUrl);
 
   // --- collect every console error and uncaught page error -----------------
   const consoleErrors: string[] = [];
@@ -60,7 +60,7 @@ test("phase-3 shell: loads, holds one stable WS, renders template, round-trips e
     });
   });
 
-  await page.goto(surface.humanUrl);
+  await page.goto(pane.humanUrl);
 
   // (2a) The status pill flips to "connected" once the WS is OPEN.
   await expect(page.locator("#status")).toHaveText("connected", {
@@ -88,10 +88,10 @@ test("phase-3 shell: loads, holds one stable WS, renders template, round-trips e
 
   // (2c) Relay-side proof of no churn: one human join, no human leave.
   const humanJoins = await relay.prisma.event.count({
-    where: { surfaceId: surface.surfaceId, type: "system.participant.joined" },
+    where: { paneId: pane.paneId, type: "system.participant.joined" },
   });
   const humanLefts = await relay.prisma.event.count({
-    where: { surfaceId: surface.surfaceId, type: "system.participant.left" },
+    where: { paneId: pane.paneId, type: "system.participant.left" },
   });
   expect(humanJoins, "exactly one participant.joined").toBe(1);
   expect(humanLefts, "no participant.left churn").toBe(0);
@@ -103,7 +103,7 @@ test("phase-3 shell: loads, holds one stable WS, renders template, round-trips e
     timeout: 10_000,
   });
   const pings = await relay.prisma.event.count({
-    where: { surfaceId: surface.surfaceId, type: "ping" },
+    where: { paneId: pane.paneId, type: "ping" },
   });
   expect(pings, "relay recorded the emitted event").toBe(1);
 
@@ -113,7 +113,7 @@ test("phase-3 shell: loads, holds one stable WS, renders template, round-trips e
 
   // (5) The /presence endpoint the shell polls returns JSON with the three
   // agent-presence facts. The token is the last path segment of the shell URL.
-  const token = new URL(surface.humanUrl).pathname
+  const token = new URL(pane.humanUrl).pathname
     .split("/")
     .filter(Boolean)
     .pop()!;

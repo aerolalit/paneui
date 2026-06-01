@@ -9,7 +9,7 @@
 //      with it. This mirrors the existing `Event` and `Attachment` cascades
 //      and is what guarantees a pane delete leaves no record-table
 //      orphans.
-//   2. The `surface_records.collection_id` FK is `ON DELETE CASCADE`, so
+//   2. The `pane_records.collection_id` FK is `ON DELETE CASCADE`, so
 //      deleting a collection (e.g. via the pane cascade above) also
 //      removes its rows.
 //

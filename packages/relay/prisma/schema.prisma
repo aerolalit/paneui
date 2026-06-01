@@ -375,11 +375,11 @@ model Pane {
 
   // #302 — soft-delete timestamp. NULL = active. When the TTL sweeper
   // (#303) fires it sets `deletedAt = now()` instead of `DELETE`-ing the
-  // row, so the surface (and its events, participants, attachments) stays
+  // row, so the pane (and its events, participants, attachments) stays
   // recoverable for the configured trash window. The hard-delete sweeper
   // (#304) reclaims rows past the retention window. Distinct from
-  // `status = "closed"`: closed surfaces don't accept new events but stay
-  // listable; soft-deleted surfaces are filtered from default queries.
+  // `status = "closed"`: closed panes don't accept new events but stay
+  // listable; soft-deleted panes are filtered from default queries.
   deletedAt       DateTime?     @map("deleted_at")
 
   @@index([agentId])
@@ -664,7 +664,7 @@ model AttachmentToken {
 
 // #302 — append-only audit trail for the soft-delete / restore / hard-delete
 // lifecycle. One row per state transition on any soft-deletable entity
-// (Surface, Template, Agent, Human, Attachment). Used by:
+// (Pane, Template, Agent, Human, Attachment). Used by:
 //   - The Trash UI (#309) to list "what was deleted, by whom, when, why"
 //   - The hard-delete sweeper (#304) which appends a row on every reclaim
 //   - The restore endpoint (#306) which appends a row when undeleting
@@ -675,13 +675,13 @@ model AttachmentToken {
 // a single index scan.
 model DeletionLog {
   id           String    @id @default(cuid())
-  // 'surface' | 'template' | 'human' | 'agent' | 'attachment'
+  // 'pane' | 'template' | 'human' | 'agent' | 'attachment'
   entityType   String    @map("entity_type")
   // The deleted entity's cuid. Not a FK — the entity may be hard-deleted
   // later and this row outlives it.
   entityId     String    @map("entity_id")
   // Owner anchors for the trash-by-human query. Both nullable: agent-only
-  // resources (a standalone agent's surfaces before it's claimed) have no
+  // resources (a standalone agent's panes before it's claimed) have no
   // human owner; conversely human-only resources have no owning agent.
   ownerHumanId String?   @map("owner_human_id")
   ownerAgentId String?   @map("owner_agent_id")

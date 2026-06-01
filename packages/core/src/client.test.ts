@@ -443,7 +443,7 @@ describe("PaneClient.createPane", () => {
   });
 });
 
-describe("PaneClient key + surface-delete operations", () => {
+describe("PaneClient key + pane-delete operations", () => {
   /** Capture the request method/path of a single call. */
   function capturingClient(opts: { status: number; body?: string }) {
     let seen: { method: string; url: string } | undefined;
