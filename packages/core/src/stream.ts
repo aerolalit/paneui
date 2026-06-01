@@ -15,7 +15,7 @@
 // `openStream` exposes this as a typed event emitter over the `ws` package.
 
 import { WebSocket } from "ws";
-import type { PaneEvent } from "./types.js";
+import type { PaneEvent, RecordDeltaMessage } from "./types.js";
 import { MAX_FRAME_SNIPPET_LENGTH } from "./limits.js";
 
 export interface OpenStreamOptions {
@@ -27,14 +27,33 @@ export interface OpenStreamOptions {
   token: string;
   /** Opaque cursor: replay only events strictly after this id. */
   since?: string | null;
+  /**
+   * #297 — subscribe to record-collection deltas. `"*"` expands to every
+   * declared collection on the surface's template; a comma list filters
+   * to those names. Absent = no record traffic (legacy event-only stream).
+   */
+  subscribeRecords?: string;
+  /**
+   * #297 — per-collection record-replay cursors. Map of collection name →
+   * last observed seq, sent as `?since_record_seq.<name>=<seq>` so the
+   * relay's replay (#295) skips already-observed rows on reconnect.
+   */
+  sinceRecordSeq?: Record<string, number>;
 }
 
 /** Callbacks for a live stream. */
 export interface StreamHandlers {
   /** Fired for every event envelope (replayed and live). */
   onEvent?: (event: PaneEvent) => void;
-  /** Fired once when the initial replay finishes. */
+  /** Fired once when the initial event replay finishes. */
   onReplayComplete?: () => void;
+  /**
+   * #297 — fired for every record-delta message (record.upsert /
+   * record.delete / record.replay.complete) on the stream. Per-collection
+   * record.replay.complete fires once per subscribed collection after
+   * the replay set has been drained.
+   */
+  onRecord?: (msg: RecordDeltaMessage) => void;
   /** Fired on a relay error frame. */
   onRelayError?: (error: {
     code?: string;
@@ -76,6 +95,14 @@ export function openStream(
   );
   if (opts.since != null && opts.since !== "") {
     u.searchParams.set("since", opts.since);
+  }
+  if (opts.subscribeRecords && opts.subscribeRecords.length > 0) {
+    u.searchParams.set("subscribe_records", opts.subscribeRecords);
+  }
+  if (opts.sinceRecordSeq) {
+    for (const [name, seq] of Object.entries(opts.sinceRecordSeq)) {
+      u.searchParams.set(`since_record_seq.${name}`, String(seq));
+    }
   }
   // Token via Authorization header (Node ws supports it); the relay also
   // accepts ?token= but the header keeps it out of any URL access log.
@@ -126,6 +153,16 @@ export function openStream(
     }
     if ("ack" in obj) {
       // Ack for a frame we sent; nothing to surface by default.
+      return;
+    }
+    // #297 — record deltas. record.upsert / record.delete / record.replay.complete.
+    const kind = obj["kind"];
+    if (
+      kind === "record.upsert" ||
+      kind === "record.delete" ||
+      kind === "record.replay.complete"
+    ) {
+      handlers.onRecord?.(obj as unknown as RecordDeltaMessage);
       return;
     }
     if (typeof obj["id"] === "string" && typeof obj["type"] === "string") {

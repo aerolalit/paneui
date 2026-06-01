@@ -33,6 +33,39 @@ export interface PaneEvent {
   template_version: number | null;
 }
 
+/**
+ * One record on the wire (#287). Returned by the records CRUD routes
+ * (#292) and by the WS record-delta messages (#294). Structurally
+ * identical to the relay-side SerializedRecord; mirrored here so the
+ * core package is self-contained.
+ */
+export interface SerializedRecord {
+  id: string;
+  collection: string;
+  key: string;
+  data: unknown;
+  version: number;
+  seq: number;
+  author: { kind: AuthorKind; id: string };
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+/** Wire shape for a soft-deleted record on the WS channel. */
+export interface DeletedRecordRef {
+  id: string;
+  key: string;
+  seq: number;
+  deleted_at: string;
+}
+
+/** Discriminated wire shape for record-state changes. */
+export type RecordDeltaMessage =
+  | { kind: "record.upsert"; collection: string; record: SerializedRecord }
+  | { kind: "record.delete"; collection: string; record: DeletedRecordRef }
+  | { kind: "record.replay.complete"; collection: string; seq: number };
+
 /** The template content type. `html-ref` is rejected by the relay for now. */
 export type TemplateType = "html-inline" | "html-ref";
 
