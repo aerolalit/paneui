@@ -24,6 +24,7 @@ import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { sweepRecordTombstones } from "./core/records.js";
+import { sweepAuthTokens, authSweepIntervalSeconds } from "./auth-sweeper.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
@@ -164,6 +165,33 @@ function startRecordTombstoneSweeper(
   });
 }
 
+// #307 — auth-state sweeper. Hard-deletes expired logins/magic-links/claim-
+// codes/attachment-tokens. Distinct from the content-soft-delete sweepers
+// above: these rows are transient auth state, no soft phase. Structurally
+// identical to startTtlSweeper (recursive setTimeout + jitter).
+function startAuthSweeper(prisma: PrismaClient): void {
+  const intervalSec = authSweepIntervalSeconds();
+  if (intervalSec <= 0) {
+    log.info("auth-sweeper disabled (HARD_DELETE_SWEEP_SECONDS=0)");
+    return;
+  }
+  const jitter = () =>
+    Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const tick = (): void => {
+    void sweepAuthTokens(prisma)
+      .catch((e) =>
+        log.warn("auth sweep error", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
+      .finally(() => {
+        setTimeout(tick, intervalSec * 1000 + jitter());
+      });
+  };
+  setTimeout(tick, intervalSec * 1000 + jitter());
+  log.info("auth-sweeper started", { intervalSeconds: intervalSec });
+}
+
 async function main(): Promise<void> {
   // The single process-wide config + Prisma client. main() is the ONLY place a
   // relay singleton is constructed; everything downstream receives them via
@@ -267,6 +295,7 @@ async function main(): Promise<void> {
   attachWs(server, { config, prisma, generalLimiter });
   startTtlSweeper(config, prisma);
   startRecordTombstoneSweeper(config, prisma);
+  startAuthSweeper(prisma);
 
   // Flush metrics on a graceful shutdown signal. Minimal — the relay otherwise
   // just exits — but a flush lets the last scrape window's data settle.
