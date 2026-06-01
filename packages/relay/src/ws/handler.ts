@@ -14,6 +14,7 @@ import {
 } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
 import { isEvent, subscribe } from "../http/broadcast.js";
+import { SYSTEM_REPLAY_COMPLETE } from "./messages.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
@@ -459,7 +460,7 @@ async function handleConnection(
   for (const row of replay) {
     sendJson(ws, serializeEvent(row));
   }
-  sendJson(ws, { kind: "system.replay.complete" });
+  sendJson(ws, SYSTEM_REPLAY_COMPLETE);
 
   // 3) Subscribe to live broadcast. De-dupe vs replay: only forward events
   //    strictly newer than the last replayed id.
