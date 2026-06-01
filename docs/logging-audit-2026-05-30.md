@@ -10,15 +10,15 @@ The relay already has a structured JSON logger ([`packages/relay/src/log.ts`](..
 
 The HTTP request middleware logs every request with `msg=req`, including `reqId`, `method`, `path`, `status`, `ms`. Token-bearing URL segments (`/s/<token>`, `/b/<token>`) are redacted to `/s/***`, `/b/***` before logging — good operational hygiene.
 
-WebSocket lifecycle events log with `msg=ws connected`, `ws closed`, `ws error`, `ws send failed`, `ws writeEvent failed`. Each carries `surfaceId`, `authorKind`, `authorId`. The close log also carries `code`, `reason` (truncated), and `openMs` for connection-duration analysis. The upgrade path is wrapped in a try/catch that logs raw exceptions at error.
+WebSocket lifecycle events log with `msg=ws connected`, `ws closed`, `ws error`, `ws send failed`, `ws writeEvent failed`. Each carries `paneId`, `authorKind`, `authorId`. The close log also carries `code`, `reason` (truncated), and `openMs` for connection-duration analysis. The upgrade path is wrapped in a try/catch that logs raw exceptions at error.
 
 **Two gaps stood out:**
 
-1. **WebSocket upgrade rejections were completely silent.** All nine `sendUpgradeError()` call sites (origin mismatch, missing/invalid credential, ticket failure, surface lookup failures, expired/closed surface, connection cap, rate limit) wrote an HTTP status line to the socket and destroyed it — with no log line. To an agent investigating "is someone probing our relay with stale tokens?" or "why are users seeing 403s?", there was literally nothing to query. The rejection happened, the operator response went out, no record.
+1. **WebSocket upgrade rejections were completely silent.** All nine `sendUpgradeError()` call sites (origin mismatch, missing/invalid credential, ticket failure, pane lookup failures, expired/closed pane, connection cap, rate limit) wrote an HTTP status line to the socket and destroyed it — with no log line. To an agent investigating "is someone probing our relay with stale tokens?" or "why are users seeing 403s?", there was literally nothing to query. The rejection happened, the operator response went out, no record.
 
 2. **HTTP `ApiError` rejections produced no rejection-specific log line.** The req middleware logged the status code (so I could see `status=401` on a `msg=req` line), but the *reason* — `unauthorized` vs `cli_upgrade_required` vs `rate_limited` vs `not_found` — was only present in the response body, never in the logs. Aggregating "rejection codes over the last hour" required parsing nothing useful.
 
-The first auditor I dispatched flagged a longer list (no `reqId` in HTTP logs, no `surfaceId` in WS logs, missing close codes, silent Prisma errors during WS upgrade). Re-reading the code those were all wrong — the relay already had them. Worth noting because it changes what's worth shipping: not a sweeping logging overhaul, just two well-scoped gaps.
+The first auditor I dispatched flagged a longer list (no `reqId` in HTTP logs, no `paneId` in WS logs, missing close codes, silent Prisma errors during WS upgrade). Re-reading the code those were all wrong — the relay already had them. Worth noting because it changes what's worth shipping: not a sweeping logging overhaul, just two well-scoped gaps.
 
 ---
 
@@ -42,17 +42,17 @@ function sendUpgradeError(
 }
 ```
 
-Every call site passes a short, bounded reason and the relevant context (always `surfaceId`; `origin` for the CORS rejection; `surfaceStatus` for the expired-surface case). The reasons are a closed enum chosen at the call site:
+Every call site passes a short, bounded reason and the relevant context (always `paneId`; `origin` for the CORS rejection; `paneStatus` for the expired-pane case). The reasons are a closed enum chosen at the call site:
 
 - `origin mismatch`
 - `rate limit exceeded`
 - `missing credential`
 - `ticket invalid or expired`
-- `surface not found (ticket path)`
+- `pane not found (ticket path)`
 - `bearer not resolvable`
-- `participant surface mismatch`
-- `agent not surface owner`
-- `surface closed or expired`
+- `participant pane mismatch`
+- `agent not pane owner`
+- `pane closed or expired`
 - `connection cap reached`
 
 ### 2. `app.onError` logs `ApiError` rejections
@@ -77,17 +77,17 @@ if (err instanceof ApiError) {
 
 The `reqId` field is the same UUID the req middleware uses, so the rejection log and the req log can be joined on it exactly — not on a fuzzy `(ts, path, status)` tuple.
 
-### 3. WS heartbeat terminate carries `surfaceId`
+### 3. WS heartbeat terminate carries `paneId`
 
 `packages/relay/src/ws/handler.ts:97`
 
 ```ts
 log.debug("ws heartbeat: terminating unresponsive socket", {
-  surfaceId: ws.paneSessionId,
+  paneId: ws.paneSessionId,
 });
 ```
 
-The only WS log site that didn't carry `surfaceId`. Now it does.
+The only WS log site that didn't carry `paneId`. Now it does.
 
 ---
 
@@ -97,13 +97,13 @@ The only WS log site that didn't carry `surfaceId`. Now it does.
 
 **Before:**
 ```json
-{"ts":"2026-05-30T03:51:57.283Z","level":"info","msg":"req","reqId":"abc","method":"GET","path":"/v1/surfaces/sfc_X/stream","status":101,"ms":4}
+{"ts":"2026-05-30T03:51:57.283Z","level":"info","msg":"req","reqId":"abc","method":"GET","path":"/v1/panes/sfc_X/stream","status":101,"ms":4}
 ```
 …or nothing at all, if the upgrade was rejected before Hono saw it (which is the actual case for `sendUpgradeError`). You'd have no log line. The socket gets a 401 and a closed connection. Operator-side: silence.
 
 **After:**
 ```json
-{"ts":"2026-05-30T19:00:00.123Z","level":"info","msg":"ws upgrade rejected","status":401,"reason":"ticket invalid or expired","surfaceId":"sfc_X"}
+{"ts":"2026-05-30T19:00:00.123Z","level":"info","msg":"ws upgrade rejected","status":401,"reason":"ticket invalid or expired","paneId":"sfc_X"}
 ```
 
 ### Scenario 2 — stolen API key being probed
@@ -112,8 +112,8 @@ The only WS log site that didn't carry `surfaceId`. Now it does.
 
 **After:**
 ```json
-{"ts":"2026-05-30T19:00:00.111Z","level":"info","msg":"req","reqId":"r1","method":"POST","path":"/v1/surfaces","status":401,"ms":3}
-{"ts":"2026-05-30T19:00:00.111Z","level":"info","msg":"api rejected","reqId":"r1","code":"unauthorized","status":401,"method":"POST","path":"/v1/surfaces"}
+{"ts":"2026-05-30T19:00:00.111Z","level":"info","msg":"req","reqId":"r1","method":"POST","path":"/v1/panes","status":401,"ms":3}
+{"ts":"2026-05-30T19:00:00.111Z","level":"info","msg":"api rejected","reqId":"r1","code":"unauthorized","status":401,"method":"POST","path":"/v1/panes"}
 {"ts":"2026-05-30T19:00:00.214Z","level":"info","msg":"req","reqId":"r2","method":"POST","path":"/v1/templates","status":401,"ms":2}
 {"ts":"2026-05-30T19:00:00.214Z","level":"info","msg":"api rejected","reqId":"r2","code":"unauthorized","status":401,"method":"POST","path":"/v1/templates"}
 ```
@@ -128,23 +128,23 @@ A malicious page tries to open a WS to the relay from a different origin, hoping
 
 **After:**
 ```json
-{"ts":"2026-05-30T19:00:00.000Z","level":"info","msg":"ws upgrade rejected","status":403,"reason":"origin mismatch","surfaceId":"sfc_X","origin":"https://evil.example"}
+{"ts":"2026-05-30T19:00:00.000Z","level":"info","msg":"ws upgrade rejected","status":403,"reason":"origin mismatch","paneId":"sfc_X","origin":"https://evil.example"}
 ```
 
 Now I can answer "show me any cross-origin upgrade attempts in the last 24h": `msg=ws upgrade rejected AND reason="origin mismatch"`.
 
 ### Scenario 4 — DoS via connection cap
 
-A bot opens 1000 sockets against one surface.
+A bot opens 1000 sockets against one pane.
 
 **Before:** sockets just stop connecting after the cap, no log signal.
 
 **After:**
 ```json
-{"ts":"2026-05-30T19:00:00.000Z","level":"info","msg":"ws upgrade rejected","status":429,"reason":"connection cap reached","surfaceId":"sfc_X"}
+{"ts":"2026-05-30T19:00:00.000Z","level":"info","msg":"ws upgrade rejected","status":429,"reason":"connection cap reached","paneId":"sfc_X"}
 ```
 
-Repeated with same `surfaceId` — clear pattern.
+Repeated with same `paneId` — clear pattern.
 
 ---
 
@@ -154,22 +154,22 @@ Below are the questions an agent like me realistically gets asked about a relay,
 
 | Question | Before | After |
 |---|---|---|
-| "What's the 429 rate on `/v1/surfaces` right now?" | Group `req` lines by `status=429`, no reason. | Group `api rejected` by `code=rate_limited`. Same answer, more precise. |
+| "What's the 429 rate on `/v1/panes` right now?" | Group `req` lines by `status=429`, no reason. | Group `api rejected` by `code=rate_limited`. Same answer, more precise. |
 | "Did anyone hit the WS connection cap today?" | No log signal at all. | `msg=ws upgrade rejected AND reason="connection cap reached"`. |
 | "Why did this user see a 401 at 14:32?" | One `msg=req` line, status only. Have to guess. | Pair of lines joined by `reqId`, includes `code` so I know if it was an unauthorized vs expired-key vs cli-skew. |
-| "Is anyone probing surface X cross-origin?" | Silence. | `msg=ws upgrade rejected AND reason="origin mismatch" AND surfaceId=sfc_X`. |
-| "Trace this surface's WS session lifecycle" | Already worked — `ws connected`, `ws closed` carry `surfaceId`. | Same, plus upgrade rejections for the surface are now visible. |
-| "Why did the heartbeat terminate that socket?" | `msg=ws heartbeat...` line had no surfaceId — couldn't tell which surface. | Now joinable to surface history. |
+| "Is anyone probing pane X cross-origin?" | Silence. | `msg=ws upgrade rejected AND reason="origin mismatch" AND paneId=sfc_X`. |
+| "Trace this pane's WS session lifecycle" | Already worked — `ws connected`, `ws closed` carry `paneId`. | Same, plus upgrade rejections for the pane are now visible. |
+| "Why did the heartbeat terminate that socket?" | `msg=ws heartbeat...` line had no paneId — couldn't tell which pane. | Now joinable to pane history. |
 
 **What I can do efficiently now:**
 - Aggregate by `code` or `reason` to get a clean breakdown of rejection causes.
 - Join `req` ↔ `api rejected` on `reqId` for exact request-to-failure correlation.
-- Filter every log line for a given `surfaceId` to reconstruct its history end-to-end — every WS event, every upgrade attempt, every termination.
+- Filter every log line for a given `paneId` to reconstruct its history end-to-end — every WS event, every upgrade attempt, every termination.
 - Distinguish probe traffic (origin mismatch, expired ticket, bearer not resolvable) from operational failures (rate-limited, cap-reached).
 
 **What I still can't do:**
 - Aggregate rejections by client IP — neither the `req` log nor the new rejection logs carry it. For "who is probing us?", I'd need to add `ip` (derived from `x-forwarded-for` per `TRUSTED_PROXY` config). Out of scope for this PR.
-- Tie a successful WS connection to the HTTP request that minted its ticket — they share `surfaceId` but the ticket-mint `req` log and the `ws connected` log have no shared correlation ID.
+- Tie a successful WS connection to the HTTP request that minted its ticket — they share `paneId` but the ticket-mint `req` log and the `ws connected` log have no shared correlation ID.
 - Time DB / Redis operations. `ms` is on req only; Prisma calls don't self-time. Out of scope.
 
 ---
@@ -180,7 +180,7 @@ For the specific questions this PR was meant to enable — *who's getting reject
 
 - **Greppable** on `msg` (event-type tag).
 - **Aggregable** on `code` and `reason` (bounded enums).
-- **Joinable** on `reqId` (HTTP request scope) and `surfaceId` (WebSocket session scope).
+- **Joinable** on `reqId` (HTTP request scope) and `paneId` (WebSocket session scope).
 - **Filterable** without parsing response bodies.
 
 For broader observability questions (per-IP aggregation, cross-protocol correlation, DB-call timing), pane's logs still need more work. But those weren't the gap this PR was scoped to close, and adding them in the same PR would have made it harder to review.

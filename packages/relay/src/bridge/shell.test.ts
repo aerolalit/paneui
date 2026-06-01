@@ -11,7 +11,7 @@
 //   * `#frame` iframe — the destination for postMessage replies. In jsdom
 //     we render a stub iframe and dispatch frames as if they came from its
 //     contentWindow.
-//   * /v1/surfaces/:id/ws-ticket — minted on the WebSocket-connect path; we
+//   * /v1/panes/:id/ws-ticket — minted on the WebSocket-connect path; we
 //     mock fetch so the connect never blocks the test.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -20,23 +20,23 @@ import { loadClient } from "./routes.js";
 const SHELL_JS = loadClient("shell.client.js");
 
 const TOKEN = "tok_h_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const SESSION_ID = "sur_test";
+const PANE_ID = "pan_test";
 
 // Minimal cfg that satisfies the shell IIFE. The shell takes its callback URLs
 // from the cfg block rather than constructing them from a token (the same
 // bundle now drives the capability-token mount AND the cookie-authed
-// /surfaces/:id mount), so we mirror the same /s/:token paths the bridge
+// /panes/:id mount), so we mirror the same /s/:token paths the bridge
 // route emits — the existing assertions still check the same URLs.
 const CFG = {
-  surfaceId: SESSION_ID,
+  paneId: PANE_ID,
   schema: {},
   inputData: null,
   presenceUrl: `/s/${TOKEN}/presence`,
-  wsTicketUrl: `/v1/surfaces/${SESSION_ID}/ws-ticket`,
+  wsTicketUrl: `/v1/panes/${PANE_ID}/ws-ticket`,
   wsTicketAuthorization: `Bearer ${TOKEN}`,
   attachmentsUploadUrl: `/s/${TOKEN}/attachments`,
   attachmentsDownloadUrlBase: `/s/${TOKEN}/attachments`,
-  wsUrl: "ws://localhost/v1/surfaces/sur_test/stream",
+  wsUrl: "ws://localhost/v1/panes/pan_test/stream",
   isClosed: false,
   agentLive: false,
   agentLastEventAt: null,
@@ -121,7 +121,7 @@ describe("shell — upload-attachment-request handler", () => {
   it("posts upload-attachment-result ok:true with the relay's AttachmentRef on 2xx", async () => {
     const blobRef = {
       attachment_id: "attachment_abc",
-      scope: "surface",
+      scope: "pane",
       mime: "image/jpeg",
       size: 1234,
       sha256: "f".repeat(64),
@@ -129,7 +129,7 @@ describe("shell — upload-attachment-request handler", () => {
       width: 64,
       height: 64,
       status: "ready",
-      surface_id: SESSION_ID,
+      pane_id: PANE_ID,
       template_id: null,
       created_at: "2026-05-21T00:00:00.000Z",
       confirmed_at: "2026-05-21T00:00:00.000Z",
@@ -181,7 +181,7 @@ describe("shell — upload-attachment-request handler", () => {
       kind: "upload-attachment-result",
       id: "u1",
       ok: true,
-      attachment: { attachment_id: "attachment_abc", scope: "surface" },
+      attachment: { attachment_id: "attachment_abc", scope: "pane" },
     });
   });
 
@@ -389,7 +389,7 @@ describe("shell — download-attachment-request handler", () => {
     // The forwarded value is whatever `response.attachment()` returned. Node 20
     // has two `Blob` constructors (`node:buffer`'s global vs undici's) and
     // happy-dom in tests returns yet another shape — `instanceof Blob` is
-    // unreliable across CI vs local. Verify by the observable surface: the
+    // unreliable across CI vs local. Verify by the observable pane: the
     // type and size the iframe actually uses, which the shell pulled off
     // the Response and put into the result frame.
     expect(payload.attachment).toBeTruthy();
@@ -606,7 +606,7 @@ describe("shell — record-mutate-request handler", () => {
     );
     expect(call).toBeTruthy();
     expect(call![0] as string).toContain(
-      `/v1/surfaces/${SESSION_ID}/records/comments`,
+      `/v1/panes/${PANE_ID}/records/comments`,
     );
     const init = call![1] as RequestInit;
     expect(init.method).toBe("POST");

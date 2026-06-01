@@ -11,7 +11,7 @@
 //   DELETE /v1/attachments/:id/tokens/:token_id     revoke a token
 //
 // The /b/<token> fetch path itself lives in src/bridge/attachment-bridge.ts so the
-// no-auth surface is clearly separated from the agent-auth one here.
+// no-auth pane is clearly separated from the agent-auth one here.
 //
 // Out of scope for the foundation stack — landing in later PRs against
 // feat/attachments:
@@ -50,7 +50,7 @@ attachments.use("*", requireAgent);
 
 interface SerializedBlob {
   attachment_id: string;
-  scope: "agent" | "surface" | "template";
+  scope: "agent" | "pane" | "template";
   mime: string;
   size: number;
   sha256: string;
@@ -58,7 +58,7 @@ interface SerializedBlob {
   width: number | null;
   height: number | null;
   status: string;
-  surface_id: string | null;
+  pane_id: string | null;
   template_id: string | null;
   created_at: string;
   confirmed_at: string | null;
@@ -75,7 +75,7 @@ interface AttachmentRow {
   width: number | null;
   height: number | null;
   status: string;
-  surfaceId: string | null;
+  paneId: string | null;
   templateId: string | null;
   createdAt: Date;
   confirmedAt: Date | null;
@@ -85,7 +85,7 @@ interface AttachmentRow {
 function serialize(row: AttachmentRow): SerializedBlob {
   return {
     attachment_id: row.id,
-    scope: row.scope as "agent" | "surface" | "template",
+    scope: row.scope as "agent" | "pane" | "template",
     mime: row.mime,
     size: row.size,
     sha256: row.sha256,
@@ -93,7 +93,7 @@ function serialize(row: AttachmentRow): SerializedBlob {
     width: row.width,
     height: row.height,
     status: row.status,
-    surface_id: row.surfaceId,
+    pane_id: row.paneId,
     template_id: row.templateId,
     created_at: row.createdAt.toISOString(),
     confirmed_at: row.confirmedAt?.toISOString() ?? null,
@@ -106,7 +106,7 @@ function serialize(row: AttachmentRow): SerializedBlob {
 // the same opaque storage key from a attachment id).
 
 // Pagination defaults for GET /v1/attachments. The list endpoint uses an opaque
-// (createdAt DESC, id DESC) cursor — mirrors how GET /v1/surfaces paginates
+// (createdAt DESC, id DESC) cursor — mirrors how GET /v1/panes paginates
 // so the agent only needs to learn one shape.
 const LIST_DEFAULT_LIMIT = 50;
 const LIST_MAX_LIMIT = 100;
@@ -228,15 +228,15 @@ attachments.get("/", async (c) => {
 //
 // Form fields:
 //   file        — required, the single binary file part
-//   scope       — optional, defaults to "agent" (one of "agent" | "surface" |
+//   scope       — optional, defaults to "agent" (one of "agent" | "pane" |
 //                  "template")
-//   surface_id  — required when scope = "surface" (the agent must own the
-//                  surface, or the v0.1.x foundation surface rejects it)
+//   pane_id  — required when scope = "pane" (the agent must own the
+//                  pane, or the v0.1.x foundation pane rejects it)
 //   template_id — required when scope = "template" (the agent must own the
 //                  template)
 //   filename    — optional UX-only display name
 //
-// Cross-tenant attempts (uploading into a surface / template owned by a
+// Cross-tenant attempts (uploading into a pane / template owned by a
 // different agent) return attachment_not_found — never reveal whether the FK target
 // actually exists.
 // ---------------------------------------------------------------------------
@@ -266,20 +266,19 @@ attachments.post("/", async (c) => {
 
   // Resolve scope + the matching FK. The FK rows are looked up under the
   // calling agent's ownership; a foreign FK returns attachment_not_found so we
-  // never leak whether a surface/template id exists for another agent.
+  // never leak whether a pane/template id exists for another agent.
   const scope = parseScope(form.scope);
-  const surfaceId =
-    scope === "surface" ? requireFormString(form, "surface_id") : null;
+  const paneId = scope === "pane" ? requireFormString(form, "pane_id") : null;
   const templateId =
     scope === "template" ? requireFormString(form, "template_id") : null;
 
-  if (surfaceId) {
-    const ses = await prisma.surface.findUnique({
-      where: { id: surfaceId },
+  if (paneId) {
+    const ses = await prisma.pane.findUnique({
+      where: { id: paneId },
       select: { agentId: true, status: true },
     });
     if (!ses || ses.agentId !== me.id) throw errors.blobNotFound();
-    if (ses.status !== "open") throw errors.gone("surface is closed");
+    if (ses.status !== "open") throw errors.gone("pane is closed");
   }
   if (templateId) {
     const art = await prisma.template.findUnique({
@@ -299,7 +298,7 @@ attachments.post("/", async (c) => {
     {
       ownerId: me.id,
       scope,
-      surfaceId,
+      paneId,
       templateId,
       filename: typeof form.filename === "string" ? form.filename : null,
       file,
@@ -320,10 +319,10 @@ export function makeQuotaEnforcer(
   store: AttachmentStore,
 ): QuotaEnforcer {
   return {
-    enforce: ({ ownerId, surfaceId, templateId, extraBytes }) =>
+    enforce: ({ ownerId, paneId, templateId, extraBytes }) =>
       enforceQuotas(prisma, {
         ownerId,
-        surfaceId,
+        paneId,
         templateId,
         config,
         extraBytes,
@@ -369,7 +368,7 @@ attachments.get("/:id", async (c) => {
     throw errors.blobNotFound();
   }
   if (row.status !== "ready") {
-    // pending / failed — exists but not downloadable. 404 keeps the surface
+    // pending / failed — exists but not downloadable. 404 keeps the pane
     // simple; a future PR could expose status separately if needed.
     throw errors.blobNotFound();
   }
@@ -430,7 +429,7 @@ attachments.get("/:id", async (c) => {
 // without paying the cost of streaming + decrypting the bytes — e.g.
 // `pane attachment show <id>`.
 //
-// Cross-tenant attempts collapse to attachment_not_found (same surface as the
+// Cross-tenant attempts collapse to attachment_not_found (same pane as the
 // download route) so a foreign agent can't probe id existence.
 // ---------------------------------------------------------------------------
 attachments.get("/:id/metadata", async (c) => {
@@ -440,7 +439,7 @@ attachments.get("/:id/metadata", async (c) => {
   const id = c.req.param("id");
   const row = await prisma.attachment.findUnique({ where: { id } });
 
-  // Same cross-tenant + status surface as GET /v1/attachments/:id — we treat
+  // Same cross-tenant + status pane as GET /v1/attachments/:id — we treat
   // "deleted" as not-found, "pending" / "failed" as not-found (the agent
   // can't act on a not-ready attachment via this endpoint).
   if (!row || row.ownerId !== me.id || row.status === "deleted") {
@@ -474,7 +473,7 @@ attachments.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const row = await prisma.attachment.findUnique({ where: { id } });
 
-  // Foreign agent / no such attachment → attachment_not_found (same surface as GET).
+  // Foreign agent / no such attachment → attachment_not_found (same pane as GET).
   if (!row || row.ownerId !== me.id) {
     throw errors.blobNotFound();
   }
@@ -509,8 +508,8 @@ attachments.delete("/:id", async (c) => {
 //     mime: string,                    // declared content-type
 //     size: integer,                   // committed byte length
 //     sha256: string (hex),            // committed content hash
-//     scope: "agent" | "surface" | "template",
-//     surface_id?: string,             // required for scope=surface
+//     scope: "agent" | "pane" | "template",
+//     pane_id?: string,             // required for scope=pane
 //     template_id?: string,            // required for scope=template
 //     filename?: string                // UX-only display name
 //   }
@@ -549,7 +548,7 @@ attachments.post("/presign", async (c) => {
     size?: unknown;
     sha256?: unknown;
     scope?: unknown;
-    surface_id?: unknown;
+    pane_id?: unknown;
     template_id?: unknown;
     filename?: unknown;
   } | null;
@@ -577,12 +576,12 @@ attachments.post("/presign", async (c) => {
   }
 
   const scope = parseScope(body.scope);
-  const surfaceId =
-    scope === "surface"
-      ? typeof body.surface_id === "string"
-        ? body.surface_id
+  const paneId =
+    scope === "pane"
+      ? typeof body.pane_id === "string"
+        ? body.pane_id
         : (() => {
-            throw errors.invalidRequest("scope=surface requires surface_id");
+            throw errors.invalidRequest("scope=pane requires pane_id");
           })()
       : null;
   const templateId =
@@ -594,13 +593,13 @@ attachments.post("/presign", async (c) => {
           })()
       : null;
 
-  if (surfaceId) {
-    const ses = await prisma.surface.findUnique({
-      where: { id: surfaceId },
+  if (paneId) {
+    const ses = await prisma.pane.findUnique({
+      where: { id: paneId },
       select: { agentId: true, status: true },
     });
     if (!ses || ses.agentId !== me.id) throw errors.blobNotFound();
-    if (ses.status !== "open") throw errors.gone("surface is closed");
+    if (ses.status !== "open") throw errors.gone("pane is closed");
   }
   if (templateId) {
     const art = await prisma.template.findUnique({
@@ -615,7 +614,7 @@ attachments.post("/presign", async (c) => {
   // yet so we pass `extraBytes: size` to project the eventual aggregate.
   const quotaFailure = await enforceQuotas(prisma, {
     ownerId: me.id,
-    surfaceId,
+    paneId,
     templateId,
     config,
     extraBytes: size,
@@ -631,7 +630,7 @@ attachments.post("/presign", async (c) => {
     data: {
       ownerId: me.id,
       scope,
-      surfaceId,
+      paneId,
       templateId,
       mime,
       size,
@@ -813,7 +812,7 @@ attachments.get("/:id/tokens", async (c) => {
 //   { ttl_seconds?: number, once?: boolean }
 //
 // TTL defaults per scope:
-//   - surface-scope:  matches the surface's expiresAt (cascades on surface delete)
+//   - pane-scope:  matches the pane's expiresAt (cascades on pane delete)
 //   - agent-scope:    BLOB_TOKEN_TTL_AGENT_SECONDS (24h default)
 //   - template-scope: BLOB_TOKEN_TTL_ARTIFACT_SECONDS (30d default)
 //
@@ -930,20 +929,20 @@ attachments.delete("/:id/tokens/:token_id", async (c) => {
 
 // ===========================================================================
 // Helpers — kept private to this module so the route file stays the entire
-// surface for /v1/attachments.
+// pane for /v1/attachments.
 // ===========================================================================
 
 /**
  * Parse the `scope` form field. Empty / missing defaults to `agent`. Anything
  * outside the enum is rejected as `invalid_request`.
  */
-function parseScope(raw: unknown): "agent" | "surface" | "template" {
+function parseScope(raw: unknown): "agent" | "pane" | "template" {
   if (raw === undefined || raw === null || raw === "") return "agent";
-  if (raw === "agent" || raw === "surface" || raw === "template") return raw;
+  if (raw === "agent" || raw === "pane" || raw === "template") return raw;
   throw errors.invalidRequest(
     `unknown scope='${String(raw)}'`,
-    { scope: String(raw), supported: ["agent", "surface", "template"] },
-    "pass scope=agent|surface|template; surface-scope requires surface_id, template-scope requires template_id",
+    { scope: String(raw), supported: ["agent", "pane", "template"] },
+    "pass scope=agent|pane|template; pane-scope requires pane_id, template-scope requires template_id",
   );
 }
 
@@ -964,7 +963,7 @@ function requireFormString(
 }
 
 interface QuotaFailure {
-  scope: "agent" | "surface" | "template";
+  scope: "agent" | "pane" | "template";
   cap: number;
 }
 
@@ -976,7 +975,7 @@ async function enforceQuotas(
   prisma: PrismaClient,
   opts: {
     ownerId: string;
-    surfaceId: string | null;
+    paneId: string | null;
     templateId: string | null;
     config: Config;
     /**
@@ -995,10 +994,10 @@ async function enforceQuotas(
     store?: { delete: (key: string) => Promise<void> };
   },
 ): Promise<QuotaFailure | null> {
-  const { ownerId, surfaceId, templateId, config, extraBytes, store } = opts;
+  const { ownerId, paneId, templateId, config, extraBytes, store } = opts;
 
   // Per-agent — always applies. When over the cap and LRU eviction is on,
-  // remove the oldest agent-scope attachments until the new one fits. Surface +
+  // remove the oldest agent-scope attachments until the new one fits. Pane +
   // template-scope attachments are NEVER evicted: they're tied to a live parent.
   let agentTotal =
     (
@@ -1048,16 +1047,13 @@ async function enforceQuotas(
     }
   }
 
-  if (surfaceId) {
+  if (paneId) {
     const ses = await prisma.attachment.aggregate({
-      where: { surfaceId, status: { in: ["pending", "ready"] } },
+      where: { paneId, status: { in: ["pending", "ready"] } },
       _sum: { size: true },
     });
-    if (
-      (ses._sum.size ?? 0) + extraBytes >
-      config.MAX_BLOBS_PER_SESSION_BYTES
-    ) {
-      return { scope: "surface", cap: config.MAX_BLOBS_PER_SESSION_BYTES };
+    if ((ses._sum.size ?? 0) + extraBytes > config.MAX_BLOBS_PER_PANE_BYTES) {
+      return { scope: "pane", cap: config.MAX_BLOBS_PER_PANE_BYTES };
     }
   }
 
@@ -1084,27 +1080,27 @@ async function enforceQuotas(
  */
 async function computeTokenExpiry(
   prisma: PrismaClient,
-  attachment: { scope: string; surfaceId: string | null },
+  attachment: { scope: string; paneId: string | null },
   config: Config,
   ttlSecondsRaw: unknown,
 ): Promise<Date> {
   const now = Date.now();
   let defaultExpiry: Date;
 
-  if (attachment.scope === "surface") {
-    if (!attachment.surfaceId) {
-      // Shouldn't happen — surface-scope attachments always have surfaceId set —
+  if (attachment.scope === "pane") {
+    if (!attachment.paneId) {
+      // Shouldn't happen — pane-scope attachments always have paneId set —
       // but be defensive.
       throw errors.invalidRequest(
-        "surface-scope attachment is missing surface_id (data integrity issue)",
+        "pane-scope attachment is missing pane_id (data integrity issue)",
       );
     }
-    const ses = await prisma.surface.findUnique({
-      where: { id: attachment.surfaceId },
+    const ses = await prisma.pane.findUnique({
+      where: { id: attachment.paneId },
       select: { expiresAt: true },
     });
     if (!ses) {
-      // The cascade would normally take the attachment with the surface; if we're
+      // The cascade would normally take the attachment with the pane; if we're
       // still here the row is racing the deletion. Treat as a not-found.
       throw errors.blobNotFound();
     }

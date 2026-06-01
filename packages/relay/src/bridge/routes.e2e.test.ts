@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSurfaceRow } from "../test-helpers/seed.js";
+import { seedPaneRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
 import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
@@ -48,9 +48,9 @@ const minimalSchema = {
   },
 };
 
-// Seed an agent + surface + one human participant, returning the
+// Seed an agent + pane + one human participant, returning the
 // participant token (the bridge URL credential) and the agent id.
-async function seedSurface(opts?: {
+async function seedPane(opts?: {
   agentLastUsedAt?: Date;
   closed?: boolean;
   expired?: boolean;
@@ -61,7 +61,7 @@ async function seedSurface(opts?: {
 }): Promise<{
   token: string;
   agentId: string;
-  surfaceId: string;
+  paneId: string;
 }> {
   const apiKey = "pane_" + randomBytes(16).toString("hex");
   const agent = await prisma.agent.create({
@@ -72,7 +72,7 @@ async function seedSurface(opts?: {
       lastUsedAt: opts?.agentLastUsedAt ?? null,
     },
   });
-  const { surfaceId } = await seedSurfaceRow(prisma, {
+  const { paneId } = await seedPaneRow(prisma, {
     agentId: agent.id,
     templateSource: opts?.templateSource ?? "<html></html>",
     eventSchema: minimalSchema,
@@ -87,14 +87,14 @@ async function seedSurface(opts?: {
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
     data: {
-      surfaceId,
+      paneId,
       kind: "human",
       identityId: "human-1",
       tokenHash: hashKey(token),
       tokenPrefix: keyPrefix(token),
     },
   });
-  return { token, agentId: agent.id, surfaceId };
+  return { token, agentId: agent.id, paneId };
 }
 
 describe("bridge /presence", () => {
@@ -104,7 +104,7 @@ describe("bridge /presence", () => {
 
   it("returns the three presence fields as JSON", async () => {
     const usedAt = new Date(Date.now() - 5000);
-    const { token } = await seedSurface({ agentLastUsedAt: usedAt });
+    const { token } = await seedPane({ agentLastUsedAt: usedAt });
 
     const res = await app.fetch(new Request(`http://t/s/${token}/presence`));
     expect(res.status).toBe(200);
@@ -122,10 +122,10 @@ describe("bridge /presence", () => {
   });
 
   it("reports agentLastEventAt from the most recent agent-authored event", async () => {
-    const { token, surfaceId } = await seedSurface();
+    const { token, paneId } = await seedPane();
     await prisma.event.create({
       data: {
-        surfaceId,
+        paneId,
         authorKind: "agent",
         authorId: "agent-x",
         type: "review.commentAdded",
@@ -160,15 +160,15 @@ describe("bridge shell GET /s/:token", () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("returns 200 text/html for a valid open surface", async () => {
-    const { token } = await seedSurface();
+  it("returns 200 text/html for a valid open pane", async () => {
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
   });
 
   it("sets the framing/caching security headers", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
@@ -177,7 +177,7 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("sets a nonce-based CSP that confines scripts and connections", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("script-src 'nonce-");
@@ -186,7 +186,7 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("sets a permissions-policy that disables sensitive APIs", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const pp = res.headers.get("permissions-policy") ?? "";
     expect(pp).toContain("camera=()");
@@ -194,17 +194,17 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("inlines the pane-cfg JSON block carrying the participant token", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toContain('<script type="application/json" id="pane-cfg">');
     expect(body).toContain(token);
   });
 
-  // Phase C — the shell config carries the surface's input_data so the
+  // Phase C — the shell config carries the pane's input_data so the
   // runtime can expose it to the template as `window.pane.inputData`.
-  it("inlines the surface's input_data into the pane-cfg block", async () => {
-    const { token } = await seedSurface({
+  it("inlines the pane's input_data into the pane-cfg block", async () => {
+    const { token } = await seedPane({
       inputData: { prTitle: "Fix the bug", files: ["a.ts"] },
     });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
@@ -219,8 +219,8 @@ describe("bridge shell GET /s/:token", () => {
     expect(cfg.inputData).toEqual({ prTitle: "Fix the bug", files: ["a.ts"] });
   });
 
-  it("sets pane-cfg inputData to null when the surface has no input_data", async () => {
-    const { token } = await seedSurface();
+  it("sets pane-cfg inputData to null when the pane has no input_data", async () => {
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     const m = body.match(
@@ -233,7 +233,7 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("renders an iframe pointing at the content route", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toContain("<iframe");
@@ -243,10 +243,10 @@ describe("bridge shell GET /s/:token", () => {
   it("does NOT embed the system-pages top nav on capability-token shells", async () => {
     // /s/<token> is the share-link path — the caller is either anonymous
     // or a non-owner participant, neither of which has access to /home or
-    // /my-surfaces. Showing those tabs would just produce dead links. The
-    // owner-shell mount (/surfaces/:id, separate route) is where the nav
+    // /my-panes. Showing those tabs would just produce dead links. The
+    // owner-shell mount (/panes/:id, separate route) is where the nav
     // belongs; here it must stay absent.
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     // The CSS rules for .top-nav-* sit in the stylesheet either way (cheap
@@ -255,11 +255,11 @@ describe("bridge shell GET /s/:token", () => {
     expect(body).not.toContain('class="top-nav-bar"');
     expect(body).not.toContain('id="top-nav-signout"');
     expect(body).not.toContain('href="/home"');
-    expect(body).not.toContain('href="/my-surfaces"');
+    expect(body).not.toContain('href="/my-panes"');
   });
 
   it("renders the agent-supplied preamble in a context band above the iframe", async () => {
-    const { token } = await seedSurface({
+    const { token } = await seedPane({
       preamble: "Your CI bot wants you to approve a deploy to staging.",
     });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
@@ -277,14 +277,14 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("omits the preamble band entirely when the agent didn't supply one", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).not.toContain('class="preamble"');
   });
 
   it("HTML-escapes preamble content (XSS defence in the shell band)", async () => {
-    const { token } = await seedSurface({
+    const { token } = await seedPane({
       preamble: '<script>alert("x")</script> & "quotes"',
     });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
@@ -305,7 +305,7 @@ describe("bridge shell GET /s/:token", () => {
     // JS — without it, Chrome blocks the submission *before* the handler runs,
     // so `pane.emit(...)` never fires. The iframe has no `allow-same-origin`,
     // so forms still can't reach a real origin even with this flag.
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     const m = body.match(/<iframe[^>]*\ssandbox="([^"]+)"/);
@@ -316,31 +316,31 @@ describe("bridge shell GET /s/:token", () => {
     expect(tokens).not.toContain("allow-same-origin");
   });
 
-  it("renders the closed banner and no iframe for a closed surface", async () => {
-    const { token } = await seedSurface({ closed: true });
+  it("renders the closed banner and no iframe for a closed pane", async () => {
+    const { token } = await seedPane({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('class="closed"');
-    expect(body).toContain("This surface is closed");
+    expect(body).toContain("This pane is closed");
     expect(body).not.toContain("<iframe");
   });
 
-  it("renders the surface title into the tab <title>", async () => {
-    const { token } = await seedSurface({ title: "Quarterly Review · Pane" });
+  it("renders the pane title into the tab <title>", async () => {
+    const { token } = await seedPane({ title: "Quarterly Review · Pane" });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toContain("<title>Quarterly Review · Pane</title>");
     // The old hardcoded text must not leak back in.
-    expect(body).not.toContain("<title>Pane Surface</title>");
-    expect(body).not.toContain("<title>Pane — Surface</title>");
+    expect(body).not.toContain("<title>Pane Pane</title>");
+    expect(body).not.toContain("<title>Pane — Pane</title>");
   });
 
   it("HTML-escapes the title so an agent-supplied <script> cannot break out", async () => {
-    // The title field is filtered for control chars at surface create, but
+    // The title field is filtered for control chars at pane create, but
     // `<script>alert(1)</script>` is otherwise valid text. It must never reach
     // the HTML stream unescaped.
-    const { token } = await seedSurface({ title: "<script>alert(1)</script>" });
+    const { token } = await seedPane({ title: "<script>alert(1)</script>" });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).not.toContain("<script>alert(1)</script>");
@@ -350,7 +350,7 @@ describe("bridge shell GET /s/:token", () => {
   });
 
   it("includes a relay-controlled favicon link in the live shell", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toMatch(
@@ -358,8 +358,8 @@ describe("bridge shell GET /s/:token", () => {
     );
   });
 
-  it("includes the same favicon link in the closed-surface shell", async () => {
-    const { token } = await seedSurface({ closed: true });
+  it("includes the same favicon link in the closed-pane shell", async () => {
+    const { token } = await seedPane({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}`));
     const body = await res.text();
     expect(body).toMatch(
@@ -386,15 +386,15 @@ describe("bridge content GET /s/:token/content", () => {
 
   const MARKER = '<div id="art">MARKER</div>';
 
-  it("returns 200 text/html for a valid open surface", async () => {
-    const { token } = await seedSurface({ templateSource: MARKER });
+  it("returns 200 text/html for a valid open pane", async () => {
+    const { token } = await seedPane({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
   });
 
   it("sets a sandboxed CSP for the template frame", async () => {
-    const { token } = await seedSurface({ templateSource: MARKER });
+    const { token } = await seedPane({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("default-src 'none'");
@@ -403,7 +403,7 @@ describe("bridge content GET /s/:token/content", () => {
   });
 
   it("embeds the template body and the pane runtime", async () => {
-    const { token } = await seedSurface({ templateSource: MARKER });
+    const { token } = await seedPane({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const body = await res.text();
     expect(body).toContain(MARKER);
@@ -414,19 +414,19 @@ describe("bridge content GET /s/:token/content", () => {
   });
 
   it("does not set X-Frame-Options (unlike the shell route)", async () => {
-    const { token } = await seedSurface({ templateSource: MARKER });
+    const { token } = await seedPane({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.headers.get("x-frame-options")).toBeNull();
   });
 
-  it("returns 410 for a closed surface", async () => {
-    const { token } = await seedSurface({ closed: true });
+  it("returns 410 for a closed pane", async () => {
+    const { token } = await seedPane({ closed: true });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(410);
   });
 
-  it("returns 410 for an expired surface", async () => {
-    const { token } = await seedSurface({ expired: true });
+  it("returns 410 for an expired pane", async () => {
+    const { token } = await seedPane({ expired: true });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     expect(res.status).toBe(410);
   });
@@ -439,7 +439,7 @@ describe("bridge content GET /s/:token/content", () => {
   });
 
   it("injects the default artifact stylesheet into <head> by default", async () => {
-    const { token } = await seedSurface({ templateSource: MARKER });
+    const { token } = await seedPane({ templateSource: MARKER });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const body = await res.text();
     // A stable token unique to default-styles.ts — picks up if injection ran.
@@ -452,7 +452,7 @@ describe("bridge content GET /s/:token/content", () => {
   });
 
   it("skips default-style injection when the artifact opts out via data-pane-bare", async () => {
-    const { token } = await seedSurface({
+    const { token } = await seedPane({
       templateSource: "<html data-pane-bare><body>raw</body></html>",
     });
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
@@ -466,7 +466,7 @@ describe("bridge content GET /s/:token/content", () => {
     // the author wins. We assert the rule is present in the rendered HTML;
     // the actual cascade is a browser concern but document-order is the
     // contract we expose.
-    const { token } = await seedSurface({
+    const { token } = await seedPane({
       templateSource:
         "<style>button { background: red; }</style><button>x</button>",
     });
@@ -586,13 +586,13 @@ describe("bridge human-facing error pages", () => {
       expect(csp).toContain("default-src 'none'");
     });
 
-    it("renders the shell with its inline closed banner for an expired surface (200, not 410)", async () => {
-      // For the /:token shell route an expired/closed surface doesn't throw —
+    it("renders the shell with its inline closed banner for an expired pane (200, not 410)", async () => {
+      // For the /:token shell route an expired/closed pane doesn't throw —
       // loadByToken succeeds, isClosed is computed, and the shell renders a
       // banner instead of the iframe. The /content route below is where the
       // gone() path lives; the issue's acceptance criterion notes this
       // asymmetry is fine as long as the two routes stay coherent.
-      const { token } = await seedSurface({ expired: true });
+      const { token } = await seedPane({ expired: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}`, {
           headers: { Accept: HTML_ACCEPT },
@@ -600,13 +600,13 @@ describe("bridge human-facing error pages", () => {
       );
       expect(res.status).toBe(200);
       const body = await res.text();
-      expect(body).toContain("This surface is closed");
+      expect(body).toContain("This pane is closed");
     });
   });
 
   describe("GET /s/:token/content", () => {
-    it("returns an HTML 410 page for a closed surface when Accept prefers HTML", async () => {
-      const { token } = await seedSurface({ closed: true });
+    it("returns an HTML 410 page for a closed pane when Accept prefers HTML", async () => {
+      const { token } = await seedPane({ closed: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {
           headers: { Accept: HTML_ACCEPT },
@@ -619,8 +619,8 @@ describe("bridge human-facing error pages", () => {
       expect(body).not.toContain(token);
     });
 
-    it("returns an HTML 410 page for an expired surface when Accept prefers HTML", async () => {
-      const { token } = await seedSurface({ expired: true });
+    it("returns an HTML 410 page for an expired pane when Accept prefers HTML", async () => {
+      const { token } = await seedPane({ expired: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {
           headers: { Accept: HTML_ACCEPT },
@@ -643,8 +643,8 @@ describe("bridge human-facing error pages", () => {
       expect(await res.text()).toContain("This pane link");
     });
 
-    it("returns the JSON envelope for a closed surface when Accept is application/json", async () => {
-      const { token } = await seedSurface({ closed: true });
+    it("returns the JSON envelope for a closed pane when Accept is application/json", async () => {
+      const { token } = await seedPane({ closed: true });
       const res = await app.fetch(
         new Request(`http://t/s/${token}/content`, {
           headers: { Accept: "application/json" },

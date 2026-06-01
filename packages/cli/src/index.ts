@@ -24,8 +24,14 @@ function failArgvError(e: ArgvError): never {
   process.stderr.write(JSON.stringify({ error }) + "\n");
   process.exit(1);
 }
-import { runSurface, surfaceHelp } from "./commands/surface.js";
-import { runArtifact, artifactHelp } from "./commands/template.js";
+import { runCreate, createHelp } from "./commands/create.js";
+import { runList, listHelp } from "./commands/list.js";
+import { runState, stateHelp } from "./commands/state.js";
+import { runSend, sendHelp } from "./commands/send.js";
+import { runWatch, watchHelp } from "./commands/watch.js";
+import { runDelete, deleteHelp } from "./commands/delete.js";
+import { runParticipant, participantHelp } from "./commands/participant.js";
+import { runTemplate, artifactHelp } from "./commands/template.js";
 import { runAgent, agentHelp } from "./commands/agent.js";
 import { runKey, keyHelp } from "./commands/key.js";
 import { runTaste, tasteHelp } from "./commands/taste.js";
@@ -41,12 +47,20 @@ import { failUpgradeRequired } from "./output.js";
 const ROOT_HELP = `pane — a round-trip UI channel between agents and humans
 
 Usage:
-  pane <noun> <verb> [options]
+  pane <command> [options]
 
-Nouns:
-  surface           Open / observe / send to / close surfaces
-                    (create | list | show | send | watch | delete |
-                     participant <list|new|revoke>).
+Pane commands (operate on the core noun — a live UI channel):
+  create            Create a pane (POST /v1/panes). Prints pane_id, urls,
+                    tokens, expires_at.
+  list              Enumerate YOUR agent's panes.
+  show <id>         Non-blocking snapshot: pane metadata + event log.
+  send <id>         Emit an agent event into a pane.
+  watch <id>        Stream a pane's events as JSON-lines on stdout.
+  delete <id>       Close/delete a pane (DELETE /v1/panes/:id).
+  participant       Manage participant URLs on an existing pane
+    <list|new|revoke> (list | mint a fresh URL | revoke one URL).
+
+Other noun groups:
   template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
   key               YOUR agent's API key (list | revoke).
@@ -56,17 +70,17 @@ Nouns:
                     generating a pane template.
   feedback          One-shot feedback to the relay operator
                     (create | list) — bug reports, feature requests, notes.
-  attachment              Binary attachments (upload | download | show | list |
-                    delete | token <mint|revoke|list>). Blobs are scoped to
-                    an agent, a surface, or an template, and can be referenced
-                    from event payloads + input_data via
+  attachment        Binary attachments (upload | download | show | list |
+                    delete | token <mint|revoke|list>). Attachments are
+                    scoped to an agent, a pane, or a template, and can be
+                    referenced from event payloads + input_data via
                     \`format: pane-attachment-id\`.
   agent             Agent identity on this machine (register | logout).
   config            CLI config inspection (show).
   skill             The relay's SKILL.md (show | version) — auto-updating;
                     no API key required.
 
-Run \`pane <noun> --help\` for that noun's verbs.
+Run \`pane <command> --help\` for command-specific options.
 
 Config:
   PANE_URL          Relay base URL.        Override: --url <url>
@@ -89,7 +103,7 @@ Output: stdout is machine-readable JSON; errors go to stderr as
 //
 // `version` is deliberately NOT here: the top-level `-v` / `--version` is
 // handled from rawArgv[0] before parseArgs runs, so it never needs to be a
-// boolean flag — and keeping it out lets `pane surface create --version <n>` /
+// boolean flag — and keeping it out lets `pane create --version <n>` /
 // `pane template version` consume a value as a normal value-flag.
 const BOOLEAN_FLAGS = new Set([
   "json",
@@ -133,7 +147,15 @@ async function main(): Promise<void> {
   }
 
   const helps: Record<string, string> = {
-    surface: surfaceHelp,
+    // Top-level pane verbs (formerly `pane surface <verb>` — see #163 follow-up).
+    create: createHelp,
+    list: listHelp,
+    show: stateHelp,
+    send: sendHelp,
+    watch: watchHelp,
+    delete: deleteHelp,
+    participant: participantHelp,
+    // Other noun groups.
     template: artifactHelp,
     key: keyHelp,
     taste: tasteHelp,
@@ -158,7 +180,7 @@ async function main(): Promise<void> {
   }
 
   // `pane <noun> --help` with no verb prints the noun-level help. A verb-level
-  // --help is the responsibility of each runner (e.g. runSurface dispatches to
+  // --help is the responsibility of each runner (e.g. runPane dispatches to
   // the verb runner which reads its own xxxHelp). This pre-empt only fires
   // when --help is the FIRST positional-equivalent — i.e. no verb given.
   if (args.bools.has("help") && args.positionals.length === 0) {
@@ -167,11 +189,31 @@ async function main(): Promise<void> {
   }
 
   switch (noun) {
-    case "surface":
-      await runSurface(args);
+    // Top-level pane verbs.
+    case "create":
+      await runCreate(args);
       break;
+    case "list":
+      await runList(args);
+      break;
+    case "show":
+      await runState(args);
+      break;
+    case "send":
+      await runSend(args);
+      break;
+    case "watch":
+      await runWatch(args);
+      break;
+    case "delete":
+      await runDelete(args);
+      break;
+    case "participant":
+      await runParticipant(args);
+      break;
+    // Other noun groups.
     case "template":
-      await runArtifact(args);
+      await runTemplate(args);
       break;
     case "key":
       await runKey(args);

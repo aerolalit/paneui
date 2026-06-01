@@ -25,7 +25,7 @@ interface FeedbackRow {
   id: string;
   type: string;
   message: string;
-  surfaceId: string | null;
+  paneId: string | null;
   createdAt: Date;
 }
 
@@ -34,7 +34,7 @@ function serialize(row: FeedbackRow) {
     id: row.id,
     type: row.type,
     message: row.message,
-    surface_id: row.surfaceId,
+    pane_id: row.paneId,
     created_at: row.createdAt.toISOString(),
   };
 }
@@ -52,17 +52,17 @@ feedback.post("/", async (c) => {
       "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
     );
   }
-  const { type, message, surface_id } = parsed.data;
+  const { type, message, pane_id } = parsed.data;
 
-  if (surface_id !== undefined) {
-    const surface = await prisma.surface.findUnique({
-      where: { id: surface_id },
+  if (pane_id !== undefined) {
+    const pane = await prisma.pane.findUnique({
+      where: { id: pane_id },
       select: { agentId: true },
     });
-    // #283 — any same-human agent may attach feedback to a surface
+    // #283 — any same-human agent may attach feedback to a pane
     // owned by a sibling agent.
     const scope = await agentScope(prisma, me);
-    if (!surface || !scope.has(surface.agentId)) throw errors.notFound();
+    if (!pane || !scope.has(pane.agentId)) throw errors.notFound();
   }
 
   const row = await prisma.feedback.create({
@@ -70,7 +70,7 @@ feedback.post("/", async (c) => {
       agentId: me.id,
       type,
       message,
-      surfaceId: surface_id ?? null,
+      paneId: pane_id ?? null,
     },
     select: { id: true, type: true, createdAt: true },
   });

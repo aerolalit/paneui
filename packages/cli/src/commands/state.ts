@@ -1,4 +1,4 @@
-// `pane surface show <id>` — snapshot of a surface, optionally long-polled.
+// `pane show <id>` — snapshot of a pane, optionally long-polled.
 
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
@@ -8,19 +8,19 @@ import { printJson, fail, failFromError } from "../output.js";
 const KNOWN_FLAGS = ["since", "wait"];
 const KNOWN_BOOLS: string[] = [];
 
-export const stateHelp = `pane surface show — show a surface's metadata and event log
+export const stateHelp = `pane show — show a pane's metadata and event log
 
 Usage:
-  pane surface show <surface-id> [options]
+  pane show <pane-id> [options]
 
-By default non-blocking: fetches surface metadata (GET /v1/surfaces/:id) plus
-the event log (GET /v1/surfaces/:id/events) and prints them together.
+By default non-blocking: fetches pane metadata (GET /v1/panes/:id) plus
+the event log (GET /v1/panes/:id/events) and prints them together.
 
 With --wait, blocks at the relay for up to <secs> if no new events are
 available since the cursor — returns as soon as something lands. Use this
 for headless polling agents that can't keep a WebSocket open (cron,
 FaaS, slow links): poll, then re-poll using next_cursor as --since on the
-next call. Compared to 'pane surface watch', it's higher latency per
+next call. Compared to 'pane watch', it's higher latency per
 round-trip but no long-lived connection.
 
 Options:
@@ -39,10 +39,10 @@ Output (stdout, JSON):
   { meta, events, next_cursor }`;
 
 export async function runState(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface show");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane show");
 
-  const surfaceId = args.positionals[0];
-  if (!surfaceId) fail("missing <surface-id>", "invalid_args");
+  const paneId = args.positionals[0];
+  if (!paneId) fail("missing <pane-id>", "invalid_args");
 
   const since = args.flags.get("since") ?? null;
 
@@ -62,8 +62,8 @@ export async function runState(args: ParsedArgs): Promise<void> {
 
   const client = makeClient(args);
   try {
-    const meta = await client.getSession(surfaceId!);
-    const page = await client.getEvents(surfaceId!, {
+    const meta = await client.getPane(paneId!);
+    const page = await client.getEvents(paneId!, {
       since,
       ...(waitSeconds !== undefined ? { waitSeconds } : {}),
     });

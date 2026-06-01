@@ -124,7 +124,7 @@ describe("PaneClient typed operations", () => {
         body: JSON.stringify({ error: { code: "not_found", message: "nope" } }),
       }),
     );
-    await expect(c.getSession("sur_x")).rejects.toMatchObject({
+    await expect(c.getPane("pan_x")).rejects.toMatchObject({
       name: "PaneApiError",
       status: 404,
       code: "not_found",
@@ -147,7 +147,7 @@ describe("PaneClient typed operations", () => {
         }),
       }),
     );
-    const err = await c.getSession("sur_x").catch((e: unknown) => e);
+    const err = await c.getPane("pan_x").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PaneApiError);
     const e = err as PaneApiError;
     expect(e.code).toBe("rate_limited");
@@ -165,7 +165,7 @@ describe("PaneClient typed operations", () => {
       }),
     );
     const err = (await c
-      .getSession("sur_x")
+      .getPane("pan_x")
       .catch((e: unknown) => e)) as PaneApiError;
     expect(err.hint).toBeUndefined();
     expect(err.retryable).toBeUndefined();
@@ -174,8 +174,8 @@ describe("PaneClient typed operations", () => {
 
   it("throws invalid_response when a 2xx body is not an object", async () => {
     const c = clientWith(async () => res({ status: 200, body: "null" }));
-    await expect(c.getSession("sur_x")).rejects.toBeInstanceOf(PaneApiError);
-    await expect(c.getSession("sur_x")).rejects.toMatchObject({
+    await expect(c.getPane("pan_x")).rejects.toBeInstanceOf(PaneApiError);
+    await expect(c.getPane("pan_x")).rejects.toMatchObject({
       code: "invalid_response",
     });
   });
@@ -184,11 +184,11 @@ describe("PaneClient typed operations", () => {
     const c = clientWith(async () =>
       res({
         status: 200,
-        body: JSON.stringify({ surface_id: "sur_x", status: "open" }),
+        body: JSON.stringify({ pane_id: "pan_x", status: "open" }),
       }),
     );
-    const s = await c.getSession("sur_x");
-    expect(s.surface_id).toBe("sur_x");
+    const s = await c.getPane("pan_x");
+    expect(s.pane_id).toBe("pan_x");
   });
 });
 
@@ -382,7 +382,7 @@ describe("PaneClient template operations", () => {
   });
 });
 
-describe("PaneClient.createSession", () => {
+describe("PaneClient.createPane", () => {
   // Body-capturing helper, scoped to this describe — the key+delete describe
   // below only captures method/url and would miss the body-passthrough
   // contract this block exists to pin.
@@ -399,44 +399,44 @@ describe("PaneClient.createSession", () => {
     return { c, seen: () => seen! };
   }
 
-  it("POSTs /v1/surfaces with the title field on the body", async () => {
-    // Regression for the docker-smoke finding on PR #166: createSession built
+  it("POSTs /v1/panes with the title field on the body", async () => {
+    // Regression for the docker-smoke finding on PR #166: createPane built
     // its POST body from an explicit allowlist (template, input_data,
     // participants, ttl, metadata, callback) and silently dropped `title`.
-    // Inline-form surfaces then failed at the relay with "title is required"
+    // Inline-form panes then failed at the relay with "title is required"
     // because the relay only falls back to Template.name on the reference
     // form, and the inline form never has a name. Pin `title` into the body
-    // so `pane surface create --template <inline> --title <t>` stops 4xx-ing.
+    // so `pane create --template <inline> --title <t>` stops 4xx-ing.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        surface_id: "sur_1",
+        pane_id: "pan_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
       }),
     );
-    await c.createSession({
+    await c.createPane({
       template: { type: "html-inline", source: "<html></html>" },
       title: "Quick poll",
     });
     expect(seen().method).toBe("POST");
-    expect(seen().url).toBe("https://relay.test/v1/surfaces");
+    expect(seen().url).toBe("https://relay.test/v1/panes");
     expect(seen().body).toMatchObject({ title: "Quick poll" });
   });
 
   it("omits title from the body when the caller didn't pass one", async () => {
-    // Reference-form surfaces (--template-id) are allowed to omit title;
+    // Reference-form panes (--template-id) are allowed to omit title;
     // the relay falls back to Template.name. We must not silently inject a
     // string here — undefined stays undefined on the wire.
     const { c, seen } = capturingClient(
       JSON.stringify({
-        surface_id: "sur_1",
+        pane_id: "pan_1",
         urls: { humans: ["https://r/s/abc"] },
         tokens: { agent: "t_agent", humans: ["t_h"] },
         expires_at: "2026-01-01T01:00:00.000Z",
       }),
     );
-    await c.createSession({
+    await c.createPane({
       template: { id: "pr-review" },
     });
     expect(seen().body).not.toHaveProperty("title");
@@ -495,14 +495,14 @@ describe("PaneClient key + surface-delete operations", () => {
     });
   });
 
-  it("deleteSession DELETEs /v1/surfaces/:id and handles a 204 without throwing", async () => {
+  it("deletePane DELETEs /v1/panes/:id and handles a 204 without throwing", async () => {
     const { c, seen } = capturingClient({ status: 204 });
-    await expect(c.deleteSession("sur_1")).resolves.toBeUndefined();
+    await expect(c.deletePane("pan_1")).resolves.toBeUndefined();
     expect(seen().method).toBe("DELETE");
-    expect(seen().url).toBe("https://relay.test/v1/surfaces/sur_1");
+    expect(seen().url).toBe("https://relay.test/v1/panes/pan_1");
   });
 
-  it("deleteSession throws PaneApiError on a 404", async () => {
+  it("deletePane throws PaneApiError on a 404", async () => {
     const c = clientWith(async () =>
       res({
         status: 404,
@@ -510,7 +510,7 @@ describe("PaneClient key + surface-delete operations", () => {
         body: JSON.stringify({ error: { code: "not_found" } }),
       }),
     );
-    await expect(c.deleteSession("sur_missing")).rejects.toMatchObject({
+    await expect(c.deletePane("pan_missing")).rejects.toMatchObject({
       name: "PaneApiError",
       status: 404,
       code: "not_found",
@@ -549,7 +549,7 @@ describe("PaneClient attachment operations", () => {
       width: 640,
       height: 480,
       status: "ready",
-      surface_id: null,
+      pane_id: null,
       template_id: null,
       created_at: "2026-05-21T10:00:00.000Z",
       confirmed_at: "2026-05-21T10:00:01.000Z",

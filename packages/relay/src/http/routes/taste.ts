@@ -3,7 +3,7 @@
 // A pane agent generates HTML templates for humans, and humans give the
 // agent feedback on how those templates should look ("denser", "no rounded
 // corners", "use a dark header"). Taste notes are where that feedback
-// accumulates between surfaces: the agent reads the attachment before generating
+// accumulates between panes: the agent reads the attachment before generating
 // an template and rewrites it when the human gives new presentation
 // feedback. Keyed by the calling agent's API key. Humans don't yet exist as
 // a first-class identity in pane (v1), so per-agent is the closest available

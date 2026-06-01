@@ -48,7 +48,7 @@ describe("cli-version middleware (wired through buildApp)", () => {
     // Hit an endpoint that requires auth — the middleware MUST fire before
     // the auth check, so a missing/invalid Authorization is irrelevant here.
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: { "x-pane-cli-version": "0.0.4" },
       }),

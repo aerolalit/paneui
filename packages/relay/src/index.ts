@@ -29,37 +29,35 @@ import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
 
-// One TTL sweep pass: collect the expired surface ids first, then deleteMany,
-// then drop each surface's compiled-validator cache entry. Two queries (no
-// per-surface round-trip), so still O(1) DB calls regardless of batch size.
+// One TTL sweep pass: collect the expired pane ids first, then deleteMany,
+// then drop each pane's compiled-validator cache entry. Two queries (no
+// per-pane round-trip), so still O(1) DB calls regardless of batch size.
 // Takes the Prisma client as a parameter — no module-level singleton — so the
 // integration test can run it against its own isolated database.
 //
-// Also cleans up anonymous template orphans. Inline-form surfaces transparently
-// create a Template row with name=null/slug=null (see surfaces.ts:404). When
-// the only surface(s) using that template expire and get swept, the template
+// Also cleans up anonymous template orphans. Inline-form panes transparently
+// create a Template row with name=null/slug=null (see panes.ts:404). When
+// the only pane(s) using that template expire and get swept, the template
 // itself is left behind forever — every smoke test, every one-off pane
 // session leaves a permanent agent-owned row. Hard-deleting an anonymous
-// template whose last referencing surface just went away cascades through
+// template whose last referencing pane just went away cascades through
 // template_versions automatically (onDelete: Cascade on the FK).
 //
-// We only touch templates that BOTH (a) are referenced by surfaces being
-// swept in this tick AND (b) end up with zero remaining surface references
+// We only touch templates that BOTH (a) are referenced by panes being
+// swept in this tick AND (b) end up with zero remaining pane references
 // AND (c) have null name + slug (the anonymity marker). Named templates and
-// templates still referenced by an active surface are left alone.
-export async function sweepExpiredSurfaces(
-  prisma: PrismaClient,
-): Promise<number> {
+// templates still referenced by an active pane are left alone.
+export async function sweepExpiredPanes(prisma: PrismaClient): Promise<number> {
   const now = new Date();
-  const expired = await prisma.surface.findMany({
+  const expired = await prisma.pane.findMany({
     where: { expiresAt: { lt: now } },
     select: { id: true, templateVersionId: true },
   });
   if (expired.length === 0) return 0;
   const ids = expired.map((s) => s.id);
 
-  // The template ids the expiring surfaces point at (via their pinned version).
-  // We need these before the surface delete so we can re-check orphan status
+  // The template ids the expiring panes point at (via their pinned version).
+  // We need these before the pane delete so we can re-check orphan status
   // after the delete commits.
   const candidateVersionIds = Array.from(
     new Set(expired.map((s) => s.templateVersionId)),
@@ -72,19 +70,19 @@ export async function sweepExpiredSurfaces(
     new Set(candidateVersions.map((v) => v.templateId)),
   );
 
-  const r = await prisma.surface.deleteMany({ where: { id: { in: ids } } });
+  const r = await prisma.pane.deleteMany({ where: { id: { in: ids } } });
   for (const id of ids) invalidateSchemaCache(id);
 
-  // After the surface delete, find anonymous templates whose every version
-  // is now surface-less. `versions.none.surfaces.some` reads as "no version
-  // has any surface" — exactly the orphan predicate.
+  // After the pane delete, find anonymous templates whose every version
+  // is now pane-less. `versions.none.panes.some` reads as "no version
+  // has any pane" — exactly the orphan predicate.
   if (candidateTemplateIds.length > 0) {
     const orphans = await prisma.template.findMany({
       where: {
         id: { in: candidateTemplateIds },
         name: null,
         slug: null,
-        versions: { none: { surfaces: { some: {} } } },
+        versions: { none: { panes: { some: {} } } },
       },
       select: { id: true },
     });
@@ -107,7 +105,7 @@ function startTtlSweeper(config: Config, prisma: PrismaClient): void {
   const jitter = () =>
     Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
   const tick = (): void => {
-    void sweepExpiredSurfaces(prisma)
+    void sweepExpiredPanes(prisma)
       .then((count) => {
         if (count > 0) log.debug("ttl swept", { count });
       })
@@ -126,7 +124,7 @@ function startTtlSweeper(config: Config, prisma: PrismaClient): void {
   log.info("ttl sweeper started", { intervalSeconds: intervalSec });
 }
 
-// #293 — records tombstone sweeper. Hard-deletes soft-deleted SurfaceRecord
+// #293 — records tombstone sweeper. Hard-deletes soft-deleted PaneRecord
 // rows that have been observable as tombstones for at least
 // RECORD_TOMBSTONE_TTL_SECONDS. Mirrors startTtlSweeper structurally: same
 // recursive-setTimeout + jitter pattern so multiple replicas don't lock-step.
@@ -313,7 +311,7 @@ async function main(): Promise<void> {
 
 // Only boot the relay when this module is the process entry point. When it is
 // imported instead (e.g. the sweeper integration test importing
-// `sweepExpiredSurfaces`), `main()` must not run — otherwise it would bind the
+// `sweepExpiredPanes`), `main()` must not run — otherwise it would bind the
 // HTTP port and start the TTL sweeper as an import side effect.
 const isEntryPoint =
   process.argv[1] !== undefined &&

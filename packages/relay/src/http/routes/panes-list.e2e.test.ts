@@ -1,4 +1,4 @@
-// End-to-end tests for GET /v1/surfaces — the list endpoint added in issue
+// End-to-end tests for GET /v1/panes — the list endpoint added in issue
 // #161. Focus areas: agent scoping (no cross-agent leakage), the effective-
 // status projection (expired rows present as "closed" even if the column
 // still says "open"), pagination cursor stability, template_id filter, and
@@ -65,12 +65,12 @@ function bearer(apiKey: string): Record<string, string> {
   };
 }
 
-async function createSession(
+async function createPane(
   apiKey: string,
   opts: { title?: string; metadata?: unknown; callback?: unknown } = {},
-): Promise<{ surface_id: string }> {
+): Promise<{ pane_id: string }> {
   const res = await app.fetch(
-    new Request("http://t/v1/surfaces", {
+    new Request("http://t/v1/panes", {
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify({
@@ -86,11 +86,11 @@ async function createSession(
     }),
   );
   expect(res.status).toBe(201);
-  return (await res.json()) as { surface_id: string };
+  return (await res.json()) as { pane_id: string };
 }
 
 interface ListResponseItem {
-  surface_id: string;
+  pane_id: string;
   title: string;
   status: "open" | "closed";
   template_id: string | null;
@@ -114,40 +114,40 @@ async function list(
     Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)])),
   ).toString();
   const res = await app.fetch(
-    new Request(`http://t/v1/surfaces${qs ? "?" + qs : ""}`, {
+    new Request(`http://t/v1/panes${qs ? "?" + qs : ""}`, {
       headers: bearer(apiKey),
     }),
   );
   return { status: res.status, body: (await res.json()) as ListResponse };
 }
 
-describe("GET /v1/surfaces — list", () => {
+describe("GET /v1/panes — list", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
   it("requires bearer auth", async () => {
-    const res = await app.fetch(new Request("http://t/v1/surfaces"));
+    const res = await app.fetch(new Request("http://t/v1/panes"));
     expect(res.status).toBe(401);
   });
 
-  it("returns the caller's surfaces only (cross-agent scoping)", async () => {
+  it("returns the caller's panes only (cross-agent scoping)", async () => {
     const a = await seedAgent();
     const b = await seedAgent();
-    const s1 = await createSession(a.apiKey, { title: "A1" });
-    await createSession(a.apiKey, { title: "A2" });
-    await createSession(b.apiKey, { title: "B1" });
+    const s1 = await createPane(a.apiKey, { title: "A1" });
+    await createPane(a.apiKey, { title: "A2" });
+    await createPane(b.apiKey, { title: "B1" });
 
     const { status, body } = await list(a.apiKey);
     expect(status).toBe(200);
     expect(body.items).toHaveLength(2);
     expect(body.items.every((s) => s.title.startsWith("A"))).toBe(true);
-    expect(body.items.some((s) => s.surface_id === s1.surface_id)).toBe(true);
+    expect(body.items.some((s) => s.pane_id === s1.pane_id)).toBe(true);
   });
 
   it("does NOT leak secrets — no token plaintext, callback URL, metadata or input_data", async () => {
     const a = await seedAgent();
-    await createSession(a.apiKey, {
+    await createPane(a.apiKey, {
       title: "Has secrets",
       metadata: { secret_label: "do-not-leak" },
       callback: {
@@ -176,8 +176,8 @@ describe("GET /v1/surfaces — list", () => {
     ).toBeUndefined();
 
     // The list MUST NOT inline the participants array — agents with many
-    // surfaces would pay the bandwidth on every call. The full array lives
-    // at GET /v1/surfaces/:id/participants. Verify by checking that no
+    // panes would pay the bandwidth on every call. The full array lives
+    // at GET /v1/panes/:id/participants. Verify by checking that no
     // string field is long enough to be a participant token plaintext
     // (49 chars), and that no `participants` array leaked through.
     expect(
@@ -189,11 +189,11 @@ describe("GET /v1/surfaces — list", () => {
 
   it("exposes the active human count but not the full participant array", async () => {
     const a = await seedAgent();
-    await createSession(a.apiKey);
+    await createPane(a.apiKey);
 
     const { body } = await list(a.apiKey);
     const item = body.items[0]!;
-    // surface-create mints 1 default human participant; the agent
+    // pane-create mints 1 default human participant; the agent
     // participant doesn't count for the human cap.
     expect(item.active_human_participants).toBe(1);
     // No full participant array on the list response.
@@ -204,15 +204,15 @@ describe("GET /v1/surfaces — list", () => {
 
   it("active_human_participants drops when a human is revoked", async () => {
     const a = await seedAgent();
-    const { surface_id } = await createSession(a.apiKey);
+    const { pane_id } = await createPane(a.apiKey);
 
     // The default human's id, fetched directly from the DB.
     const p = await prisma.participant.findFirst({
-      where: { surfaceId: surface_id, kind: "human" },
+      where: { paneId: pane_id, kind: "human" },
     });
     expect(p).not.toBeNull();
     const revokeRes = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface_id}/participants/${p!.id}`, {
+      new Request(`http://t/v1/panes/${pane_id}/participants/${p!.id}`, {
         method: "DELETE",
         headers: bearer(a.apiKey),
       }),
@@ -220,32 +220,30 @@ describe("GET /v1/surfaces — list", () => {
     expect(revokeRes.status).toBe(204);
 
     const { body } = await list(a.apiKey);
-    const item = body.items.find((s) => s.surface_id === surface_id)!;
+    const item = body.items.find((s) => s.pane_id === pane_id)!;
     expect(item.active_human_participants).toBe(0);
   });
 
-  it("default status=open hides expired surfaces; status=closed shows them", async () => {
+  it("default status=open hides expired panes; status=closed shows them", async () => {
     const a = await seedAgent();
-    const open = await createSession(a.apiKey, { title: "Open" });
-    const expired = await createSession(a.apiKey, { title: "Expired" });
+    const open = await createPane(a.apiKey, { title: "Open" });
+    const expired = await createPane(a.apiKey, { title: "Expired" });
     // Backdate expiresAt to past — effective-closed even though column says open.
-    await prisma.surface.update({
-      where: { id: expired.surface_id },
+    await prisma.pane.update({
+      where: { id: expired.pane_id },
       data: { expiresAt: new Date(Date.now() - 60_000) },
     });
 
     const openOnly = (await list(a.apiKey)).body;
-    expect(openOnly.items.map((s) => s.surface_id)).toEqual([open.surface_id]);
+    expect(openOnly.items.map((s) => s.pane_id)).toEqual([open.pane_id]);
 
     const closedOnly = (await list(a.apiKey, { status: "closed" })).body;
-    expect(closedOnly.items.map((s) => s.surface_id)).toEqual([
-      expired.surface_id,
-    ]);
+    expect(closedOnly.items.map((s) => s.pane_id)).toEqual([expired.pane_id]);
     expect(closedOnly.items[0]!.status).toBe("closed");
 
     const all = (await list(a.apiKey, { status: "all" })).body;
-    expect(all.items.map((s) => s.surface_id).sort()).toEqual(
-      [open.surface_id, expired.surface_id].sort(),
+    expect(all.items.map((s) => s.pane_id).sort()).toEqual(
+      [open.pane_id, expired.pane_id].sort(),
     );
   });
 
@@ -259,9 +257,9 @@ describe("GET /v1/surfaces — list", () => {
 
   it("paginates with next_cursor (round-trips opaque cursor)", async () => {
     const a = await seedAgent();
-    // Create 5 surfaces sequentially so createdAt orderings are stable.
+    // Create 5 panes sequentially so createdAt orderings are stable.
     for (let i = 0; i < 5; i++) {
-      await createSession(a.apiKey, { title: `S${i}` });
+      await createPane(a.apiKey, { title: `S${i}` });
     }
 
     const page1 = (await list(a.apiKey, { limit: 2 })).body;
@@ -282,30 +280,30 @@ describe("GET /v1/surfaces — list", () => {
 
     // No row appears twice across the three pages.
     const ids = [
-      ...page1.items.map((s) => s.surface_id),
-      ...page2.items.map((s) => s.surface_id),
-      ...page3.items.map((s) => s.surface_id),
+      ...page1.items.map((s) => s.pane_id),
+      ...page2.items.map((s) => s.pane_id),
+      ...page3.items.map((s) => s.pane_id),
     ];
     expect(new Set(ids).size).toBe(5);
   });
 
   it("filters by template_id", async () => {
     const a = await seedAgent();
-    // First surface uses an inline template — its head id is anonymous.
-    const inlineSession = await createSession(a.apiKey, { title: "Inline" });
+    // First pane uses an inline template — its head id is anonymous.
+    const inlinePane = await createPane(a.apiKey, { title: "Inline" });
     // Look up the inline template id so the filter probe is concrete.
-    const inlineRow = await prisma.surface.findUnique({
-      where: { id: inlineSession.surface_id },
+    const inlineRow = await prisma.pane.findUnique({
+      where: { id: inlinePane.pane_id },
       include: { templateVersion: true },
     });
     const inlineArtifactId = inlineRow!.templateVersion.templateId;
 
-    await createSession(a.apiKey, { title: "Other" });
+    await createPane(a.apiKey, { title: "Other" });
 
     const filtered = (await list(a.apiKey, { template_id: inlineArtifactId }))
       .body;
     expect(filtered.items).toHaveLength(1);
-    expect(filtered.items[0]!.surface_id).toBe(inlineSession.surface_id);
+    expect(filtered.items[0]!.pane_id).toBe(inlinePane.pane_id);
     // For inline (anonymous) templates the response's template_id is null,
     // even though the filter matched.
     expect(filtered.items[0]!.template_id).toBeNull();

@@ -1,6 +1,6 @@
-// End-to-end test for the per-agent surface cap (abuse control B3).
+// End-to-end test for the per-agent pane cap (abuse control B3).
 //
-// MAX_SESSIONS_PER_AGENT is supplied via the config injected into buildApp(),
+// MAX_PANES_PER_AGENT is supplied via the config injected into buildApp(),
 // so the small cap is just passed straight to loadConfig() — no
 // module-singleton juggling required.
 
@@ -31,7 +31,7 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
-      MAX_SESSIONS_PER_AGENT: String(CAP),
+      MAX_PANES_PER_AGENT: String(CAP),
     }),
     prisma,
   );
@@ -60,9 +60,9 @@ const minimalSchema = {
   },
 };
 
-function createSession(apiKey: string): Promise<Response> {
+function createPane(apiKey: string): Promise<Response> {
   return app.fetch(
-    new Request("http://t/v1/surfaces", {
+    new Request("http://t/v1/panes", {
       method: "POST",
       headers: {
         authorization: `Bearer ${apiKey}`,
@@ -74,53 +74,53 @@ function createSession(apiKey: string): Promise<Response> {
           source: "<html></html>",
           event_schema: minimalSchema,
         },
-        title: "Test surface",
+        title: "Test pane",
       }),
     }),
   );
 }
 
-describe("per-agent surface cap", () => {
+describe("per-agent pane cap", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("rejects surface creation past MAX_SESSIONS_PER_AGENT with 429", async () => {
+  it("rejects pane creation past MAX_PANES_PER_AGENT with 429", async () => {
     const apiKey = await seedAgent();
     for (let i = 0; i < CAP; i++) {
-      expect((await createSession(apiKey)).status).toBe(201);
+      expect((await createPane(apiKey)).status).toBe(201);
     }
-    const over = await createSession(apiKey);
+    const over = await createPane(apiKey);
     expect(over.status).toBe(429);
     const body = (await over.json()) as { error: { code: string } };
     expect(body.error.code).toBe("rate_limited");
   });
 
-  it("closing a surface frees a slot", async () => {
+  it("closing a pane frees a slot", async () => {
     const apiKey = await seedAgent();
     const ids: string[] = [];
     for (let i = 0; i < CAP; i++) {
-      const res = await createSession(apiKey);
-      ids.push(((await res.json()) as { surface_id: string }).surface_id);
+      const res = await createPane(apiKey);
+      ids.push(((await res.json()) as { pane_id: string }).pane_id);
     }
-    expect((await createSession(apiKey)).status).toBe(429);
+    expect((await createPane(apiKey)).status).toBe(429);
 
-    // Close one — its slot is reclaimed (only `open` surfaces count).
+    // Close one — its slot is reclaimed (only `open` panes count).
     const del = await app.fetch(
-      new Request(`http://t/v1/surfaces/${ids[0]}`, {
+      new Request(`http://t/v1/panes/${ids[0]}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${apiKey}` },
       }),
     );
     expect(del.status).toBe(204);
-    expect((await createSession(apiKey)).status).toBe(201);
+    expect((await createPane(apiKey)).status).toBe(201);
   });
 
   it("the cap is per-agent — a second agent is unaffected", async () => {
     const a = await seedAgent();
     const b = await seedAgent();
-    for (let i = 0; i < CAP; i++) await createSession(a);
-    expect((await createSession(a)).status).toBe(429);
-    expect((await createSession(b)).status).toBe(201);
+    for (let i = 0; i < CAP; i++) await createPane(a);
+    expect((await createPane(a)).status).toBe(429);
+    expect((await createPane(b)).status).toBe(201);
   });
 });

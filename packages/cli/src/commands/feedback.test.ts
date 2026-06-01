@@ -16,7 +16,7 @@ const page = {
       id: "fb_abc123",
       type: "bug" as const,
       message: "x",
-      surface_id: null,
+      pane_id: null,
       created_at: "2026-05-20T00:00:00.000Z",
     },
   ],
@@ -132,20 +132,20 @@ describe("feedback create", () => {
     expect(JSON.parse(stdout)).toEqual(submission);
   });
 
-  it("passes --surface-id when provided", async () => {
+  it("passes --pane-id when provided", async () => {
     await run([
       "create",
       "--type",
       "feature",
       "--message",
       "x",
-      "--surface-id",
+      "--pane-id",
       "sess_1",
     ]);
     expect(calls).toEqual([
       {
         method: "submitFeedback",
-        args: [{ type: "feature", message: "x", surfaceId: "sess_1" }],
+        args: [{ type: "feature", message: "x", paneId: "sess_1" }],
       },
     ]);
   });

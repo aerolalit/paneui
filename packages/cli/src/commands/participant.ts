@@ -1,9 +1,9 @@
-// `pane surface participant <new|revoke>` — mint or invalidate one
-// participant URL on an existing surface. Recovery + leak-containment
-// primitives that together replace the destructive `pane surface delete +
-// pane surface create` workaround for the lost-URL case.
+// `pane participant <new|revoke>` — mint or invalidate one
+// participant URL on an existing pane. Recovery + leak-containment
+// primitives that together replace the destructive `pane delete +
+// pane create` workaround for the lost-URL case.
 //
-// This file is a sub-noun dispatcher under `pane surface`. The surface
+// This file is a sub-noun dispatcher under `pane pane`. The pane
 // dispatcher hands us a ParsedArgs whose positionals[0] is "participant"
 // (our sub-noun marker), so we read the verb from positionals[1] and the
 // args from positionals[2..]. This mirrors the way every other sub-verb
@@ -18,32 +18,32 @@ import { printJson, fail, failFromError } from "../output.js";
 const NO_FLAGS: string[] = [];
 const NO_BOOLS: string[] = [];
 
-export const participantHelp = `pane surface participant — manage one surface's participant URLs
+export const participantHelp = `pane participant — manage one pane's participant URLs
 
 Participant tokens are stored hashed on the relay and CANNOT be recovered.
 If you lost the create-response (and the URL with it), use 'new' to mint a
-fresh URL — the surface keeps its event log, template pin, and created_at.
-Use 'revoke' to invalidate a single URL while keeping the surface alive.
+fresh URL — the pane keeps its event log, template pin, and created_at.
+Use 'revoke' to invalidate a single URL while keeping the pane alive.
 
 Usage:
-  pane surface participant <verb> <args>
+  pane participant <verb> <args>
 
 Verbs:
-  list <surface-id>           List the participants on one surface, including
+  list <pane-id>           List the participants on one pane, including
                               revoked rows (for audit). Returns
-                              { surface_id, items: [...] } where each item
+                              { pane_id, items: [...] } where each item
                               carries { participant_id, kind, token_prefix,
                               joined_at, revoked_at }. Use this to find the
                               participant_id you need to pass to 'revoke'.
 
-  new <surface-id>            Mint a fresh human URL on an existing surface.
+  new <pane-id>            Mint a fresh human URL on an existing pane.
                               Returns { participant_id, kind, token, url,
                               created_at } — ONCE. The plaintext token is
                               never recoverable; save the response (pipe to
                               a JSONL log) before delivering the URL.
 
-  revoke <surface-id> <participant-id>
-                              Invalidate one participant URL. The surface's
+  revoke <pane-id> <participant-id>
+                              Invalidate one participant URL. The pane's
                               other participants (and the agent's own
                               websocket) are untouched. Idempotent: running
                               revoke twice still returns success.
@@ -58,30 +58,30 @@ Options:
   -h, --help                  Show this help.
 
 Recovery recipe:
-  pane surface list                                       # find surface_id
-  pane surface participant list <surface-id>              # find participant
+  pane list                                       # find pane_id
+  pane participant list <pane-id>              # find participant
                                                           #   ids on that
-                                                          #   surface
-  pane surface participant new <surface-id>               # mint a new URL
-  pane surface participant revoke <surface-id> <p-id>     # invalidate the
+                                                          #   pane
+  pane participant new <pane-id>               # mint a new URL
+  pane participant revoke <pane-id> <p-id>     # invalidate the
                                                           #   old URL
 
 Output: stdout is machine-readable JSON.`;
 
 async function runParticipantList(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane surface participant list");
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane participant list");
 
-  const surfaceId = args.positionals[1];
-  if (!surfaceId) {
+  const paneId = args.positionals[1];
+  if (!paneId) {
     fail(
-      "missing <surface-id> — usage: pane surface participant list <surface-id>",
+      "missing <pane-id> — usage: pane participant list <pane-id>",
       "invalid_args",
     );
   }
 
   const client = makeClient(args);
   try {
-    const res = await client.listParticipants(surfaceId!);
+    const res = await client.listParticipants(paneId!);
     printJson(res);
   } catch (e) {
     failFromError(e);
@@ -89,19 +89,19 @@ async function runParticipantList(args: ParsedArgs): Promise<void> {
 }
 
 async function runParticipantNew(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane surface participant new");
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane participant new");
 
-  const surfaceId = args.positionals[1];
-  if (!surfaceId) {
+  const paneId = args.positionals[1];
+  if (!paneId) {
     fail(
-      "missing <surface-id> — usage: pane surface participant new <surface-id>",
+      "missing <pane-id> — usage: pane participant new <pane-id>",
       "invalid_args",
     );
   }
 
   const client = makeClient(args);
   try {
-    const res = await client.mintParticipant(surfaceId!);
+    const res = await client.mintParticipant(paneId!);
     printJson(res);
   } catch (e) {
     failFromError(e);
@@ -109,22 +109,22 @@ async function runParticipantNew(args: ParsedArgs): Promise<void> {
 }
 
 async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane surface participant revoke");
+  assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane participant revoke");
 
-  const surfaceId = args.positionals[1];
+  const paneId = args.positionals[1];
   const participantId = args.positionals[2];
-  if (!surfaceId || !participantId) {
+  if (!paneId || !participantId) {
     fail(
-      "missing arguments — usage: pane surface participant revoke <surface-id> <participant-id>",
+      "missing arguments — usage: pane participant revoke <pane-id> <participant-id>",
       "invalid_args",
     );
   }
 
   const client = makeClient(args);
   try {
-    await client.revokeParticipant(surfaceId!, participantId!);
+    await client.revokeParticipant(paneId!, participantId!);
     printJson({
-      surface_id: surfaceId,
+      pane_id: paneId,
       participant_id: participantId,
       revoked: true,
     });
@@ -135,7 +135,7 @@ async function runParticipantRevoke(args: ParsedArgs): Promise<void> {
 
 export async function runParticipant(args: ParsedArgs): Promise<void> {
   // positionals[0] is the verb (list | new | revoke), positionals[1..] are
-  // the verb's args. (The surface.ts dispatcher already shifted off the
+  // the verb's args. (The pane.ts dispatcher already shifted off the
   // "participant" marker before calling us.)
   const verb = args.positionals[0];
   switch (verb) {
@@ -150,13 +150,13 @@ export async function runParticipant(args: ParsedArgs): Promise<void> {
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane surface participant <list|new|revoke> (run 'pane surface participant --help')",
+        "missing verb — usage: pane participant <list|new|revoke> (run 'pane participant --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown participant verb '${verb}' — expected list|new|revoke (run 'pane surface participant --help')`,
+        `unknown participant verb '${verb}' — expected list|new|revoke (run 'pane participant --help')`,
         "invalid_args",
       );
   }

@@ -601,7 +601,7 @@ describe("assertSchemaWithinLimits", () => {
 
 describe("validateEvent", () => {
   const args = {
-    surfaceId: "sur_test1",
+    paneId: "pan_test1",
     schemaVersion: 1,
     schema: exampleSchema,
   };
@@ -648,7 +648,7 @@ describe("validateEvent", () => {
   });
 
   it("schema_violation details lists ALL failing fields, not just the first (#137)", () => {
-    // Multi-field schema in a one-off surface so we can violate two
+    // Multi-field schema in a one-off pane so we can violate two
     // constraints simultaneously and verify both are surfaced.
     const multiFieldSchema: EventSchema = {
       events: {
@@ -668,7 +668,7 @@ describe("validateEvent", () => {
     };
     try {
       validateEvent({
-        surfaceId: "sur_multi",
+        paneId: "pan_multi",
         schemaVersion: 1,
         schema: multiFieldSchema,
         type: "form.submitted",
@@ -718,15 +718,15 @@ describe("validateEvent", () => {
     ).not.toThrow();
   });
 
-  // View-only template: a surface with no event schema declares an empty,
+  // View-only template: a pane with no event schema declares an empty,
   // strictly-enforced vocabulary — every page/agent emit is rejected.
   // The error's `code`/`message` is `unknown_event_type`; the view-only
   // explanation rides in the `hint`.
-  it("rejects an agent emit on a schemaless (view-only) surface", () => {
+  it("rejects an agent emit on a schemaless (view-only) pane", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        surfaceId: "sur_viewonly",
+        paneId: "pan_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -740,11 +740,11 @@ describe("validateEvent", () => {
     expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
   });
 
-  it("rejects a human emit on a schemaless (view-only) surface", () => {
+  it("rejects a human emit on a schemaless (view-only) pane", () => {
     let caught: { code: string; hint: string } | undefined;
     try {
       validateEvent({
-        surfaceId: "sur_viewonly",
+        paneId: "pan_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "anything.atall",
@@ -758,12 +758,12 @@ describe("validateEvent", () => {
     expect(caught?.hint).toMatch(/view-only and accepts no page\/agent events/);
   });
 
-  it("does NOT reject a system event on a schemaless surface", () => {
+  it("does NOT reject a system event on a schemaless pane", () => {
     // System events bypass the view-only guard — they keep flowing so
-    // system.surface.expired, participant.joined, etc. still work.
+    // system.pane.expired, participant.joined, etc. still work.
     expect(() =>
       validateEvent({
-        surfaceId: "sur_viewonly",
+        paneId: "pan_viewonly",
         schemaVersion: 1,
         schema: null,
         type: "system.note",
@@ -840,11 +840,11 @@ describe("compiled-validator cache (LRU)", () => {
       "x.event": { payload: { type: "object" }, emittedBy: ["agent"] },
     },
   };
-  // Validating an event for a surface populates the cache for that
-  // (surfaceId, schemaVersion) key.
-  const touch = (surfaceId: string): void =>
+  // Validating an event for a pane populates the cache for that
+  // (paneId, schemaVersion) key.
+  const touch = (paneId: string): void =>
     validateEvent({
-      surfaceId,
+      paneId,
       schemaVersion: 1,
       schema,
       type: "x.event",
@@ -854,13 +854,13 @@ describe("compiled-validator cache (LRU)", () => {
 
   beforeEach(() => __schemaCacheInternals.clear());
 
-  it("caches a compiled validator per surface", () => {
+  it("caches a compiled validator per pane", () => {
     touch("s1");
     expect(__schemaCacheInternals.has("s1", 1)).toBe(true);
     expect(__schemaCacheInternals.size()).toBe(1);
   });
 
-  it("invalidateSchemaCache drops a surface's entries", () => {
+  it("invalidateSchemaCache drops a pane's entries", () => {
     touch("s1");
     invalidateSchemaCache("s1");
     expect(__schemaCacheInternals.has("s1", 1)).toBe(false);
@@ -874,7 +874,7 @@ describe("compiled-validator cache (LRU)", () => {
 
     // Re-touch the oldest entry so it is no longer the LRU.
     touch("sess_0");
-    // One more distinct surface pushes the cache over cap → one eviction.
+    // One more distinct pane pushes the cache over cap → one eviction.
     touch("overflow");
 
     expect(__schemaCacheInternals.size()).toBe(max);
@@ -993,7 +993,7 @@ describe("format: pane-attachment-id", () => {
   };
 
   const baseArgs = {
-    surfaceId: "sur_blob_format",
+    paneId: "pan_blob_format",
     schemaVersion: 1,
     schema: schemaWithBlobRef,
     type: "image.attach",

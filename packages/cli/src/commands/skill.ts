@@ -82,7 +82,7 @@ async function fetchOrFail(url: string): Promise<Response> {
 async function failOnNon2xx(res: Response, target: string): Promise<void> {
   if (res.ok) return;
   // 404 if the operator stripped the route, 5xx on a static-read failure.
-  // Surface the body inline — it may carry a useful message.
+  // Pane the body inline — it may carry a useful message.
   const body = await res.text().catch(() => "");
   fail(
     `relay returned ${res.status} for ${target}${

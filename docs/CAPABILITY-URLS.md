@@ -9,7 +9,7 @@ view a private image by clicking a link — but they have well-documented
 failure modes (the same ones every S3 presigned URL or Google Docs
 "anyone with the link" share has).
 
-This document tells you what the surface is, what we defend against,
+This document tells you what the pane is, what we defend against,
 and what to do about the gaps.
 
 ## What a `/b/<token>` URL grants
@@ -218,7 +218,7 @@ payload and can download the bytes via the existing
 ### Threat model
 
 - **Auth.** The participant token in the path IS the credential. There is
-  no second factor. The token's surface is the same one already used by
+  no second factor. The token's pane is the same one already used by
   the WebSocket-ticket mint, the presence-poll endpoint, and the event-
   emit channel — so participant uploads inherit the same trust posture
   as event emits. A leaked participant token already lets the holder
@@ -304,8 +304,8 @@ The artifact API is `await window.pane.downloadBlob(blob_id)` — see
   agent-side `GET /v1/blobs/:id` when `BLOB_ENCRYPT_AT_REST` is on. Both
   routes share the same `encrypt.parseEnvelope` + `decryptBlob` calls,
   so the two cannot drift on envelope semantics. The two `/b/<token>`
-  capability-URL surface and the participant-token `/s/.../blobs/:id`
-  surface BOTH return plaintext; both have e2e coverage that diffs the
+  capability-URL pane and the participant-token `/s/.../blobs/:id`
+  pane BOTH return plaintext; both have e2e coverage that diffs the
   on-disk ciphertext against the response bytes
   (`bridge/blob-download-bridge.e2e.test.ts` for the participant route,
   `routes/blobs.e2e.test.ts` "envelope-encrypted blob" cases for `/b/<token>`).

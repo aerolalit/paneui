@@ -4,7 +4,7 @@
 // @azure/monitor-opentelemetry-exporter is declared in `optionalDependencies`
 // (not `dependencies`) in package.json — a self-hoster's `npm install` may or
 // may not pull it. It is therefore loaded lazily, via dynamic import, ONLY
-// when METRICS_EXPORTER=azure. If it is missing we surface a clear, actionable
+// when METRICS_EXPORTER=azure. If it is missing we pane a clear, actionable
 // error instead of an opaque module-not-found crash.
 
 /** The subset of the Azure exporter package this relay uses. */

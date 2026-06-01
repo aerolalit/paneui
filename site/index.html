@@ -1356,7 +1356,7 @@
 
       </div><!-- /stage -->
 
-      <p class="stage-hint">↑ <b>Explore the report</b> — click a month to break down the revenue. A pane can be a view-only output surface, not just a form.</p>
+      <p class="stage-hint">↑ <b>Explore the report</b> — click a month to break down the revenue. A pane can be a view-only output pane, not just a form.</p>
       </div><!-- /panel-report -->
     </div>
   </section>
@@ -1783,7 +1783,7 @@ npx skills add aerolalit/paneui
               'sign-off — I\'ll hand them a review pane.' },
       { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
               '(pane session create --artifact ./review.html --event-schema ./schema.json)', cls: '' },
-      { html: '     <span class="ok">✓</span> session <span class="ev">ses_8fa2c1</span>' +
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_8fa2c1</span>' +
               ' created', cls: '' },
       { gap: true },
       { html: '<span class="cc-dot">⏺</span> Sent the reviewer this link:' },
@@ -1791,7 +1791,7 @@ npx skills add aerolalit/paneui
               'https://relay.paneui.com/s/8fa2c1</span>', cls: '' },
       { gap: true },
       { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Monitor</span>' +
-              '(pane session watch ses_8fa2c1 --type form.submitted)', cls: '' },
+              '(pane session watch pan_8fa2c1 --type form.submitted)', cls: '' },
       { html: '     waiting for the human to respond<span class="term-cursor"></span>',
         cls: 'dim', wait: true }
     ];
@@ -2102,9 +2102,9 @@ npx skills add aerolalit/paneui
       { html: '⚙ tool: read_pdf → extracted 14 pages', cls: 'tool' },
       { html: '<span class="ev">●</span> built a 5-question quiz from the notes', cls: 'dim' },
       { html: '<span class="pr">$</span> <span class="cmd">pane session create --artifact ./quiz.html --event-schema ./quiz.schema.json</span>' },
-      { html: '✓ session <span class="ev">ses_q7m2x9</span> created', cls: 'ok' },
+      { html: '✓ session <span class="ev">pan_q7m2x9</span> created', cls: 'ok' },
       { gap: true },
-      { html: '<span class="pr">$</span> <span class="cmd">pane session watch ses_q7m2x9 --type quiz.answered</span>' },
+      { html: '<span class="pr">$</span> <span class="cmd">pane session watch pan_q7m2x9 --type quiz.answered</span>' },
       { html: '  waiting for answers…<span class="term-cursor"></span>', cls: 'dim', wait: true }
     ];
 
@@ -2374,7 +2374,7 @@ npx skills add aerolalit/paneui
       // not reveal correct/wrong yet — that's painted back after the agent
       // grades the answer below.
       termLine('<span class="pr">$</span> <span class="cmd">pane session send ' +
-        'ses_q7m2x9 --type quiz.answered --data \'{"q":' + qNum +
+        'pan_q7m2x9 --type quiz.answered --data \'{"q":' + qNum +
         ', "choice":' + picked + '}\'</span>');
       termLine('<span class="ok">✓</span> <span class="ev">quiz.answered</span>  ' +
         '<span class="json">{ "q": ' + qNum + ', "choice": ' + picked +
@@ -2419,7 +2419,7 @@ npx skills add aerolalit/paneui
             // tallies the quiz, and reports back to Telegram once.
             btn.textContent = 'Scoring your quiz…';
             termLine('<span class="pr">$</span> <span class="cmd">pane session send ' +
-              'ses_q7m2x9 --type quiz.completed --data \'{"score":' + score +
+              'pan_q7m2x9 --type quiz.completed --data \'{"score":' + score +
               ', "total":' + TOTAL + ', "breakdown":[…]}\'</span>');
             termLine('<span class="ev">●</span> quiz complete — final score ' +
               score + '/' + TOTAL + '; sending the student a summary', 'dim');
@@ -2440,7 +2440,7 @@ npx skills add aerolalit/paneui
             // the student clicked "Next question" — NOW the agent emits the
             // next question over the pane channel; the pane updates in place.
             termLine('<span class="pr">$</span> <span class="cmd">pane session send ' +
-              'ses_q7m2x9 --type quiz.question --data \'{"q":' + (qNum + 1) +
+              'pan_q7m2x9 --type quiz.question --data \'{"q":' + (qNum + 1) +
               ', "text":"…", "options":[…]}\'</span>');
             idx++;
             renderQuestion();
@@ -2580,14 +2580,14 @@ npx skills add aerolalit/paneui
         { d: B,  fn: function () {
             term('<span class="pr">$</span> <span class="cmd">pane session create --artifact ./quiz.html --event-schema ./quiz.schema.json</span>'); } },
         { d: L,  fn: function () {
-            term('✓ session <span class="ev">ses_q7m2x9</span> created', 'ok'); } },
+            term('✓ session <span class="ev">pan_q7m2x9</span> created', 'ok'); } },
         { d: B,  fn: function () {
             botSay('Tap to start 👇<br><a class="qlink" id="quiz-url">' +
                    'relay.paneui.com/s/q7m2x9</a>', true); } },
         // the agent starts watching the session for answers
         { d: L,  fn: termGapStep },
         { d: L,  fn: function () {
-            term('<span class="pr">$</span> <span class="cmd">pane session watch ses_q7m2x9 --type quiz.answered</span>'); } },
+            term('<span class="pr">$</span> <span class="cmd">pane session watch pan_q7m2x9 --type quiz.answered</span>'); } },
         { d: L,  fn: function () {
             term('  waiting for answers…<span class="term-cursor"></span>', 'dim', true); } },
         // the student "clicks" the link — a cursor taps it, then the browser
@@ -2664,7 +2664,7 @@ npx skills add aerolalit/paneui
               'I\'ll open a live monitor so you can follow along.' },
       { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
               '(pane session create --artifact ./deploy.html --event-schema ./schema.json)', cls: '' },
-      { html: '     <span class="ok">✓</span> session <span class="ev">ses_d3k9p1</span>' +
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_d3k9p1</span>' +
               ' created', cls: '' },
       { gap: true },
       { html: '<span class="cc-dot">⏺</span> Watch the rollout here:' },
@@ -2886,7 +2886,7 @@ npx skills add aerolalit/paneui
       { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
               '(pane session create --artifact ./q2-report.html)  ' +
               '<span class="cc-meta">view-only · no event schema</span>', cls: '' },
-      { html: '     <span class="ok">✓</span> session <span class="ev">ses_r5w8t2</span>' +
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_r5w8t2</span>' +
               ' created', cls: '' },
       { gap: true },
       { html: '<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Your Q2 financial report:' },

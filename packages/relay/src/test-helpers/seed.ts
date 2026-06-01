@@ -1,6 +1,6 @@
-// Shared seed helpers for tests. Since the reusable-templates change, a surface
+// Shared seed helpers for tests. Since the reusable-templates change, a pane
 // is FK'd to an `template_version` rather than carrying inline template columns
-// — so a raw `prisma.surface.create` must first create an Template + an
+// — so a raw `prisma.pane.create` must first create an Template + an
 // TemplateVersion. These helpers encapsulate that two-step setup.
 
 import { randomBytes } from "node:crypto";
@@ -30,7 +30,7 @@ export interface SeedArtifactOptions {
 
 /**
  * Create an Template head + one TemplateVersion (v1). Returns both ids.
- * Used by tests that need a concrete `template_version_id` to attach a surface
+ * Used by tests that need a concrete `template_version_id` to attach a pane
  * to.
  */
 export async function seedArtifact(
@@ -60,7 +60,7 @@ export async function seedArtifact(
   return { templateId: template.id, templateVersionId: version.id };
 }
 
-export interface SeedSurfaceOptions {
+export interface SeedPaneOptions {
   agentId: string;
   id?: string;
   status?: "open" | "closed";
@@ -74,24 +74,24 @@ export interface SeedSurfaceOptions {
   templateSource?: string;
   eventSchema?: object;
   inputSchema?: object | null;
-  /** Per-surface tab title. Defaults to a benign placeholder; tests exercising
+  /** Per-pane tab title. Defaults to a benign placeholder; tests exercising
    * the bridge shell's <title> rendering pass their own value. */
   title?: string;
-  /** Optional context preamble — passes through to Surface.preamble. */
+  /** Optional context preamble — passes through to Pane.preamble. */
   preamble?: string | null;
   /** Reuse an existing template version instead of creating a fresh one. */
   templateVersionId?: string;
 }
 
 /**
- * Create a surface row, transparently seeding an Template + TemplateVersion
- * first (unless `templateVersionId` is supplied). Returns the surface id and
+ * Create a pane row, transparently seeding an Template + TemplateVersion
+ * first (unless `templateVersionId` is supplied). Returns the pane id and
  * the template-version id it was pinned to.
  */
-export async function seedSurfaceRow(
+export async function seedPaneRow(
   prisma: PrismaClient,
-  opts: SeedSurfaceOptions,
-): Promise<{ surfaceId: string; templateVersionId: string }> {
+  opts: SeedPaneOptions,
+): Promise<{ paneId: string; templateVersionId: string }> {
   let templateVersionId = opts.templateVersionId;
   if (!templateVersionId) {
     const seeded = await seedArtifact(prisma, {
@@ -103,13 +103,13 @@ export async function seedSurfaceRow(
     });
     templateVersionId = seeded.templateVersionId;
   }
-  const surfaceId = opts.id ?? `sur_${randomBytes(8).toString("hex")}`;
-  await prisma.surface.create({
+  const paneId = opts.id ?? `pan_${randomBytes(8).toString("hex")}`;
+  await prisma.pane.create({
     data: {
-      id: surfaceId,
+      id: paneId,
       agentId: opts.agentId,
       templateVersionId,
-      title: opts.title ?? "Pane Surface",
+      title: opts.title ?? "Pane Pane",
       preamble: opts.preamble ?? null,
       status: opts.status ?? "open",
       expiresAt: opts.expiresAt ?? new Date(Date.now() + 3_600_000),
@@ -120,5 +120,5 @@ export async function seedSurfaceRow(
       callbackFilter: opts.callbackFilter ?? undefined,
     },
   });
-  return { surfaceId, templateVersionId };
+  return { paneId, templateVersionId };
 }

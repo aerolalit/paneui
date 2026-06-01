@@ -1,7 +1,7 @@
 // End-to-end tests for #283 — cross-agent same-human access scope.
 //
 // When two agents share the same `ownerHumanId`, they form a fungible
-// fleet: any of them may read/write any surface or template owned by
+// fleet: any of them may read/write any pane or template owned by
 // any of them. Unclaimed agents stay strictly self-scoped.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -62,7 +62,7 @@ async function seedAgent(ownerHumanId: string | null = null) {
   return { id: a.id, apiKey };
 }
 
-async function seedSurface(opts: {
+async function seedPane(opts: {
   agentId: string;
   ownerHumanId: string | null;
   title?: string;
@@ -78,9 +78,9 @@ async function seedSurface(opts: {
       templateSource: "<p/>",
     },
   });
-  return prisma.surface.create({
+  return prisma.pane.create({
     data: {
-      id: `sur_${randomBytes(8).toString("hex")}`,
+      id: `pan_${randomBytes(8).toString("hex")}`,
       agent: { connect: { id: opts.agentId } },
       ...(opts.ownerHumanId
         ? { ownerHuman: { connect: { id: opts.ownerHumanId } } }
@@ -92,31 +92,31 @@ async function seedSurface(opts: {
   });
 }
 
-describe("#283 cross-agent surface access", () => {
-  it("GET /v1/surfaces lists same-human siblings' surfaces", async () => {
+describe("#283 cross-agent pane access", () => {
+  it("GET /v1/panes lists same-human siblings' panes", async () => {
     const human = await seedHuman("alice@example.com");
     const a = await seedAgent(human.id);
     const b = await seedAgent(human.id);
     const stranger = await seedAgent(); // unclaimed
 
-    await seedSurface({
+    await seedPane({
       agentId: a.id,
       ownerHumanId: human.id,
       title: "alice-A",
     });
-    await seedSurface({
+    await seedPane({
       agentId: b.id,
       ownerHumanId: human.id,
       title: "alice-B",
     });
-    await seedSurface({
+    await seedPane({
       agentId: stranger.id,
       ownerHumanId: null,
       title: "stranger",
     });
 
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         headers: { authorization: `Bearer ${b.apiKey}` },
       }),
     );
@@ -129,35 +129,35 @@ describe("#283 cross-agent surface access", () => {
     expect(body.items.length).toBe(2);
   });
 
-  it("GET /v1/surfaces/:id succeeds for a sibling agent's surface", async () => {
+  it("GET /v1/panes/:id succeeds for a sibling agent's pane", async () => {
     const human = await seedHuman("alice@example.com");
     const a = await seedAgent(human.id);
     const b = await seedAgent(human.id);
-    const surface = await seedSurface({
+    const pane = await seedPane({
       agentId: a.id,
       ownerHumanId: human.id,
     });
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface.id}`, {
+      new Request(`http://t/v1/panes/${pane.id}`, {
         headers: { authorization: `Bearer ${b.apiKey}` },
       }),
     );
     expect(res.status).toBe(200);
   });
 
-  it("GET /v1/surfaces/:id returns forbidden for a different-human surface", async () => {
+  it("GET /v1/panes/:id returns forbidden for a different-human pane", async () => {
     const aliceHuman = await seedHuman("alice@example.com");
     const bobHuman = await seedHuman("bob@example.com");
     const aliceAgent = await seedAgent(aliceHuman.id);
     const bobAgent = await seedAgent(bobHuman.id);
-    const aliceSurface = await seedSurface({
+    const alicePane = await seedPane({
       agentId: aliceAgent.id,
       ownerHumanId: aliceHuman.id,
     });
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${aliceSurface.id}`, {
+      new Request(`http://t/v1/panes/${alicePane.id}`, {
         headers: { authorization: `Bearer ${bobAgent.apiKey}` },
       }),
     );
@@ -166,46 +166,46 @@ describe("#283 cross-agent surface access", () => {
     expect(body.error.code).toBe("forbidden_cross_human");
   });
 
-  it("GET /v1/surfaces/:id keeps unclaimed-agent surfaces strictly self-scoped", async () => {
+  it("GET /v1/panes/:id keeps unclaimed-agent panes strictly self-scoped", async () => {
     // Two unclaimed (standalone) agents — neither has ownerHumanId.
     const a = await seedAgent();
     const b = await seedAgent();
-    const surface = await seedSurface({
+    const pane = await seedPane({
       agentId: a.id,
       ownerHumanId: null,
     });
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface.id}`, {
+      new Request(`http://t/v1/panes/${pane.id}`, {
         headers: { authorization: `Bearer ${b.apiKey}` },
       }),
     );
-    // No human owner on the surface → fall back to session_not_found
+    // No human owner on the pane → fall back to session_not_found
     // so we don't leak a "yes this exists" signal to random callers.
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("session_not_found");
   });
 
-  it("DELETE /v1/surfaces/:id works for a sibling agent's surface", async () => {
+  it("DELETE /v1/panes/:id works for a sibling agent's pane", async () => {
     const human = await seedHuman("alice@example.com");
     const a = await seedAgent(human.id);
     const b = await seedAgent(human.id);
-    const surface = await seedSurface({
+    const pane = await seedPane({
       agentId: a.id,
       ownerHumanId: human.id,
     });
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface.id}`, {
+      new Request(`http://t/v1/panes/${pane.id}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${b.apiKey}` },
       }),
     );
     expect([200, 204]).toContain(res.status);
-    // DELETE soft-closes the surface.
-    const after = await prisma.surface.findUnique({
-      where: { id: surface.id },
+    // DELETE soft-closes the pane.
+    const after = await prisma.pane.findUnique({
+      where: { id: pane.id },
     });
     expect(after!.status).toBe("closed");
   });

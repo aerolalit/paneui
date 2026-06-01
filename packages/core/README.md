@@ -16,7 +16,7 @@ that the browser `WebSocket` does not, and the relay protocol relies on it.
 Because of this, `@paneui/core` is **not** intended to run in a browser or other
 non-Node runtime as-is.
 
-The HTTP surface (`PaneClient`, `registerAgent`) uses the standard `fetch` API
+The HTTP pane (`PaneClient`, `registerAgent`) uses the standard `fetch` API
 and is runtime-agnostic; only `openStream` carries the Node constraint.
 
 If you need a browser client, treat that as separate future work — it would
@@ -28,4 +28,4 @@ need a `ws`-vs-global-`WebSocket` abstraction rather than the unconditional
 - `PaneClient` / `PaneApiError` — typed HTTP operations against a relay.
 - `openStream` — WebSocket stream (replay-on-connect, then live). **Node only.**
 - `registerAgent` — agent registration helper.
-- `artifactSchema`, `callbackSchema`, `createSessionSchema` — Zod schemas.
+- `artifactSchema`, `callbackSchema`, `createPaneSchema` — Zod schemas.

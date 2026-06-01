@@ -4,16 +4,16 @@
 
 import { describe, it, expect } from "vitest";
 import { __recordSubsInternals } from "./handler.js";
-import type { SurfaceWithArtifactVersion } from "../core/events.js";
+import type { PaneWithTemplateVersion } from "../core/events.js";
 
 // Minimal stub: only templateVersion.recordSchema matters for the parser.
-function surfaceWith(recordSchema: unknown): SurfaceWithArtifactVersion {
+function paneWith(recordSchema: unknown): PaneWithTemplateVersion {
   return {
     templateVersion: { recordSchema },
-  } as unknown as SurfaceWithArtifactVersion;
+  } as unknown as PaneWithTemplateVersion;
 }
 
-const DECLARED = surfaceWith({
+const DECLARED = paneWith({
   $defs: {
     Comment: { type: "object" },
     Post: { type: "object" },
@@ -32,10 +32,10 @@ const DECLARED = surfaceWith({
   },
 });
 
-const NO_RECORDS = surfaceWith(null);
+const NO_RECORDS = paneWith(null);
 
 function u(qs: string): URL {
-  return new URL(`http://t/v1/surfaces/sur_x/stream${qs}`);
+  return new URL(`http://t/v1/panes/pan_x/stream${qs}`);
 }
 
 describe("parseRecordSubscriptions", () => {
@@ -48,7 +48,7 @@ describe("parseRecordSubscriptions", () => {
     expect(r?.collections.sort()).toEqual(["comments", "posts"]);
   });
 
-  it("subscribe_records=* on a surface with no record_schema yields an empty collection list", () => {
+  it("subscribe_records=* on a pane with no record_schema yields an empty collection list", () => {
     const r = __recordSubsInternals.parse(
       u("?subscribe_records=*"),
       NO_RECORDS,

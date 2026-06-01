@@ -12,7 +12,7 @@ import {
   compareEventSchema,
   compareInputSchema,
   compareRecordSchema,
-  compareSurfaceSchemas,
+  comparePaneSchemas,
   type RecordSchema,
 } from "./schema-compat.js";
 import type { EventSchema } from "../types.js";
@@ -498,7 +498,7 @@ describe("compareRecordSchema — record-collection diffs (#290)", () => {
     }
   });
 
-  it("compatible: added collection (no rows existed on this surface)", () => {
+  it("compatible: added collection (no rows existed on this pane)", () => {
     const old = rec({ comments: { rowSchema: { type: "object" } } });
     const next = rec({
       comments: { rowSchema: { type: "object" } },
@@ -521,7 +521,7 @@ describe("compareRecordSchema — record-collection diffs (#290)", () => {
     expect(breaks[0]!.message).toMatch(/orphaned/);
   });
 
-  it("break: renamed collection surfaces as remove+add (only the removed side is a break)", () => {
+  it("break: renamed collection panes as remove+add (only the removed side is a break)", () => {
     const old = rec({ comments: { rowSchema: { type: "object" } } });
     const next = rec({ remarks: { rowSchema: { type: "object" } } });
     const breaks = compareRecordSchema(old, next);
@@ -664,9 +664,9 @@ describe("compareRecordSchema — record-collection diffs (#290)", () => {
   });
 });
 
-describe("compareSurfaceSchemas — combined gate", () => {
+describe("comparePaneSchemas — combined gate", () => {
   it("returns all breaks from both halves merged", () => {
-    const breaks = compareSurfaceSchemas({
+    const breaks = comparePaneSchemas({
       oldEventSchema: ev({
         x: {
           emittedBy: ["page"],
@@ -684,7 +684,7 @@ describe("compareSurfaceSchemas — combined gate", () => {
   });
 
   it("empty breaks = compatible", () => {
-    const breaks = compareSurfaceSchemas({
+    const breaks = comparePaneSchemas({
       oldEventSchema: ev({}),
       newEventSchema: ev({}),
       oldInputSchema: null,
@@ -704,7 +704,7 @@ describe("compareSurfaceSchemas — combined gate", () => {
         },
       },
     };
-    const breaks = compareSurfaceSchemas({
+    const breaks = comparePaneSchemas({
       oldEventSchema: ev({}),
       newEventSchema: ev({}),
       oldInputSchema: null,
@@ -720,7 +720,7 @@ describe("compareSurfaceSchemas — combined gate", () => {
 
   it("omitting the new record-schema args preserves pre-#290 caller behavior", () => {
     // Existing callers (not yet updated) pass only the four old args.
-    const breaks = compareSurfaceSchemas({
+    const breaks = comparePaneSchemas({
       oldEventSchema: ev({}),
       newEventSchema: ev({}),
       oldInputSchema: null,

@@ -100,7 +100,7 @@ export interface SystemReplayCompleteMessage {
 // ---------------------------------------------------------------------------
 
 /**
- * Any message that can flow over the per-surface WS channel. Discriminated
+ * Any message that can flow over the per-pane WS channel. Discriminated
  * by the top-level `kind` field — events have NO `kind`, every other
  * message does. `isEvent` / `isRecordDelta` / `isSystemSentinel` predicates
  * are exported from http/broadcast.ts.

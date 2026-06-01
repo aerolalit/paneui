@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatSurfaceCreated, humanCountdown } from "./format.js";
+import { formatPaneCreated, humanCountdown } from "./format.js";
 
 describe("humanCountdown", () => {
   const base = Date.UTC(2026, 0, 1, 0, 0, 0); // 2026-01-01T00:00:00Z
@@ -45,28 +45,28 @@ describe("humanCountdown", () => {
   });
 });
 
-describe("formatSurfaceCreated", () => {
+describe("formatPaneCreated", () => {
   const sample = {
-    surface_id: "sur_abc123",
+    pane_id: "pan_abc123",
     title: "PR review",
     expires_at: new Date(Date.now() + 3600_000).toISOString(),
     urls: {
       humans: ["https://relay.test/s/tok_h_one"],
-      agent_stream: "wss://relay.test/v1/surfaces/sur_abc123/stream",
+      agent_stream: "wss://relay.test/v1/panes/pan_abc123/stream",
     },
   };
 
-  it("includes the title, surface id, expiry countdown, and the human URL", () => {
-    const out = formatSurfaceCreated(sample);
+  it("includes the title, pane id, expiry countdown, and the human URL", () => {
+    const out = formatPaneCreated(sample);
     expect(out).toContain("PR review");
-    expect(out).toContain("sur_abc123");
+    expect(out).toContain("pan_abc123");
     expect(out).toMatch(/Expires:.*in 59m|Expires:.*in 1h 0m/);
     expect(out).toContain("https://relay.test/s/tok_h_one");
-    expect(out).toContain("wss://relay.test/v1/surfaces/sur_abc123/stream");
+    expect(out).toContain("wss://relay.test/v1/panes/pan_abc123/stream");
   });
 
   it("renders a QR matrix for the first human URL", () => {
-    const out = formatSurfaceCreated(sample);
+    const out = formatPaneCreated(sample);
     // qrcode-terminal small mode uses Unicode block characters; assert that
     // at least one of them appears (any QR module is enough — the exact
     // matrix is a function of the URL and not worth pinning).
@@ -74,13 +74,13 @@ describe("formatSurfaceCreated", () => {
   });
 
   it("uses the dedup-hit headline when `created` is explicitly false", () => {
-    const out = formatSurfaceCreated({ ...sample, created: false });
-    expect(out).toContain("Existing surface reused");
-    expect(out).not.toContain("Pane surface created");
+    const out = formatPaneCreated({ ...sample, created: false });
+    expect(out).toContain("Existing pane reused");
+    expect(out).not.toContain("Pane pane created");
   });
 
   it("handles the dedup case where no fresh human URLs were minted", () => {
-    const out = formatSurfaceCreated({
+    const out = formatPaneCreated({
       ...sample,
       created: false,
       urls: { humans: [], agent_stream: sample.urls.agent_stream },
@@ -91,7 +91,7 @@ describe("formatSurfaceCreated", () => {
   });
 
   it("strips ANSI / control chars from interpolated server values", () => {
-    const out = formatSurfaceCreated({
+    const out = formatPaneCreated({
       ...sample,
       // A malicious title that would otherwise paint the terminal red until
       // the user resets it. We strip control chars before rendering.
@@ -102,13 +102,13 @@ describe("formatSurfaceCreated", () => {
   });
 
   it("emits no ANSI escapes when color=false (default)", () => {
-    const out = formatSurfaceCreated(sample);
+    const out = formatPaneCreated(sample);
     // eslint-disable-next-line no-control-regex
     expect(out).not.toMatch(/\x1b\[/);
   });
 
   it("emits ANSI bold/dim when color=true", () => {
-    const out = formatSurfaceCreated(sample, { color: true });
+    const out = formatPaneCreated(sample, { color: true });
     // eslint-disable-next-line no-control-regex
     expect(out).toMatch(/\x1b\[1m/);
   });

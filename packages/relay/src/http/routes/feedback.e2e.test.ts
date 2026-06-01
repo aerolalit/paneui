@@ -1,6 +1,6 @@
 // End-to-end tests for /v1/feedback — POST creates a row, GET lists the
-// caller's own rows with cursor pagination, and surface_id ownership is
-// enforced. Validation errors and auth are covered against the same surface.
+// caller's own rows with cursor pagination, and pane_id ownership is
+// enforced. Validation errors and auth are covered against the same pane.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
@@ -49,7 +49,7 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
   return { id: agent.id, apiKey };
 }
 
-async function seedSurface(agentId: string): Promise<string> {
+async function seedPane(agentId: string): Promise<string> {
   const template = await prisma.template.create({
     data: { ownerId: agentId },
   });
@@ -61,16 +61,16 @@ async function seedSurface(agentId: string): Promise<string> {
       templateSource: "<p>x</p>",
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
       id: "sess_" + randomBytes(8).toString("hex"),
       agentId,
       templateVersionId: av.id,
-      title: "Test surface",
+      title: "Test pane",
       expiresAt: new Date(Date.now() + 60_000),
     },
   });
-  return surface.id;
+  return pane.id;
 }
 
 function bearer(apiKey: string): Record<string, string> {
@@ -120,7 +120,7 @@ describe("/v1/feedback", () => {
     const { apiKey } = await seedAgent();
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "bug",
-      message: "watch hangs on empty surface",
+      message: "watch hangs on empty pane",
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
@@ -161,37 +161,37 @@ describe("/v1/feedback", () => {
     expect(res.status).toBe(400);
   });
 
-  it("accepts an optional surface_id owned by the caller", async () => {
+  it("accepts an optional pane_id owned by the caller", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const surfaceId = await seedSurface(agentId);
+    const paneId = await seedPane(agentId);
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "feature",
       message: "richer event types",
-      surface_id: surfaceId,
+      pane_id: paneId,
     });
     expect(res.status).toBe(201);
     const stored = await prisma.feedback.findFirst({ where: { agentId } });
-    expect(stored?.surfaceId).toBe(surfaceId);
+    expect(stored?.paneId).toBe(paneId);
   });
 
-  it("returns 404 when surface_id is not owned by the caller", async () => {
+  it("returns 404 when pane_id is not owned by the caller", async () => {
     const { apiKey } = await seedAgent();
     const other = await seedAgent();
-    const otherSession = await seedSurface(other.id);
+    const otherPane = await seedPane(other.id);
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "bug",
       message: "spoofy",
-      surface_id: otherSession,
+      pane_id: otherPane,
     });
     expect(res.status).toBe(404);
   });
 
-  it("returns 404 when surface_id does not exist", async () => {
+  it("returns 404 when pane_id does not exist", async () => {
     const { apiKey } = await seedAgent();
     const res = await req("POST", "/v1/feedback", apiKey, {
       type: "bug",
       message: "ghost",
-      surface_id: "sess_does_not_exist",
+      pane_id: "sess_does_not_exist",
     });
     expect(res.status).toBe(404);
   });

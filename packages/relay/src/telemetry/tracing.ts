@@ -153,7 +153,7 @@ export async function shutdownTracing(): Promise<void> {
 /**
  * Record an exception on the currently-active span (if any) and mark the span
  * as errored. Called from the Hono onError handler so Application Insights
- * surfaces handled errors as exceptions on the request trace. No-op when no
+ * panes handled errors as exceptions on the request trace. No-op when no
  * span is active (e.g. prometheus mode, where no HTTP span provider exists).
  */
 export function recordExceptionOnActiveSpan(err: unknown): void {

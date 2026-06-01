@@ -1,12 +1,12 @@
-// `pane surface create` — create a surface via POST /v1/surfaces.
+// `pane create` — create a pane via POST /v1/panes.
 
-import { createSessionSchema, type CreateSessionRequest } from "@paneui/core";
+import { createPaneSchema, type CreatePaneRequest } from "@paneui/core";
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
 import { makeClient } from "../config.js";
 import { resolveJson, resolveText } from "../input.js";
 import { printJson, fail, failFromError } from "../output.js";
-import { formatSurfaceCreated } from "../format.js";
+import { formatPaneCreated } from "../format.js";
 
 const KNOWN_FLAGS = [
   "template",
@@ -31,7 +31,7 @@ const KNOWN_BOOLS: string[] = ["json"];
 
 // Translate a Zod schema path (e.g. ["participants","humans"]) back to the
 // public CLI flag the user actually typed. Without this, a `--participants 0`
-// rejection surfaces as `participants.humans: ...` — which leaks the wire
+// rejection panes as `participants.humans: ...` — which leaks the wire
 // shape and refers to no flag the user could fix.
 //
 // Match strategy: longest prefix wins. Schema paths whose top segment isn't
@@ -70,16 +70,16 @@ function schemaPathToFlag(path: PropertyKey[]): string {
   return dotted;
 }
 
-export const createHelp = `pane surface create — create a Pane surface
+export const createHelp = `pane create — create a Pane pane
 
-A surface is one use of an template. Supply the template in ONE of two ways:
+A pane is one use of an template. Supply the template in ONE of two ways:
 
   Reference form — instance an existing reusable template (the cheap path,
   no HTML re-sent):
-    pane surface create --template-id <id|slug> [--version <n>] [--input-data <v>]
+    pane create --template-id <id|slug> [--version <n>] [--input-data <v>]
 
   Inline form — a one-off template, defined on this call:
-    pane surface create --template <path|inline> [--event-schema <path|json>] [options]
+    pane create --template <path|inline> [--event-schema <path|json>] [options]
 
 Exactly one of --template-id / --template must be given.
 
@@ -118,7 +118,7 @@ Template (choose one):
   --input-schema <v>  Inline-form input schema. A .json file, or inline JSON.
                       Optional with --template, rejected with --template-id
                       (the schema comes from the pinned template version
-                      there). When present, the surface's --input-data is
+                      there). When present, the pane's --input-data is
                       validated against it AND any attachment ids declared at a
                       "format": "pane-attachment-id" site become reachable from the
                       page via window.pane.downloadBlob. Without it, attachment
@@ -144,8 +144,8 @@ Options:
   --template-type <t> "html-inline" (default) or "html-ref". With "html-ref"
                       the --template value is treated as a URL. Note: the relay
                       does not serve "html-ref" templates in this release and
-                      will reject the surface — use "html-inline".
-  --ttl <seconds>     Surface time-to-live in seconds. The relay clamps this
+                      will reject the pane — use "html-inline".
+  --ttl <seconds>     Pane time-to-live in seconds. The relay clamps this
                       to its configured MAX_TTL_SECONDS (defaults: 1 h
                       requested, 24 h max for self-host; hosted may differ).
                       The returned \`expires_at\` is the authoritative value.
@@ -154,8 +154,8 @@ Options:
   --callback <path|json>  Webhook callback config: { url, events[], secret }.
   --context-key <key>  Natural key for "the same logical thing" — the relay
                       dedups repeated creates with the same
-                      (template, owner, context_key) into one surface row,
-                      returning {created:false, surface_id:<existing>} on
+                      (template, owner, context_key) into one pane row,
+                      returning {created:false, pane_id:<existing>} on
                       subsequent calls. Use this to make scripted creates
                       idempotent (e.g. "pr-42", "deal-1138", "home"). Only
                       meaningful when the calling agent is claimed by a
@@ -169,13 +169,13 @@ Options:
   -h, --help          Show this help.
 
 Output:
-  - Piped (or --json): { surface_id, urls, tokens, expires_at } as JSON
+  - Piped (or --json): { pane_id, urls, tokens, expires_at } as JSON
   - TTY: title + each human URL + a scannable QR code + expiry countdown
 
 Deliver urls.humans to the human(s); keep tokens.agent for the WS stream.`;
 
 export async function runCreate(args: ParsedArgs): Promise<void> {
-  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane surface create");
+  assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane create");
 
   const artifactIdVal = args.flags.get("template-id");
   const artifactVal = args.flags.get("template");
@@ -348,15 +348,15 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   }
 
   // --context-key — natural-key dedup. Passthrough; the relay enforces
-  // length + charset (createSessionSchema in @paneui/core), so an invalid
-  // value surfaces as a schema rejection on the call below rather than
+  // length + charset (createPaneSchema in @paneui/core), so an invalid
+  // value panes as a schema rejection on the call below rather than
   // a duplicated client-side guard that could drift.
   const contextKey = args.flags.get("context-key");
   if (contextKey !== undefined) {
     candidate["context_key"] = contextKey;
   }
 
-  const parsed = createSessionSchema.safeParse(candidate);
+  const parsed = createPaneSchema.safeParse(candidate);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const where =
@@ -368,11 +368,11 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     );
   }
 
-  const req: CreateSessionRequest = parsed.data;
+  const req: CreatePaneRequest = parsed.data;
 
   const client = makeClient(args);
   try {
-    const res = await client.createSession(req);
+    const res = await client.createPane(req);
     // Output mode:
     //   --json explicit         → JSON
     //   stdout NOT a TTY (pipe) → JSON (so scripts / agents stay parseable)
@@ -384,7 +384,7 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     if (forceJson || !isTty) {
       printJson(res);
     } else {
-      process.stdout.write(formatSurfaceCreated(res, { color: isTty }));
+      process.stdout.write(formatPaneCreated(res, { color: isTty }));
     }
   } catch (e) {
     failFromError(e);

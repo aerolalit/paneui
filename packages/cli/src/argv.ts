@@ -16,7 +16,7 @@ export interface ParsedArgs {
    * message is uniform regardless of whether the user wrote
    * `pane config show --bogus` or `pane config show --bogus something`:
    * an unknown flag is "unknown flag(s)" in both cases. A known flag
-   * that's missing its value is the only path that surfaces as
+   * that's missing its value is the only path that panes as
    * "requires a value". See PR #227 follow-up note for the rationale.
    *
    * Optional so handwritten ParsedArgs literals (tests) don't need to set
@@ -133,7 +133,7 @@ const GLOBAL_BOOLS: readonly string[] = ["help", "json"];
  *
  * Also resolves the parser's `danglingValueFlags`: an unknown name there
  * is reported alongside other unknowns ("unknown flag(s): --bogus"); a
- * known name there surfaces as "--name requires a value". This is what
+ * known name there panes as "--name requires a value". This is what
  * keeps the error message uniform for a typo whether or not a value
  * follows it.
  */
@@ -165,7 +165,7 @@ export function assertKnownFlags(
   }
 
   // No unknowns — but a known value-flag may still have been left without
-  // a value. Surface the first such case with the pre-existing message
+  // a value. Pane the first such case with the pre-existing message
   // shape ("--name requires a value"). Reporting only the first keeps the
   // message simple; the user fixes that flag, re-runs, sees the next one.
   for (const k of dangling) {

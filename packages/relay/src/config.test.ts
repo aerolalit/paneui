@@ -12,7 +12,7 @@ describe("config", () => {
     expect(c.PORT).toBe(3000);
     expect(c.MAX_ARTIFACT_BYTES).toBe(2_000_000);
     expect(c.MAX_EVENT_DATA_BYTES).toBe(65_536);
-    expect(c.MAX_PARTICIPANTS_PER_SESSION).toBe(32);
+    expect(c.MAX_PARTICIPANTS_PER_PANE).toBe(32);
     expect(c.DEFAULT_TTL_SECONDS).toBe(3600);
     expect(c.MAX_TTL_SECONDS).toBe(86_400);
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
@@ -21,9 +21,9 @@ describe("config", () => {
     expect(c.RATE_LIMIT).toBe(120);
     expect(c.RATE_LIMIT_WINDOW_SECONDS).toBe(60);
     expect(c.TRUSTED_PROXY).toEqual([]);
-    expect(c.MAX_WS_CONNECTIONS_PER_SESSION).toBe(16);
-    expect(c.MAX_SESSIONS_PER_AGENT).toBe(50);
-    expect(c.MAX_EVENTS_PER_SESSION).toBe(10_000);
+    expect(c.MAX_WS_CONNECTIONS_PER_PANE).toBe(16);
+    expect(c.MAX_PANES_PER_AGENT).toBe(50);
+    expect(c.MAX_EVENTS_PER_PANE).toBe(10_000);
     expect(c.LOG_LEVEL).toBe("info");
     expect(c.DATABASE_URL).toBe("file:./data/pane.db");
     expect(c.publicUrl).toBe("http://localhost:3000");
@@ -70,15 +70,15 @@ describe("config", () => {
     const c = loadConfig({
       RATE_LIMIT: "0",
       RATE_LIMIT_WINDOW_SECONDS: "30",
-      MAX_WS_CONNECTIONS_PER_SESSION: "0",
-      MAX_SESSIONS_PER_AGENT: "0",
-      MAX_EVENTS_PER_SESSION: "0",
+      MAX_WS_CONNECTIONS_PER_PANE: "0",
+      MAX_PANES_PER_AGENT: "0",
+      MAX_EVENTS_PER_PANE: "0",
     });
     expect(c.RATE_LIMIT).toBe(0);
     expect(c.RATE_LIMIT_WINDOW_SECONDS).toBe(30);
-    expect(c.MAX_WS_CONNECTIONS_PER_SESSION).toBe(0);
-    expect(c.MAX_SESSIONS_PER_AGENT).toBe(0);
-    expect(c.MAX_EVENTS_PER_SESSION).toBe(0);
+    expect(c.MAX_WS_CONNECTIONS_PER_PANE).toBe(0);
+    expect(c.MAX_PANES_PER_AGENT).toBe(0);
+    expect(c.MAX_EVENTS_PER_PANE).toBe(0);
   });
 
   it("redacts creds in DATABASE_URL", () => {

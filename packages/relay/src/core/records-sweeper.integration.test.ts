@@ -16,7 +16,7 @@ import {
   deleteRecord,
   sweepRecordTombstones,
   writeRecord,
-  type SurfaceWithRecordSchema,
+  type PaneWithRecordSchema,
 } from "./records.js";
 import type { Author } from "../types.js";
 
@@ -54,7 +54,7 @@ const RECORD_SCHEMA = {
 };
 
 async function seed(): Promise<{
-  surface: SurfaceWithRecordSchema;
+  pane: PaneWithRecordSchema;
   author: Author;
 }> {
   const agent = await prisma.agent.create({
@@ -76,9 +76,9 @@ async function seed(): Promise<{
       recordSchema: RECORD_SCHEMA,
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: `sur_${randomBytes(8).toString("hex")}`,
+      id: `pan_${randomBytes(8).toString("hex")}`,
       agentId: agent.id,
       templateVersionId: ver.id,
       title: "sweeper test",
@@ -87,25 +87,25 @@ async function seed(): Promise<{
     include: { templateVersion: true },
   });
   return {
-    surface: surface as SurfaceWithRecordSchema,
+    pane: pane as PaneWithRecordSchema,
     author: { kind: "human", id: "h_alice" },
   };
 }
 
 describe("sweepRecordTombstones", () => {
   it("removes tombstones older than the TTL", async () => {
-    const { surface, author } = await seed();
-    const r = await writeRecord({ prisma }, surface, author, {
+    const { pane, author } = await seed();
+    const r = await writeRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_old",
       data: { body: "x" },
     });
-    await deleteRecord({ prisma }, surface, author, {
+    await deleteRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_old",
     });
     // Back-date the deletedAt to 10 minutes ago.
-    await prisma.surfaceRecord.update({
+    await prisma.paneRecord.update({
       where: { id: r.record.id },
       data: { deletedAt: new Date(Date.now() - 10 * 60 * 1000) },
     });
@@ -113,20 +113,20 @@ describe("sweepRecordTombstones", () => {
     // TTL = 5 minutes — the 10-min-old tombstone should be swept.
     const count = await sweepRecordTombstones(prisma, 5 * 60);
     expect(count).toBe(1);
-    const after = await prisma.surfaceRecord.findUnique({
+    const after = await prisma.paneRecord.findUnique({
       where: { id: r.record.id },
     });
     expect(after).toBeNull();
   });
 
   it("leaves fresh tombstones alone", async () => {
-    const { surface, author } = await seed();
-    const r = await writeRecord({ prisma }, surface, author, {
+    const { pane, author } = await seed();
+    const r = await writeRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_fresh",
       data: { body: "x" },
     });
-    await deleteRecord({ prisma }, surface, author, {
+    await deleteRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_fresh",
     });
@@ -134,7 +134,7 @@ describe("sweepRecordTombstones", () => {
     // TTL = 1 hour — the just-now tombstone is well within.
     const count = await sweepRecordTombstones(prisma, 3600);
     expect(count).toBe(0);
-    const after = await prisma.surfaceRecord.findUnique({
+    const after = await prisma.paneRecord.findUnique({
       where: { id: r.record.id },
     });
     expect(after).not.toBeNull();
@@ -142,8 +142,8 @@ describe("sweepRecordTombstones", () => {
   });
 
   it("never touches live rows (deletedAt = null)", async () => {
-    const { surface, author } = await seed();
-    const r = await writeRecord({ prisma }, surface, author, {
+    const { pane, author } = await seed();
+    const r = await writeRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_alive",
       data: { body: "x" },
@@ -153,7 +153,7 @@ describe("sweepRecordTombstones", () => {
     // be ignored because deletedAt is null.
     const count = await sweepRecordTombstones(prisma, 1);
     expect(count).toBe(0);
-    const after = await prisma.surfaceRecord.findUnique({
+    const after = await prisma.paneRecord.findUnique({
       where: { id: r.record.id },
     });
     expect(after).not.toBeNull();
@@ -162,7 +162,7 @@ describe("sweepRecordTombstones", () => {
 
 describe("writeRecord caps", () => {
   it("rejects with 413 when data exceeds MAX_RECORD_DATA_BYTES", async () => {
-    const { surface, author } = await seed();
+    const { pane, author } = await seed();
     // Tiny cap forces rejection on a small payload.
     await expect(
       writeRecord(
@@ -173,7 +173,7 @@ describe("writeRecord caps", () => {
             MAX_RECORDS_PER_COLLECTION: 1000,
           },
         },
-        surface,
+        pane,
         author,
         {
           collectionName: "comments",
@@ -185,21 +185,21 @@ describe("writeRecord caps", () => {
   });
 
   it("rejects with 429 when MAX_RECORDS_PER_COLLECTION is hit", async () => {
-    const { surface, author } = await seed();
+    const { pane, author } = await seed();
     // Cap=2; write 2 then expect the 3rd to fail.
     const cfg = {
       MAX_RECORD_DATA_BYTES: 65_536,
       MAX_RECORDS_PER_COLLECTION: 2,
     };
     for (let i = 0; i < 2; i++) {
-      await writeRecord({ prisma, config: cfg }, surface, author, {
+      await writeRecord({ prisma, config: cfg }, pane, author, {
         collectionName: "comments",
         recordKey: `cmt_${i}`,
         data: { body: String(i) },
       });
     }
     await expect(
-      writeRecord({ prisma, config: cfg }, surface, author, {
+      writeRecord({ prisma, config: cfg }, pane, author, {
         collectionName: "comments",
         recordKey: "cmt_overflow",
         data: { body: "no room" },
@@ -208,7 +208,7 @@ describe("writeRecord caps", () => {
   });
 
   it("MAX_RECORDS_PER_COLLECTION = 0 disables the cap", async () => {
-    const { surface, author } = await seed();
+    const { pane, author } = await seed();
     const cfg = {
       MAX_RECORD_DATA_BYTES: 65_536,
       MAX_RECORDS_PER_COLLECTION: 0,
@@ -216,7 +216,7 @@ describe("writeRecord caps", () => {
     // Write more than the (disabled) cap would have allowed.
     for (let i = 0; i < 5; i++) {
       await expect(
-        writeRecord({ prisma, config: cfg }, surface, author, {
+        writeRecord({ prisma, config: cfg }, pane, author, {
           collectionName: "comments",
           recordKey: `cmt_${i}`,
           data: { body: String(i) },
@@ -226,25 +226,25 @@ describe("writeRecord caps", () => {
   });
 
   it("tombstones do NOT count toward the live-row cap", async () => {
-    const { surface, author } = await seed();
+    const { pane, author } = await seed();
     const cfg = {
       MAX_RECORD_DATA_BYTES: 65_536,
       MAX_RECORDS_PER_COLLECTION: 2,
     };
     // Write 2 (at cap), delete 1 (live=1), write 1 more (live=2 again, OK).
     for (let i = 0; i < 2; i++) {
-      await writeRecord({ prisma, config: cfg }, surface, author, {
+      await writeRecord({ prisma, config: cfg }, pane, author, {
         collectionName: "comments",
         recordKey: `cmt_${i}`,
         data: { body: String(i) },
       });
     }
-    await deleteRecord({ prisma }, surface, author, {
+    await deleteRecord({ prisma }, pane, author, {
       collectionName: "comments",
       recordKey: "cmt_0",
     });
     await expect(
-      writeRecord({ prisma, config: cfg }, surface, author, {
+      writeRecord({ prisma, config: cfg }, pane, author, {
         collectionName: "comments",
         recordKey: "cmt_after",
         data: { body: "fits" },

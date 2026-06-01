@@ -124,7 +124,7 @@ describe("registerAgent", () => {
     // Same header semantics as PaneClient — present means "version-known
     // CLI", absent means "library / non-CLI caller". The relay's
     // version-skew check covers /v1/register too, so registering with an
-    // ancient CLI surfaces 426 just like any other endpoint.
+    // ancient CLI panes 426 just like any other endpoint.
     let seenInit: RequestInit | undefined;
     await registerAgent({
       url: "https://relay.test",

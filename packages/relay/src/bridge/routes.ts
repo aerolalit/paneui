@@ -49,7 +49,7 @@ export function loadClient(name: string): string {
 }
 const RUNTIME_JS = loadClient("runtime.client.js");
 const SHELL_JS = loadClient("shell.client.js");
-// The runtime is exported so the owner-shell `/surfaces/:id/content` route can
+// The runtime is exported so the owner-shell `/panes/:id/content` route can
 // inline the same iframe runtime as the capability-token `/s/:token/content`
 // route — both serve the same template body under the same CSP.
 export { RUNTIME_JS, PERMISSIONS_POLICY };
@@ -66,7 +66,7 @@ function publicWsBase(config: Config): string {
 // directory. The same shape is rendered visually in the header SVG below.
 // Both the shell's CSP (img-src 'self' data:) and the error page's CSP
 // (img-src 'self' data:) explicitly allow the data: scheme, so the icon
-// loads under both surfaces.
+// loads under both panes.
 const BRAND_FAVICON_HREF =
   "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2262%22%20cy%3D%2258%22%20r%3D%2217%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2226%22%20width%3D%2240%22%20height%3D%2232%22%20rx%3D%2210%22%20fill%3D%22%230f172a%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2230%22%20width%3D%2232%22%20height%3D%2224%22%20rx%3D%227%22%20fill%3D%22%23a78bfa%22%2F%3E%3Ccircle%20cx%3D%2233.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2246.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3C%2Fsvg%3E";
 
@@ -114,19 +114,19 @@ async function loadByToken(prisma: PrismaClient, token: string) {
     where: { tokenHash: hashKey(token) },
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
-  const surface = await prisma.surface.findUnique({
-    where: { id: participant.surfaceId },
+  const pane = await prisma.pane.findUnique({
+    where: { id: participant.paneId },
     include: { templateVersion: true },
   });
-  if (!surface) throw errors.notFound();
-  return { participant, surface };
+  if (!pane) throw errors.notFound();
+  return { participant, pane };
 }
 
 // The shell shows an "agent presence" pill. Presence is LIVE runtime state,
 // so it is computed from three present-tense signals — NOT by replaying the
 // persisted `system.participant.*` log (a `left` event can be lost, which
 // would leave a stale `joined` claiming an agent is connected forever):
-//  1) agentLive        — an agent WebSocket is open on this surface right now.
+//  1) agentLive        — an agent WebSocket is open on this pane right now.
 //  2) agentLastEventAt — the most recent agent-authored Event's timestamp.
 //  3) agentLastUsedAt  — the owning agent's last authenticated request.
 // Shared by the `/:token` route (seeds the shell config once) and the
@@ -140,13 +140,13 @@ export interface AgentPresence {
 
 export async function computeAgentPresence(
   prisma: PrismaClient,
-  surface: {
+  pane: {
     id: string;
     agentId: string;
   },
 ): Promise<AgentPresence> {
   const agent = await prisma.agent.findUnique({
-    where: { id: surface.agentId },
+    where: { id: pane.agentId },
     select: { lastUsedAt: true },
   });
   const agentLastUsedAt = agent?.lastUsedAt
@@ -154,7 +154,7 @@ export async function computeAgentPresence(
     : null;
 
   const lastAgentEvent = await prisma.event.findFirst({
-    where: { surfaceId: surface.id, authorKind: "agent" },
+    where: { paneId: pane.id, authorKind: "agent" },
     orderBy: { ts: "desc" },
     select: { ts: true },
   });
@@ -162,7 +162,7 @@ export async function computeAgentPresence(
     ? lastAgentEvent.ts.toISOString()
     : null;
 
-  const agentLive = (await agentCount(surface.id)) > 0;
+  const agentLive = (await agentCount(pane.id)) > 0;
 
   return { agentLive, agentLastEventAt, agentLastUsedAt };
 }
@@ -183,22 +183,22 @@ bridge.get("/:token", async (c) => {
     }
     throw err;
   }
-  const { surface, participant } = loaded;
+  const { pane, participant } = loaded;
 
   // Logged-in owner → upgrade to the clean session-authed URL. If the
-  // caller is signed in as the surface's owner, redirect them off the
-  // capability-token URL onto /surfaces/:id, where the pane_login cookie
+  // caller is signed in as the pane's owner, redirect them off the
+  // capability-token URL onto /panes/:id, where the pane_login cookie
   // does the auth and the URL bar shows nothing sensitive. This makes the
   // share link a graceful one-way ramp for the owner: they paste a /s/<tok>
   // URL once (e.g. from an email they sent themselves), and from then on
-  // the address bar reflects the surface-id route.
+  // the address bar reflects the pane-id route.
   //
   // Done BEFORE the identity-bound participant gate below: an owner whose
-  // own agent created the surface generally won't be a participant on it,
+  // own agent created the pane generally won't be a participant on it,
   // so the gate below wouldn't apply — but we still want to upgrade them.
   // Done AFTER loadByToken so a bad/revoked token still 404s as before; we
-  // never leak surface state by redirecting on an invalid token.
-  if (surface.ownerHumanId) {
+  // never leak pane state by redirecting on an invalid token.
+  if (pane.ownerHumanId) {
     const { parseLoginCookie, hashLoginCookie } =
       await import("../auth/cookie.js");
     const cookieValue = parseLoginCookie(c.req.header("cookie") ?? null);
@@ -209,9 +209,9 @@ bridge.get("/:token", async (c) => {
       if (
         login &&
         login.expiresAt > new Date() &&
-        login.humanId === surface.ownerHumanId
+        login.humanId === pane.ownerHumanId
       ) {
-        return c.redirect(`/surfaces/${surface.id}`, 302);
+        return c.redirect(`/panes/${pane.id}`, 302);
       }
     }
   }
@@ -234,7 +234,7 @@ bridge.get("/:token", async (c) => {
     }
     if (loggedInHumanId === null) {
       // Not logged in — bounce to /login carrying the return URL so the
-      // human lands back on this surface after magic-link verify.
+      // human lands back on this pane after magic-link verify.
       const returnUrl = encodeURIComponent(`/s/${token}`);
       return c.redirect(`/login?return=${returnUrl}`, 302);
     }
@@ -246,7 +246,7 @@ bridge.get("/:token", async (c) => {
           error: {
             code: "wrong_account",
             message:
-              "this surface is invited to a different account; sign out and sign in as that human",
+              "this pane is invited to a different account; sign out and sign in as that human",
           },
         },
         403,
@@ -259,12 +259,12 @@ bridge.get("/:token", async (c) => {
   // /:token/presence (a polling agent never opens a WebSocket, so the seed
   // would otherwise go stale within ~30s).
   const { agentLive, agentLastEventAt, agentLastUsedAt } =
-    await computeAgentPresence(prisma, surface);
+    await computeAgentPresence(prisma, pane);
 
   const isClosed =
-    surface.status !== "open" || surface.expiresAt.getTime() < Date.now();
-  const wsUrl = publicWsBase(config) + "/v1/surfaces/" + surface.id + "/stream";
-  const schema = surface.templateVersion.eventSchema as unknown as EventSchema;
+    pane.status !== "open" || pane.expiresAt.getTime() < Date.now();
+  const wsUrl = publicWsBase(config) + "/v1/panes/" + pane.id + "/stream";
+  const schema = pane.templateVersion.eventSchema as unknown as EventSchema;
   // 16 bytes of entropy, base64url so the value is safe inside both CSP and
   // an HTML attribute without escaping.
   const nonceBuf = new Uint8Array(16);
@@ -285,7 +285,7 @@ bridge.get("/:token", async (c) => {
       "img-src 'self' data:",
       // 'self' covers same-origin HTTP fetches but NOT the ws:/wss: scheme —
       // CSP treats a WebSocket as a distinct scheme and would block the shell's
-      // connection to /v1/surfaces/:id/stream. Allow the relay's own ws origin.
+      // connection to /v1/panes/:id/stream. Allow the relay's own ws origin.
       `connect-src 'self' ${publicWsBase(config)}`,
       "frame-src 'self'",
       "base-uri 'none'",
@@ -307,28 +307,28 @@ bridge.get("/:token", async (c) => {
   return c.body(
     renderShell({
       nonce,
-      surfaceId: surface.id,
+      paneId: pane.id,
       iframeContentUrl: `${tokenSeg}/content`,
       presenceUrl: `${tokenSeg}/presence`,
       // ws-ticket mint stays under /v1 in token mode — that endpoint already
       // accepts both an agent key and a participant token as dual auth.
-      wsTicketUrl: `/v1/surfaces/${encodeURIComponent(surface.id)}/ws-ticket`,
+      wsTicketUrl: `/v1/panes/${encodeURIComponent(pane.id)}/ws-ticket`,
       wsTicketAuthorization: `Bearer ${token}`,
       attachmentsUploadUrl: `${tokenSeg}/attachments`,
       attachmentsDownloadUrlBase: `${tokenSeg}/attachments`,
       schema,
-      inputData: surface.inputData ?? null,
+      inputData: pane.inputData ?? null,
       wsUrl,
       isClosed,
       agentLive,
       agentLastEventAt,
       agentLastUsedAt,
-      title: surface.title,
-      preamble: surface.preamble,
+      title: pane.title,
+      preamble: pane.preamble,
       // Capability-token mount: the caller is either anonymous or a
-      // non-owner who reached this surface via a share link. They don't
+      // non-owner who reached this pane via a share link. They don't
       // have the system-pages context, so no top nav. (A logged-in OWNER
-      // hitting /s/<token> is already 302'd to /surfaces/<id> above this
+      // hitting /s/<token> is already 302'd to /panes/<id> above this
       // point, so they never see the bare token shell.)
       topNav: null,
     }),
@@ -350,22 +350,22 @@ bridge.get("/:token/content", async (c) => {
     }
     throw err;
   }
-  const { surface } = loaded;
+  const { pane } = loaded;
 
-  // Gate the template body on the surface being live. The shell page renders
+  // Gate the template body on the pane being live. The shell page renders
   // a "closed" banner instead of the iframe, but a client that bookmarked
   // /content directly would otherwise still receive the template (and any
   // sensitive data baked into it) until the participant is revoked.
-  if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
+  if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     return humanOrJsonError(c, errors.gone());
   }
 
   let artifactBody: string;
-  if (surface.templateVersion.templateType === "html-inline") {
-    artifactBody = surface.templateVersion.templateSource;
+  if (pane.templateVersion.templateType === "html-inline") {
+    artifactBody = pane.templateVersion.templateSource;
   } else {
-    // html-ref is rejected at POST /v1/surfaces in this release, so no new
-    // surface reaches here with that type. Kept as defence-in-depth for any
+    // html-ref is rejected at POST /v1/panes in this release, so no new
+    // pane reaches here with that type. Kept as defence-in-depth for any
     // pre-existing row; fetch + cache support is deferred to a later phase.
     artifactBody = "<!-- template.type=html-ref is not implemented in v1 -->";
   }
@@ -422,7 +422,7 @@ ${artifactBody}
 
 // Lightweight presence endpoint. The shell polls this every ~10s so the
 // agent-presence pill reflects a polling agent (one that monitors via
-// `pane surface show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
+// `pane pane show` HTTP polls and never opens a WebSocket) — its `lastUsedAt`
 // keeps advancing server-side but the page-load config seed cannot see it.
 //
 // Trust model: the URL token IS the auth, identical to the shell page
@@ -432,9 +432,9 @@ bridge.get("/:token/presence", async (c) => {
   const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { surface } = await loadByToken(prisma, token);
+  const { pane } = await loadByToken(prisma, token);
 
-  const presence = await computeAgentPresence(prisma, surface);
+  const presence = await computeAgentPresence(prisma, pane);
 
   c.header("Content-Type", "application/json; charset=utf-8");
   c.header("Cache-Control", "no-store");
@@ -443,8 +443,8 @@ bridge.get("/:token/presence", async (c) => {
 
 export interface ShellArgs {
   nonce: string;
-  surfaceId: string;
-  // Path the iframe loads (e.g. `/s/<token>/content` or `/surfaces/<id>/content`).
+  paneId: string;
+  // Path the iframe loads (e.g. `/s/<token>/content` or `/panes/<id>/content`).
   // Carried as a separate field so renderShell stays auth-mode-agnostic.
   iframeContentUrl: string;
   // Same-origin endpoints the shell calls back into. Carrying these in the
@@ -460,7 +460,7 @@ export interface ShellArgs {
   attachmentsUploadUrl: string;
   attachmentsDownloadUrlBase: string;
   schema: EventSchema;
-  // The surface's per-instance input_data (validated against the template
+  // The pane's per-instance input_data (validated against the template
   // version's input_schema at create time). Threaded through the shell config
   // and the init frame so the template can read it as `window.pane.inputData`.
   inputData: unknown;
@@ -471,17 +471,17 @@ export interface ShellArgs {
   agentLive: boolean;
   agentLastEventAt: string | null;
   agentLastUsedAt: string | null;
-  // Agent-supplied (or Template.name-resolved) per-surface title. Validated at
-  // surface create — non-empty, ≤80 chars, no control chars — but still
+  // Agent-supplied (or Template.name-resolved) per-pane title. Validated at
+  // pane create — non-empty, ≤80 chars, no control chars — but still
   // untrusted at this point; HTML-escaped into <title> at render time.
   title: string;
-  // Optional agent-supplied context message. Validated at surface create
+  // Optional agent-supplied context message. Validated at pane create
   // (≤280 chars, one `\n` allowed). Rendered into the shell band above the
   // iframe — HTML-escaped at render. Null when the agent didn't pass one.
   preamble: string | null;
   // Optional top-nav block — rendered above the existing dark presence
-  // header. The owner-shell route passes this so a logged-in surface owner
-  // gets the same Home / My surfaces / My templates / My agents / Settings
+  // header. The owner-shell route passes this so a logged-in pane owner
+  // gets the same Home / My panes / My templates / My agents / Settings
   // tabs they see on the system pages, instead of being stuck with only the
   // browser back button. The capability-token mount (/s/<token>) leaves this
   // null — anonymous callers don't have access to those pages anyway.
@@ -492,7 +492,7 @@ export interface ShellArgs {
 // in one list so adding / renaming a system page only needs an edit here AND
 // in src/http/routes/system-pages.ts (which mounts the routes). The shell's
 // stale-tab risk vs. the source of truth in system-pages.ts is small —
-// pre-existing surfaces share the same tab set, and a missing slug on either
+// pre-existing panes share the same tab set, and a missing slug on either
 // side just shows an inactive tab.
 const TOP_NAV_TABS: ReadonlyArray<{
   slug: string;
@@ -501,7 +501,7 @@ const TOP_NAV_TABS: ReadonlyArray<{
 }> = [
   { slug: "home", label: "Home", href: "/home" },
   { slug: "apps", label: "Apps", href: "/apps" },
-  { slug: "surfaces", label: "My surfaces", href: "/my-surfaces" },
+  { slug: "panes", label: "My panes", href: "/my-panes" },
   { slug: "templates", label: "My templates", href: "/my-templates" },
   { slug: "agents", label: "My agents", href: "/my-agents" },
   { slug: "settings", label: "Settings", href: "/settings" },
@@ -522,7 +522,7 @@ function renderTopNav(args: ShellArgs): string {
   // (brand row, presence row, tabs row). One row each for "where am I" and
   // "what is the relay doing" is enough; presence sits beside the email so
   // the eye picks up both states without scanning vertically.
-  const closedLabel = args.isClosed ? "surface closed" : "no agent yet";
+  const closedLabel = args.isClosed ? "pane closed" : "no agent yet";
   return `<div class="top-nav">
   <div class="top-nav-bar">
     <a class="top-nav-brand" href="/home" aria-label="pane home">
@@ -571,7 +571,7 @@ function renderTopNav(args: ShellArgs): string {
 
 export function renderShell(args: ShellArgs): string {
   const cfg = {
-    surfaceId: args.surfaceId,
+    paneId: args.paneId,
     schema: args.schema,
     inputData: args.inputData,
     presenceUrl: args.presenceUrl,
@@ -758,7 +758,7 @@ ${renderTopNav(args)}${
       <line x1="15" y1="14" x2="15" y2="14.5"/>
     </svg>
     <span id="agent-dot" class="dot"></span>
-    <span id="agent-status" class="info">${args.isClosed ? "surface closed" : "no agent yet"}</span>
+    <span id="agent-status" class="info">${args.isClosed ? "pane closed" : "no agent yet"}</span>
   </span>
 </header>`
   }
@@ -774,7 +774,7 @@ ${
     : ""
 }${
     args.isClosed
-      ? `<div class="closed">This surface is closed. It cannot accept new events.</div>`
+      ? `<div class="closed">This pane is closed. It cannot accept new events.</div>`
       : // `allow-downloads` is required for `<a download href="attachment:...">` to
         // actually fire on Chromium-based browsers (especially mobile Chrome),
         // which silently drops the navigation otherwise. Without it, an template
@@ -850,9 +850,9 @@ interface ErrorPageCopy {
 }
 
 // The status-code-keyed copy. 404 covers "unknown token | revoked
-// participant | surface row deleted" — all three look identical in the
+// participant | pane row deleted" — all three look identical in the
 // rendered page on purpose, so the bridge isn't a participant-token
-// enumeration oracle. 410 covers TTL-expired and explicitly-closed surfaces
+// enumeration oracle. 410 covers TTL-expired and explicitly-closed panes
 // reached through the /content sub-route.
 function errorPageFor(err: ApiError): string {
   const copy: ErrorPageCopy =
@@ -860,12 +860,12 @@ function errorPageFor(err: ApiError): string {
       ? {
           tabTitle: "Closed",
           headline: "This pane has been closed",
-          body: "The surface has expired or been closed by the agent. Ask for a new link if you still need to act.",
+          body: "The pane has expired or been closed by the agent. Ask for a new link if you still need to act.",
         }
       : {
           tabTitle: "Not found",
           headline: "This pane link isn't valid",
-          body: "The link may be mistyped, or the surface may have been cleaned up. Ask the agent for a fresh one.",
+          body: "The link may be mistyped, or the pane may have been cleaned up. Ask the agent for a fresh one.",
         };
   return renderHumanError(copy);
 }

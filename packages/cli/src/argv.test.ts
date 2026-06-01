@@ -7,8 +7,8 @@ const BOOLS = new Set(["json", "once", "help", "version"]);
 
 describe("parseArgs", () => {
   it("collects positionals", () => {
-    const r = parseArgs(["sur_1", "sur_2"], BOOLS);
-    expect(r.positionals).toEqual(["sur_1", "sur_2"]);
+    const r = parseArgs(["pan_1", "pan_2"], BOOLS);
+    expect(r.positionals).toEqual(["pan_1", "pan_2"]);
   });
 
   it("parses --flag value", () => {
@@ -53,10 +53,10 @@ describe("parseArgs", () => {
 
   it("handles a mix of positionals, flags, and bools", () => {
     const r = parseArgs(
-      ["watch", "sur_1", "--type", "form.submitted", "--once"],
+      ["watch", "pan_1", "--type", "form.submitted", "--once"],
       BOOLS,
     );
-    expect(r.positionals).toEqual(["watch", "sur_1"]);
+    expect(r.positionals).toEqual(["watch", "pan_1"]);
     expect(r.flags.get("type")).toBe("form.submitted");
     expect(r.bools.has("once")).toBe(true);
   });
@@ -182,7 +182,7 @@ describe("assertKnownFlags", () => {
     // The whole point of the danglingValueFlags split: the message for
     // a typo is uniform whether or not a token follows. `pane config
     // show --bogus` (parser path: dangling) and `pane config show
-    // --bogus something` (parser path: flags.set) MUST surface the
+    // --bogus something` (parser path: flags.set) MUST pane the
     // same envelope.
     const danglingArgs = {
       positionals: [],
@@ -216,12 +216,12 @@ describe("assertKnownFlags", () => {
       bools: new Set<string>(),
       danglingValueFlags: new Set(["title"]),
     };
-    expect(() =>
-      assertKnownFlags(args, ["title"], [], "pane surface create"),
-    ).toThrow("--title requires a value");
+    expect(() => assertKnownFlags(args, ["title"], [], "pane create")).toThrow(
+      "--title requires a value",
+    );
   });
 
-  it("dangling globals (--url) still surface as 'requires a value'", () => {
+  it("dangling globals (--url) still pane as 'requires a value'", () => {
     const args = {
       positionals: [],
       flags: new Map<string, string>(),
@@ -243,9 +243,9 @@ describe("assertKnownFlags", () => {
       bools: new Set<string>(),
       danglingValueFlags: new Set(["title", "bogus"]),
     };
-    expect(() =>
-      assertKnownFlags(args, ["title"], [], "pane surface create"),
-    ).toThrow("unknown flag(s): --bogus");
+    expect(() => assertKnownFlags(args, ["title"], [], "pane create")).toThrow(
+      "unknown flag(s): --bogus",
+    );
   });
 });
 

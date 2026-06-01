@@ -81,7 +81,7 @@ export interface PaneFrameEnvelope {
  */
 export interface AttachmentRefLike {
   attachment_id: string;
-  scope: "agent" | "surface" | "template";
+  scope: "agent" | "pane" | "template";
   mime: string;
   size: number;
   sha256: string;
@@ -89,7 +89,7 @@ export interface AttachmentRefLike {
   width: number | null;
   height: number | null;
   status: string;
-  surface_id: string | null;
+  pane_id: string | null;
   template_id: string | null;
   created_at: string;
   confirmed_at: string | null;
@@ -150,7 +150,7 @@ export interface DownloadBlobRequestFrame {
   kind: "download-attachment-request";
   /** RPC correlation id — the runtime's resolver matches against this. */
   id: string;
-  /** The attachment id to fetch. Must be referenced from this surface. */
+  /** The attachment id to fetch. Must be referenced from this pane. */
   attachment_id: string;
 }
 
@@ -189,7 +189,7 @@ export interface SaveBlobRequestFrame {
   kind: "save-attachment-request";
   /** RPC correlation id. */
   id: string;
-  /** The attachment id to save. Must be referenced from this surface. */
+  /** The attachment id to save. Must be referenced from this pane. */
   attachment_id: string;
   /** Suggested filename; the shell uses it on the `<a download>` attribute. */
   filename?: string;
@@ -209,18 +209,18 @@ export type SaveBlobResultFrame = {
  * has completed.
  */
 export interface PaneInitPayload {
-  /** The surface id. */
-  surface_id: string;
-  /** The surface's event schema (the event vocabulary). */
+  /** The pane id. */
+  pane_id: string;
+  /** The pane's event schema (the event vocabulary). */
   schema: unknown;
   /** Historical events to replay through the runtime's ingest path. */
   replay: unknown[];
   /** Origin of the shell page — outbound posts from the runtime pin to it. */
   shell_origin: string;
   /**
-   * The surface's per-instance `input_data` — validated by the relay against
-   * the template version's `input_schema` at surface-create time. `null` when
-   * the surface was created without `input_data`. The runtime exposes it on the
+   * The pane's per-instance `input_data` — validated by the relay against
+   * the template version's `input_schema` at pane-create time. `null` when
+   * the pane was created without `input_data`. The runtime exposes it on the
    * frozen `window.pane` as `pane.inputData`.
    */
   input_data: unknown;
@@ -269,7 +269,7 @@ export type RecordDeltaFrame = {
 /**
  * Shell -> iframe: initial snapshot, sent immediately after `init`. The
  * iframe seeds its store before the first pane.records.snapshot() call.
- * Empty when the surface has no record_schema.
+ * Empty when the pane has no record_schema.
  */
 export interface RecordSnapshotFrame {
   __pane: PaneFrameMarker;

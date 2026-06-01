@@ -1,11 +1,11 @@
 // HTTP routes for the records feature (#292).
 //
-// Mounted at /v1/surfaces/:id/records/:collection. All four CRUD verbs are
+// Mounted at /v1/panes/:id/records/:collection. All four CRUD verbs are
 // thin wrappers — auth + body parsing + query-param decoding here, all real
 // logic in core/records.ts (#291).
 //
-// Auth: dualAuth — agent owning the surface OR participant token bound to it.
-// Same middleware as /v1/surfaces/:id/events.
+// Auth: dualAuth — agent owning the pane OR participant token bound to it.
+// Same middleware as /v1/panes/:id/events.
 
 import { Hono } from "hono";
 import { z } from "zod";
@@ -16,7 +16,7 @@ import {
   listRecords,
   updateRecord,
   writeRecord,
-  type SurfaceWithRecordSchema,
+  type PaneWithRecordSchema,
 } from "../../core/records.js";
 
 const records = new Hono<AuthEnv>();
@@ -60,12 +60,12 @@ function recordKeyParam(c: { req: { param: (n: string) => string } }): string {
   return k;
 }
 
-// GET /v1/surfaces/:id/records/:collection
+// GET /v1/panes/:id/records/:collection
 // Cursor-paginated read with tombstones. `?since=<seq>` returns rows with
 // seq > <since>, capped at MAX_RECORDS_PER_PAGE (default 100).
 records.get("/", async (c) => {
   const prisma = c.get("prisma");
-  const surface = c.get("surface") as unknown as SurfaceWithRecordSchema;
+  const pane = c.get("pane") as unknown as PaneWithRecordSchema;
   const collection = collectionParam(c);
 
   let since = 0;
@@ -93,15 +93,15 @@ records.get("/", async (c) => {
     limit = n;
   }
 
-  const out = await listRecords(prisma, surface, collection, { since, limit });
+  const out = await listRecords(prisma, pane, collection, { since, limit });
   return c.json(out);
 });
 
-// POST /v1/surfaces/:id/records/:collection
+// POST /v1/panes/:id/records/:collection
 // Create-or-return-existing. 201 on fresh create, 200 on idempotent dedup.
 records.post("/", async (c) => {
   const prisma = c.get("prisma");
-  const surface = c.get("surface") as unknown as SurfaceWithRecordSchema;
+  const pane = c.get("pane") as unknown as PaneWithRecordSchema;
   const author = c.get("author");
   const collection = collectionParam(c);
 
@@ -117,7 +117,7 @@ records.post("/", async (c) => {
 
   const { record, deduped } = await writeRecord(
     { prisma, config: c.get("config") },
-    surface,
+    pane,
     author,
     {
       collectionName: collection,
@@ -132,12 +132,12 @@ records.post("/", async (c) => {
   return c.json({ record }, 201);
 });
 
-// PATCH /v1/surfaces/:id/records/:collection/:recordKey
+// PATCH /v1/panes/:id/records/:collection/:recordKey
 // Update with optional optimistic locking. 200 on success; 409 with the
 // current row in details.current on if_match mismatch.
 records.patch("/:recordKey", async (c) => {
   const prisma = c.get("prisma");
-  const surface = c.get("surface") as unknown as SurfaceWithRecordSchema;
+  const pane = c.get("pane") as unknown as PaneWithRecordSchema;
   const author = c.get("author");
   const collection = collectionParam(c);
   const recordKey = recordKeyParam(c);
@@ -154,7 +154,7 @@ records.patch("/:recordKey", async (c) => {
 
   const { record } = await updateRecord(
     { prisma, config: c.get("config") },
-    surface,
+    pane,
     author,
     {
       collectionName: collection,
@@ -166,12 +166,12 @@ records.patch("/:recordKey", async (c) => {
   return c.json({ record });
 });
 
-// DELETE /v1/surfaces/:id/records/:collection/:recordKey
+// DELETE /v1/panes/:id/records/:collection/:recordKey
 // Soft-delete with optional optimistic locking. 204 on success; 409 with the
 // current row on if_match mismatch.
 records.delete("/:recordKey", async (c) => {
   const prisma = c.get("prisma");
-  const surface = c.get("surface") as unknown as SurfaceWithRecordSchema;
+  const pane = c.get("pane") as unknown as PaneWithRecordSchema;
   const author = c.get("author");
   const collection = collectionParam(c);
   const recordKey = recordKeyParam(c);
@@ -193,7 +193,7 @@ records.delete("/:recordKey", async (c) => {
     }
   }
 
-  await deleteRecord({ prisma }, surface, author, {
+  await deleteRecord({ prisma }, pane, author, {
     collectionName: collection,
     recordKey,
     ifMatch,

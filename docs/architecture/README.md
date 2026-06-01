@@ -3,7 +3,7 @@
 Per-phase architecture for building Pane v1. This sits one level below `docs/SPEC.md` and one level above the code:
 
 - `README.md` (root): what Pane is, for whom.
-- `docs/SPEC.md`: the system-level design. Architecture, API surface, data model, bridge, auth, open/closed line. The "what and why" at the whole-system level.
+- `docs/SPEC.md`: the system-level design. Architecture, API pane, data model, bridge, auth, open/closed line. The "what and why" at the whole-system level.
 - `docs/ROADMAP.md`: phasing and strategy. What's in v1, what's deferred, why this order.
 - **`docs/architecture/` (this dir)**: the "what and why" at the phase/module level, with the exact interfaces (Prisma models, endpoint shapes, the `pane.*` runtime, the CLI commands) that the code has to satisfy. Detailed enough to implement against, close enough to the code that it shouldn't rot the way speculative architecture does.
 
@@ -23,7 +23,7 @@ These are pre-implementation docs. Anything still genuinely undecided is marked 
 
 1. **Scope**: what's in this phase, what's explicitly out (and which later phase or `/ee/` owns it).
 2. **Architecture**: the design and the reasoning. Why this shape, what the alternatives were.
-3. **Interfaces**: the exact contracts the code must satisfy. Prisma models, endpoint request/response shapes, the runtime API, the CLI command surface, env vars.
+3. **Interfaces**: the exact contracts the code must satisfy. Prisma models, endpoint request/response shapes, the runtime API, the CLI command pane, env vars.
 4. **Acceptance criteria**: "this phase is done when..." Concrete, testable.
 5. **Open decisions**: the unsettled calls, each with candidates and a lean. (Settled calls are noted DECIDED inline.)
 

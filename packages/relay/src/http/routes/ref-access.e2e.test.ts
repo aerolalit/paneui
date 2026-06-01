@@ -1,5 +1,5 @@
 // End-to-end tests for the attachment-reference DB access check (follow-up B
-// of #156). Exercises both the event-POST path and the surface-create
+// of #156). Exercises both the event-POST path and the pane-create
 // path: each MUST reject a payload whose `format: pane-attachment-id` site
 // refers to a attachment the calling agent cannot access.
 //
@@ -112,13 +112,13 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
  *  upload route — we don't care about the bytes here, only the FK row. */
 async function seedReadyBlob(
   ownerId: string,
-  opts: { deleted?: boolean; surfaceId?: string } = {},
+  opts: { deleted?: boolean; paneId?: string } = {},
 ): Promise<string> {
   const attachment = await prisma.attachment.create({
     data: {
       ownerId,
-      scope: opts.surfaceId ? "surface" : "agent",
-      surfaceId: opts.surfaceId ?? null,
+      scope: opts.paneId ? "pane" : "agent",
+      paneId: opts.paneId ?? null,
       mime: "image/png",
       size: 1,
       sha256: randomBytes(32).toString("hex"),
@@ -131,7 +131,7 @@ async function seedReadyBlob(
 }
 
 interface CreatedSession {
-  surfaceId: string;
+  paneId: string;
   agentToken: string;
   humanToken: string;
 }
@@ -141,11 +141,11 @@ async function createSessionWithBlobSchema(
   body: Record<string, unknown> = {},
 ): Promise<CreatedSession> {
   const res = await app.fetch(
-    new Request("http://t/v1/surfaces", {
+    new Request("http://t/v1/panes", {
       method: "POST",
       headers: bearer(apiKey),
       body: JSON.stringify({
-        title: "attachment-ref-access test surface",
+        title: "attachment-ref-access test pane",
         template: {
           type: "html-inline",
           source: "<html></html>",
@@ -158,11 +158,11 @@ async function createSessionWithBlobSchema(
   );
   expect(res.status).toBe(201);
   const json = (await res.json()) as {
-    surface_id: string;
+    pane_id: string;
     tokens: { humans: string[]; agent: string };
   };
   return {
-    surfaceId: json.surface_id,
+    paneId: json.pane_id,
     agentToken: json.tokens.agent,
     humanToken: json.tokens.humans[0]!,
   };
@@ -171,11 +171,11 @@ async function createSessionWithBlobSchema(
 describe("attachment-ref DB access check — events", () => {
   it("accepts an event referencing the agent's own attachment", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { paneId, agentToken } = await createSessionWithBlobSchema(apiKey);
     const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
@@ -198,10 +198,10 @@ describe("attachment-ref DB access check — events", () => {
     const { id: aliceId } = await seedAgent();
     const { apiKey: bobKey } = await seedAgent();
     const aliceBlobId = await seedReadyBlob(aliceId);
-    const { surfaceId, agentToken } = await createSessionWithBlobSchema(bobKey);
+    const { paneId, agentToken } = await createSessionWithBlobSchema(bobKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
@@ -228,10 +228,10 @@ describe("attachment-ref DB access check — events", () => {
   it("rejects an event referencing a soft-deleted attachment", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const attachmentId = await seedReadyBlob(agentId, { deleted: true });
-    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { paneId, agentToken } = await createSessionWithBlobSchema(apiKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
@@ -249,12 +249,12 @@ describe("attachment-ref DB access check — events", () => {
 
   it("rejects an event referencing a well-formed-but-nonexistent attachment_id", async () => {
     const { apiKey } = await seedAgent();
-    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { paneId, agentToken } = await createSessionWithBlobSchema(apiKey);
     // cuid-shaped (passes Ajv format) but no Blob row exists.
     const ghostId = "cm00000000000000000000000z";
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
@@ -273,10 +273,10 @@ describe("attachment-ref DB access check — events", () => {
 
   it("regression: events with NO attachment refs are unaffected (no DB lookup needed)", async () => {
     const { apiKey } = await seedAgent();
-    const { surfaceId, agentToken } = await createSessionWithBlobSchema(apiKey);
+    const { paneId, agentToken } = await createSessionWithBlobSchema(apiKey);
 
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(agentToken),
         body: JSON.stringify({
@@ -291,12 +291,12 @@ describe("attachment-ref DB access check — events", () => {
   it("a participant posting through their token is gated by the SESSION's agent, not the participant", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const attachmentId = await seedReadyBlob(agentId);
-    const { surfaceId, humanToken } = await createSessionWithBlobSchema(apiKey);
+    const { paneId, humanToken } = await createSessionWithBlobSchema(apiKey);
 
     // Human-side reference to the agent's attachment — should be accepted, since
-    // the surface's owning agent owns the attachment.
+    // the pane's owning agent owns the attachment.
     const res = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}/events`, {
+      new Request(`http://t/v1/panes/${paneId}/events`, {
         method: "POST",
         headers: bearer(humanToken),
         body: JSON.stringify({
@@ -311,9 +311,9 @@ describe("attachment-ref DB access check — events", () => {
   });
 });
 
-describe("attachment-ref DB access check — surface create (input_data)", () => {
+describe("attachment-ref DB access check — pane create (input_data)", () => {
   // Helper: create a NAMED template + version with an input_schema declaring
-  // a attachment ref. The surface-create path will then validate input_data
+  // a attachment ref. The pane-create path will then validate input_data
   // against this schema and run the ref-access check.
   async function seedArtifactWithBlobInputSchema(
     ownerId: string,
@@ -356,7 +356,7 @@ describe("attachment-ref DB access check — surface create (input_data)", () =>
     const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: bearer(apiKey),
         body: JSON.stringify({
@@ -376,7 +376,7 @@ describe("attachment-ref DB access check — surface create (input_data)", () =>
     const aliceBlobId = await seedReadyBlob(aliceId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: bearer(bobKey),
         body: JSON.stringify({
@@ -402,7 +402,7 @@ describe("attachment-ref DB access check — surface create (input_data)", () =>
 // would never fire, AND the participant attachment-download bridge would refuse
 // to serve the agent's OWN attachment because the same null-schema gap made it
 // invisible to the read-side walker.
-describe("attachment-ref DB access check — inline surface create with input_schema (#208)", () => {
+describe("attachment-ref DB access check — inline pane create with input_schema (#208)", () => {
   const inlineInputSchema = {
     type: "object",
     properties: {
@@ -416,12 +416,12 @@ describe("attachment-ref DB access check — inline surface create with input_sc
     },
   };
 
-  it("accepts an inline surface referencing the agent's own attachment via input_data", async () => {
+  it("accepts an inline pane referencing the agent's own attachment via input_data", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const attachmentId = await seedReadyBlob(agentId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: bearer(apiKey),
         body: JSON.stringify({
@@ -440,13 +440,13 @@ describe("attachment-ref DB access check — inline surface create with input_sc
     expect(res.status).toBe(201);
   });
 
-  it("rejects an inline surface referencing another agent's attachment (the gate fires the same way as for named templates)", async () => {
+  it("rejects an inline pane referencing another agent's attachment (the gate fires the same way as for named templates)", async () => {
     const { id: aliceId } = await seedAgent();
     const { apiKey: bobKey } = await seedAgent();
     const aliceBlobId = await seedReadyBlob(aliceId);
 
     const res = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: bearer(bobKey),
         body: JSON.stringify({

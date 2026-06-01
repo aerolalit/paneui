@@ -239,11 +239,11 @@ describe("POST /v1/agents/claim", () => {
     expect(body.error.code).toBe("agent_already_claimed");
   });
 
-  it("migrates ownerHumanId onto the agent's existing surfaces", async () => {
+  it("migrates ownerHumanId onto the agent's existing panes", async () => {
     const { id: agentId, apiKey } = await seedAgent();
     const humanId = await seedHuman();
 
-    // Seed a template + version + a surface owned by this agent.
+    // Seed a template + version + a pane owned by this agent.
     const tmpl = await prisma.template.create({
       data: { ownerId: agentId, name: "t" },
     });
@@ -255,16 +255,16 @@ describe("POST /v1/agents/claim", () => {
         templateSource: "<p/>",
       },
     });
-    const surface = await prisma.surface.create({
+    const pane = await prisma.pane.create({
       data: {
-        id: "sur_test",
+        id: "pan_test",
         agentId,
         templateVersionId: tv.id,
         title: "t",
         expiresAt: new Date(Date.now() + 60_000),
       },
     });
-    expect(surface.ownerHumanId).toBeNull();
+    expect(pane.ownerHumanId).toBeNull();
 
     const { raw } = await mintCode(humanId);
     const res = await app.fetch(
@@ -279,8 +279,8 @@ describe("POST /v1/agents/claim", () => {
     );
     expect(res.status).toBe(200);
 
-    const after = await prisma.surface.findUnique({
-      where: { id: surface.id },
+    const after = await prisma.pane.findUnique({
+      where: { id: pane.id },
     });
     expect(after?.ownerHumanId).toBe(humanId);
   });

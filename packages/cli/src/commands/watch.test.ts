@@ -1,4 +1,4 @@
-// Unit tests for the pure helpers in `pane surface watch` — the CSV parser for
+// Unit tests for the pure helpers in `pane watch` — the CSV parser for
 // --type / --filter-type, and the output-filter predicate that decides
 // whether a given event reaches stdout.
 //
@@ -30,7 +30,7 @@ describe("parseTypeList", () => {
   });
 
   it("trims whitespace around each entry", () => {
-    // Common shell mistake: 'pane surface watch --type "a, b ,c"' — the inner
+    // Common shell mistake: 'pane watch --type "a, b ,c"' — the inner
     // spaces are easy to type and shouldn't poison the lookup.
     const out = parseTypeList("a , b ,c");
     expect(out).toEqual(new Set(["a", "b", "c"]));
@@ -73,14 +73,14 @@ describe("shouldPrintEvent", () => {
 
   it("always passes system.* lifecycle events through, even with a filter", () => {
     // The load-bearing invariant: an agent that runs
-    //   pane surface watch --filter-type form.submitted
+    //   pane watch --filter-type form.submitted
     // must still see system.participant.joined (the "human opened the
-    // URL" signal) and system.surface.expired (the "give up" signal).
+    // URL" signal) and system.pane.expired (the "give up" signal).
     // Without this carve-out the agent's harness would lose visibility
-    // into the surface lifecycle the moment a filter was set.
+    // into the pane lifecycle the moment a filter was set.
     const filter = new Set(["form.submitted"]);
     expect(shouldPrintEvent("system.participant.joined", filter)).toBe(true);
-    expect(shouldPrintEvent("system.surface.expired", filter)).toBe(true);
+    expect(shouldPrintEvent("system.pane.expired", filter)).toBe(true);
     expect(shouldPrintEvent("system.anything.future", filter)).toBe(true);
   });
 

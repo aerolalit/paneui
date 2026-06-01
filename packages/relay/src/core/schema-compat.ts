@@ -1,13 +1,13 @@
 // Schema-compatibility gate for template-version upgrades (#267 PR A).
 //
-// Given two schemas — the surface's currently-pinned (old) and the proposed
+// Given two schemas — the pane's currently-pinned (old) and the proposed
 // upgrade target (new) — decide whether `new` is a SUPERSET of `old`. The
-// upgrade route (POST /v1/surfaces/:id/upgrade, landing in PR B) takes the
+// upgrade route (POST /v1/panes/:id/upgrade, landing in PR B) takes the
 // breaks[] this returns and either:
 //   - returns 422 with the list (when compat="strict", the default)
 //   - logs + proceeds anyway (when compat="force", the escape hatch)
 //
-// The intent (per #267): every payload an old surface produced under the
+// The intent (per #267): every payload an old pane produced under the
 // OLD schema must STILL validate under the NEW schema. So a downstream
 // polymorphic-render (#268's stamped template_version) can hand old events
 // to the new template's JS unchanged. "Compatible" = "anything old accepted,
@@ -59,7 +59,7 @@ export function compareEventSchema(
     if (!newEntry) {
       breaks.push({
         path: `events.${type}`,
-        message: `event type "${type}" was removed — surfaces with persisted ${type} events would lose their schema reference`,
+        message: `event type "${type}" was removed — panes with persisted ${type} events would lose their schema reference`,
       });
       continue;
     }
@@ -94,7 +94,7 @@ export function compareEventSchema(
 }
 
 /**
- * Compare two input schemas — the schema for surface.input_data. The whole
+ * Compare two input schemas — the schema for pane.input_data. The whole
  * blob is a single JSON Schema (no event-vocabulary wrapper), so we just
  * recurse from the root.
  *
@@ -141,13 +141,13 @@ export type RecordSchema = JsonSchemaLike;
  *
  * Both null = no record schema either side = no breaks.
  * Old has schema, new is null = every declared collection is orphaned —
- * persisted SurfaceRecord rows lose their schema reference. One break
+ * persisted PaneRecord rows lose their schema reference. One break
  * per collection so the operator sees the scope.
- * Old is null, new has schema = additive (no surfaces could have
+ * Old is null, new has schema = additive (no panes could have
  * persisted record rows under a non-existent schema). No breaks.
  *
  * Per-collection rules (issue #290):
- *   - Added collection: fine — no rows existed for it on this surface.
+ *   - Added collection: fine — no rows existed for it on this pane.
  *   - Removed collection: break — existing rows would be orphaned.
  *   - Payload schema widening (added optional fields, looser bounds): fine.
  *   - Payload schema narrowing (new required field, narrower bounds, type
@@ -156,7 +156,7 @@ export type RecordSchema = JsonSchemaLike;
  *     affect new operations, not stored data, so existing rows are untouched.
  *
  * Rename is intentionally NOT inferred: a removed-collection + added-collection
- * pair surfaces as one removed-collection break, exactly as the rule above
+ * pair panes as one removed-collection break, exactly as the rule above
  * intends. The operator can pass `compat="force"` if the "rename" is meant.
  */
 export function compareRecordSchema(
@@ -166,7 +166,7 @@ export function compareRecordSchema(
   const breaks: SchemaBreak[] = [];
   if (!oldDoc && !newDoc) return breaks;
   if (!oldDoc) {
-    // null → set: additive. The new collections start empty for the surface.
+    // null → set: additive. The new collections start empty for the pane.
     return breaks;
   }
   if (!newDoc) {
@@ -218,7 +218,7 @@ export function compareRecordSchema(
     );
   }
 
-  // Added collections: fine. No surface had rows for them yet, so the new
+  // Added collections: fine. No pane had rows for them yet, so the new
   // declaration introduces no incompat against stored data.
   return breaks;
 }
@@ -228,7 +228,7 @@ export function compareRecordSchema(
  * and return the merged breaks list. The record-schema args are optional so
  * existing callers (pre-#290) continue to type-check.
  */
-export function compareSurfaceSchemas(args: {
+export function comparePaneSchemas(args: {
   oldEventSchema: EventSchema | null;
   newEventSchema: EventSchema | null;
   oldInputSchema: JsonSchemaLike | null;

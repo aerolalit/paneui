@@ -62,7 +62,7 @@ It also subsumes the existing model: an `API_KEY`-provisioned agent is simply
    short `claimCode`.
 2. The unclaimed agent is heavily limited (see tiers below) but immediately
    usable.
-3. The agent surfaces `claimUrl` to its human ("claim this agent here").
+3. The agent panes `claimUrl` to its human ("claim this agent here").
 4. The human opens `claimUrl`, authenticates with Google (OIDC). On success
    the agent is bound to that `User`; limits lift to the claimed tier.
 5. Unclaimed agents that are never claimed are reaped after a TTL.
@@ -131,7 +131,7 @@ model ClaimCode {
 
 `claimedAt == null` (equivalently `ownerId == null`) is the unclaimed marker.
 
-## New surfaces
+## New panes
 
 - **OIDC subsystem** — Google OAuth on the relay. The genuinely new component;
   everything else extends existing code. Provider-pluggable from the start

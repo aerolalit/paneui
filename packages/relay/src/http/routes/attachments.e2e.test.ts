@@ -3,7 +3,7 @@
 // Covers the foundation slice: agent-scope multipart uploads, agent-auth
 // download, idempotent delete, MIME sniffing (sniff vs declared + sniff vs
 // allowlist), size cap, cross-tenant isolation, scope-gate rejection of
-// surface + template scopes (which land in PR feat/attachments-scopes-tokens).
+// pane + template scopes (which land in PR feat/attachments-scopes-tokens).
 //
 // Backed by a real FilesystemBlobStore over a tmpdir per test run.
 
@@ -123,7 +123,7 @@ beforeAll(async () => {
     // one IP (jsdom / vitest), so the prod default (120 req/min) is consumed
     // by the ~300+ HTTP calls this file makes — manifests as flaky 429s on
     // whichever tests happen to land near the end of the window. Tests don't
-    // exercise the limiter itself; rate_limit.e2e.test.ts owns that surface.
+    // exercise the limiter itself; rate_limit.e2e.test.ts owns that pane.
     RATE_LIMIT: "0",
   });
   const blobStore = await makeBlobStore(config);
@@ -152,7 +152,7 @@ interface UploadOpts {
   declaredMime?: string;
   filename?: string;
   scope?: string;
-  surfaceId?: string;
+  paneId?: string;
   templateId?: string;
 }
 
@@ -168,7 +168,7 @@ async function upload(
   fd.set("file", attachment, opts.filename ?? "test.jpg");
   if (opts.scope) fd.set("scope", opts.scope);
   if (opts.filename) fd.set("filename", opts.filename);
-  if (opts.surfaceId) fd.set("surface_id", opts.surfaceId);
+  if (opts.paneId) fd.set("pane_id", opts.paneId);
   if (opts.templateId) fd.set("template_id", opts.templateId);
 
   return app.fetch(
@@ -181,11 +181,11 @@ async function upload(
 }
 
 /**
- * Seed a minimal open surface owned by `agentId`. Uses inline anonymous
+ * Seed a minimal open pane owned by `agentId`. Uses inline anonymous
  * template + version because that's the cheapest way to satisfy the FK chain
- * (Surface → TemplateVersion → Template) without standing up the real flow.
+ * (Pane → TemplateVersion → Template) without standing up the real flow.
  */
-async function seedSessionFor(agentId: string): Promise<string> {
+async function seedPaneFor(agentId: string): Promise<string> {
   const template = await prisma.template.create({
     data: { ownerId: agentId, latestVersion: 1 },
   });
@@ -197,16 +197,16 @@ async function seedSessionFor(agentId: string): Promise<string> {
       templateSource: "<html></html>",
     },
   });
-  const surface = await prisma.surface.create({
+  const pane = await prisma.pane.create({
     data: {
-      id: "sur_" + randomBytes(8).toString("hex"),
+      id: "pan_" + randomBytes(8).toString("hex"),
       agentId,
       templateVersionId: version.id,
-      title: "attachments e2e test surface",
+      title: "attachments e2e test pane",
       expiresAt: new Date(Date.now() + 3600_000),
     },
   });
-  return surface.id;
+  return pane.id;
 }
 
 /** Seed a minimal named template owned by `agentId`. */
@@ -299,9 +299,9 @@ describe("/v1/attachments — auth + scope validation", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects scope=surface without surface_id", async () => {
+  it("rejects scope=pane without pane_id", async () => {
     const { apiKey } = await seedAgent();
-    const res = await upload(apiKey, await makeJpeg(), { scope: "surface" });
+    const res = await upload(apiKey, await makeJpeg(), { scope: "pane" });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_request");
@@ -321,20 +321,16 @@ describe("/v1/attachments — auth + scope validation", () => {
       error: { code: string; details: { supported: string[] } };
     };
     expect(body.error.code).toBe("invalid_request");
-    expect(body.error.details.supported).toEqual([
-      "agent",
-      "surface",
-      "template",
-    ]);
+    expect(body.error.details.supported).toEqual(["agent", "pane", "template"]);
   });
 
-  it("rejects scope=surface with a foreign surface_id (attachment_not_found, not 403)", async () => {
+  it("rejects scope=pane with a foreign pane_id (attachment_not_found, not 403)", async () => {
     const alice = await seedAgent();
     const bob = await seedAgent();
-    const aliceSes = await seedSessionFor(alice.id);
+    const aliceSes = await seedPaneFor(alice.id);
     const res = await upload(bob.apiKey, await makeJpeg(), {
-      scope: "surface",
-      surfaceId: aliceSes,
+      scope: "pane",
+      paneId: aliceSes,
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -371,7 +367,7 @@ describe("/v1/attachments — POST happy path", () => {
       size: number;
       sha256: string;
       status: string;
-      surface_id: null;
+      pane_id: null;
       template_id: null;
     };
     expect(json.attachment_id).toMatch(/^c[a-z0-9]+$/);
@@ -380,7 +376,7 @@ describe("/v1/attachments — POST happy path", () => {
     expect(json.size).toBe(body.length);
     expect(json.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(json.status).toBe("ready");
-    expect(json.surface_id).toBeNull();
+    expect(json.pane_id).toBeNull();
     expect(json.template_id).toBeNull();
   });
 
@@ -786,42 +782,42 @@ describe("/v1/attachments/:id — DELETE", () => {
 });
 
 // ===========================================================================
-// Surface + template scope uploads.
+// Pane + template scope uploads.
 // ===========================================================================
 
-describe("/v1/attachments — surface-scope upload", () => {
+describe("/v1/attachments — pane-scope upload", () => {
   beforeEach(async () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("uploads with scope=surface and records surfaceId", async () => {
+  it("uploads with scope=pane and records paneId", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const surfaceId = await seedSessionFor(agentId);
+    const paneId = await seedPaneFor(agentId);
     const res = await upload(apiKey, await makeJpeg(), {
-      scope: "surface",
-      surfaceId,
+      scope: "pane",
+      paneId,
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
       scope: string;
-      surface_id: string | null;
+      pane_id: string | null;
       template_id: string | null;
     };
-    expect(body.scope).toBe("surface");
-    expect(body.surface_id).toBe(surfaceId);
+    expect(body.scope).toBe("pane");
+    expect(body.pane_id).toBe(paneId);
     expect(body.template_id).toBeNull();
   });
 
-  it("cascades on surface delete (DB row goes away)", async () => {
+  it("cascades on pane delete (DB row goes away)", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const surfaceId = await seedSessionFor(agentId);
+    const paneId = await seedPaneFor(agentId);
     const post = await upload(apiKey, await makeJpeg(), {
-      scope: "surface",
-      surfaceId,
+      scope: "pane",
+      paneId,
     });
     const { attachment_id } = (await post.json()) as { attachment_id: string };
 
-    await prisma.surface.delete({ where: { id: surfaceId } });
+    await prisma.pane.delete({ where: { id: paneId } });
     const found = await prisma.attachment.findUnique({
       where: { id: attachment_id },
     });
@@ -829,17 +825,17 @@ describe("/v1/attachments — surface-scope upload", () => {
   });
 
   // Regression for issue #209. The DB-level cascade above only fires on a real
-  // row delete; the HTTP DELETE /v1/surfaces/:id route does a soft close
+  // row delete; the HTTP DELETE /v1/panes/:id route does a soft close
   // (status="closed", expiresAt=now()) and the cascade never runs in practice.
   // Without the explicit cascade in the route, the attachment row stayed
   // status="ready" / deletedAt=null indefinitely — quota leak, /b/<token>
   // links kept working, scope contract broken.
-  it("soft-deletes surface-scope attachments via the HTTP surface delete route", async () => {
+  it("soft-deletes pane-scope attachments via the HTTP pane delete route", async () => {
     const { apiKey } = await seedAgent();
 
-    // Use the real create flow so the surface is created end-to-end.
+    // Use the real create flow so the pane is created end-to-end.
     const create = await app.fetch(
-      new Request("http://t/v1/surfaces", {
+      new Request("http://t/v1/panes", {
         method: "POST",
         headers: { authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
@@ -860,17 +856,17 @@ describe("/v1/attachments — surface-scope upload", () => {
       }),
     );
     expect(create.status).toBe(201);
-    const { surface_id } = (await create.json()) as { surface_id: string };
+    const { pane_id } = (await create.json()) as { pane_id: string };
 
     const upRes = await upload(apiKey, await makeJpeg(), {
-      scope: "surface",
-      surfaceId: surface_id,
+      scope: "pane",
+      paneId: pane_id,
     });
     expect(upRes.status).toBe(201);
     const { attachment_id } = (await upRes.json()) as { attachment_id: string };
 
     const del = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surface_id}`, {
+      new Request(`http://t/v1/panes/${pane_id}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${apiKey}` },
       }),
@@ -887,7 +883,7 @@ describe("/v1/attachments — surface-scope upload", () => {
 
     // Agent-side GET now returns attachment_not_found, same as for any soft-deleted
     // attachment (the existing /v1/attachments/:id GET handler folds status="deleted" into
-    // the not-found surface — defense in depth + existence-oracle parity).
+    // the not-found pane — defense in depth + existence-oracle parity).
     const getAfter = await app.fetch(
       new Request(`http://t/v1/attachments/${attachment_id}`, {
         headers: { authorization: `Bearer ${apiKey}` },
@@ -895,7 +891,7 @@ describe("/v1/attachments — surface-scope upload", () => {
     );
     expect(getAfter.status).toBe(404);
 
-    // List no longer surfaces it — quota accounting drops accordingly.
+    // List no longer panes it — quota accounting drops accordingly.
     const list = await app.fetch(
       new Request("http://t/v1/attachments", {
         headers: { authorization: `Bearer ${apiKey}` },
@@ -909,18 +905,18 @@ describe("/v1/attachments — surface-scope upload", () => {
     ).toBeUndefined();
   });
 
-  it("surface delete is a no-op for already-soft-deleted attachments (idempotent)", async () => {
+  it("pane delete is a no-op for already-soft-deleted attachments (idempotent)", async () => {
     const { id: agentId, apiKey } = await seedAgent();
-    const surfaceId = await seedSessionFor(agentId);
+    const paneId = await seedPaneFor(agentId);
 
     const upRes = await upload(apiKey, await makeJpeg(), {
-      scope: "surface",
-      surfaceId,
+      scope: "pane",
+      paneId,
     });
     const { attachment_id } = (await upRes.json()) as { attachment_id: string };
 
-    // Pre-delete the attachment via the per-attachment API, then close the surface. The
-    // surface-delete path must not try to re-delete the storage object or
+    // Pre-delete the attachment via the per-attachment API, then close the pane. The
+    // pane-delete path must not try to re-delete the storage object or
     // double-flip the row.
     const delBlob = await app.fetch(
       new Request(`http://t/v1/attachments/${attachment_id}`, {
@@ -930,13 +926,13 @@ describe("/v1/attachments — surface-scope upload", () => {
     );
     expect(delBlob.status).toBe(200);
 
-    const delSession = await app.fetch(
-      new Request(`http://t/v1/surfaces/${surfaceId}`, {
+    const delPane = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${apiKey}` },
       }),
     );
-    expect(delSession.status).toBe(204);
+    expect(delPane.status).toBe(204);
 
     const row = await prisma.attachment.findUnique({
       where: { id: attachment_id },
@@ -961,11 +957,11 @@ describe("/v1/attachments — template-scope upload", () => {
     const body = (await res.json()) as {
       scope: string;
       template_id: string | null;
-      surface_id: string | null;
+      pane_id: string | null;
     };
     expect(body.scope).toBe("template");
     expect(body.template_id).toBe(templateId);
-    expect(body.surface_id).toBeNull();
+    expect(body.pane_id).toBeNull();
   });
 
   it("cascades on template delete", async () => {
@@ -1821,7 +1817,7 @@ describe("/v1/attachments/:id/tokens — GET list", () => {
     };
     const t2 = (await m2.json()) as { token: string; token_id: string };
 
-    // Revoke t2 so the listing must surface revoked_at as non-null.
+    // Revoke t2 so the listing must pane revoked_at as non-null.
     const rev = await revokeToken(apiKey, attachment_id, t2.token_id);
     expect(rev.status).toBe(200);
 

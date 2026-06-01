@@ -8,7 +8,7 @@
 // The test stubs both Azure modules with a factory that THROWS on import
 // (vitest's vi.mock factory is invoked when the module is first
 // require'd / imported). If the filesystem branch ever accidentally pulls
-// in azure.ts — which static-imports both packages — the throw surfaces
+// in azure.ts — which static-imports both packages — the throw panes
 // and the test fails loudly.
 //
 // We don't separately test the "Azure SDK missing → clean error" rethrow

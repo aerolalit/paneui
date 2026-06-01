@@ -51,15 +51,15 @@ const schema = z.object({
         .map((v) => v.trim())
         .filter((v) => v.length > 0),
     ),
-  // Max concurrent WebSocket connections per surface/token.
-  // MAX_WS_CONNECTIONS_PER_SESSION=0 disables the cap.
-  MAX_WS_CONNECTIONS_PER_SESSION: z.coerce.number().int().min(0).default(16),
-  // Max number of open (non-closed) surfaces a single agent may hold.
-  // MAX_SESSIONS_PER_AGENT=0 disables the cap.
-  MAX_SESSIONS_PER_AGENT: z.coerce.number().int().min(0).default(50),
-  // Max number of events a single surface may accumulate.
-  // MAX_EVENTS_PER_SESSION=0 disables the cap.
-  MAX_EVENTS_PER_SESSION: z.coerce.number().int().min(0).default(10_000),
+  // Max concurrent WebSocket connections per pane/token.
+  // MAX_WS_CONNECTIONS_PER_PANE=0 disables the cap.
+  MAX_WS_CONNECTIONS_PER_PANE: z.coerce.number().int().min(0).default(16),
+  // Max number of open (non-closed) panes a single agent may hold.
+  // MAX_PANES_PER_AGENT=0 disables the cap.
+  MAX_PANES_PER_AGENT: z.coerce.number().int().min(0).default(50),
+  // Max number of events a single pane may accumulate.
+  // MAX_EVENTS_PER_PANE=0 disables the cap.
+  MAX_EVENTS_PER_PANE: z.coerce.number().int().min(0).default(10_000),
   MAX_ARTIFACT_BYTES: z.coerce.number().int().positive().default(2_000_000),
   MAX_EVENT_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
   // Cap on a single agent's freeform "taste notes" markdown attachment (see
@@ -73,12 +73,12 @@ const schema = z.object({
   // Max number of versions a single template may accumulate.
   // MAX_VERSIONS_PER_ARTIFACT=0 disables the cap.
   MAX_VERSIONS_PER_ARTIFACT: z.coerce.number().int().min(0).default(50),
-  // Caps on the agent-supplied per-surface JSON Schema. The schema is compiled
-  // by Ajv at surface-create / schema-patch time; an oversized or
+  // Caps on the agent-supplied per-pane JSON Schema. The schema is compiled
+  // by Ajv at pane-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
   MAX_SCHEMA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_SCHEMA_DEPTH: z.coerce.number().int().positive().default(32),
-  MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
+  MAX_PARTICIPANTS_PER_PANE: z.coerce.number().int().positive().default(32),
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
@@ -86,9 +86,9 @@ const schema = z.object({
   // ------------------------------------------------------------------
   // Records (#287)
   // ------------------------------------------------------------------
-  // Max number of rows in one (surface, collection). Records replace the
+  // Max number of rows in one (pane, collection). Records replace the
   // comments-as-events anti-pattern at scale, so the ceiling is larger than
-  // MAX_EVENTS_PER_SESSION. MAX_RECORDS_PER_COLLECTION=0 disables the cap.
+  // MAX_EVENTS_PER_PANE. MAX_RECORDS_PER_COLLECTION=0 disables the cap.
   MAX_RECORDS_PER_COLLECTION: z.coerce.number().int().min(0).default(50_000),
   // Per-row payload byte cap. Mirrors MAX_EVENT_DATA_BYTES.
   MAX_RECORD_DATA_BYTES: z.coerce.number().int().positive().default(65_536),
@@ -125,8 +125,8 @@ const schema = z.object({
   // if needed; lower is the right v0.1.0 default.
   MAX_BLOB_BYTES: z.coerce.number().int().positive().default(5_000_000),
 
-  // Per-surface aggregate cap on attached attachments. 100 MB ≈ 20 max-size attachments.
-  MAX_BLOBS_PER_SESSION_BYTES: z.coerce
+  // Per-pane aggregate cap on attached attachments. 100 MB ≈ 20 max-size attachments.
+  MAX_BLOBS_PER_PANE_BYTES: z.coerce
     .number()
     .int()
     .positive()
@@ -142,7 +142,7 @@ const schema = z.object({
     .default(500_000_000),
 
   // Per-template aggregate cap (icons / fonts / static assets a UI needs to
-  // render). Smaller than surface by design — template assets should be
+  // render). Smaller than pane by design — template assets should be
   // lightweight.
   MAX_BLOBS_PER_ARTIFACT_BYTES: z.coerce
     .number()
@@ -208,8 +208,8 @@ const schema = z.object({
 
   // When the per-agent aggregate cap would be exceeded, evict oldest
   // agent-scope attachments (LRU by createdAt) to make room for the new one.
-  // Surface-scope and template-scope attachments are NEVER evicted — they're
-  // tied to a live surface / template and the cascade handles their
+  // Pane-scope and template-scope attachments are NEVER evicted — they're
+  // tied to a live pane / template and the cascade handles their
   // cleanup. When false, the relay rejects the upload with
   // quota_exceeded instead of evicting.
   BLOB_LRU_EVICTION: z
@@ -233,7 +233,7 @@ const schema = z.object({
 
   // Default TTL for a /b/<token> capability URL minted against an
   // template-scope attachment. 30 days. Template-scope is the longest-lived; these
-  // tokens are typically reused across many surface instances. Operators
+  // tokens are typically reused across many pane instances. Operators
   // tighten this if exposure tolerance is lower.
   BLOB_TOKEN_TTL_ARTIFACT_SECONDS: z.coerce
     .number()
@@ -244,8 +244,8 @@ const schema = z.object({
   // Default TTL for a /b/<token> capability URL minted against an agent-
   // scope attachment. 24 hours. Tightened from the original 7d design after the
   // security review (proposal #152) — long-lived agent tokens invited
-  // "set and forget" leaks. Surface-scope tokens don't get a knob here:
-  // they always inherit their surface's TTL exactly.
+  // "set and forget" leaks. Pane-scope tokens don't get a knob here:
+  // they always inherit their pane's TTL exactly.
   BLOB_TOKEN_TTL_AGENT_SECONDS: z.coerce
     .number()
     .int()
@@ -305,8 +305,8 @@ const schema = z.object({
   // ------------------------------------------------------------------
   // The email provider used to deliver magic-link login emails. `none` (the
   // default) disables human-side login entirely — the relay still serves the
-  // agent API and capability-URL surfaces, but POST /v1/auth/* returns 503.
-  // Self-hosters who only need the agent surface leave this unset.
+  // agent API and capability-URL panes, but POST /v1/auth/* returns 503.
+  // Self-hosters who only need the agent pane leave this unset.
   // See docs/HUMAN-SIDE-PROPOSAL.md §4.3.
   EMAIL_PROVIDER: z
     .enum(["none", "dev", "azure", "smtp", "resend"])
@@ -497,7 +497,7 @@ export function loadConfig(
  * Production-only sanity checks for config that is fine to default in local dev
  * but silently breaks a real deployment.
  *
- * PUBLIC_URL: human-facing surface URLs are built from it. On Azure Container
+ * PUBLIC_URL: human-facing pane URLs are built from it. On Azure Container
  * Apps the ingress FQDN isn't known until the app exists, so PUBLIC_URL is
  * wired in a second deploy step — until then it falls back to localhost and
  * every URL handed to a human is unreachable. Fail loudly rather than hand out
@@ -511,7 +511,7 @@ export function validateProductionConfig(c: Config): void {
   const pub = c.PUBLIC_URL?.trim();
   if (!pub) {
     throw new Error(
-      "PUBLIC_URL must be set in production — surface URLs are built from it. " +
+      "PUBLIC_URL must be set in production — pane URLs are built from it. " +
         "On Azure Container Apps, set it to the ingress FQDN in a second deploy " +
         "step (https://<fqdn>). See docs/DEPLOY.md.",
     );
@@ -519,7 +519,7 @@ export function validateProductionConfig(c: Config): void {
   if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(pub)) {
     throw new Error(
       `PUBLIC_URL still points at localhost (${pub}) in production — human-facing ` +
-        "surface URLs would be unreachable. Set it to the public ingress URL. " +
+        "pane URLs would be unreachable. Set it to the public ingress URL. " +
         "See docs/DEPLOY.md.",
     );
   }

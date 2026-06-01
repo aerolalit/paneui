@@ -165,7 +165,7 @@ The meta-test is the load-bearing acceptance criterion from #154: it runs
 case #3's TOCTOU scenario against a deliberately-broken `confirmPresigned`
 that performs zero verification, and asserts the broken implementation
 accepts a sha256 mismatch. If case #3's pass/fail signal ever stopped
-catching the regression, the meta-test would flip and surface it.
+catching the regression, the meta-test would flip and pane it.
 
 ### Per-backend test files
 

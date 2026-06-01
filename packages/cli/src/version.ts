@@ -1,7 +1,7 @@
 // Single source of truth for the CLI version string.
 //
 // - `pane --version` prints this verbatim.
-// - Every PaneClient construction passes it as `cliVersion`, which surfaces
+// - Every PaneClient construction passes it as `cliVersion`, which panes
 //   as the `x-pane-cli-version` header on every relay request — drives the
 //   relay's version-skew check (HTTP 426 `cli_upgrade_required`).
 //

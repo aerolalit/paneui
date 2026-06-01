@@ -1,11 +1,11 @@
-// Tests for `pane surface delete` — surface deletion and missing-id handling.
+// Tests for `pane delete` — pane deletion and missing-id handling.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const calls: { method: string; args: unknown[] }[] = [];
 const fakeClient = {
-  deleteSession: vi.fn((id: unknown) => {
-    calls.push({ method: "deleteSession", args: [id] });
+  deletePane: vi.fn((id: unknown) => {
+    calls.push({ method: "deletePane", args: [id] });
     return Promise.resolve();
   }),
 };
@@ -59,22 +59,22 @@ async function run(tokens: string[]): Promise<void> {
 }
 
 describe("runDelete", () => {
-  it("deletes the given surface id", async () => {
-    await run(["sur_abc"]);
+  it("deletes the given pane id", async () => {
+    await run(["pan_abc"]);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.method).toBe("deleteSession");
-    expect(calls[0]!.args[0]).toBe("sur_abc");
+    expect(calls[0]!.method).toBe("deletePane");
+    expect(calls[0]!.args[0]).toBe("pan_abc");
     expect(JSON.parse(stdout)).toEqual({
-      surface_id: "sur_abc",
+      pane_id: "pan_abc",
       deleted: true,
     });
   });
 
-  it("fails when the surface id is missing", async () => {
+  it("fails when the pane id is missing", async () => {
     await run([]);
     expect(exitCode).toBe(1);
     expect(JSON.parse(stderr).error.code).toBe("invalid_args");
-    expect(stderr).toContain("missing <surface-id>");
+    expect(stderr).toContain("missing <pane-id>");
     expect(calls).toHaveLength(0);
   });
 });

@@ -25,7 +25,7 @@ const postBody = z.object({
 events.post("/", async (c) => {
   const prisma = c.get("prisma");
   const config = c.get("config");
-  const surface = c.get("surface");
+  const pane = c.get("pane");
   const author = c.get("author");
 
   const body = await c.req.json().catch(() => null);
@@ -41,7 +41,7 @@ events.post("/", async (c) => {
 
   const { event, deduped } = await writeEvent(
     { prisma, config },
-    surface,
+    pane,
     author,
     {
       type,
@@ -59,7 +59,7 @@ events.post("/", async (c) => {
 
 events.get("/", async (c) => {
   const prisma = c.get("prisma");
-  const surface = c.get("surface");
+  const pane = c.get("pane");
   const sinceRaw = c.req.query("since");
   const waitRaw = c.req.query("wait");
 
@@ -87,7 +87,7 @@ events.get("/", async (c) => {
   }> {
     const rows = await prisma.event.findMany({
       where: {
-        surfaceId: surface.id,
+        paneId: pane.id,
         ...(sinceId !== null ? { id: { gt: sinceId } } : {}),
       },
       orderBy: { id: "asc" },
@@ -109,7 +109,7 @@ events.get("/", async (c) => {
   // Subscribe to the broadcast bus BEFORE the first query so that an event
   // published during the query window is buffered rather than missed by both
   // the query and the subsequent waiter (long-poll race, issue #49).
-  const waiter = openWaiter(surface.id);
+  const waiter = openWaiter(pane.id);
   try {
     const first = await query();
     if (first.events.length > 0) {

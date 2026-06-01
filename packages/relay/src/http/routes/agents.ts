@@ -2,7 +2,7 @@
 //
 //   POST /v1/agents/claim   bind this agent to a human via a one-shot code
 //                           the human generated via POST /v1/self/claim-codes
-//                           (§6.1). Migrates ownership of all surfaces and
+//                           (§6.1). Migrates ownership of all panes and
 //                           templates the agent owns to the claiming human.
 
 import { Hono } from "hono";
@@ -86,18 +86,18 @@ agents.post("/claim", async (c) => {
         where: { id: agent.id },
         data: { ownerHumanId: claim.humanId, claimedAt: now },
       });
-      // Step 3: migrate ownership of the agent's surfaces from ownerAgentId
+      // Step 3: migrate ownership of the agent's panes from ownerAgentId
       // to ownerHumanId. ownerHumanId NULL on these rows by Phase A's
       // additive shape — set it to the claiming human. Leave ownerAgentId
       // alone too (so the audit trail still records the original agent
       // owner); the rule "ownerHumanId IS NOT NULL => human-owned" lets
       // Phase D's lookups treat the human as the new owner.
       //
-      // NOTE: this writes ownerHumanId on EVERY surface/template the
+      // NOTE: this writes ownerHumanId on EVERY pane/template the
       // agent owns. The proposal also describes flipping the ownership
-      // model in Phase D (Surface.agentId removed); until then we just
+      // model in Phase D (Pane.agentId removed); until then we just
       // tag the human owner alongside.
-      await tx.surface.updateMany({
+      await tx.pane.updateMany({
         where: { agentId: agent.id, ownerHumanId: null },
         data: { ownerHumanId: claim.humanId },
       });

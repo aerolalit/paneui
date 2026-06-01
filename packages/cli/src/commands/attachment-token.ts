@@ -10,7 +10,7 @@
 // hands us a ParsedArgs whose positionals[0] is "token" (our sub-noun
 // marker), so we read the verb from positionals[1] and the args from
 // positionals[2..]. Mirrors how participant.ts dispatches under `pane
-// surface participant`.
+// pane participant`.
 
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
@@ -35,7 +35,7 @@ Usage:
 Verbs:
   mint <attachment-id>          Mint a /b/<token> capability URL for one attachment.
                           Optional: --ttl <seconds> (defaults by scope:
-                          30d template / surface TTL / 24h agent; the caller
+                          30d template / pane TTL / 24h agent; the caller
                           can only shorten), --once (token self-deletes on
                           first successful GET). Returns { token, url,
                           expires_at, ... } — ONCE.

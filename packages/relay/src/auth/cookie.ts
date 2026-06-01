@@ -12,7 +12,7 @@
 //   - Secure          — in production only. localhost http: dev would
 //                       silently lose the cookie otherwise.
 //   - Path=/          — the cookie scopes to the entire relay; both the
-//                       /v1/api routes and the /home template surface
+//                       /v1/api routes and the /home template pane
 //                       (Phase D) use it.
 //   - Max-Age         — LOGIN_TTL_SECONDS from config.
 

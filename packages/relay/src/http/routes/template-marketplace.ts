@@ -21,7 +21,7 @@ import { requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
-import { compareSurfaceSchemas } from "../../core/schema-compat.js";
+import { comparePaneSchemas } from "../../core/schema-compat.js";
 import type { EventSchema } from "../../types.js";
 
 // ----------------------------------------------------------------------
@@ -388,7 +388,7 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
 });
 
 // POST /v1/templates/:id/upgrade — re-pin an install to another version of
-// the same template (#267 PR C). Mirrors the surface-side upgrade route but
+// the same template (#267 PR C). Mirrors the pane-side upgrade route but
 // operates on HumanTemplateInstall.installedVersion. Same compat gate;
 // same compat="strict" | "force" semantics.
 const upgradeInstallBody = z.object({
@@ -472,7 +472,7 @@ templateMarketplace.post("/:id/upgrade", requireHuman, async (c) => {
     throw errors.notFound();
   }
 
-  const breaks = compareSurfaceSchemas({
+  const breaks = comparePaneSchemas({
     oldEventSchema: fromVersion.eventSchema as unknown as EventSchema | null,
     newEventSchema: toVersion.eventSchema as unknown as EventSchema | null,
     oldInputSchema: fromVersion.inputSchema as Record<string, unknown> | null,

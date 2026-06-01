@@ -24,7 +24,7 @@ import { AttachmentIntegrityError, type AttachmentStore } from "./store.js";
 
 /**
  * Shape every backend exposes for the presigned-PUT path. Mirrors
- * AzureBlobStore's method surface — kept as an interface here so the
+ * AzureBlobStore's method pane — kept as an interface here so the
  * conformance suite doesn't `import` from the concrete Azure module.
  */
 export interface PresignCapable {

@@ -135,7 +135,7 @@ describe("runSkill", () => {
   });
 
   it("exits non-zero with relay_error on a 404 (e.g. operator stripped the route)", async () => {
-    // The skill route is optional in principle — surface the relay's
+    // The skill route is optional in principle — pane the relay's
     // status + body snippet rather than just "command failed".
     stubFetch({ status: 404, body: "not found" });
     await run(["show"]);
@@ -175,7 +175,7 @@ describe("runSkill — version subcommand", () => {
   });
 
   it("with --plain prints just the version string + newline", async () => {
-    // The shell-pipeline form. An agent's surface-start hook does:
+    // The shell-pipeline form. An agent's pane-start hook does:
     //   if [ "$(pane skill version --plain)" != "$LOCAL" ]; then ...
     // — so --plain MUST emit a bare line, no JSON braces, no trailing
     // whitespace beyond the newline.

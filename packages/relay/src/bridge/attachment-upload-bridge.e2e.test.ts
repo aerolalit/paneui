@@ -1,6 +1,6 @@
 // End-to-end test for `POST /s/:participantToken/attachments` — follow-up C of #156.
 //
-// Mirrors the surface tests in src/http/routes/attachments.e2e.test.ts so the human-
+// Mirrors the pane tests in src/http/routes/attachments.e2e.test.ts so the human-
 // side upload route can't drift from the agent-side route on security-
 // sensitive behaviour (MIME sniff, polyglot defense, quotas). Uses a real
 // FilesystemBlobStore over a tmpdir + a real Hono app.
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../test-helpers/db.js";
-import { seedSurfaceRow } from "../test-helpers/seed.js";
+import { seedPaneRow } from "../test-helpers/seed.js";
 import { createPrismaClient } from "../db.js";
 import { loadConfig } from "../config.js";
 import { hashKey, keyPrefix, generateHumanParticipantToken } from "../keys.js";
@@ -106,10 +106,10 @@ afterAll(async () => {
   rmSync(blobDir, { recursive: true, force: true });
 });
 
-async function seedSurface(): Promise<{
+async function seedPane(): Promise<{
   token: string;
   agentId: string;
-  surfaceId: string;
+  paneId: string;
 }> {
   const apiKey = "pane_" + randomBytes(16).toString("hex");
   const agent = await prisma.agent.create({
@@ -119,7 +119,7 @@ async function seedSurface(): Promise<{
       keyPrefix: keyPrefix(apiKey),
     },
   });
-  const { surfaceId } = await seedSurfaceRow(prisma, {
+  const { paneId } = await seedPaneRow(prisma, {
     agentId: agent.id,
     templateSource: "<html></html>",
     eventSchema: minimalSchema,
@@ -129,20 +129,20 @@ async function seedSurface(): Promise<{
   const token = generateHumanParticipantToken();
   await prisma.participant.create({
     data: {
-      surfaceId,
+      paneId,
       kind: "human",
       identityId: "human-1",
       tokenHash: hashKey(token),
       tokenPrefix: keyPrefix(token),
     },
   });
-  return { token, agentId: agent.id, surfaceId };
+  return { token, agentId: agent.id, paneId };
 }
 
 interface UploadOpts {
   declaredMime?: string;
   filename?: string;
-  /** Extra form fields the route should IGNORE — used to verify forced surface scope. */
+  /** Extra form fields the route should IGNORE — used to verify forced pane scope. */
   extra?: Record<string, string>;
 }
 
@@ -174,8 +174,8 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("uploads a JPEG and returns a AttachmentRef pinned to scope='surface'", async () => {
-    const { token, agentId, surfaceId } = await seedSurface();
+  it("uploads a JPEG and returns a AttachmentRef pinned to scope='pane'", async () => {
+    const { token, agentId, paneId } = await seedPane();
     const payload = await makeJpeg(128);
 
     const res = await upload(token, payload);
@@ -186,50 +186,50 @@ describe("POST /s/:participantToken/attachments — happy path", () => {
       mime: string;
       size: number;
       sha256: string;
-      surface_id: string | null;
+      pane_id: string | null;
       template_id: string | null;
       status: string;
     };
-    expect(json.scope).toBe("surface");
+    expect(json.scope).toBe("pane");
     expect(json.mime).toBe("image/jpeg");
-    expect(json.surface_id).toBe(surfaceId);
+    expect(json.pane_id).toBe(paneId);
     expect(json.template_id).toBeNull();
     expect(json.status).toBe("ready");
 
-    // The Blob row's `ownerId` is the AGENT that owns the surface, not the
+    // The Blob row's `ownerId` is the AGENT that owns the pane, not the
     // participant — human uploads count against the agent's footprint.
     const row = await prisma.attachment.findUnique({
       where: { id: json.attachment_id },
     });
     expect(row).not.toBeNull();
     expect(row!.ownerId).toBe(agentId);
-    expect(row!.scope).toBe("surface");
-    expect(row!.surfaceId).toBe(surfaceId);
+    expect(row!.scope).toBe("pane");
+    expect(row!.paneId).toBe(paneId);
   });
 
-  it("forces scope=surface even when the client tries to send scope=agent", async () => {
-    const { token, surfaceId } = await seedSurface();
+  it("forces scope=pane even when the client tries to send scope=agent", async () => {
+    const { token, paneId } = await seedPane();
     const res = await upload(token, await makeJpeg(), {
       extra: {
         scope: "agent",
         // Even with these set, the route ignores them.
-        surface_id: "sur_someone_else",
+        pane_id: "pan_someone_else",
         template_id: "art_someone_else",
       },
     });
     expect(res.status).toBe(201);
     const json = (await res.json()) as {
       scope: string;
-      surface_id: string | null;
+      pane_id: string | null;
       template_id: string | null;
     };
-    expect(json.scope).toBe("surface");
-    expect(json.surface_id).toBe(surfaceId);
+    expect(json.scope).toBe("pane");
+    expect(json.pane_id).toBe(paneId);
     expect(json.template_id).toBeNull();
   });
 
   it("stores the filename when provided", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const res = await upload(token, await makeJpeg(), {
       filename: "selfie.jpg",
     });
@@ -260,9 +260,9 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
   });
 
   it("rejects a revoked participant with 401", async () => {
-    const { token, surfaceId } = await seedSurface();
+    const { token, paneId } = await seedPane();
     await prisma.participant.updateMany({
-      where: { surfaceId },
+      where: { paneId },
       data: { revokedAt: new Date() },
     });
     const res = await upload(token, await makeJpeg());
@@ -271,10 +271,10 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
     expect(body.error.code).toBe("participant_token_invalid");
   });
 
-  it("rejects uploads to a closed surface with 410 gone", async () => {
-    const { token, surfaceId } = await seedSurface();
-    await prisma.surface.update({
-      where: { id: surfaceId },
+  it("rejects uploads to a closed pane with 410 gone", async () => {
+    const { token, paneId } = await seedPane();
+    await prisma.pane.update({
+      where: { id: paneId },
       data: { status: "closed" },
     });
     const res = await upload(token, await makeJpeg());
@@ -283,10 +283,10 @@ describe("POST /s/:participantToken/attachments — auth / token validation", ()
     expect(body.error.code).toBe("gone");
   });
 
-  it("rejects uploads to an expired surface with 410 gone", async () => {
-    const { token, surfaceId } = await seedSurface();
-    await prisma.surface.update({
-      where: { id: surfaceId },
+  it("rejects uploads to an expired pane with 410 gone", async () => {
+    const { token, paneId } = await seedPane();
+    await prisma.pane.update({
+      where: { id: paneId },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
     const res = await upload(token, await makeJpeg());
@@ -300,7 +300,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("400 invalid_request when the file part is missing", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const fd = new FormData();
     fd.set("filename", "no-file.jpg");
     const res = await app.fetch(
@@ -315,7 +315,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("415 mime_disallowed for an HTML-looking payload (polyglot defense)", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     // FF D8 FF prefix sniffs as image/jpeg but the rest is HTML — sharp's
     // decode-then-encode pass refuses it, mirroring the agent-side route.
     const fakeJpeg = Buffer.concat([
@@ -329,7 +329,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("413 attachment_size_exceeded when the upload exceeds MAX_BLOB_BYTES", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const big = await makeBigJpeg(MAX_BLOB + 1024);
     const res = await upload(token, big);
     expect(res.status).toBe(413);
@@ -338,7 +338,7 @@ describe("POST /s/:participantToken/attachments — rejection paths", () => {
   });
 
   it("413 quota_exceeded when the agent's aggregate quota is exhausted", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const perBlob = 80 * 1024;
     // First three fit (240 KB total), 4th would push past the 300 KB cap.
     expect((await upload(token, await makeBigJpeg(perBlob))).status).toBe(201);
@@ -360,7 +360,7 @@ describe("POST /s/:participantToken/attachments — polyglot defense", () => {
   });
 
   it("strips HTML appended after a JPEG (same defense as POST /v1/attachments)", async () => {
-    const { token } = await seedSurface();
+    const { token } = await seedPane();
     const realJpeg = await makeJpeg(256);
     const polyglot = Buffer.concat([
       realJpeg,

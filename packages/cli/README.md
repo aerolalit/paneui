@@ -34,11 +34,11 @@ Uniform `pane <noun> <verb> [options]`:
 ```
 pane agent register            Provision an agent API key and save it locally
 pane agent logout              Clear the locally-saved URL + API key
-pane surface create            Create a surface — returns surface_id, urls, tokens
-pane surface show <id>         Non-blocking snapshot: metadata + event log
-pane surface send <id>         Emit an agent event into a surface
-pane surface watch <id>        Stream a surface's events as JSON-lines on stdout
-pane surface delete <id>       Close / delete a surface
+pane create            Create a pane — returns pane_id, urls, tokens
+pane show <id>         Non-blocking snapshot: metadata + event log
+pane send <id>         Emit an agent event into a pane
+pane watch <id>        Stream a pane's events as JSON-lines on stdout
+pane delete <id>       Close / delete a pane
 pane template <verb>           Manage reusable, versioned templates
 pane key list | revoke         Inspect or revoke your agent's API key
 pane taste get | set | clear   Read / write / clear UI-taste notes
@@ -56,8 +56,8 @@ stdout is machine-readable JSON. Errors go to stderr as
 `{"error":{"code","message"}}` with a non-zero exit.
 
 ```sh
-SESSION=$(pane surface create --template form --schema ./q.json | jq -r .surface_id)
-pane surface watch "$SESSION" | jq 'select(.type == "human_response")'
+SESSION=$(pane create --template form --schema ./q.json | jq -r .pane_id)
+pane watch "$SESSION" | jq 'select(.type == "human_response")'
 ```
 
 ## Links

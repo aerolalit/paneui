@@ -17,7 +17,7 @@
 //
 // The `ownerId` carried in the input is the AGENT id, even for the
 // participant-side route — human uploads count against the agent that owns
-// the surface, never against the participant.
+// the pane, never against the participant.
 //
 // Quota helpers (`enforceQuotas`) live alongside the route in
 // `src/http/routes/attachments.ts` for now. The pipeline reaches in via a
@@ -49,16 +49,16 @@ export function storageKeyFor(attachmentId: string): string {
 }
 
 export interface AttachmentUploadInput {
-  /** The owning agent id. For surface-scope uploads from a participant this
-   * is `surface.agentId` — the participant is NOT the owner. */
+  /** The owning agent id. For pane-scope uploads from a participant this
+   * is `pane.agentId` — the participant is NOT the owner. */
   ownerId: string;
   /** Already-validated scope (caller is responsible for cross-tenant + FK
-   * existence checks, and for forcing scope="surface" on participant routes). */
-  scope: "agent" | "surface" | "template";
-  /** Required when scope="surface". Caller has already verified the agent
-   * owns this surface (or, for participant routes, that the token's surface
+   * existence checks, and for forcing scope="pane" on participant routes). */
+  scope: "agent" | "pane" | "template";
+  /** Required when scope="pane". Caller has already verified the agent
+   * owns this pane (or, for participant routes, that the token's pane
    * matches). */
-  surfaceId: string | null;
+  paneId: string | null;
   /** Required when scope="template". */
   templateId: string | null;
   /** Optional UX-only display name (no security meaning — sanitised at
@@ -81,10 +81,10 @@ export interface QuotaEnforcer {
    */
   enforce(opts: {
     ownerId: string;
-    surfaceId: string | null;
+    paneId: string | null;
     templateId: string | null;
     extraBytes: number;
-  }): Promise<{ scope: "agent" | "surface" | "template"; cap: number } | null>;
+  }): Promise<{ scope: "agent" | "pane" | "template"; cap: number } | null>;
 }
 
 export interface AttachmentRowReady {
@@ -98,7 +98,7 @@ export interface AttachmentRowReady {
   width: number | null;
   height: number | null;
   status: string;
-  surfaceId: string | null;
+  paneId: string | null;
   templateId: string | null;
   storageKey: string;
   createdAt: Date;
@@ -127,7 +127,7 @@ export async function processBlobUpload(
   input: AttachmentUploadInput,
 ): Promise<AttachmentRowReady> {
   const { prisma, config, store, quota } = deps;
-  const { ownerId, scope, surfaceId, templateId, filename, file } = input;
+  const { ownerId, scope, paneId, templateId, filename, file } = input;
 
   // Cheap declared-Content-Type check. The authoritative check happens
   // after we have leading bytes (sniff vs. allowlist).
@@ -251,7 +251,7 @@ export async function processBlobUpload(
     data: {
       ownerId,
       scope,
-      surfaceId,
+      paneId,
       templateId,
       mime: sniffedMime,
       size: finalSize,
@@ -314,13 +314,13 @@ export async function processBlobUpload(
   }
 
   // Aggregate quotas. The per-agent cap applies to EVERY scope (an
-  // agent's total footprint across all attachments they own). The per-surface
+  // agent's total footprint across all attachments they own). The per-pane
   // or per-template cap applies on top of that when relevant. The just-
   // written row still has its placeholder `size: 0` at this point, so
   // we add `info.size` into the aggregate via `extraBytes`.
   const quotaFailure = await quota.enforce({
     ownerId,
-    surfaceId,
+    paneId,
     templateId,
     extraBytes: info.size,
   });

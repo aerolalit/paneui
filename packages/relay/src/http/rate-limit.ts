@@ -264,13 +264,13 @@ export const generalRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
- * Per-IP rate limit for the WebSocket upgrade (`WS /v1/surfaces/:id/stream`).
+ * Per-IP rate limit for the WebSocket upgrade (`WS /v1/panes/:id/stream`).
  *
  * The upgrade is handled out-of-band by the `server.on("upgrade")` listener,
  * NOT through the Hono app — so `generalRateLimit` middleware never runs for
  * it. Without this an attacker could hammer the upgrade endpoint (each upgrade
  * does a token resolve + DB lookups) with no per-IP bound, sidestepping the
- * per-surface connection cap by rotating surface ids / spraying invalid
+ * per-pane connection cap by rotating pane ids / spraying invalid
  * tokens. Call this FIRST in the upgrade handler, before any DB work.
  *
  * The caller passes the SAME `generalLimiter` instance the Hono app uses (the

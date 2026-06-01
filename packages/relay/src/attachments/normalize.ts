@@ -24,7 +24,7 @@
 // natively and would need a separate XML sanitiser; v0.1.0 documents this
 // in docs/SECURITY-POLYGLOTS.md as a known limitation and recommends
 // operators remove `image/svg+xml` from BLOB_MIME_ALLOWLIST if their
-// surface is exposed to untrusted UI rendering.
+// pane is exposed to untrusted UI rendering.
 
 import { createHash } from "node:crypto";
 import sharp from "sharp";
@@ -116,7 +116,7 @@ export async function normaliseImage(
   } catch (e) {
     // Re-throw with a stable shape the route can pattern-match. We treat a
     // sharp decode failure as a hostile or unsupported image — the caller
-    // surfaces it as `mime_disallowed` so the upload is rejected.
+    // panes it as `mime_disallowed` so the upload is rejected.
     throw new ImageNormalisationError(
       `image normalisation failed: ${
         e instanceof Error ? e.message : String(e)

@@ -4,8 +4,8 @@
 // a positional subcommand (create / version / update / search / list / show /
 // delete).
 // An template is a reusable UI template (HTML + event schema + optional input
-// schema); a surface is one *use* of one version of it. Authoring an template
-// once and instancing it via `pane surface create --template-id` removes the
+// schema); a pane is one *use* of one version of it. Authoring an template
+// once and instancing it via `pane create --template-id` removes the
 // per-use cost of regenerating the same HTML.
 
 import {
@@ -48,9 +48,9 @@ const SEARCH_PUBLIC_FLAGS = ["limit", "offset"];
 export const artifactHelp = `pane template — manage reusable, versioned templates
 
 An template is a reusable UI template: HTML + an event schema + an optional
-input schema. A surface is one use of one version of it. Author an template
-once, then instance it many times with 'pane surface create --template-id <id|slug>'
-instead of regenerating the HTML on every surface.
+input schema. A pane is one use of one version of it. Author an template
+once, then instance it many times with 'pane create --template-id <id|slug>'
+instead of regenerating the HTML on every pane.
 
 Usage:
   pane template <subcommand> [options]
@@ -63,7 +63,7 @@ Subcommands:
   list          List the agent's named templates (search with no query).
   show          Show a full template: head metadata + its version list.
   delete        Permanently delete an template and ALL its versions. Requires
-                --yes. Refused with 409 conflict if any surface (open or
+                --yes. Refused with 409 conflict if any pane (open or
                 closed) still references the template — delete those first.
   publish       Publish a template to the public catalog (so other humans
                 can install it). Optionally lock --scopes at publish time.
@@ -102,15 +102,15 @@ Subcommands:
 
   pane template delete <id|slug> --yes
       Permanently deletes the template and all its versions. Refused
-      (409 conflict) if any surface in any state still references one
-      of the template's versions — run 'pane surface delete <surface-id>' on
+      (409 conflict) if any pane in any state still references one
+      of the template's versions — run 'pane delete <pane-id>' on
       each first, or wait for the relay's TTL sweeper to reclaim them.
       Prints { template, deleted: true } on success.
 
   pane template publish <id|slug> [--scopes <s1,s2,...>]
       Publishes the template to the public catalog. Other humans can then
       install it from their /apps page. --scopes is a comma-separated
-      'verb:noun' list (e.g. 'read:agent,write:surface') that locks the
+      'verb:noun' list (e.g. 'read:agent,write:pane') that locks the
       permissions this version requests; reissue with new --scopes to
       reset them. Prints the head metadata + published_at + scopes.
 
@@ -158,7 +158,7 @@ Options:
                       emittedBy is any non-empty subset of ["page", "agent"].
                       payload is a JSON Schema; the relay validates every
                       emit against it. See docs/SPEC.md for the full grammar.
-  --input-schema <v>  JSON Schema for this template's per-surface input_data —
+  --input-schema <v>  JSON Schema for this template's per-pane input_data —
                       a file path, or inline JSON. Optional.
   --template-type <t> "html-inline" (default) or "html-ref".
   --url <url>         Relay base URL (overrides PANE_URL).
@@ -236,7 +236,7 @@ function resolveTags(args: ParsedArgs): string[] | undefined {
   return tags.length > 0 ? tags : undefined;
 }
 
-async function runArtifactCreate(args: ParsedArgs): Promise<void> {
+async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, CREATE_FLAGS, NO_BOOLS, "pane template create");
 
   const name = args.flags.get("name");
@@ -289,7 +289,7 @@ async function runArtifactCreate(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runArtifactVersion(args: ParsedArgs): Promise<void> {
+async function runTemplateVersion(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, VERSION_FLAGS, NO_BOOLS, "pane template version");
 
   const idOrSlug = args.positionals[1];
@@ -336,7 +336,7 @@ async function runArtifactVersion(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runArtifactUpdate(args: ParsedArgs): Promise<void> {
+async function runTemplateUpdate(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, UPDATE_FLAGS, NO_BOOLS, "pane template update");
 
   const idOrSlug = args.positionals[1];
@@ -386,7 +386,7 @@ async function runArtifactUpdate(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runArtifactSearch(
+async function runTemplateSearch(
   args: ParsedArgs,
   query?: string,
 ): Promise<void> {
@@ -406,7 +406,7 @@ async function runArtifactSearch(
   }
 }
 
-async function runArtifactShow(args: ParsedArgs): Promise<void> {
+async function runTemplateShow(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, NO_FLAGS, NO_BOOLS, "pane template show");
 
   const idOrSlug = args.positionals[1];
@@ -427,10 +427,10 @@ async function runArtifactShow(args: ParsedArgs): Promise<void> {
 
 // `pane template delete <id|slug> --yes` — remove an template (and, server-
 // side, all its versions). The relay refuses with 409 conflict if any
-// surface still references it; the CLI surfaces that as the relay-supplied
+// pane still references it; the CLI panes that as the relay-supplied
 // envelope. `--yes` is required because there's no Undo button on a delete
 // and the same `pane template create` slug isn't reservable once gone.
-async function runArtifactDelete(args: ParsedArgs): Promise<void> {
+async function runTemplateDelete(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, NO_FLAGS, DELETE_BOOLS, "pane template delete");
 
   const idOrSlug = args.positionals[1];
@@ -542,29 +542,29 @@ async function runTemplateSearchPublic(args: ParsedArgs): Promise<void> {
   }
 }
 
-export async function runArtifact(args: ParsedArgs): Promise<void> {
+export async function runTemplate(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
     case "create":
-      await runArtifactCreate(args);
+      await runTemplateCreate(args);
       break;
     case "version":
-      await runArtifactVersion(args);
+      await runTemplateVersion(args);
       break;
     case "update":
-      await runArtifactUpdate(args);
+      await runTemplateUpdate(args);
       break;
     case "search":
-      await runArtifactSearch(args, args.positionals[1]);
+      await runTemplateSearch(args, args.positionals[1]);
       break;
     case "list":
-      await runArtifactSearch(args, undefined);
+      await runTemplateSearch(args, undefined);
       break;
     case "show":
-      await runArtifactShow(args);
+      await runTemplateShow(args);
       break;
     case "delete":
-      await runArtifactDelete(args);
+      await runTemplateDelete(args);
       break;
     case "publish":
       await runTemplatePublish(args);

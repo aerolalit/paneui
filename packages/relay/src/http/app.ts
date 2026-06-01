@@ -14,7 +14,7 @@ import { log } from "../log.js";
 import { recordError, recordHttpDuration } from "../telemetry/metrics.js";
 import { recordExceptionOnActiveSpan } from "../telemetry/tracing.js";
 import register from "./routes/register.js";
-import surfaces from "./routes/surfaces.js";
+import panes from "./routes/panes.js";
 import templates from "./routes/templates.js";
 import { auth } from "./routes/auth.js";
 import self from "./routes/self.js";
@@ -107,7 +107,7 @@ export function buildApp(
       await next();
     } finally {
       const ms = Date.now() - start;
-      // Redact the surface token in /s/<tok>/... bridge paths AND the attachment
+      // Redact the pane token in /s/<tok>/... bridge paths AND the attachment
       // capability token in /b/<tok> paths — both are bearer secrets in the
       // URL itself and must never reach access logs / log aggregators in
       // unredacted form.
@@ -124,7 +124,7 @@ export function buildApp(
         });
       }
       // Record request duration against the matched ROUTE PATTERN (e.g.
-      // /v1/surfaces/:id/events) — never the concrete path — to keep the
+      // /v1/panes/:id/events) — never the concrete path — to keep the
       // histogram's label cardinality bounded. No-op when metrics are disabled.
       recordHttpDuration(ms / 1000, {
         method: c.req.method,
@@ -136,7 +136,7 @@ export function buildApp(
 
   app.onError((err, c) => {
     // Enrich the active HTTP span (created by the OTel HTTP instrumentation)
-    // with the exception so Application Insights surfaces it as an exception
+    // with the exception so Application Insights panes it as an exception
     // on the request trace. No-op when no span is active (e.g. prometheus
     // mode, or a 4xx ApiError which is still a legitimate "error" to record).
     recordExceptionOnActiveSpan(err);
@@ -212,7 +212,7 @@ export function buildApp(
   // rate-limit middleware, so it stays unmetered like /healthz.
   app.route("/skills", skill);
 
-  // System pages — /login + /home + /my-surfaces + /my-templates + /my-agents
+  // System pages — /login + /home + /my-panes + /my-templates + /my-agents
   // + /settings. These are pane-shipped HTML pages that read the human's
   // Login cookie and render their data. Registered before the rate limiter
   // (like /skills and /healthz) so a hostile bot can't lock a legitimate
@@ -260,10 +260,10 @@ export function buildApp(
   // stricter per-IP limiter applied inside the route module.
   app.use("/v1/*", generalRateLimit);
   app.use("/s/*", generalRateLimit);
-  // /surfaces/:id/* — the cookie-authed owner shell. Same per-IP + per-token
+  // /panes/:id/* — the cookie-authed owner shell. Same per-IP + per-token
   // limiter as /s/* so an attacker who steals a session cookie can't grind
   // through endpoints any faster than they could with a participant token.
-  app.use("/surfaces/*", generalRateLimit);
+  app.use("/panes/*", generalRateLimit);
 
   // CLI-version skew check on the agent-facing API. Runs after the rate
   // limiter so a hostile too-old CLI also pays the per-IP cost; runs before
@@ -272,15 +272,15 @@ export function buildApp(
   // health routes are mounted above and stay unmetered.
   app.use("/v1/*", cliVersionMiddleware(config));
 
-  // Owner-shell mount — /surfaces/:id + nested content/presence/ws-ticket.
+  // Owner-shell mount — /panes/:id + nested content/presence/ws-ticket.
   // Cookie-authed, owner-only: renders the same shell + iframe runtime as the
-  // capability-token /s/:token mount but with surface-id-keyed callback URLs,
-  // so a logged-in human opens their own surfaces without a token in the URL.
+  // capability-token /s/:token mount but with pane-id-keyed callback URLs,
+  // so a logged-in human opens their own panes without a token in the URL.
   // Registered AFTER the rate-limit + body-cap middleware (unlike systemPages,
   // which deliberately stays unmetered so a bot can't lock a human out of
-  // /login) so an attacker hammering /surfaces/* hits the per-IP limiter
+  // /login) so an attacker hammering /panes/* hits the per-IP limiter
   // just like they would on /s/*.
-  app.route("/surfaces", ownerShell);
+  app.route("/panes", ownerShell);
 
   // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
   // the route module: `closed` (default) returns 404; `secret` requires an
@@ -291,12 +291,12 @@ export function buildApp(
   // EMAIL_PROVIDER=none case internally (returns 503 auth_provider_unavailable)
   // so unconfigured self-hosters get a clear signal instead of a 404.
   app.route("/v1", auth);
-  app.route("/v1/surfaces", surfaces);
+  app.route("/v1/panes", panes);
   // Event bodies carry at most MAX_EVENT_DATA_BYTES of `data`; a tighter cap
   // here (leaving headroom for the JSON envelope) rejects an oversized event
   // body before it is buffered/parsed, ahead of the global /v1/* limit.
   app.use(
-    "/v1/surfaces/:id/events",
+    "/v1/panes/:id/events",
     bodyLimit({
       maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
       onError: () => {
@@ -304,13 +304,13 @@ export function buildApp(
       },
     }),
   );
-  app.route("/v1/surfaces/:id/events", events);
-  // #292 — records routes. Mounted under the surface tree so dualAuth's
+  app.route("/v1/panes/:id/events", events);
+  // #292 — records routes. Mounted under the pane tree so dualAuth's
   // `:id` lookup keeps working. Per-route body limit mirrors events' (the
   // record payload cap matches MAX_EVENT_DATA_BYTES until #293's dedicated
   // MAX_RECORD_DATA_BYTES lands).
   app.use(
-    "/v1/surfaces/:id/records/:collection/*",
+    "/v1/panes/:id/records/:collection/*",
     bodyLimit({
       maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
       onError: () => {
@@ -318,7 +318,7 @@ export function buildApp(
       },
     }),
   );
-  app.route("/v1/surfaces/:id/records/:collection", records);
+  app.route("/v1/panes/:id/records/:collection", records);
   // Phase F — public catalog + install flow. MUST mount the human-side
   // marketplace BEFORE the agent-CRUD `templates` router: the latter has
   // a `/:id` route that would otherwise capture `/public` (`id=public`)
@@ -337,17 +337,17 @@ export function buildApp(
   // /v1/agents/* — agent-authenticated routes about the calling agent.
   // Currently only the claim endpoint; Phase D will likely add more.
   app.route("/v1/agents", agents);
-  // /v1/surfaces/:id/identity-link + /v1/surfaces/:id/public-link — Phase E.
-  // Human-authenticated mints; the agent-authed POST /v1/surfaces/:id/participants
-  // is unchanged and lives in routes/surfaces.ts.
-  app.route("/v1/surfaces", participantsHuman);
+  // /v1/panes/:id/identity-link + /v1/panes/:id/public-link — Phase E.
+  // Human-authenticated mints; the agent-authed POST /v1/panes/:id/participants
+  // is unchanged and lives in routes/panes.ts.
+  app.route("/v1/panes", participantsHuman);
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
   app.route("/v1/attachments", attachments);
   // POST /s/:participantToken/attachments — human-side attachment upload (follow-up C
   // of #156). Mounted BEFORE the general /s bridge so the POST route is
   // matched cleanly; the bridge module only registers GET endpoints, but
-  // routing order keeps the surfaces visibly separate.
+  // routing order keeps the panes visibly separate.
   app.route("/s", blobUploadBridge);
   // GET /s/:participantToken/attachments/:attachment_id — human-side attachment download
   // (follow-up D of #156). The symmetric counterpart to the upload bridge:

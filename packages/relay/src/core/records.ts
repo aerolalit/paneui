@@ -1,19 +1,19 @@
-// records.ts — the per-surface record-collection writer (#291).
+// records.ts — the per-pane record-collection writer (#291).
 //
 // Peer to core/events.ts. Records are a separate data shape from events:
 // where events are an append-only journal (one row = one fact), records are
-// a mutable per-surface collection (one row = one current value). The
+// a mutable per-pane collection (one row = one current value). The
 // architectural rationale is in the epic (#287); the short version is "events
 // don't scale to thousands of comments where only the latest value matters."
 //
-// Public surface — STABLE, callers must not change:
-//   writeRecord(deps, surface, author, input)   — POST: create-or-return-existing
-//   updateRecord(deps, surface, author, input)  — PATCH: update with optimistic lock
-//   deleteRecord(deps, surface, author, input)  — DELETE: soft-delete with optimistic lock
-//   listRecords(prisma, surface, name, since)   — GET: cursor-paginated list with tombstones
+// Public pane — STABLE, callers must not change:
+//   writeRecord(deps, pane, author, input)   — POST: create-or-return-existing
+//   updateRecord(deps, pane, author, input)  — PATCH: update with optimistic lock
+//   deleteRecord(deps, pane, author, input)  — DELETE: soft-delete with optimistic lock
+//   listRecords(prisma, pane, name, since)   — GET: cursor-paginated list with tombstones
 //   validateRecord({...})                       — per-write row payload validator
 //   serializeRecord(row, collectionName)        — DB row → wire format
-//   invalidateRecordSchemaCache(surfaceId)      — drop a surface's cache entries
+//   invalidateRecordSchemaCache(paneId)      — drop a pane's cache entries
 //
 // On the wire (RecordDeltaMessage), records flow over the same WS channel as
 // events — the discriminator is a top-level `kind` field. Events have no
@@ -25,8 +25,8 @@ import { Prisma } from "@prisma/client";
 import type {
   PrismaClient,
   RecordCollection,
-  Surface,
-  SurfaceRecord,
+  Pane,
+  PaneRecord,
   TemplateVersion,
 } from "@prisma/client";
 import type { ValidateFunction } from "ajv";
@@ -40,10 +40,10 @@ import type { Config } from "../config.js";
 // Types
 // -------------------------------------------------------------------------
 
-// A surface row with its pinned template version eagerly loaded — every
+// A pane row with its pinned template version eagerly loaded — every
 // caller must pass this shape because the record schema lives on
 // templateVersion.recordSchema (#288).
-export type SurfaceWithRecordSchema = Surface & {
+export type PaneWithRecordSchema = Pane & {
   templateVersion: TemplateVersion;
 };
 
@@ -117,38 +117,38 @@ interface CollectionEntry {
   delete: Set<"agent" | "page" | "author">;
 }
 
-// Pull the (validated-at-template-time) recordSchema off the surface's pinned
+// Pull the (validated-at-template-time) recordSchema off the pane's pinned
 // template version and resolve one collection's entry. Throws 404 if the
-// collection isn't declared, 400 if the surface has no record_schema at all.
+// collection isn't declared, 400 if the pane has no record_schema at all.
 // The shape validator (#289) guarantees `x-pane-collections[name].schema.$ref`
 // resolves under `$defs` and that the principal lists are valid — we re-walk
 // defensively here but expect well-formed input.
 function resolveCollection(
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   collectionName: string,
 ): CollectionEntry {
-  const doc = surface.templateVersion.recordSchema as Record<
+  const doc = pane.templateVersion.recordSchema as Record<
     string,
     unknown
   > | null;
   if (!doc || typeof doc !== "object") {
     throw recordCollectionNotFound(
       collectionName,
-      "surface's template declares no record collections (record_schema is null)",
+      "pane's template declares no record collections (record_schema is null)",
     );
   }
   const xpc = doc["x-pane-collections"] as Record<string, unknown> | undefined;
   if (!xpc || typeof xpc !== "object") {
     throw recordCollectionNotFound(
       collectionName,
-      "surface's template declares no record collections",
+      "pane's template declares no record collections",
     );
   }
   const entry = xpc[collectionName] as Record<string, unknown> | undefined;
   if (!entry) {
     throw recordCollectionNotFound(
       collectionName,
-      `collection '${collectionName}' is not declared in this surface's template recordSchema`,
+      `collection '${collectionName}' is not declared in this pane's template recordSchema`,
     );
   }
   const schemaField = entry["schema"] as { $ref?: string } | undefined;
@@ -234,31 +234,31 @@ ajv2020.addFormat("pane-attachment-id", {
 });
 
 // LRU compiler cache, structurally identical to the validation.ts event cache:
-// outer key `${surfaceId}:${schemaVersion}`, inner key collection name. JS
+// outer key `${paneId}:${schemaVersion}`, inner key collection name. JS
 // Map preserves insertion order so "least recently used" = the first key; on
 // a hit we delete + re-set to move the entry to most-recent. Bounded at
 // CACHE_MAX entries as a backstop against any path that fails to invalidate.
 const CACHE_MAX = 10_000;
 const cache = new Map<string, Map<string, ValidateFunction>>();
-const cacheKey = (surfaceId: string, schemaVersion: number): string =>
-  `${surfaceId}:${schemaVersion}`;
+const cacheKey = (paneId: string, schemaVersion: number): string =>
+  `${paneId}:${schemaVersion}`;
 
 function getCompiler(
-  surfaceId: string,
+  paneId: string,
   schemaVersion: number,
   collectionName: string,
   rowSchema: object,
 ): ValidateFunction {
-  const k = cacheKey(surfaceId, schemaVersion);
-  let perSurface = cache.get(k);
-  if (perSurface) {
+  const k = cacheKey(paneId, schemaVersion);
+  let perPane = cache.get(k);
+  if (perPane) {
     cache.delete(k);
-    cache.set(k, perSurface);
-    const hit = perSurface.get(collectionName);
+    cache.set(k, perPane);
+    const hit = perPane.get(collectionName);
     if (hit) return hit;
   } else {
-    perSurface = new Map<string, ValidateFunction>();
-    cache.set(k, perSurface);
+    perPane = new Map<string, ValidateFunction>();
+    cache.set(k, perPane);
     // Bound: evict oldest until under cap.
     while (cache.size > CACHE_MAX) {
       const firstKey = cache.keys().next().value;
@@ -267,40 +267,40 @@ function getCompiler(
     }
   }
   const compiled = ajv2020.compile(rowSchema);
-  perSurface.set(collectionName, compiled);
+  perPane.set(collectionName, compiled);
   return compiled;
 }
 
 /**
- * Drop a surface's compiled-validator entries — call on surface DELETE and
+ * Drop a pane's compiled-validator entries — call on pane DELETE and
  * on TTL-expiry sweep. Safe to call when no entries exist.
  */
-export function invalidateRecordSchemaCache(surfaceId: string): void {
+export function invalidateRecordSchemaCache(paneId: string): void {
   for (const k of cache.keys()) {
-    if (k.startsWith(`${surfaceId}:`)) cache.delete(k);
+    if (k.startsWith(`${paneId}:`)) cache.delete(k);
   }
 }
 
 /**
- * Validate a single record-write payload against the surface's pinned
+ * Validate a single record-write payload against the pane's pinned
  * recordSchema for the named collection. Throws schemaViolation (422) on
  * failure with the same error envelope shape as validateEvent. Peer to
  * validateEvent in core/validation.ts.
  *
- * Per-collection caching keyed `${surfaceId}:${schemaVersion}:${collectionName}` —
- * a surface that writes records frequently compiles each collection's row
+ * Per-collection caching keyed `${paneId}:${schemaVersion}:${collectionName}` —
+ * a pane that writes records frequently compiles each collection's row
  * schema once and reuses the compiled validator forever (or until cap eviction
  * or explicit invalidate).
  */
 export function validateRecord(args: {
-  surfaceId: string;
+  paneId: string;
   schemaVersion: number;
   collectionName: string;
   rowSchema: object;
   data: unknown;
 }): void {
   const validate = getCompiler(
-    args.surfaceId,
+    args.paneId,
     args.schemaVersion,
     args.collectionName,
     args.rowSchema,
@@ -318,14 +318,14 @@ export function validateRecord(args: {
 // __schemaCacheInternals export. Not part of the public API.
 export const __recordSchemaCacheInternals = {
   size: (): number => cache.size,
-  has: (surfaceId: string, schemaVersion: number): boolean =>
-    cache.has(cacheKey(surfaceId, schemaVersion)),
+  has: (paneId: string, schemaVersion: number): boolean =>
+    cache.has(cacheKey(paneId, schemaVersion)),
   hasCollection: (
-    surfaceId: string,
+    paneId: string,
     schemaVersion: number,
     collectionName: string,
   ): boolean =>
-    cache.get(cacheKey(surfaceId, schemaVersion))?.has(collectionName) ?? false,
+    cache.get(cacheKey(paneId, schemaVersion))?.has(collectionName) ?? false,
   clear: (): void => {
     cache.clear();
   },
@@ -337,7 +337,7 @@ export const __recordSchemaCacheInternals = {
 // -------------------------------------------------------------------------
 
 export function serializeRecord(
-  row: SurfaceRecord,
+  row: PaneRecord,
   collectionName: string,
 ): SerializedRecord {
   return {
@@ -355,7 +355,7 @@ export function serializeRecord(
 }
 
 function tombstone(
-  row: SurfaceRecord,
+  row: PaneRecord,
   collectionName: string,
 ): import("../ws/messages.js").RecordDeleteMessage {
   // A deleteRecord call always sets deletedAt; the fallback to updatedAt is
@@ -387,14 +387,14 @@ export interface ListRecordsResult {
  */
 export async function listRecords(
   prisma: PrismaClient,
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   collectionName: string,
   opts: { since: number; limit: number },
 ): Promise<ListRecordsResult> {
-  resolveCollection(surface, collectionName); // 404s if undeclared
+  resolveCollection(pane, collectionName); // 404s if undeclared
 
   const collection = await prisma.recordCollection.findUnique({
-    where: { surfaceId_name: { surfaceId: surface.id, name: collectionName } },
+    where: { paneId_name: { paneId: pane.id, name: collectionName } },
   });
   if (!collection) {
     // The collection is declared but no writes have happened yet — return
@@ -404,7 +404,7 @@ export async function listRecords(
     return { records: [], next_since: opts.since, has_more: false };
   }
 
-  const rows = await prisma.surfaceRecord.findMany({
+  const rows = await prisma.paneRecord.findMany({
     where: { collectionId: collection.id, seq: { gt: opts.since } },
     orderBy: { seq: "asc" },
     take: opts.limit + 1, // +1 to detect has_more without a separate count
@@ -432,22 +432,22 @@ export async function listRecords(
  *   - record_key present, no row at that key → creates with version=1.
  *   - record_key present, row already at that key → returns existing row,
  *     deduped=true, no modification (idempotent — mirrors event idempotency
- *     on (surfaceId, authorId, idempotencyKey)).
+ *     on (paneId, authorId, idempotencyKey)).
  *
  * To MUTATE a row, callers use updateRecord (PATCH), which carries an
  * optional `ifMatch` for optimistic locking.
  */
 export async function writeRecord(
   deps: WriteRecordDeps,
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   author: Author,
   input: WriteRecordInput,
 ): Promise<WriteRecordResult> {
   const { prisma } = deps;
-  assertSurfaceOpen(surface);
-  await assertRecordWithinCaps({ prisma, config: deps.config }, surface, input);
+  assertPaneOpen(pane);
+  await assertRecordWithinCaps({ prisma, config: deps.config }, pane, input);
 
-  const collection = resolveCollection(surface, input.collectionName);
+  const collection = resolveCollection(pane, input.collectionName);
 
   // Authz: only principals listed in `write` may create.
   const principal = authorKindForAuthz(author.kind);
@@ -459,10 +459,10 @@ export async function writeRecord(
   }
 
   // Shape validation. The compiled validator is cached by
-  // (surfaceId, schemaVersion, collectionName).
+  // (paneId, schemaVersion, collectionName).
   validateRecord({
-    surfaceId: surface.id,
-    schemaVersion: surface.templateVersion.version,
+    paneId: pane.id,
+    schemaVersion: pane.templateVersion.version,
     collectionName: input.collectionName,
     rowSchema: collection.rowSchema,
     data: input.data,
@@ -475,21 +475,21 @@ export async function writeRecord(
   // Transactional create-or-return-existing. The (collectionId, recordKey)
   // unique index makes the dedupe detection a P2002 catch, mirroring how
   // writeEvent handles idempotency-key collisions.
-  let row: SurfaceRecord;
+  let row: PaneRecord;
   let deduped = false;
   try {
     const result = await prisma.$transaction(async (tx) => {
       const col = await tx.recordCollection.upsert({
         where: {
-          surfaceId_name: {
-            surfaceId: surface.id,
+          paneId_name: {
+            paneId: pane.id,
             name: input.collectionName,
           },
         },
-        create: { surfaceId: surface.id, name: input.collectionName, seq: 1 },
+        create: { paneId: pane.id, name: input.collectionName, seq: 1 },
         update: { seq: { increment: 1 } },
       });
-      const created = await tx.surfaceRecord.create({
+      const created = await tx.paneRecord.create({
         data: {
           collectionId: col.id,
           recordKey,
@@ -513,14 +513,14 @@ export async function writeRecord(
       // back when the create failed; no orphan increment.
       const existingCollection = await prisma.recordCollection.findUnique({
         where: {
-          surfaceId_name: {
-            surfaceId: surface.id,
+          paneId_name: {
+            paneId: pane.id,
             name: input.collectionName,
           },
         },
       });
       if (!existingCollection) throw err;
-      const existing = await prisma.surfaceRecord.findUnique({
+      const existing = await prisma.paneRecord.findUnique({
         where: {
           collectionId_recordKey: {
             collectionId: existingCollection.id,
@@ -538,7 +538,7 @@ export async function writeRecord(
 
   const serialized = serializeRecord(row, input.collectionName);
   if (!deduped) {
-    publish(surface.id, makeRecordUpsert(input.collectionName, serialized));
+    publish(pane.id, makeRecordUpsert(input.collectionName, serialized));
   }
   return { record: serialized, deduped };
 }
@@ -556,14 +556,14 @@ export async function writeRecord(
  */
 export async function updateRecord(
   deps: WriteRecordDeps,
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   author: Author,
   input: UpdateRecordInput,
 ): Promise<UpdateRecordResult> {
   const { prisma } = deps;
-  assertSurfaceOpen(surface);
+  assertPaneOpen(pane);
 
-  const collection = resolveCollection(surface, input.collectionName);
+  const collection = resolveCollection(pane, input.collectionName);
 
   // PATCH uses the same authz set as POST — anything that can create can
   // mutate. (Per-row authorship rules live on DELETE; updates don't have
@@ -577,8 +577,8 @@ export async function updateRecord(
   }
 
   validateRecord({
-    surfaceId: surface.id,
-    schemaVersion: surface.templateVersion.version,
+    paneId: pane.id,
+    schemaVersion: pane.templateVersion.version,
     collectionName: input.collectionName,
     rowSchema: collection.rowSchema,
     data: input.data,
@@ -587,8 +587,8 @@ export async function updateRecord(
   const updated = await prisma.$transaction(async (tx) => {
     const col = await tx.recordCollection.findUnique({
       where: {
-        surfaceId_name: {
-          surfaceId: surface.id,
+        paneId_name: {
+          paneId: pane.id,
           name: input.collectionName,
         },
       },
@@ -596,7 +596,7 @@ export async function updateRecord(
     if (!col) {
       throw recordNotFound(input.collectionName, input.recordKey);
     }
-    const existing = await tx.surfaceRecord.findUnique({
+    const existing = await tx.paneRecord.findUnique({
       where: {
         collectionId_recordKey: {
           collectionId: col.id,
@@ -618,7 +618,7 @@ export async function updateRecord(
       where: { id: col.id },
       data: { seq: { increment: 1 } },
     });
-    return tx.surfaceRecord.update({
+    return tx.paneRecord.update({
       where: { id: existing.id },
       data: {
         data: (input.data ?? null) as Prisma.InputJsonValue,
@@ -632,7 +632,7 @@ export async function updateRecord(
   });
 
   const serialized = serializeRecord(updated, input.collectionName);
-  publish(surface.id, makeRecordUpsert(input.collectionName, serialized));
+  publish(pane.id, makeRecordUpsert(input.collectionName, serialized));
   return { record: serialized };
 }
 
@@ -656,14 +656,14 @@ export async function updateRecord(
  */
 export async function deleteRecord(
   deps: WriteRecordDeps,
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   author: Author,
   input: DeleteRecordInput,
 ): Promise<void> {
   const { prisma } = deps;
-  assertSurfaceOpen(surface);
+  assertPaneOpen(pane);
 
-  const collection = resolveCollection(surface, input.collectionName);
+  const collection = resolveCollection(pane, input.collectionName);
 
   const principal = authorKindForAuthz(author.kind);
   const allowedByPrincipal =
@@ -677,8 +677,8 @@ export async function deleteRecord(
   const result = await prisma.$transaction(async (tx) => {
     const col = await tx.recordCollection.findUnique({
       where: {
-        surfaceId_name: {
-          surfaceId: surface.id,
+        paneId_name: {
+          paneId: pane.id,
           name: input.collectionName,
         },
       },
@@ -686,7 +686,7 @@ export async function deleteRecord(
     if (!col) {
       throw recordNotFound(input.collectionName, input.recordKey);
     }
-    const existing = await tx.surfaceRecord.findUnique({
+    const existing = await tx.paneRecord.findUnique({
       where: {
         collectionId_recordKey: {
           collectionId: col.id,
@@ -723,7 +723,7 @@ export async function deleteRecord(
       where: { id: col.id },
       data: { seq: { increment: 1 } },
     });
-    return tx.surfaceRecord.update({
+    return tx.paneRecord.update({
       where: { id: existing.id },
       data: {
         deletedAt: new Date(),
@@ -734,26 +734,26 @@ export async function deleteRecord(
     });
   });
 
-  publish(surface.id, tombstone(result, input.collectionName));
+  publish(pane.id, tombstone(result, input.collectionName));
 }
 
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
 
-function assertSurfaceOpen(surface: Surface): void {
-  if (surface.status !== "open" || surface.expiresAt.getTime() < Date.now()) {
+function assertPaneOpen(pane: Pane): void {
+  if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }
 }
 
 // #293 — per-write byte + count caps for writeRecord. Byte cap throws 413;
-// count cap throws 429 with a clear "rotate to a new surface" hint. updateRecord
+// count cap throws 429 with a clear "rotate to a new pane" hint. updateRecord
 // and deleteRecord don't grow the collection so they skip the count check;
 // updateRecord still benefits from the byte check (done inline there).
 async function assertRecordWithinCaps(
   deps: { prisma: PrismaClient; config?: WriteRecordDeps["config"] },
-  surface: SurfaceWithRecordSchema,
+  pane: PaneWithRecordSchema,
   input: { collectionName: string; data: unknown },
 ): Promise<void> {
   const maxBytes =
@@ -770,25 +770,25 @@ async function assertRecordWithinCaps(
 
   if (maxRows > 0) {
     // Count-then-create soft cap — concurrent writers can race past it and
-    // overshoot by ~inflight count. Same shape as writeEvent's per-surface
+    // overshoot by ~inflight count. Same shape as writeEvent's per-pane
     // cap; the cap exists to bound abuse to ~N, not enforce exact rows.
     // Counts ALIVE rows only (tombstones don't count) so a chatty collection
     // can keep working after the sweeper hard-deletes old tombstones.
     const col = await deps.prisma.recordCollection.findUnique({
       where: {
-        surfaceId_name: {
-          surfaceId: surface.id,
+        paneId_name: {
+          paneId: pane.id,
           name: input.collectionName,
         },
       },
     });
     if (col) {
-      const live = await deps.prisma.surfaceRecord.count({
+      const live = await deps.prisma.paneRecord.count({
         where: { collectionId: col.id, deletedAt: null },
       });
       if (live >= maxRows) {
         throw errors.tooManyRequests(
-          `record cap reached for collection '${input.collectionName}' (max ${maxRows} rows); delete an existing row or rotate to a new surface`,
+          `record cap reached for collection '${input.collectionName}' (max ${maxRows} rows); delete an existing row or rotate to a new pane`,
         );
       }
     }
@@ -815,7 +815,7 @@ export async function sweepRecordTombstones(
   ttlSeconds: number,
 ): Promise<number> {
   const cutoff = new Date(Date.now() - ttlSeconds * 1000);
-  const r = await prisma.surfaceRecord.deleteMany({
+  const r = await prisma.paneRecord.deleteMany({
     where: { deletedAt: { not: null, lt: cutoff } },
   });
   if (r.count > 0) {
@@ -850,7 +850,7 @@ function recordNotFound(collectionName: string, recordKey: string): ApiError {
     "record_not_found",
     `no record at key '${recordKey}' in collection '${collectionName}'`,
     { collection: collectionName, key: recordKey },
-    "the record may have been deleted, or the key is wrong; list the collection with GET /v1/surfaces/:id/records/:collection",
+    "the record may have been deleted, or the key is wrong; list the collection with GET /v1/panes/:id/records/:collection",
     false,
   );
 }
@@ -875,7 +875,7 @@ function recordVersionConflict(
 }
 
 // cuid-ish id for server-generated record keys. We don't pull the cuid
-// package — the existing codebase generates surface ids via the
+// package — the existing codebase generates pane ids via the
 // `id-helpers` module; record keys are scoped to a collection so a 16-char
 // random suffix is plenty. Matches the `^c[a-z0-9]{15+}$` shape that the
 // pane-attachment-id format check uses, so it would pass even if surfaced

@@ -7,17 +7,17 @@
 //                     token. The shell's wsTicketAuthorization carries the
 //                     `Bearer <token>` it needs to mint a WS ticket; all
 //                     other callback URLs are /s/<token>/* paths.
-//   - /surfaces/<id>  session mode: the caller is signed in as the surface
+//   - /panes/<id>  session mode: the caller is signed in as the pane
 //                     owner. The pane_login cookie authenticates each
 //                     request (including the ws-ticket mint, which carries
 //                     no Authorization header); callback URLs are
-//                     /surfaces/<id>/* paths.
+//                     /panes/<id>/* paths.
 // The shell does not need to know which mode it is in — both paths are
 // expressed through the injected URLs in ShellCfg below.
 //
 // Config is delivered via a sibling `<script type="application/json" id="pane-cfg">`
 // block emitted by routes.ts, NOT via template interpolation into this JS source.
-// That keeps the only attack surface in routes.ts (which already neutralises
+// That keeps the only attack pane in routes.ts (which already neutralises
 // `</script>` in the JSON via JSON.stringify behaviour for `<` inside strings).
 //
 // `export {}` makes this a module (needed for TS file scoping). The relay's
@@ -136,16 +136,16 @@ type OutboundFrame = PaneFrameEnvelope & {
 };
 
 interface ShellCfg {
-  surfaceId: string;
+  paneId: string;
   schema: unknown;
-  // The surface's per-instance input_data — the relay validated it against the
+  // The pane's per-instance input_data — the relay validated it against the
   // template version's input_schema at create time. Forwarded to the iframe in
   // the `init` frame; the runtime exposes it as `window.pane.inputData`.
   inputData: unknown;
   // Same-origin endpoints the shell calls back into. Injected (rather than
   // constructed from a token) so the same shell bundle drives BOTH auth modes:
   //   - capability-token mode (/s/<token>) — URLs include the token in the path
-  //   - session mode (/surfaces/<id>) — URLs are id-keyed; the pane_login
+  //   - session mode (/panes/<id>) — URLs are id-keyed; the pane_login
   //     cookie authenticates each call.
   presenceUrl: string;
   wsTicketUrl: string;
@@ -161,7 +161,7 @@ interface ShellCfg {
   // Live agent-presence facts, computed by the relay at request time. These
   // SEED the agent-presence pill; the shell then keeps it live from events
   // received after `system.replay.complete` (see the presence section below).
-  //  - agentLive: an agent WebSocket was open on this surface at request time.
+  //  - agentLive: an agent WebSocket was open on this pane at request time.
   //  - agentLastEventAt: ISO ts of the most recent agent-authored event.
   //  - agentLastUsedAt: ISO ts of the owning agent's last authenticated request.
   agentLive: boolean;
@@ -232,18 +232,18 @@ interface SerializedEvent {
   //  1) agentLiveCount — number of agent sockets open right now. Seeded from
   //     CFG.agentLive, then kept exact from post-replay `agentCountLive`.
   //  2) lastAgentActiveMs — the most recent moment an agent touched the
-  //     surface (sent an event or pulled events). Seeded from the max of
+  //     pane (sent an event or pulled events). Seeded from the max of
   //     CFG.agentLastEventAt / agentLastUsedAt, bumped to now() on any live
   //     agent-authored event.
   const RECENT_WINDOW_MS = 5 * 60 * 1000;
-  // Green-from-recent-activity window. An agent that MONITORS a surface by
-  // polling `pane surface show` (HTTP GET .../events?since=... every few seconds)
+  // Green-from-recent-activity window. An agent that MONITORS a pane by
+  // polling `pane pane show` (HTTP GET .../events?since=... every few seconds)
   // never opens a WebSocket, yet is just as present as one holding a stream.
   // Every authenticated agent request stamps `Agent.lastUsedAt` server-side,
   // so an agent polling on a few-second cadence keeps `lastUsedAt` well within
   // this window. The shell learns the fresh value by polling /presence.
   const ACTIVE_WINDOW_MS = 30 * 1000;
-  // Grace window: an agent monitor often reconnects in short `pane surface watch`
+  // Grace window: an agent monitor often reconnects in short `pane pane watch`
   // cycles (connect -> get event -> exit -> harness re-runs). The live socket
   // count flickers 1 -> 0 -> 1 between cycles. Without a grace period the pill
   // would flap green -> amber -> green. So once a live agent socket has been
@@ -277,7 +277,7 @@ interface SerializedEvent {
 
   function renderAgentPresence(): void {
     if (CFG.isClosed) {
-      agentStatusEl.textContent = "surface closed";
+      agentStatusEl.textContent = "pane closed";
       agentDot.className = "dot";
       return;
     }
@@ -286,7 +286,7 @@ interface SerializedEvent {
     //     closed (short reconnection gaps in a monitor loop don't flap), OR
     //  2) the owning agent made an authenticated request — or an
     //     agent-authored event arrived — within ACTIVE_WINDOW_MS (30s). This
-    //     covers a monitor that polls `pane surface show` and never opens a socket;
+    //     covers a monitor that polls `pane pane show` and never opens a socket;
     //     the shell keeps lastAgentActiveMs fresh by polling /presence.
     if (
       agentLiveCount > 0 ||
@@ -352,7 +352,7 @@ interface SerializedEvent {
   }
 
   // Poll the relay's /presence endpoint to keep the pill fresh for a polling
-  // agent. Such an agent monitors via `pane surface show` HTTP polls and never opens
+  // agent. Such an agent monitors via `pane pane show` HTTP polls and never opens
   // a WebSocket, so the live-socket count and post-replay events never see it
   // — but every authenticated request stamps `Agent.lastUsedAt` server-side.
   // The page-load config seed captures `lastUsedAt` once and then goes stale;
@@ -432,7 +432,7 @@ interface SerializedEvent {
       v: 1,
       kind: "init",
       payload: {
-        surface_id: CFG.surfaceId,
+        pane_id: CFG.paneId,
         schema: CFG.schema,
         replay: replayBuffer.slice(),
         shell_origin: window.location.origin,
@@ -587,7 +587,7 @@ interface SerializedEvent {
 
   // Mint a ticket, then open the socket with `?ticket=`. Kept separate from
   // connect() so connect() stays a synchronous guard. A mint failure (network
-  // blip, expired surface) is treated like a connection failure: clear the
+  // blip, expired pane) is treated like a connection failure: clear the
   // in-flight flag and schedule a backed-off reconnect.
   async function openWithTicket(): Promise<void> {
     let ticket: string;
@@ -598,7 +598,7 @@ interface SerializedEvent {
       scheduleReconnect();
       return;
     }
-    // The surface may have closed, or a newer connect superseded us, while the
+    // The pane may have closed, or a newer connect superseded us, while the
     // mint was in flight — bail rather than open a doomed socket.
     if (CFG.isClosed) {
       connecting = false;
@@ -607,8 +607,8 @@ interface SerializedEvent {
     let qs = "?ticket=" + encodeURIComponent(ticket);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
     // #296 — auto-subscribe to every declared record collection. The relay
-    // (#295) expands `subscribe_records=*` against the surface's
-    // recordSchema; a surface with no record_schema gets an empty list and
+    // (#295) expands `subscribe_records=*` against the pane's
+    // recordSchema; a pane with no record_schema gets an empty list and
     // sees no record traffic. On reconnect, advance each collection's
     // cursor from the store so the relay's replay skips already-observed
     // rows.
@@ -1211,7 +1211,7 @@ interface SerializedEvent {
       return;
     }
     // #298 phase 2 — record-mutate-request: the iframe is asking the shell
-    // to dispatch an HTTP CRUD call against /v1/surfaces/:id/records/:collection
+    // to dispatch an HTTP CRUD call against /v1/panes/:id/records/:collection
     // on its behalf. Same pattern as upload-attachment-request: the iframe
     // can't reach the relay directly (sandboxed; no fetch), so the shell
     // brokers it using the participant token (or the session cookie in
@@ -1274,8 +1274,8 @@ interface SerializedEvent {
       // already mounted by #292 — we just dispatch the matching verb.
       const base =
         window.location.origin +
-        "/v1/surfaces/" +
-        encodeURIComponent(CFG.surfaceId) +
+        "/v1/panes/" +
+        encodeURIComponent(CFG.paneId) +
         "/records/" +
         encodeURIComponent(collection);
 

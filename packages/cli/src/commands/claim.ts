@@ -7,7 +7,7 @@
 //   2. Alice hands the code to the agent out-of-band (this CLI invocation
 //      is exactly that handoff).
 //   3. CLI calls POST /v1/agents/claim with the calling agent's API key.
-//   4. Relay binds Agent.ownerHumanId = alice.id, migrates surface ownership.
+//   4. Relay binds Agent.ownerHumanId = alice.id, migrates pane ownership.
 //
 // The CLI does NOT print the human's email or id — only the relay's response,
 // which is { ok, owner_human_id, claimed_at }. The agent's existing API key
