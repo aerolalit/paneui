@@ -66,10 +66,8 @@ function validateVersionContent(
   if (content.input_schema !== undefined) {
     assertValidInputSchema(content.input_schema);
   }
-  // #289 — validate record_schema shape (JSON Schema 2020-12 + x-pane-collections).
-  // Validation-only for this PR; persistence lands after #288 adds the Prisma
-  // column. A 400 here means an agent's record_schema is malformed, which is
-  // worth surfacing now even though the relay drops the schema on the floor.
+  // Validate record_schema shape (JSON Schema 2020-12 + x-pane-collections)
+  // before persisting. A 400 here means an agent supplied a malformed schema.
   if (content.record_schema !== undefined) {
     assertSchemaWithinLimits(content.record_schema, {
       maxBytes: config.MAX_SCHEMA_BYTES,
@@ -203,6 +201,10 @@ templates.post("/", async (c) => {
             input_schema !== undefined
               ? (input_schema as Prisma.InputJsonValue)
               : Prisma.JsonNull,
+          recordSchema:
+            record_schema !== undefined
+              ? (record_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
         },
       });
       return head;
@@ -288,6 +290,10 @@ templates.post("/:id/versions", async (c) => {
         inputSchema:
           input_schema !== undefined
             ? (input_schema as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        recordSchema:
+          record_schema !== undefined
+            ? (record_schema as Prisma.InputJsonValue)
             : Prisma.JsonNull,
       },
     });
