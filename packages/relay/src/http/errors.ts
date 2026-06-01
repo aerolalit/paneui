@@ -71,6 +71,21 @@ export const errors = {
       DOCS.api,
     ),
 
+  // Method-not-allowed for routes that have other verbs registered but not
+  // this one (e.g. PUT on a path that supports GET/POST). Caller must set
+  // the Allow header on the response with the supported verbs.
+  methodNotAllowed: (message?: string, hint?: string) =>
+    new ApiError(
+      405,
+      "method_not_allowed",
+      message,
+      undefined,
+      hint ??
+        "the request HTTP method is not supported on this route; see the Allow response header for the verbs that are",
+      false,
+      DOCS.api,
+    ),
+
   // Distinct from `not_found` so an agent can act differently when the
   // missing thing is a pane (likely expired/cleaned up) vs an template
   // (likely wrong slug/id) vs an template version (likely wrong --version).

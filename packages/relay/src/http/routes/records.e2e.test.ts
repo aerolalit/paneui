@@ -434,3 +434,80 @@ describe("DELETE /v1/panes/:id/records/:collection/:recordKey", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Unrouted verb / path fallback handlers.
+//
+// Before the fallback handlers were added, PUT/GET/HEAD on the records
+// sub-paths returned 401 — the request used a verb the records subrouter
+// didn't handle, bubbled out, and hit participants-human's wildcard
+// cookie-auth middleware (mounted at `/v1/panes` with `use("*", requireHuman)`)
+// which 401'd on the missing cookie. The fallbacks intercept first.
+// ---------------------------------------------------------------------------
+
+describe("records router fallback handlers", () => {
+  it("PUT on /:recordKey returns 405 with Allow: PATCH, DELETE", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req(
+      "PUT",
+      `/v1/panes/${paneId}/records/todos/some-key`,
+      apiKey,
+      { data: { x: 1 } },
+    );
+    expect(res.status).toBe(405);
+    const allow = res.headers.get("allow") ?? "";
+    expect(allow).toContain("PATCH");
+    expect(allow).toContain("DELETE");
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("method_not_allowed");
+  });
+
+  it("HEAD on /:recordKey returns 405", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req(
+      "HEAD",
+      `/v1/panes/${paneId}/records/todos/some-key`,
+      apiKey,
+    );
+    expect(res.status).toBe(405);
+  });
+
+  it("PUT on / returns 405 with Allow: GET, POST", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req("PUT", `/v1/panes/${paneId}/records/todos`, apiKey, {
+      data: { x: 1 },
+    });
+    expect(res.status).toBe(405);
+    const allow = res.headers.get("allow") ?? "";
+    expect(allow).toContain("GET");
+    expect(allow).toContain("POST");
+  });
+
+  it("paths deeper than /:recordKey return 404", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req(
+      "PATCH",
+      `/v1/panes/${paneId}/records/todos/key/extra/segments`,
+      apiKey,
+      { data: { x: 1 } },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("regression: POST with no auth still returns 401, not 405", async () => {
+    const { agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}/records/todos`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ data: { title: "x", done: false } }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+});

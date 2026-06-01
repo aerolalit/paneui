@@ -201,4 +201,39 @@ records.delete("/:recordKey", async (c) => {
   return c.body(null, 204);
 });
 
+// Fallback handlers for unsupported verbs on the records subtree.
+//
+// Why these exist: participants-human is mounted at `app.route("/v1/panes",
+// participantsHuman)` and registers `participantsHuman.use("*", requireHuman)`
+// — a wildcard cookie-auth middleware that matches every path under
+// /v1/panes/*, including this records subtree. When a request used a verb
+// the records subrouter didn't handle (e.g. PUT or GET on /:recordKey),
+// the request bubbled past records.ts, hit that cookie-auth wildcard,
+// found no login cookie, and returned 401 — a misleading "unauthorized"
+// for what was really a method-not-allowed.
+//
+// `.all()` only matches verbs that aren't already handled, so the explicit
+// GET/POST on "/" and PATCH/DELETE on "/:recordKey" above still win.
+records.all("/:recordKey", (c) => {
+  c.header("Allow", "PATCH, DELETE");
+  throw errors.methodNotAllowed(
+    `method ${c.req.method} not allowed on this route`,
+    "the records HTTP API supports PATCH (update) and DELETE on /:recordKey; single-record reads happen over the WebSocket replay stream, not HTTP — see SPEC.md#http-api-v1",
+  );
+});
+
+records.all("/", (c) => {
+  c.header("Allow", "GET, POST");
+  throw errors.methodNotAllowed(
+    `method ${c.req.method} not allowed on this route`,
+    "the records collection endpoint supports GET (list) and POST (create) — see SPEC.md#http-api-v1",
+  );
+});
+
+// Catch-all for paths deeper than /:recordKey (e.g. an extra segment). Hits
+// before the participants-human wildcard middleware can claim it.
+records.all("/*", () => {
+  throw errors.notFound();
+});
+
 export default records;
