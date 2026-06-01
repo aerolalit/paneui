@@ -181,13 +181,21 @@ describe("logged-out access to gated pages", () => {
     "/my-panes",
     "/my-templates",
     "/my-agents",
-    "/apps",
+    "/public-templates",
     "/settings",
   ])("%s shows the sign-in prompt to logged-out callers", async (path) => {
     const res = await app.fetch(new Request(`http://t${path}`));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Sign in to see this page");
+  });
+});
+
+describe("/apps redirects to /public-templates (legacy alias)", () => {
+  it("returns 301 to /public-templates regardless of auth state", async () => {
+    const res = await app.fetch(new Request("http://t/apps"));
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/public-templates");
   });
 });
 
@@ -216,11 +224,11 @@ describe("GET /my-panes (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     // First-touch empty state — headline, explanation, and two CTAs
-    // (Claim an agent / Browse apps) point a new human at the next step.
+    // (Claim an agent / Browse public templates) point a new human at the next step.
     expect(html).toContain('class="empty-state"');
     expect(html).toContain("No panes yet");
     expect(html).toContain("Claim an agent");
-    expect(html).toContain("Browse apps");
+    expect(html).toContain("Browse public templates");
   });
 
   it("renders a pane card with title, template, agent, and id", async () => {
@@ -480,8 +488,8 @@ describe("GET /my-templates (signed in)", () => {
     expect(html).toContain('class="empty-state"');
     expect(html).toContain("haven't authored any templates");
     expect(html).toContain("pane template create");
-    // Cross-links to /apps so a new human can browse before authoring.
-    expect(html).toContain('href="/apps"');
+    // Cross-links to /public-templates so a new human can browse before authoring.
+    expect(html).toContain('href="/public-templates"');
   });
 
   it("lists templates owned by the human's claimed agents", async () => {
@@ -538,32 +546,32 @@ describe("GET /my-templates (signed in)", () => {
   });
 });
 
-describe("GET /apps (signed in)", () => {
-  it("renders the Apps catalog shell + search input", async () => {
+describe("GET /public-templates (signed in)", () => {
+  it("renders the Public templates catalog shell + search input", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/apps", withCookie(cookie)),
+      new Request("http://t/public-templates", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Apps");
-    expect(html).toContain('id="apps-search"');
-    expect(html).toContain('id="apps-results"');
+    expect(html).toContain("Public templates");
+    expect(html).toContain('id="catalog-search"');
+    expect(html).toContain('id="catalog-results"');
     expect(html).toContain("/v1/templates/public");
   });
 
   it("ships two distinct empty-state copies in the client (catalog empty vs. search miss)", async () => {
-    // The /apps results list is rendered client-side, so the e2e check is
-    // that the inline JS carries both copies — a regression that collapses
-    // them back into the original single string is caught here.
+    // The /public-templates results list is rendered client-side, so the
+    // e2e check is that the inline JS carries both copies — a regression
+    // that collapses them back into the original single string is caught here.
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/apps", withCookie(cookie)),
+      new Request("http://t/public-templates", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain("The public catalog is empty");
     expect(html).toContain("pane template publish");
-    expect(html).toContain("No apps match");
+    expect(html).toContain("No templates match");
   });
 });
 

@@ -263,7 +263,7 @@ function layout(args: {
   </div>
   <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
-    ${nav("apps", "Apps", "/apps")}
+    ${nav("catalog", "Public templates", "/public-templates")}
     ${nav("panes", "My panes", "/my-panes")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
@@ -568,7 +568,7 @@ systemPages.get("/my-panes", async (c) => {
             <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".7" fill="currentColor"/><circle cx="10" cy="6" r=".7" fill="currentColor"/></svg>
             <h3 class="empty-state-headline">No panes yet</h3>
             <p class="empty-state-body">A pane is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
-            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/apps">Browse apps</a></div>
+            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/public-templates">Browse public templates</a></div>
           </div>`
         : `<ul class="pane-cards">${panes
             .map((s) => {
@@ -668,7 +668,7 @@ systemPages.get("/my-templates", async (c) => {
     installs.length === 0
       ? ""
       : `<h2 style="margin-top:24px;">Installed</h2>
-  <div class="card">
+  <div class="card" id="installed-card">
     <ul class="list">${installs
       .map((i) => {
         const blockedPill = i.upgradeBlockedAt
@@ -685,17 +685,75 @@ systemPages.get("/my-templates", async (c) => {
         const blockedNote = i.upgradeBlockedAt
           ? `<div class="meta" style="color:#b34700;margin-top:4px;">A new version of this template can't be applied automatically — its schema narrows yours. Visit the template author or upgrade with <code>compat: &quot;force&quot;</code>.</div>`
           : "";
-        return `<li><div><div class="title">${escapeHtml(i.template.name ?? i.template.slug ?? i.template.id)}</div><div class="meta">installed v${i.installedVersion}</div>${blockedNote}</div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${policyPill}${newerAvailable}${blockedPill}</div></li>`;
+        // Launch button: hits POST /v1/my-templates/:id/launch, navigates to
+        // the resulting pane URL. Disabled when the upgrade is blocked so
+        // the human resolves the schema mismatch first.
+        const launchBtn = i.upgradeBlockedAt
+          ? `<button class="btn" data-act="launch" data-id="${escapeHtml(i.template.id)}" disabled title="Resolve the upgrade-blocked state before launching.">Launch</button>`
+          : `<button class="btn" data-act="launch" data-id="${escapeHtml(i.template.id)}">Launch</button>`;
+        return `<li data-install-id="${escapeHtml(i.template.id)}"><div style="min-width:0;flex:1;"><div class="title">${escapeHtml(i.template.name ?? i.template.slug ?? i.template.id)}</div><div class="meta">installed v${i.installedVersion}</div>${blockedNote}<div class="launch-status meta" style="margin-top:4px;color:var(--muted);"></div></div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${policyPill}${newerAvailable}${blockedPill}${launchBtn}</div></li>`;
       })
       .join("")}</ul>
-  </div>`;
+  </div>
+  <script>
+    (function () {
+      const card = document.getElementById('installed-card');
+      if (!card) return;
+      card.addEventListener('click', async (ev) => {
+        const target = ev.target;
+        if (!(target instanceof HTMLElement)) return;
+        const btn = target.closest('button[data-act="launch"]');
+        if (!btn) return;
+        const li = btn.closest('li[data-install-id]');
+        if (!li) return;
+        const id = btn.getAttribute('data-id');
+        const status = li.querySelector('.launch-status');
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Launching…';
+        if (status) status.textContent = '';
+        try {
+          const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+            body: '{}',
+          });
+          if (!res.ok) {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+            let detail = 'HTTP ' + res.status;
+            try {
+              const errBody = await res.json();
+              if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+            } catch (_) {}
+            if (status) status.textContent = 'Launch failed: ' + detail;
+            return;
+          }
+          const body = await res.json();
+          const url = body && body.urls && body.urls.humans && body.urls.humans[0];
+          if (!url) {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+            if (status) status.textContent = 'Launch failed: missing pane URL in response.';
+            return;
+          }
+          window.location.href = url;
+        } catch (_) {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          if (status) status.textContent = 'Network error — try again.';
+        }
+      });
+    })();
+  </script>`;
   const authoredList =
     templates.length === 0
       ? `<div class="empty-state">
           <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg>
           <h3 class="empty-state-headline">You haven't authored any templates</h3>
           <p class="empty-state-body">Templates are reusable mini-apps your agents create with <code>pane template create</code>. Once an agent saves one, it lives here — installs from the public catalog appear below.</p>
-          <div class="empty-state-cta"><a class="btn ghost" href="/apps">Browse apps</a></div>
+          <div class="empty-state-cta"><a class="btn ghost" href="/public-templates">Browse public templates</a></div>
         </div>`
       : `<ul class="list">${templates
           .map((t) => {
@@ -716,8 +774,9 @@ systemPages.get("/my-templates", async (c) => {
                 <details class="pub-form" style="margin-top:6px;">
                   <summary style="cursor:pointer;font-size:13px;color:var(--accent);">${btnLabel}</summary>
                   <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-                    <label style="font-size:12.5px;color:var(--muted);">Scopes (comma-separated, e.g. <code>read:agent, write:pane</code>)</label>
-                    <textarea class="scopes" rows="2" style="width:100%;border:1px solid var(--rule);border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;" placeholder="leave blank to keep current scopes">${escapeHtml(scopesCsv)}</textarea>
+                    <label style="font-size:12.5px;color:var(--muted);">Scopes</label>
+                    <div class="help" style="font-size:12px;color:var(--muted);line-height:1.45;">Format: <code>&lt;action&gt;:&lt;resource&gt;</code> where action is one of <code>read</code>, <code>write</code>, <code>delete</code>. Examples: <code>read:profile</code>, <code>write:posts</code>, <code>delete:comments</code>. Comma-separated for multiple. Leave blank to keep current scopes.</div>
+                    <textarea class="scopes" rows="2" style="width:100%;border:1px solid var(--rule);border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;" placeholder="read:profile, write:posts">${escapeHtml(scopesCsv)}</textarea>
                     <div style="display:flex;gap:8px;align-items:center;">
                       <button class="btn" data-act="${btnAct}" type="button">${btnLabel}</button>
                       <span class="pub-status" style="color:var(--muted);font-size:13px;"></span>
@@ -766,7 +825,30 @@ systemPages.get("/my-templates", async (c) => {
                   let detail = 'HTTP ' + res.status;
                   try {
                     const errBody = await res.json();
-                    if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+                    // Zod validation errors carry detailed field info under
+                    // error.details.message (a stringified JSON array of
+                    // issues). Surface the first issue's path + message so
+                    // the user sees what went wrong, e.g.
+                    //   "scopes.0 — Invalid string: must match pattern …".
+                    // Fallback to error.message for everything else.
+                    const errObj = errBody && errBody.error;
+                    if (errObj && errObj.details && errObj.details.name === 'ZodError' && typeof errObj.details.message === 'string') {
+                      try {
+                        const issues = JSON.parse(errObj.details.message);
+                        if (Array.isArray(issues) && issues.length > 0) {
+                          const issue = issues[0];
+                          const path = Array.isArray(issue.path) ? issue.path.join('.') : '';
+                          const msg = issue.message || (errObj.message || 'invalid input');
+                          detail = path ? (path + ' — ' + msg) : msg;
+                        } else if (errObj.message) {
+                          detail = errObj.message;
+                        }
+                      } catch (_) {
+                        if (errObj.message) detail = errObj.message;
+                      }
+                    } else if (errObj && errObj.message) {
+                      detail = errObj.message;
+                    }
                   } catch (_) {}
                   status.textContent = (act === 'publish' ? 'Publish' : 'Unpublish') + ' failed: ' + detail;
                   return;
@@ -798,26 +880,32 @@ systemPages.get("/my-templates", async (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /apps — public catalog browse page (#279).
+// GET /public-templates — public catalog browse page (#279).
 // Human-facing wrapper over GET /v1/templates/public + install/uninstall.
-// UI uses "Apps" vocabulary; the underlying noun stays "template".
+// /apps is kept as a 301 redirect so legacy links don't break.
 // ----------------------------------------------------------------------
-systemPages.get("/apps", (c) => {
+systemPages.get("/apps", (c) => c.redirect("/public-templates", 301));
+
+systemPages.get("/public-templates", (c) => {
   const human = c.get("human");
   if (!human) {
     return c.html(
-      layout({ title: "Apps", email: null, body: loggedOutPrompt() }),
+      layout({
+        title: "Public templates",
+        email: null,
+        body: loggedOutPrompt(),
+      }),
     );
   }
-  const body = `<h1>Apps</h1>
-  <p style="color:var(--muted);font-size:14.5px;">Mini apps published by other agents. Install one to make it available to your own agents — they can then create panes from it for you.</p>
+  const body = `<h1>Public templates</h1>
+  <p style="color:var(--muted);font-size:14.5px;">Templates published by other agents. Install one to add it to your library — then hit Launch on <a href="/my-templates">My templates</a> to open a pane.</p>
   <div class="card">
-    <input id="apps-search" type="text" placeholder="Search apps by name, description, or tag" autocomplete="off" />
-    <div id="apps-results" style="margin-top:14px;"></div>
+    <input id="catalog-search" type="text" placeholder="Search templates by name, description, or tag" autocomplete="off" />
+    <div id="catalog-results" style="margin-top:14px;"></div>
   </div>
   <script>
-    const resultsEl = document.getElementById("apps-results");
-    const searchEl = document.getElementById("apps-search");
+    const resultsEl = document.getElementById("catalog-results");
+    const searchEl = document.getElementById("catalog-search");
 
     function escape(s) {
       return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -828,12 +916,12 @@ systemPages.get("/apps", (c) => {
         // Two empty states: search-miss (user typed something) vs. an empty
         // catalog on first load. Different copy, different CTA.
         if (query) {
-          resultsEl.innerHTML = '<p class="empty">No apps match "' + escape(query) + '". Try fewer or different keywords.</p>';
+          resultsEl.innerHTML = '<p class="empty">No templates match "' + escape(query) + '". Try fewer or different keywords.</p>';
         } else {
           resultsEl.innerHTML = '<div class="empty-state">'
             + '<svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></svg>'
             + '<h3 class="empty-state-headline">The public catalog is empty</h3>'
-            + '<p class="empty-state-body">Once agents publish templates with <code>pane template publish &lt;id-or-slug&gt;</code>, the marketplace appears here. Your own authored templates live on <a href="/my-templates">My templates</a>.</p>'
+            + '<p class="empty-state-body">Once agents publish templates with <code>pane template publish &lt;id-or-slug&gt;</code>, the catalog appears here. Your own authored templates live on <a href="/my-templates">My templates</a>.</p>'
             + '</div>';
         }
         return;
@@ -863,7 +951,7 @@ systemPages.get("/apps", (c) => {
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
         if (!res.ok) {
-          resultsEl.textContent = 'Failed to load apps (' + res.status + ').';
+          resultsEl.textContent = 'Failed to load templates (' + res.status + ').';
           return;
         }
         const body = await res.json();
@@ -916,7 +1004,12 @@ systemPages.get("/apps", (c) => {
     load('');
   </script>`;
   return c.html(
-    layout({ title: "Apps", email: human.email, body, active: "apps" }),
+    layout({
+      title: "Public templates",
+      email: human.email,
+      body,
+      active: "catalog",
+    }),
   );
 });
 

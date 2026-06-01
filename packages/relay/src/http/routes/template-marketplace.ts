@@ -23,6 +23,15 @@ import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
 import type { EventSchema } from "../../types.js";
+import {
+  generatePaneId,
+  generateAgentParticipantToken,
+  generateHumanParticipantToken,
+  hashKey,
+  keyPrefix,
+} from "../../keys.js";
+import type { Config } from "../../config.js";
+import { recordSessionCreated } from "../../telemetry/metrics.js";
 
 // ----------------------------------------------------------------------
 // Agent-authenticated publish/unpublish
@@ -606,4 +615,119 @@ myTemplates.post("/:id/unpublish", requireHuman, async (c) => {
   });
 
   return c.json({ id, published_at: null });
+});
+
+// POST /v1/my-templates/:id/launch — create a pane from an installed template.
+//
+// Closes the dead-end-UX gap where Install added the template to the human's
+// library but offered no way for the human to actually use it. The new pane:
+//   - Pins to the install's installedVersion (consistent with how an agent-
+//     created pane references a templateVersion).
+//   - Sets ownerHumanId = calling human, so the pane appears in /my-panes.
+//   - Sets agentId = template.ownerId, which is owned by the calling human
+//     (cross-agent-same-human, #283), so existing per-agent indices stay
+//     consistent without minting a brand-new agent.
+//   - Mints one human participant token and returns its URL — the UI navigates
+//     there immediately.
+//
+// Mirrors the reference-form panes.ts create (lines 660-720) but trimmed to
+// the essentials: no dedup, no input_data, no callbacks. Anything beyond
+// "open a pane" is the agent-driven path and stays on POST /v1/panes.
+const LAUNCH_TTL_MS = 24 * 60 * 60 * 1000; // 24h — same default as panes.ts.
+myTemplates.post("/:id/launch", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config") as Config;
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  // Find the active install row. The install carries the pinned version.
+  // 404 (not 401/403) for any failure — same no-enumeration shape as the
+  // publish/unpublish handlers above.
+  const install = await prisma.humanTemplateInstall.findUnique({
+    where: { humanId_templateId: { humanId: human.id, templateId: id } },
+    include: {
+      template: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          ownerId: true,
+          owner: { select: { ownerHumanId: true } },
+        },
+      },
+    },
+  });
+  if (!install || install.uninstalledAt !== null) {
+    throw errors.notFound();
+  }
+
+  // Load the pinned templateVersion. If the install row references a version
+  // that no longer exists (shouldn't happen — versions are immutable — but
+  // defends against a future rename), fail closed.
+  const version = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: install.templateId,
+        version: install.installedVersion,
+      },
+    },
+  });
+  if (!version) {
+    throw errors.notFound();
+  }
+
+  const paneId = generatePaneId();
+  const humanToken = generateHumanParticipantToken();
+  const agentToken = generateAgentParticipantToken();
+  const expiresAt = new Date(Date.now() + LAUNCH_TTL_MS);
+  const title =
+    install.template.name ?? install.template.slug ?? install.template.id;
+
+  await prisma.pane.create({
+    data: {
+      id: paneId,
+      agentId: install.template.ownerId,
+      ownerHumanId: human.id,
+      creatorKind: "human",
+      creatorId: human.id,
+      templateVersionId: version.id,
+      title,
+      expiresAt,
+      participants: {
+        create: [
+          {
+            kind: "agent",
+            identityId: install.template.ownerId,
+            tokenHash: hashKey(agentToken),
+            tokenPrefix: keyPrefix(agentToken),
+          },
+          {
+            kind: "human",
+            identityId: human.id,
+            tokenHash: hashKey(humanToken),
+            tokenPrefix: keyPrefix(humanToken),
+          },
+        ],
+      },
+    },
+  });
+
+  // Bump the template's last-used timestamp — search ranks by it.
+  await prisma.template.update({
+    where: { id: install.templateId },
+    data: { lastUsedAt: new Date() },
+  });
+
+  recordSessionCreated();
+
+  return c.json(
+    {
+      pane_id: paneId,
+      urls: {
+        humans: [`${config.publicUrl}/s/${humanToken}`],
+      },
+    },
+    201,
+  );
 });
