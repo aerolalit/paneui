@@ -29,7 +29,12 @@ export type RuntimeToShellKind =
   | "emit"
   | "upload-attachment-request"
   | "download-attachment-request"
-  | "save-attachment-request";
+  | "save-attachment-request"
+  // #298 — record-mutation request. Discriminated by `op` inside the frame:
+  // "create" | "upsert" | "update" | "delete". The shell dispatches via HTTP
+  // (the iframe sandbox blocks fetch); a correlation_id'd `record-mutate-result`
+  // returns with either the persisted row or the relay's error envelope.
+  | "record-mutate-request";
 
 /** Frame kinds the shell sends to the runtime (shell -> iframe). */
 export type ShellToRuntimeKind =
@@ -39,7 +44,19 @@ export type ShellToRuntimeKind =
   | "error"
   | "upload-attachment-result"
   | "download-attachment-result"
-  | "save-attachment-result";
+  | "save-attachment-result"
+  // #298 — push of a record-state change so the iframe runtime can update its
+  // in-iframe RecordStore and fire pane.records.on() handlers. One frame per
+  // WS-side record.upsert / record.delete after dedup.
+  | "record-delta"
+  // #298 — reply to a record-mutate-request. Carries either the persisted row
+  // (success) or an error envelope.
+  | "record-mutate-result"
+  // #298 — initial snapshot push: every row the shell has observed so far for
+  // every collection. Delivered immediately after `init` so a template that
+  // calls pane.records.snapshot() on first render sees the replayed state
+  // without waiting for the next live delta.
+  | "record-snapshot";
 
 /**
  * The envelope every Pane protocol frame carries. Concrete frame types in each
@@ -208,3 +225,88 @@ export interface PaneInitPayload {
    */
   input_data: unknown;
 }
+
+// ===========================================================================
+// #298 — record-mutation + delta frames
+// ===========================================================================
+
+/** A record on the iframe-side wire — matches the relay's SerializedRecord. */
+export interface RecordRowLike {
+  id: string;
+  collection: string;
+  key: string;
+  data: unknown;
+  version: number;
+  seq: number;
+  author: { kind: "agent" | "human" | "system"; id: string };
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+/** A tombstone reference — matches the relay's DeletedRecordRef. */
+export interface DeletedRecordRefLike {
+  id: string;
+  key: string;
+  seq: number;
+  deleted_at: string;
+}
+
+/**
+ * Shell -> iframe: push a record-state change so the iframe runtime can
+ * update its store and fire pane.records.on() handlers. The shell drops
+ * stale-seq messages itself, so the iframe trusts the order it receives.
+ */
+export type RecordDeltaFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "record-delta";
+} & (
+  | { op: "upsert"; collection: string; record: RecordRowLike }
+  | { op: "delete"; collection: string; record: DeletedRecordRefLike }
+);
+
+/**
+ * Shell -> iframe: initial snapshot, sent immediately after `init`. The
+ * iframe seeds its store before the first pane.records.snapshot() call.
+ * Empty when the surface has no record_schema.
+ */
+export interface RecordSnapshotFrame {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "record-snapshot";
+  /** Map: collection name -> array of rows in seq order. */
+  collections: Record<string, RecordRowLike[]>;
+}
+
+/**
+ * Iframe -> shell: request to create / upsert / update / delete a record.
+ * The shell brokers the HTTP call (the iframe sandbox blocks fetch).
+ * Discriminated by `op`. `recordKey` is optional only for `create`; the
+ * other ops require it.
+ */
+export type RecordMutateRequestFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "record-mutate-request";
+  /** RPC correlation id. */
+  id: string;
+  collection: string;
+} & (
+  | { op: "create"; data: unknown }
+  | { op: "upsert"; recordKey: string; data: unknown }
+  | { op: "update"; recordKey: string; data: unknown; ifMatch?: number }
+  | { op: "delete"; recordKey: string; ifMatch?: number }
+);
+
+/** Shell -> iframe: reply to a record-mutate-request. Discriminated by `ok`. */
+export type RecordMutateResultFrame = {
+  __pane: PaneFrameMarker;
+  v: PaneProtocolVersion;
+  kind: "record-mutate-result";
+  /** Matches the request's `id`. */
+  id: string;
+} & (
+  | { ok: true; record?: RecordRowLike } // record absent on delete
+  | { ok: false; error: { code: string; message: string; details?: unknown } }
+);

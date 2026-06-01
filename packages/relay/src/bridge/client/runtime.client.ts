@@ -555,6 +555,23 @@ declare global {
       }
       return;
     }
+    // #298 — records: snapshot seed + live deltas. The shell brokers all of
+    // this; the iframe just maintains a mirror keyed by (collection, key).
+    if (m.kind === "record-snapshot") {
+      const cols = (m.collections || {}) as Record<string, unknown[]>;
+      for (const [name, rows] of Object.entries(cols)) {
+        for (const r of rows) {
+          ingestRecord("upsert", name, r as { key: string; seq: number });
+        }
+      }
+      return;
+    }
+    if (m.kind === "record-delta") {
+      const op = m.op as "upsert" | "delete";
+      const collection = String(m.collection);
+      ingestRecord(op, collection, m.record);
+      return;
+    }
   });
 
   // `window.pane` is frozen so the template can't tamper with the bridge. But
@@ -565,6 +582,123 @@ declare global {
   // whatever `init` delivered. An template reads its per-instance seed data as
   // `window.pane.inputData` — e.g. a PR-review page does
   // `window.pane.inputData.prTitle`.
+  // #298 — in-iframe records store, fed by record-snapshot + record-delta
+  // frames from the shell. Pure read-only API for v1; mutators (upsert /
+  // create / update / delete) throw a clear "not yet implemented" with a
+  // pointer to the CLI / HTTP route for now — wiring them needs a
+  // correlation-id RPC over postMessage that goes through the shell's
+  // HTTP path, deferred to a phase-2 PR.
+  interface RecordRow {
+    id: string;
+    collection: string;
+    key: string;
+    data: unknown;
+    version: number;
+    seq: number;
+    author: { kind: string; id: string };
+    created_at: string;
+    updated_at: string;
+    deleted_at: string | null;
+  }
+  interface RecordDelta {
+    kind: "upsert" | "delete";
+    collection: string;
+    record: { key: string; seq: number; [k: string]: unknown };
+  }
+  type RecordHandler = (ev: RecordDelta) => void;
+  const recordStore = new Map<string, Map<string, RecordRow>>();
+  const recordLastSeq = new Map<string, number>();
+  const recordHandlers = new Map<string, Set<RecordHandler>>();
+
+  function ingestRecord(
+    op: "upsert" | "delete",
+    collection: string,
+    record: { key: string; seq: number; [k: string]: unknown },
+  ): void {
+    const last = recordLastSeq.get(collection) ?? 0;
+    if (record.seq <= last) return; // stale
+    let inner = recordStore.get(collection);
+    if (!inner) {
+      inner = new Map();
+      recordStore.set(collection, inner);
+    }
+    if (op === "upsert") inner.set(record.key, record as unknown as RecordRow);
+    else inner.delete(record.key);
+    recordLastSeq.set(collection, record.seq);
+    const handlers = recordHandlers.get(collection);
+    if (handlers) {
+      const ev: RecordDelta = { kind: op, collection, record };
+      for (const h of handlers) {
+        try {
+          h(ev);
+        } catch (err) {
+          // A throwing handler must not break delivery to other subscribers.
+
+          console.error("pane.records handler threw:", err);
+        }
+      }
+    }
+  }
+
+  const records = {
+    /** Snapshot current rows for a collection in observation order. */
+    snapshot(collection: string): RecordRow[] {
+      const inner = recordStore.get(collection);
+      return inner ? Array.from(inner.values()) : [];
+    },
+    /**
+     * Subscribe to upserts + deletes on a collection. The handler fires for
+     * every observed delta from the moment of subscription forward; for the
+     * historical replay set, call `snapshot()` first and merge.
+     */
+    on(collection: string, handler: RecordHandler): () => void {
+      let set = recordHandlers.get(collection);
+      if (!set) {
+        set = new Set();
+        recordHandlers.set(collection, set);
+      }
+      set.add(handler);
+      return () => {
+        const s = recordHandlers.get(collection);
+        if (s) s.delete(handler);
+      };
+    },
+    // Phase-1 stubs. The mutator path needs a postMessage RPC to the shell
+    // (which has the bearer token + can call /v1/...); the shell-side
+    // record-mutate-request handler is the missing piece. Tracked as
+    // follow-up to #298.
+    create(): Promise<never> {
+      return Promise.reject(
+        new Error(
+          "pane.records.create is not yet implemented; use the CLI " +
+            "(`pane records upsert`) or your agent's HTTP path. Tracked as " +
+            "follow-up to #298.",
+        ),
+      );
+    },
+    upsert(): Promise<never> {
+      return Promise.reject(
+        new Error(
+          "pane.records.upsert is not yet implemented; see pane.records.create",
+        ),
+      );
+    },
+    update(): Promise<never> {
+      return Promise.reject(
+        new Error(
+          "pane.records.update is not yet implemented; see pane.records.create",
+        ),
+      );
+    },
+    delete(): Promise<never> {
+      return Promise.reject(
+        new Error(
+          "pane.records.delete is not yet implemented; see pane.records.create",
+        ),
+      );
+    },
+  };
+
   window.pane = Object.freeze({
     emit,
     on,
@@ -573,6 +707,7 @@ declare global {
     downloadBlob,
     saveBlob,
     ready,
+    records,
     get inputData(): unknown {
       return inputData;
     },
