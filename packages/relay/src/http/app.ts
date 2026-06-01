@@ -33,6 +33,7 @@ import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
 import attachments from "./routes/attachments.js";
+import trash from "./routes/trash.js";
 import blobBridge from "../bridge/attachment-bridge.js";
 import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
 import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
@@ -344,6 +345,8 @@ export function buildApp(
   app.route("/v1/taste", taste);
   app.route("/v1/feedback", feedback);
   app.route("/v1/attachments", attachments);
+  // #306 — /v1/trash: list trash, restore, permanent hard-delete.
+  app.route("/v1/trash", trash);
   // POST /s/:participantToken/attachments — human-side attachment upload (follow-up C
   // of #156). Mounted BEFORE the general /s bridge so the POST route is
   // matched cleanly; the bridge module only registers GET endpoints, but
