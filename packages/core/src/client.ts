@@ -21,6 +21,7 @@ import type {
   PaneState,
   PanesPage,
   TasteInfo,
+  TrashListResponse,
 } from "./types.js";
 import type { ListPanesQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
@@ -737,6 +738,64 @@ export class PaneClient {
    */
   async deletePane(id: string): Promise<void> {
     const r = await this.call("DELETE", `/v1/panes/${encodeURIComponent(id)}`);
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * GET /v1/trash — list soft-deleted panes + templates in the caller's
+   * agent-scope. The trash UI / `pane trash list` lives off this. (#306)
+   */
+  async listTrash(): Promise<TrashListResponse> {
+    const r = await this.call("GET", "/v1/trash");
+    if (!r.ok) this.fail(r);
+    return r.data as TrashListResponse;
+  }
+
+  /**
+   * POST /v1/trash/panes/:id/restore — un-trash a soft-deleted pane (clear
+   * deletedAt + audit row). (#306)
+   */
+  async restorePane(id: string): Promise<void> {
+    const r = await this.call(
+      "POST",
+      `/v1/trash/panes/${encodeURIComponent(id)}/restore`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * POST /v1/trash/templates/:id/restore — un-trash a soft-deleted template. (#306)
+   */
+  async restoreTemplate(id: string): Promise<void> {
+    const r = await this.call(
+      "POST",
+      `/v1/trash/templates/${encodeURIComponent(id)}/restore`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * DELETE /v1/trash/panes/:id — permanently hard-delete a trashed pane
+   * (bypass retention window). (#306)
+   */
+  async permanentDeletePane(id: string): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/trash/panes/${encodeURIComponent(id)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * DELETE /v1/trash/templates/:id — permanently hard-delete a trashed
+   * template. Refused 409 if a live pane still references one of its
+   * versions. (#306)
+   */
+  async permanentDeleteTemplate(id: string): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/trash/templates/${encodeURIComponent(id)}`,
+    );
     if (!r.ok) this.fail(r);
   }
 

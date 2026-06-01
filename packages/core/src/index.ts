@@ -85,5 +85,8 @@ export type {
   PaneSummary,
   PanesPage,
   MintParticipantResponse,
+  TrashedPaneEntry,
+  TrashedTemplateEntry,
+  TrashListResponse,
   RelayError,
 } from "./types.js";
