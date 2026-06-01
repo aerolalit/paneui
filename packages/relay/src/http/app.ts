@@ -168,6 +168,7 @@ export function buildApp(
           | 401
           | 403
           | 404
+          | 405
           | 409
           | 410
           | 413
