@@ -201,7 +201,12 @@ describe("GET /my-surfaces (signed in)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
+    // First-touch empty state — headline, explanation, and two CTAs
+    // (Claim an agent / Browse apps) point a new human at the next step.
+    expect(html).toContain('class="empty-state"');
     expect(html).toContain("No surfaces yet");
+    expect(html).toContain("Claim an agent");
+    expect(html).toContain("Browse apps");
   });
 
   it("lists surfaces the human owns", async () => {
@@ -248,7 +253,12 @@ describe("GET /my-templates (signed in)", () => {
       new Request("http://t/my-templates", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain("No templates yet");
+    const html = await res.text();
+    expect(html).toContain('class="empty-state"');
+    expect(html).toContain("haven't authored any templates");
+    expect(html).toContain("pane template create");
+    // Cross-links to /apps so a new human can browse before authoring.
+    expect(html).toContain('href="/apps"');
   });
 
   it("lists templates owned by the human's claimed agents", async () => {
@@ -318,6 +328,20 @@ describe("GET /apps (signed in)", () => {
     expect(html).toContain('id="apps-results"');
     expect(html).toContain("/v1/templates/public");
   });
+
+  it("ships two distinct empty-state copies in the client (catalog empty vs. search miss)", async () => {
+    // The /apps results list is rendered client-side, so the e2e check is
+    // that the inline JS carries both copies — a regression that collapses
+    // them back into the original single string is caught here.
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/apps", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("The public catalog is empty");
+    expect(html).toContain("pane template publish");
+    expect(html).toContain("No apps match");
+  });
 });
 
 describe("GET /my-agents (signed in)", () => {
@@ -328,7 +352,9 @@ describe("GET /my-agents (signed in)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
+    expect(html).toContain('class="empty-state"');
     expect(html).toContain("No claimed agents yet");
+    expect(html).toContain("pane agent claim");
     expect(html).toContain("Generate claim code");
   });
 
