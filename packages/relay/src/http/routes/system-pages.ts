@@ -215,6 +215,25 @@ function layout(args: {
   .hero-mock-btn { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--bg); color: var(--fg); font-size: 13px; font-weight: 500; }
   .hero-mock-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+  /* Surface cards — /my-surfaces switched from a text list to one card
+     per surface, with a hash-coloured tile (template initials) on the
+     left so the eye can lock onto a particular surface at a glance.
+     The .list rule above survives for the other pages that don't need
+     this density. */
+  .surface-cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .surface-card { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--bg); border: 1px solid var(--rule); border-radius: 12px; }
+  @media (min-width: 640px) { .surface-card { padding: 16px 18px; gap: 18px; } }
+  .surface-card-tile { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: #fff; background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%); flex: none; user-select: none; }
+  .surface-card-main { min-width: 0; }
+  .surface-card-title { font-weight: 600; font-size: 15.5px; overflow-wrap: anywhere; }
+  .surface-card-meta { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; margin-top: 2px; }
+  .surface-card-meta-dim { color: var(--muted); }
+  .surface-card-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  @media (max-width: 540px) {
+    .surface-card { grid-template-columns: 44px 1fr; }
+    .surface-card-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 4px; border-top: 1px dashed var(--rule); }
+  }
+
   button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
   button.btn:hover, a.btn:hover { background: var(--accent-hover); }
   button.btn:active, a.btn:active { transform: translateY(1px); }
@@ -264,6 +283,48 @@ function layout(args: {
 </script>
 </body>
 </html>`;
+}
+
+// Two-character "avatar" derived from the template name. Used as the
+// colored tile on each /my-surfaces card so visually scanning a long list
+// is faster than reading titles. Falls back to "?" for blank input.
+export function surfaceInitials(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "?";
+  // Strip leading non-alphanumerics, then take the first two word-starts.
+  const words = trimmed
+    .split(/[\s_\-/.]+/)
+    .filter((w) => /[A-Za-z0-9]/.test(w));
+  if (words.length === 0) return trimmed.slice(0, 2).toUpperCase();
+  if (words.length === 1) return (words[0] ?? "").slice(0, 2).toUpperCase();
+  return ((words[0]?.[0] ?? "") + (words[1]?.[0] ?? "")).toUpperCase();
+}
+
+// Stable hue in [0, 360) derived from the surface id. Each card gets a
+// distinct background tile without having to track per-template color
+// metadata in the DB; same surface always renders the same hue.
+export function surfaceHue(seed: string): number {
+  // djb2 — good enough for visual differentiation; no security claim.
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) {
+    h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h) % 360;
+}
+
+// "today" / "yesterday" / "Nd ago" / ISO date. Keeps the meta line short
+// without losing the "is this fresh or stale" signal. The plain ISO date
+// stays for anything older than 14 days so the eye can compare exact dates
+// when scrolling through a long backlog.
+export function formatRelativeDate(when: Date, now: Date): string {
+  const day = 24 * 60 * 60 * 1000;
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(when.getFullYear(), when.getMonth(), when.getDate());
+  const diffDays = Math.round((start.getTime() - target.getTime()) / day);
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays > 1 && diffDays < 14) return `${diffDays}d ago`;
+  return when.toISOString().slice(0, 10);
 }
 
 function escapeHtml(s: string): string {
@@ -472,6 +533,12 @@ systemPages.get("/my-surfaces", async (c) => {
       status: true,
       createdAt: true,
       expiresAt: true,
+      agent: { select: { name: true } },
+      templateVersion: {
+        select: {
+          template: { select: { name: true, slug: true } },
+        },
+      },
     },
   });
   const body = `<h1>My surfaces</h1>
@@ -485,7 +552,7 @@ systemPages.get("/my-surfaces", async (c) => {
             <p class="empty-state-body">A surface is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
             <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/apps">Browse apps</a></div>
           </div>`
-        : `<ul class="list">${surfaces
+        : `<ul class="surface-cards">${surfaces
             .map((s) => {
               const isActive =
                 s.status === "open" && s.expiresAt.getTime() > Date.now();
@@ -497,9 +564,25 @@ systemPages.get("/my-surfaces", async (c) => {
               // (/s/:token). No participant token in the URL; the pane_login
               // cookie does the auth, so a stolen URL is inert.
               const openAction = isActive
-                ? `<a class="btn ghost" href="/surfaces/${encodeURIComponent(s.id)}" style="padding:6px 12px;font-size:13px;">Open</a>`
+                ? `<a class="btn ghost" href="/surfaces/${encodeURIComponent(s.id)}" style="padding:6px 14px;font-size:13px;">Open</a>`
                 : "";
-              return `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(s.createdAt.toISOString().slice(0, 10))}</div></div><div style="display:flex;gap:10px;align-items:center;">${statusBadge}${openAction}</div></li>`;
+              const templateName =
+                s.templateVersion.template.name ??
+                s.templateVersion.template.slug ??
+                "ad-hoc template";
+              const agentName = s.agent.name;
+              const initials = surfaceInitials(templateName);
+              const hue = surfaceHue(s.id);
+              const createdLabel = formatRelativeDate(s.createdAt, new Date());
+              return `<li class="surface-card">
+                <div class="surface-card-tile" style="--tile-h:${hue};" aria-hidden="true">${escapeHtml(initials)}</div>
+                <div class="surface-card-main">
+                  <div class="surface-card-title">${escapeHtml(s.title)}</div>
+                  <div class="surface-card-meta">${escapeHtml(templateName)} · ${escapeHtml(agentName)}</div>
+                  <div class="surface-card-meta surface-card-meta-dim"><code>${escapeHtml(s.id)}</code> · created ${escapeHtml(createdLabel)}</div>
+                </div>
+                <div class="surface-card-actions">${statusBadge}${openAction}</div>
+              </li>`;
             })
             .join("")}</ul>`
     }
