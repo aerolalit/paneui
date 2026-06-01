@@ -79,9 +79,52 @@ const schema = z.object({
   MAX_SCHEMA_BYTES: z.coerce.number().int().positive().default(65_536),
   MAX_SCHEMA_DEPTH: z.coerce.number().int().positive().default(32),
   MAX_PARTICIPANTS_PER_SESSION: z.coerce.number().int().positive().default(32),
-  DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
-  MAX_TTL_SECONDS: z.coerce.number().int().positive().default(86_400),
+  // #308 — surface lifecycle in three stages:
+  //
+  //   1. Active. expires_at > now(). Surface accepts events, listed in /my-*.
+  //      Duration: caller-supplied ttl, or DEFAULT_TTL_SECONDS, capped at
+  //      MAX_TTL_SECONDS.
+  //   2. Soft-deleted. expires_at <= now(). The TTL sweeper (#303) sets
+  //      `deleted_at = now()`. Surface is filtered from default queries but
+  //      still listable in /v1/trash and restorable (#306). Duration depends
+  //      on owner tier: free uses HARD_RETENTION_DAYS_FREE; paid uses
+  //      HARD_RETENTION_DAYS_PAID (null = never).
+  //   3. Hard-deleted. deleted_at + retention window elapsed. The hard-delete
+  //      sweeper (#304) removes the row + cascades to children. An audit row
+  //      stays in deletion_log indefinitely.
+  //
+  // 6 months default lifespan + 30 days trash window closes the "lost
+  // baby-tracking surface" class of bug from 2026-05-30 (1h default expired
+  // before the human could come back to read it).
+  DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(15_768_000), // 180 days
+  MAX_TTL_SECONDS: z.coerce.number().int().positive().default(31_536_000), // 1 year
   TTL_SWEEP_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  // #308 — hard-delete retention windows (days after `deleted_at` before
+  // the hard-delete sweeper reclaims the row). Resolution per row, applied
+  // by the sweeper from #304:
+  //
+  //   1. If `humans.hard_retention_days` is set, use it (per-row override).
+  //   2. Else if `humans.tier = 'paid'`, use HARD_RETENTION_DAYS_PAID.
+  //   3. Else (free, or no human owner), use HARD_RETENTION_DAYS_FREE.
+  //   4. If `tier = 'system'` → never hard-delete (immune).
+  //
+  // HARD_RETENTION_DAYS_PAID defaults to `null` = never, on purpose: paid
+  // users get effectively-permanent retention until/unless an operator sets
+  // a different value. Storing null end-to-end (env unset, config unset,
+  // sweeper skips) avoids a magic number masquerading as "no expiry."
+  HARD_RETENTION_DAYS_FREE: z.coerce.number().int().positive().default(30),
+  HARD_RETENTION_DAYS_PAID: z.coerce
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .default(null),
+
+  // How often the hard-delete sweeper wakes. 0 disables. Hourly is the
+  // intended cadence — retention windows are days-scale, so an hour of
+  // jitter on the actual reclaim time is fine.
+  HARD_DELETE_SWEEP_SECONDS: z.coerce.number().int().min(0).default(3600),
 
   // ------------------------------------------------------------------
   // Records (#287)
@@ -481,6 +524,15 @@ export function loadConfig(
     throw new ConfigError(
       "invalid relay configuration:\n" +
         "  - RESEND_API_KEY: required when EMAIL_PROVIDER=resend",
+    );
+  }
+  // #308 — DEFAULT_TTL_SECONDS must fit under MAX_TTL_SECONDS; otherwise the
+  // implicit (no-ttl-supplied) surface-create path would silently produce
+  // a surface that violates the cap.
+  if (parsed.DEFAULT_TTL_SECONDS > parsed.MAX_TTL_SECONDS) {
+    throw new ConfigError(
+      "invalid relay configuration:\n" +
+        `  - DEFAULT_TTL_SECONDS (${parsed.DEFAULT_TTL_SECONDS}) must be <= MAX_TTL_SECONDS (${parsed.MAX_TTL_SECONDS})`,
     );
   }
   const publicUrl = (
