@@ -137,8 +137,22 @@ describe("GET /login", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    expect(html).toContain("Sign in to pane");
+    // Hero block tells the story before the form.
+    expect(html).toContain("A real UI for the human in the loop");
     expect(html).toContain('id="login-form"');
+    // The email-magic-link form remains the actual sign-in surface.
+    expect(html).toContain('class="login-hero"');
+    expect(html).toContain('class="login-form-card');
+  });
+
+  it("renders the mock artifact preview so new visitors see what Pane looks like", async () => {
+    const res = await app.fetch(new Request("http://t/login"));
+    const html = await res.text();
+    expect(html).toContain('class="hero-mock"');
+    // Concrete example copy — if this regresses to a generic placeholder
+    // the page goes back to telling no story.
+    expect(html).toContain("Approve deploy");
+    expect(html).toContain("Your CI bot wants you to approve");
   });
 
   it("explains the EMAIL_PROVIDER=none case", async () => {
