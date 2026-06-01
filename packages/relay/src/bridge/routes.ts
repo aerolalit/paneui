@@ -500,7 +500,7 @@ const TOP_NAV_TABS: ReadonlyArray<{
   href: string;
 }> = [
   { slug: "home", label: "Home", href: "/home" },
-  { slug: "apps", label: "Apps", href: "/apps" },
+  { slug: "catalog", label: "Public templates", href: "/public-templates" },
   { slug: "panes", label: "My panes", href: "/my-panes" },
   { slug: "templates", label: "My templates", href: "/my-templates" },
   { slug: "agents", label: "My agents", href: "/my-agents" },

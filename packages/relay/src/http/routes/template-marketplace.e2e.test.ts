@@ -1038,3 +1038,122 @@ describe("GET /v1/templates/catalog (agent, #279 PR C)", () => {
     expect(body.items[0]!.name).toBe("PR Reviewer");
   });
 });
+
+// ----------------------------------------------------------------------
+// POST /v1/my-templates/:id/launch — open a pane from an installed template.
+// ----------------------------------------------------------------------
+describe("POST /v1/my-templates/:id/launch (human)", () => {
+  async function seedClaimedTemplateForHuman(humanId: string) {
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Launchable",
+        slug: "launchable",
+        latestVersion: 1,
+        publishedAt: new Date(),
+      },
+    });
+    const v1 = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p>v1</p>",
+        eventSchema: null,
+      },
+    });
+    return { agentId: agent.id, templateId: tmpl.id, versionId: v1.id };
+  }
+
+  it("requires a login cookie (401 without auth)", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x/launch", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when there is no install for this human", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedClaimedTemplateForHuman(humanId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 when the install has been uninstalled", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedClaimedTemplateForHuman(humanId);
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "pin",
+        uninstalledAt: new Date(),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("creates a pane pinned to installedVersion and returns the human URL", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { agentId, templateId, versionId } =
+      await seedClaimedTemplateForHuman(humanId);
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId,
+        installedVersion: 1,
+        upgradePolicy: "pin",
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      pane_id: string;
+      urls: { humans: string[] };
+    };
+    expect(body.pane_id).toMatch(/^pan_/);
+    expect(body.urls.humans).toHaveLength(1);
+    expect(body.urls.humans[0]).toMatch(/\/s\/[A-Za-z0-9_-]+$/);
+
+    // Pane row carries the human as owner so /my-panes shows it.
+    const pane = await prisma.pane.findUnique({
+      where: { id: body.pane_id },
+    });
+    expect(pane).not.toBeNull();
+    expect(pane!.ownerHumanId).toBe(humanId);
+    expect(pane!.agentId).toBe(agentId);
+    expect(pane!.templateVersionId).toBe(versionId);
+    expect(pane!.creatorKind).toBe("human");
+    expect(pane!.creatorId).toBe(humanId);
+  });
+});
