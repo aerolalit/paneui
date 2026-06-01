@@ -29,7 +29,105 @@ export {};
 // shared (as a type) with the runtime bundle, so the two sides cannot drift.
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
 import type { PaneFrameEnvelope, ShellToRuntimeKind } from "./protocol.js";
-import { RecordStore } from "./record-store.js";
+
+// #296 — inlined RecordStore.
+//
+// Why inlined: shell.client.ts is compiled by tsc (not bundled) and the
+// resulting JS is then loaded by the relay's loadClient() helper and evaluated
+// as a CLASSIC script inside the browser AND under jsdom in the unit tests.
+// A cross-module `import { RecordStore } from "./record-store.js"` would
+// survive into the compiled output as a top-level `import` statement, which
+// is a SyntaxError in classic-script eval. So we keep two copies of the
+// class:
+//
+//   * The CANONICAL one lives in ./record-store.ts and is unit-tested
+//     directly (record-store.test.ts, 11 tests).
+//   * The INLINE one below is loaded into the shell IIFE. Must stay in
+//     sync with the canonical source.
+//
+// A future bundler pass over shell.client.ts could eliminate this
+// duplication, but that's its own structural change.
+
+interface ShellSerializedRecord {
+  id: string;
+  collection: string;
+  key: string;
+  data: unknown;
+  version: number;
+  seq: number;
+  author: { kind: "agent" | "human" | "system"; id: string };
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+interface ShellDeletedRecordRef {
+  id: string;
+  key: string;
+  seq: number;
+  deleted_at: string;
+}
+interface ShellRecordUpsertMessage {
+  kind: "record.upsert";
+  collection: string;
+  record: ShellSerializedRecord;
+}
+interface ShellRecordDeleteMessage {
+  kind: "record.delete";
+  collection: string;
+  record: ShellDeletedRecordRef;
+}
+type ShellRecordDelta =
+  | { kind: "upsert"; collection: string; record: ShellSerializedRecord }
+  | { kind: "delete"; collection: string; record: ShellDeletedRecordRef };
+
+class RecordStore {
+  private readonly byCollection = new Map<
+    string,
+    Map<string, ShellSerializedRecord>
+  >();
+  private readonly lastSeq = new Map<string, number>();
+
+  applyUpsert(msg: ShellRecordUpsertMessage): ShellRecordDelta | null {
+    const last = this.lastSeq.get(msg.collection) ?? 0;
+    if (msg.record.seq <= last) return null;
+    let inner = this.byCollection.get(msg.collection);
+    if (!inner) {
+      inner = new Map();
+      this.byCollection.set(msg.collection, inner);
+    }
+    inner.set(msg.record.key, msg.record);
+    this.lastSeq.set(msg.collection, msg.record.seq);
+    return { kind: "upsert", collection: msg.collection, record: msg.record };
+  }
+
+  applyDelete(msg: ShellRecordDeleteMessage): ShellRecordDelta | null {
+    const last = this.lastSeq.get(msg.collection) ?? 0;
+    if (msg.record.seq <= last) return null;
+    const inner = this.byCollection.get(msg.collection);
+    if (inner) inner.delete(msg.record.key);
+    this.lastSeq.set(msg.collection, msg.record.seq);
+    return { kind: "delete", collection: msg.collection, record: msg.record };
+  }
+
+  snapshot(collection: string): ShellSerializedRecord[] {
+    const inner = this.byCollection.get(collection);
+    if (!inner) return [];
+    return Array.from(inner.values());
+  }
+
+  observedCollections(): string[] {
+    return Array.from(this.lastSeq.keys());
+  }
+
+  reconnectCursorQuery(): string {
+    if (this.lastSeq.size === 0) return "";
+    const parts: string[] = [];
+    for (const [name, seq] of this.lastSeq.entries()) {
+      parts.push(`since_record_seq.${encodeURIComponent(name)}=${seq}`);
+    }
+    return parts.join("&");
+  }
+}
 
 /** An outbound frame the shell posts to the iframe. */
 type OutboundFrame = PaneFrameEnvelope & {
