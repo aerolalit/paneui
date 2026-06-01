@@ -1210,6 +1210,195 @@ interface SerializedEvent {
       })();
       return;
     }
+    // #298 phase 2 — record-mutate-request: the iframe is asking the shell
+    // to dispatch an HTTP CRUD call against /v1/surfaces/:id/records/:collection
+    // on its behalf. Same pattern as upload-attachment-request: the iframe
+    // can't reach the relay directly (sandboxed; no fetch), so the shell
+    // brokers it using the participant token (or the session cookie in
+    // session mode). ALWAYS post a reply — otherwise the runtime's promise
+    // hangs until the 30s correlation-id timeout.
+    if (m.kind === "record-mutate-request") {
+      const mutateId =
+        typeof m.id === "string" && m.id.length > 0 && m.id.length <= 128
+          ? m.id
+          : null;
+      const replyMutate = (
+        body:
+          | { ok: true; record?: unknown }
+          | {
+              ok: false;
+              error: { code: string; message: string; details?: unknown };
+            },
+      ): void => {
+        if (!mutateId || !frame || !frame.contentWindow) return;
+        const reply: OutboundFrame = {
+          __pane: 1,
+          v: 1,
+          kind: "record-mutate-result",
+          id: mutateId,
+          ...body,
+        };
+        frame.contentWindow.postMessage(reply, IFRAME_ORIGIN);
+      };
+      if (!mutateId) return; // no id = no way to reply; drop silently
+
+      const op = m.op;
+      const collection = typeof m.collection === "string" ? m.collection : "";
+      if (!collection) {
+        replyMutate({
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: "collection is required",
+          },
+        });
+        return;
+      }
+      if (
+        op !== "create" &&
+        op !== "upsert" &&
+        op !== "update" &&
+        op !== "delete"
+      ) {
+        replyMutate({
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: `unknown op '${String(op)}' (allowed: create, upsert, update, delete)`,
+          },
+        });
+        return;
+      }
+
+      // Build the URL + method + body for each op. The CRUD routes are
+      // already mounted by #292 — we just dispatch the matching verb.
+      const base =
+        window.location.origin +
+        "/v1/surfaces/" +
+        encodeURIComponent(CFG.surfaceId) +
+        "/records/" +
+        encodeURIComponent(collection);
+
+      let url: string;
+      let method: "POST" | "PATCH" | "DELETE";
+      let payload: Record<string, unknown> | null;
+
+      if (op === "create") {
+        url = base;
+        method = "POST";
+        payload = { data: m.data };
+      } else if (op === "upsert") {
+        if (typeof m.recordKey !== "string" || !m.recordKey.length) {
+          replyMutate({
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "recordKey is required for op='upsert'",
+            },
+          });
+          return;
+        }
+        url = base;
+        method = "POST";
+        payload = { record_key: m.recordKey, data: m.data };
+      } else if (op === "update") {
+        if (typeof m.recordKey !== "string" || !m.recordKey.length) {
+          replyMutate({
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "recordKey is required for op='update'",
+            },
+          });
+          return;
+        }
+        url = base + "/" + encodeURIComponent(m.recordKey);
+        method = "PATCH";
+        payload = { data: m.data };
+        if (typeof m.ifMatch === "number") payload["if_match"] = m.ifMatch;
+      } else {
+        // op === "delete"
+        if (typeof m.recordKey !== "string" || !m.recordKey.length) {
+          replyMutate({
+            ok: false,
+            error: {
+              code: "invalid_request",
+              message: "recordKey is required for op='delete'",
+            },
+          });
+          return;
+        }
+        url = base + "/" + encodeURIComponent(m.recordKey);
+        method = "DELETE";
+        payload =
+          typeof m.ifMatch === "number" ? { if_match: m.ifMatch } : null;
+      }
+
+      // Same auth pattern as the ws-ticket mint: Bearer header in
+      // capability-token mode, no header (cookie auth) in session mode.
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      if (CFG.wsTicketAuthorization) {
+        headers["authorization"] = CFG.wsTicketAuthorization;
+      }
+
+      void (async () => {
+        let res: Response;
+        try {
+          res = await fetch(url, {
+            method,
+            headers,
+            body: payload !== null ? JSON.stringify(payload) : undefined,
+          });
+        } catch (e) {
+          replyMutate({
+            ok: false,
+            error: {
+              code: "network_error",
+              message: e instanceof Error ? e.message : "fetch failed",
+            },
+          });
+          return;
+        }
+        // DELETE returns 204 with no body. Treat as success.
+        if (method === "DELETE" && res.status === 204) {
+          replyMutate({ ok: true });
+          return;
+        }
+        let body: unknown;
+        try {
+          body = await res.json();
+        } catch {
+          body = null;
+        }
+        if (res.ok) {
+          const bodyObj = body as { record?: unknown } | null;
+          const rec =
+            bodyObj && typeof bodyObj === "object" ? bodyObj.record : undefined;
+          replyMutate({ ok: true, record: rec });
+          return;
+        }
+        // 4xx/5xx: the relay returns { error: { code, message, details } }.
+        const errBody = body as {
+          error?: { code?: string; message?: string; details?: unknown };
+        } | null;
+        const e = errBody && errBody.error ? errBody.error : null;
+        replyMutate({
+          ok: false,
+          error: {
+            code: e && typeof e.code === "string" ? e.code : "http_error",
+            message:
+              e && typeof e.message === "string"
+                ? e.message
+                : "HTTP " + String(res.status),
+            ...(e && "details" in e ? { details: e.details } : {}),
+          },
+        });
+      })();
+      return;
+    }
+
     if (m.kind === "emit") {
       // The runtime always attaches correlation_id, so any failure path here
       // MUST reply with a synthetic error frame — otherwise pane.emit()'s
