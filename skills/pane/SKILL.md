@@ -1166,7 +1166,8 @@ Pass `record_schema` to `pane template create` (or the inline form on
 
 ### Reading + writing records from the page
 
-The page-side `pane.records` API is **read-only in v1**:
+The page-side `pane.records` API has two halves — **read** (snapshot + on)
+and **write** (create / upsert / update / delete). Reads first:
 
 ```js
 // Snapshot of every row in a collection (empty array if unseen).
@@ -1185,9 +1186,42 @@ const unsubscribe = pane.records.on("comments", (ev) => {
 });
 ```
 
-**Mutators from the page are not yet wired** (`pane.records.create / upsert /
-update / delete` throw a clear "use the CLI / HTTP for now" error). To create
-or modify records, use the agent-side CLI or the relay's HTTP routes:
+**Mutators from the page** are wired (#298 phase 2). The page mutates its
+own records by calling `pane.records.*` — the shell brokers each call to
+`/v1/panes/:id/records/...` and the WS broadcast updates every other
+subscriber (including the calling page itself). Errors reject the Promise
+with the relay's `code` set on the Error — branch on `err.code` rather
+than parsing the message.
+
+```js
+// Create a row; the relay assigns a `rec_<cuid>` key.
+const row = await pane.records.create("comments", { body: "hi" });
+
+// Upsert a row at a client-supplied key (idempotent — duplicate key
+// returns the existing row without bumping `version` or broadcasting).
+await pane.records.upsert("comments", "cmt_1", { body: "hi" });
+
+// Update with optimistic locking. On version mismatch the Promise rejects
+// with err.code === "conflict" and err.details.current is the current row.
+try {
+  await pane.records.update("comments", "cmt_1", { body: "edited" }, { ifMatch: 1 });
+} catch (err) {
+  if (err.code === "conflict") {
+    const current = err.details?.current;
+    // rebase the edit against `current` and retry
+  }
+}
+
+// Soft-delete. Tombstone stays in the table until the sweeper hard-deletes.
+await pane.records.delete("comments", "cmt_1", { ifMatch: 2 });
+```
+
+Mutator error codes you'll see on the rejected Error: `record_collection_not_found`,
+`record_schema_violation`, `author_not_allowed`, `conflict` (with
+`details.current`), `gone` (the pane was closed / expired).
+
+**Agents** mutate the same collections via the CLI (or the equivalent
+`/v1/panes/:id/records/:collection` HTTP routes):
 
 ```sh
 pane records upsert <pane-id> comments --data '{"body":"hi"}' --key cmt_1
