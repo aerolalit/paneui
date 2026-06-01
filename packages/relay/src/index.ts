@@ -23,6 +23,7 @@ import { initTelemetry, shutdownTelemetry } from "./telemetry/metrics.js";
 import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
+import { sweepRecordTombstones } from "./core/records.js";
 import { reconcileOrphanedParticipants } from "./core/reconcile.js";
 import { initRedis, shutdownRedis } from "./redis.js";
 import { ensureKeyLoaded } from "./crypto.js";
@@ -122,6 +123,45 @@ function startTtlSweeper(config: Config, prisma: PrismaClient): void {
   };
   setTimeout(tick, intervalSec * 1000 + jitter());
   log.info("ttl sweeper started", { intervalSeconds: intervalSec });
+}
+
+// #293 — records tombstone sweeper. Hard-deletes soft-deleted SurfaceRecord
+// rows that have been observable as tombstones for at least
+// RECORD_TOMBSTONE_TTL_SECONDS. Mirrors startTtlSweeper structurally: same
+// recursive-setTimeout + jitter pattern so multiple replicas don't lock-step.
+function startRecordTombstoneSweeper(
+  config: Config,
+  prisma: PrismaClient,
+): void {
+  const intervalSec = config.RECORD_SWEEPER_INTERVAL_SECONDS;
+  if (intervalSec <= 0) {
+    log.info(
+      "record tombstone sweeper disabled (RECORD_SWEEPER_INTERVAL_SECONDS=0)",
+    );
+    return;
+  }
+  const ttlSec = config.RECORD_TOMBSTONE_TTL_SECONDS;
+  const jitter = () =>
+    Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
+  const tick = (): void => {
+    void sweepRecordTombstones(prisma, ttlSec)
+      .then((count) => {
+        if (count > 0) log.debug("record tombstones swept", { count });
+      })
+      .catch((e) =>
+        log.warn("record tombstone sweep error", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
+      .finally(() => {
+        setTimeout(tick, intervalSec * 1000 + jitter());
+      });
+  };
+  setTimeout(tick, intervalSec * 1000 + jitter());
+  log.info("record tombstone sweeper started", {
+    intervalSeconds: intervalSec,
+    ttlSeconds: ttlSec,
+  });
 }
 
 async function main(): Promise<void> {
@@ -226,6 +266,7 @@ async function main(): Promise<void> {
   });
   attachWs(server, { config, prisma, generalLimiter });
   startTtlSweeper(config, prisma);
+  startRecordTombstoneSweeper(config, prisma);
 
   // Flush metrics on a graceful shutdown signal. Minimal — the relay otherwise
   // just exits — but a flush lets the last scrape window's data settle.
