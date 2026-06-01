@@ -47,7 +47,16 @@ model Agent {
   // Named relation avoids the collision with Agent <- Surface.agentId above.
   participantOf Participant[] @relation("ParticipantAgent")
 
+  // #302 — soft-delete timestamp. NULL = active. Set by hard-delete on demand
+  // (`DELETE ?permanent=true`) is the only path that skips this; normal delete
+  // sets `deletedAt` and the hard-delete sweeper (#304) reclaims rows whose
+  // retention window has elapsed. Distinct from `revokedAt` which is the
+  // agent-key revocation state; the two coexist (an agent can be revoked but
+  // not soft-deleted, or vice versa).
+  deletedAt  DateTime? @map("deleted_at")
+
   @@index([ownerHumanId])
+  @@index([deletedAt])
   @@map("agents")
 }
 
@@ -77,7 +86,27 @@ model Human {
   // Participations where this human is identity-bound on a surface
   participantOf  Participant[]
 
+  // #302 — soft-delete + retention policy.
+  //
+  // `deletedAt`: NULL = active. A soft-deleted human cascades to their claimed
+  // agents (Phase 1 hard-delete sweeper handles the cascade — see #304).
+  //
+  // `tier`: gates retention. 'free' uses HARD_RETENTION_DAYS_FREE (default
+  // 30 days); 'paid' uses HARD_RETENTION_DAYS_PAID (default null = never
+  // hard-delete); 'system' is for the relay-internal humans (e.g. the
+  // home-template owner) and is NEVER hard-deleted.
+  //
+  // `softRetentionDays` / `hardRetentionDays`: per-human override. NULL
+  // means "use the tier default." Useful for ad-hoc extended retention
+  // (e.g. compliance hold) or shorter retention for a clearly-throwaway
+  // account.
+  deletedAt         DateTime? @map("deleted_at")
+  tier              String    @default("free") // 'free' | 'paid' | 'system'
+  softRetentionDays Int?      @map("soft_retention_days")
+  hardRetentionDays Int?      @map("hard_retention_days")
+
   @@index([email])
+  @@index([deletedAt])
   @@map("humans")
 }
 
@@ -236,9 +265,14 @@ model Template {
   installs      HumanTemplateInstall[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
 
+  // #302 — soft-delete timestamp. NULL = active. See Agent.deletedAt for
+  // semantics; templates follow the same model.
+  deletedAt     DateTime?         @map("deleted_at")
+
   @@unique([ownerId, slug])
   @@index([ownerId])
   @@index([publishedAt])
+  @@index([deletedAt])
   @@map("templates")
 }
 
@@ -339,10 +373,20 @@ model Surface {
   // #288 — per-surface mutable record collections.
   recordCollections RecordCollection[]
 
+  // #302 — soft-delete timestamp. NULL = active. When the TTL sweeper
+  // (#303) fires it sets `deletedAt = now()` instead of `DELETE`-ing the
+  // row, so the surface (and its events, participants, attachments) stays
+  // recoverable for the configured trash window. The hard-delete sweeper
+  // (#304) reclaims rows past the retention window. Distinct from
+  // `status = "closed"`: closed surfaces don't accept new events but stay
+  // listable; soft-deleted surfaces are filtered from default queries.
+  deletedAt       DateTime?     @map("deleted_at")
+
   @@index([agentId])
   @@index([expiresAt])
   @@index([templateVersionId])
   @@index([ownerHumanId])
+  @@index([deletedAt])
   // Dedup index — (templateVersionId, ownerHumanId, contextKey) is unique
   // for human-owned surfaces with a contextKey. Surfaces without a
   // contextKey are not deduped (ad-hoc).
@@ -616,4 +660,42 @@ model AttachmentToken {
   @@index([attachmentId])
   @@index([expiresAt])
   @@map("attachment_tokens")
+}
+
+// #302 — append-only audit trail for the soft-delete / restore / hard-delete
+// lifecycle. One row per state transition on any soft-deletable entity
+// (Surface, Template, Agent, Human, Attachment). Used by:
+//   - The Trash UI (#309) to list "what was deleted, by whom, when, why"
+//   - The hard-delete sweeper (#304) which appends a row on every reclaim
+//   - The restore endpoint (#306) which appends a row when undeleting
+//
+// No FK to the entity — the row outlives the entity (hard-delete removes
+// the entity but keeps the audit row indefinitely). `entityId` is opaque.
+// Denormalised owner ids make the by-human trash query (#306 /v1/trash)
+// a single index scan.
+model DeletionLog {
+  id           String    @id @default(cuid())
+  // 'surface' | 'template' | 'human' | 'agent' | 'attachment'
+  entityType   String    @map("entity_type")
+  // The deleted entity's cuid. Not a FK — the entity may be hard-deleted
+  // later and this row outlives it.
+  entityId     String    @map("entity_id")
+  // Owner anchors for the trash-by-human query. Both nullable: agent-only
+  // resources (a standalone agent's surfaces before it's claimed) have no
+  // human owner; conversely human-only resources have no owning agent.
+  ownerHumanId String?   @map("owner_human_id")
+  ownerAgentId String?   @map("owner_agent_id")
+  // 'soft_deleted' | 'restored' | 'hard_deleted'
+  phase        String
+  // 'ttl_expired' | 'user_action' | 'cascade' | 'agent_revoked' |
+  // 'retention_window_elapsed' | 'user_immediate' | ...
+  reason       String
+  at           DateTime  @default(now())
+
+  // Two query patterns:
+  //   - "what did this human delete, ordered by most recent" → (owner_human_id, at)
+  //   - "find the audit row for this specific entity" → (entity_type, entity_id)
+  @@index([ownerHumanId, at])
+  @@index([entityType, entityId])
+  @@map("deletion_log")
 }

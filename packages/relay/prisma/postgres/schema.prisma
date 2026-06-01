@@ -45,7 +45,11 @@ model Agent {
   // Named relation avoids the collision with Agent <- Surface.agentId above.
   participantOf Participant[] @relation("ParticipantAgent")
 
+  // #302 — soft-delete timestamp. See sqlite schema for semantics.
+  deletedAt  DateTime? @map("deleted_at")
+
   @@index([ownerHumanId])
+  @@index([deletedAt])
   @@map("agents")
 }
 
@@ -75,7 +79,15 @@ model Human {
   // Participations where this human is identity-bound on a surface
   participantOf  Participant[]
 
+  // #302 — soft-delete + retention policy. See sqlite schema for the full
+  // semantics (tier defaults, override resolution, etc.).
+  deletedAt         DateTime? @map("deleted_at")
+  tier              String    @default("free")
+  softRetentionDays Int?      @map("soft_retention_days")
+  hardRetentionDays Int?      @map("hard_retention_days")
+
   @@index([email])
+  @@index([deletedAt])
   @@map("humans")
 }
 
@@ -225,9 +237,13 @@ model Template {
   installs      HumanTemplateInstall[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
 
+  // #302 — soft-delete timestamp. See sqlite schema for semantics.
+  deletedAt     DateTime?         @map("deleted_at")
+
   @@unique([ownerId, slug])
   @@index([ownerId])
   @@index([publishedAt])
+  @@index([deletedAt])
   @@map("templates")
 }
 
@@ -326,10 +342,14 @@ model Surface {
   // #288 — per-surface mutable record collections.
   recordCollections RecordCollection[]
 
+  // #302 — soft-delete timestamp. See sqlite schema for semantics.
+  deletedAt       DateTime?     @map("deleted_at")
+
   @@index([agentId])
   @@index([expiresAt])
   @@index([templateVersionId])
   @@index([ownerHumanId])
+  @@index([deletedAt])
   // Dedup index — (templateVersionId, ownerHumanId, contextKey) is unique
   // for human-owned surfaces with a contextKey. Surfaces without a
   // contextKey are not deduped (ad-hoc).
@@ -579,4 +599,20 @@ model AttachmentToken {
   @@index([attachmentId])
   @@index([expiresAt])
   @@map("attachment_tokens")
+}
+
+// #302 — deletion audit trail. See sqlite schema for the full design rationale.
+model DeletionLog {
+  id           String   @id @default(cuid())
+  entityType   String   @map("entity_type")
+  entityId     String   @map("entity_id")
+  ownerHumanId String?  @map("owner_human_id")
+  ownerAgentId String?  @map("owner_agent_id")
+  phase        String
+  reason       String
+  at           DateTime @default(now())
+
+  @@index([ownerHumanId, at])
+  @@index([entityType, entityId])
+  @@map("deletion_log")
 }
