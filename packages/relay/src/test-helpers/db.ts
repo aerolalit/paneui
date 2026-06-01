@@ -263,6 +263,10 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.humanTemplateInstall.deleteMany();
         await p.human.deleteMany();
         await p.agent.deleteMany();
+        // #302 — deletion_log has no FK to anything, so order doesn't matter,
+        // but clearing it last keeps test row-count assertions stable when a
+        // test specifically counts log rows.
+        await p.deletionLog.deleteMany();
       },
       cleanup: async () => {
         rmSync(dir, { recursive: true, force: true });
@@ -294,7 +298,7 @@ export async function setupTestDb(): Promise<TestDb> {
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
       await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "surface_records", "record_collections", "surfaces", "template_versions", "templates", "agents" RESTART IDENTITY CASCADE`,
+        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "surface_records", "record_collections", "surfaces", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
       );
     },
     cleanup: async () => {
