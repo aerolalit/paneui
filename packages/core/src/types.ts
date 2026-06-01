@@ -177,6 +177,29 @@ export interface PanesPage {
   next_cursor: string | null;
 }
 
+/** A trashed pane in the GET /v1/trash response (#306). */
+export interface TrashedPaneEntry {
+  pane_id: string;
+  title: string;
+  agent_name: string;
+  /** ISO-8601 timestamp the pane was soft-deleted. Always present here. */
+  deleted_at: string;
+}
+
+/** A trashed template in the GET /v1/trash response (#306). */
+export interface TrashedTemplateEntry {
+  template_id: string;
+  name: string | null;
+  slug: string | null;
+  deleted_at: string;
+}
+
+/** Response from GET /v1/trash (#306). */
+export interface TrashListResponse {
+  panes: TrashedPaneEntry[];
+  templates: TrashedTemplateEntry[];
+}
+
 /** Response from POST /v1/panes/:id/participants — one-shot, includes the
  *  plaintext token exactly once. The relay stores only the hash. */
 export interface MintParticipantResponse {

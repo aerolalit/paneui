@@ -40,6 +40,7 @@ import { runConfig, configHelp } from "./commands/config.js";
 import { runBlob, blobHelp } from "./commands/attachment.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { runRecords, recordsHelp } from "./commands/records.js";
+import { runTrash, trashHelp } from "./commands/trash.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
 import { failUpgradeRequired } from "./output.js";
@@ -79,6 +80,8 @@ Other noun groups:
   config            CLI config inspection (show).
   skill             The relay's SKILL.md (show | version) — auto-updating;
                     no API key required.
+  trash             Manage soft-deleted panes / templates
+                    (list | restore | restore-template | purge | purge-template).
 
 Run \`pane <command> --help\` for command-specific options.
 
@@ -165,6 +168,7 @@ async function main(): Promise<void> {
     config: configHelp,
     skill: skillHelp,
     records: recordsHelp,
+    trash: trashHelp,
   };
 
   if (!(noun in helps)) {
@@ -238,6 +242,9 @@ async function main(): Promise<void> {
       break;
     case "records":
       await runRecords(args);
+      break;
+    case "trash":
+      await runTrash(args);
       break;
   }
 }
