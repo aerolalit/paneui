@@ -94,6 +94,202 @@ describe("validateSchemaShape", () => {
   });
 });
 
+describe("validateSchemaShape — standards-aligned x-pane-events (#300)", () => {
+  // The standards-aligned shape normalizes to the SAME internal EventSchema
+  // the legacy bespoke shape produces, so every downstream consumer
+  // (validateEvent, schema-compat, etc.) is unchanged. These tests pin the
+  // discriminator + the normalization.
+
+  const STANDARDS_VALID = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $defs: {
+      ReviewSubmitted: {
+        type: "object",
+        properties: { rating: { type: "integer" } },
+        required: ["rating"],
+      },
+    },
+    "x-pane-events": {
+      "review.submitted": {
+        payload: { $ref: "#/$defs/ReviewSubmitted" },
+        emit: ["page"],
+      },
+    },
+  };
+
+  it("accepts the minimal standards shape and normalizes to the same EventSchema as the legacy form", () => {
+    const out = validateSchemaShape(STANDARDS_VALID);
+    expect(Object.keys(out.events)).toEqual(["review.submitted"]);
+    expect(out.events["review.submitted"]!.emittedBy).toEqual(["page"]);
+    // The internal payload IS the resolved row schema (the $defs target),
+    // not the $ref wrapper. Downstream Ajv compiles against this directly.
+    expect(out.events["review.submitted"]!.payload).toEqual(
+      STANDARDS_VALID.$defs.ReviewSubmitted,
+    );
+  });
+
+  it("standards + legacy produce identical EventSchema for an equivalent declaration", () => {
+    const standards = validateSchemaShape(STANDARDS_VALID);
+    const legacy = validateSchemaShape({
+      events: {
+        "review.submitted": {
+          payload: STANDARDS_VALID.$defs.ReviewSubmitted,
+          emittedBy: ["page"],
+        },
+      },
+    });
+    expect(standards).toEqual(legacy);
+  });
+
+  it("accepts an inline payload (no $ref) — terse single-use", () => {
+    const out = validateSchemaShape({
+      "x-pane-events": {
+        "form.submitted": {
+          payload: { type: "object", required: ["body"] },
+          emit: ["page", "agent"],
+        },
+      },
+    });
+    expect(out.events["form.submitted"]!.payload).toEqual({
+      type: "object",
+      required: ["body"],
+    });
+    expect(out.events["form.submitted"]!.emittedBy).toEqual(["page", "agent"]);
+  });
+
+  it("rejects mixing legacy `events` with `x-pane-events` (choose one)", () => {
+    expect(() =>
+      validateSchemaShape({
+        events: { foo: {} },
+        "x-pane-events": {
+          "foo.bar": {
+            payload: { type: "object" },
+            emit: ["page"],
+          },
+        },
+      }),
+    ).toThrow(/cannot mix/);
+  });
+
+  it("rejects an unknown top-level key", () => {
+    expect(() =>
+      validateSchemaShape({
+        ...STANDARDS_VALID,
+        nonsense: 1,
+      }),
+    ).toThrow(/unknown top-level key 'nonsense'/);
+  });
+
+  it("rejects an empty x-pane-events", () => {
+    expect(() => validateSchemaShape({ "x-pane-events": {} })).toThrow(
+      /at least one event type/,
+    );
+  });
+
+  it("rejects a $ref that doesn't resolve under $defs", () => {
+    expect(() =>
+      validateSchemaShape({
+        $defs: {},
+        "x-pane-events": {
+          "x.y": {
+            payload: { $ref: "#/$defs/Missing" },
+            emit: ["page"],
+          },
+        },
+      }),
+    ).toThrow(/does not resolve under \$defs/);
+  });
+
+  it("rejects a cross-doc $ref (anything not #/$defs/<Name>)", () => {
+    expect(() =>
+      validateSchemaShape({
+        $defs: {},
+        "x-pane-events": {
+          "x.y": {
+            payload: { $ref: "https://example.com/Schema.json" },
+            emit: ["page"],
+          },
+        },
+      }),
+    ).toThrow(/must match '#\/\$defs\/<Name>'/);
+  });
+
+  it("rejects an unknown principal in emit", () => {
+    expect(() =>
+      validateSchemaShape({
+        "x-pane-events": {
+          "x.y": {
+            payload: { type: "object" },
+            emit: ["everyone"],
+          },
+        },
+      }),
+    ).toThrow(/'page' or 'agent'/);
+  });
+
+  it("rejects an empty emit array", () => {
+    expect(() =>
+      validateSchemaShape({
+        "x-pane-events": {
+          "x.y": {
+            payload: { type: "object" },
+            emit: [],
+          },
+        },
+      }),
+    ).toThrow(/non-empty array/);
+  });
+
+  it("rejects an unknown entry sub-key", () => {
+    expect(() =>
+      validateSchemaShape({
+        "x-pane-events": {
+          "x.y": {
+            payload: { type: "object" },
+            emit: ["page"],
+            extra: 1,
+          },
+        },
+      }),
+    ).toThrow(/unknown key 'extra'/);
+  });
+
+  it("rejects a non-namespaced event type", () => {
+    expect(() =>
+      validateSchemaShape({
+        "x-pane-events": {
+          Foo: { payload: { type: "object" }, emit: ["page"] },
+        },
+      }),
+    ).toThrow(/must match/);
+  });
+
+  it("rejects a payload that doesn't compile as JSON Schema 2020-12", () => {
+    expect(() =>
+      validateSchemaShape({
+        "x-pane-events": {
+          "x.y": {
+            payload: { type: "not-a-real-type" },
+            emit: ["page"],
+          },
+        },
+      }),
+    ).toThrow(/not a valid JSON Schema 2020-12/);
+  });
+
+  it("deduplicates emit entries (same as legacy emittedBy)", () => {
+    const out = validateSchemaShape({
+      "x-pane-events": {
+        "x.y": {
+          payload: { type: "object" },
+          emit: ["page", "page", "agent"],
+        },
+      },
+    });
+    expect(out.events["x.y"]!.emittedBy).toEqual(["page", "agent"]);
+  });
+});
+
 describe("validateRecordSchemaShape", () => {
   // Minimal valid recordSchema reused across the happy-path + rejection cases.
   const validDoc = {
