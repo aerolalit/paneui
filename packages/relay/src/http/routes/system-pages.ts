@@ -524,8 +524,21 @@ systemPages.get("/my-surfaces", async (c) => {
     );
   }
   const prisma = c.get("prisma");
+  // #301 — show every surface this human has access to: ones they own AND
+  // ones they joined as a participant. Previously only ownerHumanId rows
+  // surfaced here, so a human who opened someone else's invited surface had
+  // no "where did that go" page. The dedup-by-id is implicit via Prisma
+  // findMany on a single table — a human who is BOTH owner and identity-
+  // bound participant on the same surface shows up exactly once. Revoked
+  // participants are filtered out so a kicked human's surfaces don't linger
+  // on their list.
   const surfaces = await prisma.surface.findMany({
-    where: { ownerHumanId: human.id },
+    where: {
+      OR: [
+        { ownerHumanId: human.id },
+        { participants: { some: { humanId: human.id, revokedAt: null } } },
+      ],
+    },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

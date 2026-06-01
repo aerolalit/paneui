@@ -309,6 +309,164 @@ describe("GET /my-surfaces (signed in)", () => {
     const html = await res.text();
     expect(html).toContain("ad-hoc template");
   });
+
+  // #301 — /my-surfaces should reflect every surface the human has access
+  // to, not just ones they own. Pre-fix only ownerHumanId rows surfaced
+  // here; a human who joined a colleague's surface had no recovery path.
+  it("includes surfaces opened as a (non-revoked) participant, not just owned ones", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman("bob@example.com");
+    const ownerAgent = await prisma.agent.create({
+      data: {
+        name: "owner-bot",
+        keyHash: "y".repeat(64),
+        keyPrefix: "y",
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: { ownerId: ownerAgent.id, name: "Survey", slug: "survey" },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    // Surface owned by someone else (no ownerHumanId pointing at our human),
+    // but our human is identity-bound on it via a non-revoked participant.
+    const surface = await prisma.surface.create({
+      data: {
+        id: "sur_invited",
+        agentId: ownerAgent.id,
+        templateVersionId: tv.id,
+        title: "Bob's invited survey",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    await prisma.participant.create({
+      data: {
+        surfaceId: surface.id,
+        kind: "human",
+        identityId: humanId,
+        humanId,
+        tokenHash: "z".repeat(64),
+        tokenPrefix: "tok_h_pre",
+      },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/my-surfaces", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Bob's invited survey");
+    expect(html).toContain("sur_invited");
+  });
+
+  it("excludes surfaces where the human's participant row was revoked", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman("carol@example.com");
+    const ownerAgent = await prisma.agent.create({
+      data: {
+        name: "owner-bot-2",
+        keyHash: "a".repeat(64),
+        keyPrefix: "a",
+      },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        template: {
+          create: { ownerId: ownerAgent.id, name: "T", slug: "t-revoked" },
+        },
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    const surface = await prisma.surface.create({
+      data: {
+        id: "sur_kicked",
+        agentId: ownerAgent.id,
+        templateVersionId: tv.id,
+        title: "Surface Carol was kicked from",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    await prisma.participant.create({
+      data: {
+        surfaceId: surface.id,
+        kind: "human",
+        identityId: humanId,
+        humanId,
+        tokenHash: "b".repeat(64),
+        tokenPrefix: "tok_h_kicked",
+        revokedAt: new Date(),
+      },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/my-surfaces", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).not.toContain("Surface Carol was kicked from");
+    // Empty-state should render — no surfaces.
+    expect(html).toContain("No surfaces yet");
+  });
+
+  it("does not double-list a surface where the human is BOTH owner and participant", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman("dana@example.com");
+    const agent = await prisma.agent.create({
+      data: {
+        name: "dana-bot",
+        keyHash: "d".repeat(64),
+        keyPrefix: "d",
+      },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        template: {
+          create: { ownerId: agent.id, name: "T", slug: "t-self" },
+        },
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    const surface = await prisma.surface.create({
+      data: {
+        id: "sur_self",
+        agentId: agent.id,
+        ownerHumanId: humanId,
+        templateVersionId: tv.id,
+        title: "Self surface",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    await prisma.participant.create({
+      data: {
+        surfaceId: surface.id,
+        kind: "human",
+        identityId: humanId,
+        humanId,
+        tokenHash: "e".repeat(64),
+        tokenPrefix: "tok_h_self",
+      },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/my-surfaces", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // The surface card appears exactly once — count the title or the id.
+    const matches = html.match(/sur_self/g) ?? [];
+    // The id appears in the card body (once) and potentially in a link href
+    // (once) — but never duplicated by the OR query itself. Allow up to a
+    // couple of occurrences inside one card; verify the title is exactly
+    // once which is the user-visible signal.
+    expect(matches.length).toBeGreaterThan(0);
+    const titleMatches = html.match(/Self surface/g) ?? [];
+    expect(titleMatches).toHaveLength(1);
+  });
 });
 
 describe("GET /my-templates (signed in)", () => {
