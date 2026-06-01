@@ -13,8 +13,12 @@ describe("config", () => {
     expect(c.MAX_ARTIFACT_BYTES).toBe(2_000_000);
     expect(c.MAX_EVENT_DATA_BYTES).toBe(65_536);
     expect(c.MAX_PARTICIPANTS_PER_PANE).toBe(32);
-    expect(c.DEFAULT_TTL_SECONDS).toBe(3600);
-    expect(c.MAX_TTL_SECONDS).toBe(86_400);
+    // #308 — 6-month / 1-year retention defaults.
+    expect(c.DEFAULT_TTL_SECONDS).toBe(15_768_000);
+    expect(c.MAX_TTL_SECONDS).toBe(31_536_000);
+    expect(c.HARD_RETENTION_DAYS_FREE).toBe(30);
+    expect(c.HARD_RETENTION_DAYS_PAID).toBeNull();
+    expect(c.HARD_DELETE_SWEEP_SECONDS).toBe(3600);
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
     expect(c.REGISTER_RATE_LIMIT).toBe(5);
     expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(3600);
