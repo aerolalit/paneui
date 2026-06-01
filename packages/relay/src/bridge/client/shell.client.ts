@@ -29,6 +29,7 @@ export {};
 // shared (as a type) with the runtime bundle, so the two sides cannot drift.
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
 import type { PaneFrameEnvelope, ShellToRuntimeKind } from "./protocol.js";
+import { RecordStore } from "./record-store.js";
 
 /** An outbound frame the shell posts to the iframe. */
 type OutboundFrame = PaneFrameEnvelope & {
@@ -91,6 +92,10 @@ interface SerializedEvent {
   let replayDone = false;
   const replayBuffer: SerializedEvent[] = [];
   let lastEventId = 0;
+  // #296 — per-shell record store. Keyed by (collection, recordKey); seq
+  // tracking drives the reconnect cursors. The iframe-postMessage routing
+  // that exposes this to `pane.records.*` is #298's scope.
+  const recordStore = new RecordStore();
   let ws: WebSocket | null = null;
   let backoff = 1000;
   // Guards against overlapping connections. `connect()` can be reached from two
@@ -461,6 +466,15 @@ interface SerializedEvent {
     }
     let qs = "?ticket=" + encodeURIComponent(ticket);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
+    // #296 — auto-subscribe to every declared record collection. The relay
+    // (#295) expands `subscribe_records=*` against the surface's
+    // recordSchema; a surface with no record_schema gets an empty list and
+    // sees no record traffic. On reconnect, advance each collection's
+    // cursor from the store so the relay's replay skips already-observed
+    // rows.
+    qs += "&subscribe_records=*";
+    const cursorQs = recordStore.reconnectCursorQuery();
+    if (cursorQs.length > 0) qs += "&" + cursorQs;
     const sock = new WebSocket(CFG.wsUrl + qs);
     ws = sock;
 
@@ -482,6 +496,30 @@ interface SerializedEvent {
       if (msg && msg["kind"] === "system.replay.complete") {
         replayDone = true;
         sendIframeInit();
+        return;
+      }
+      // #296 — record-delta routing. record.replay.complete is a per-collection
+      // handshake sentinel from the relay's #295 path; the shell uses it to
+      // mark the collection as fully synced but otherwise drops it (no
+      // forwarding into the iframe needed today — #298's runtime API can
+      // expose a `.ready` promise if it wants one). record.upsert and
+      // record.delete fold into the store; the iframe-postMessage routing
+      // for these is #298's scope.
+      const kind = msg["kind"];
+      if (kind === "record.upsert") {
+        recordStore.applyUpsert(
+          msg as unknown as Parameters<RecordStore["applyUpsert"]>[0],
+        );
+        return;
+      }
+      if (kind === "record.delete") {
+        recordStore.applyDelete(
+          msg as unknown as Parameters<RecordStore["applyDelete"]>[0],
+        );
+        return;
+      }
+      if (kind === "record.replay.complete") {
+        // Sentinel — store already advanced via the replayed deltas above it.
         return;
       }
       if (msg && msg["error"]) {
