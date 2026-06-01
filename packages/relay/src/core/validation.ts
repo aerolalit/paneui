@@ -340,13 +340,54 @@ export function assertSchemaWithinLimits(
   }
 }
 
+// #300 — top-level allowed keys for the standards-aligned event schema. Strict
+// like x-pane-collections (recordSchema): unknown keys are rejected so a typo
+// doesn't get silently dropped.
+const STANDARDS_EVENT_SCHEMA_TOP_KEYS = new Set([
+  "$schema",
+  "$id",
+  "$defs",
+  "$comment",
+  "x-pane-events",
+]);
+const STANDARDS_EVENT_ENTRY_KEYS = new Set(["payload", "emit"]);
+const STANDARDS_EVENT_EMIT_PRINCIPALS = new Set(["agent", "page"]);
+
 // Validate the *shape* of an event schema at surface-create / schema-patch time.
+// Accepts BOTH the legacy bespoke shape and the standards-aligned shape (#300):
+//
+//   Legacy (still supported, no plans to remove):
+//     { events: { "type.name": { payload: {...JSON Schema}, emittedBy: [...] } } }
+//
+//   Standards-aligned (recommended for new templates — mirrors x-pane-collections
+//   on recordSchema):
+//     { $schema, $defs: { TypeName: {...} },
+//       x-pane-events: { "type.name": { payload: {$ref: "#/$defs/TypeName"}, emit: [...] } } }
+//
+// Both forms normalize to the same internal EventSchema repr so downstream
+// code (validateEvent, schema-compat, etc.) is unchanged. Discriminator:
+// presence of `x-pane-events` at the top level. A document with BOTH
+// `x-pane-events` AND `events` is rejected — pick one.
+//
 // (Each type's payload must be a valid JSON Schema; types must be namespaced;
-// emittedBy must be a non-empty subset of {page, agent}.)
+// emit / emittedBy must be a non-empty subset of {page, agent}.)
 export function validateSchemaShape(raw: unknown): EventSchema {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw errors.invalidRequest("schema must be an object");
   }
+  const doc = raw as Record<string, unknown>;
+
+  // Discriminator: standards shape iff `x-pane-events` is present.
+  if ("x-pane-events" in doc) {
+    if ("events" in doc) {
+      throw errors.invalidRequest(
+        "schema cannot mix legacy `events` with standards-aligned `x-pane-events` — choose one",
+      );
+    }
+    return validateStandardsEventSchema(doc);
+  }
+
+  // Fall through to the legacy shape.
   const s = raw as { events?: unknown };
   if (!s.events || typeof s.events !== "object" || Array.isArray(s.events)) {
     throw errors.invalidRequest("schema.events is required");
@@ -396,6 +437,141 @@ export function validateSchemaShape(raw: unknown): EventSchema {
     }
     out.events[type] = { payload: e.payload as object, emittedBy };
   }
+  return out;
+}
+
+// #300 — parse the standards-aligned event schema (`x-pane-events` extension)
+// and normalize to the same internal EventSchema repr the legacy shape
+// produces. All downstream code (validateEvent, schema-compat, etc.) sees
+// the same shape regardless of which form the template author chose.
+//
+// Document shape (mirrors x-pane-collections for recordSchema):
+//
+//   $schema: "https://json-schema.org/draft/2020-12/schema"
+//   $defs:
+//     ReviewSubmitted:
+//       type: object
+//       properties: { rating: { type: integer } }
+//       required: [rating]
+//   x-pane-events:
+//     "review.submitted":
+//       payload: { $ref: "#/$defs/ReviewSubmitted" }   # or an inline JSON Schema
+//       emit:    [page]                                # subset of {agent, page}
+//
+// Inline payloads (no $ref) are accepted for terse single-use schemas.
+// $ref must point inside the doc's $defs — no cross-doc refs in v1.
+function validateStandardsEventSchema(
+  doc: Record<string, unknown>,
+): EventSchema {
+  // Strict top-level keys.
+  for (const k of Object.keys(doc)) {
+    if (!STANDARDS_EVENT_SCHEMA_TOP_KEYS.has(k)) {
+      throw errors.invalidRequest(
+        `schema: unknown top-level key '${k}' (allowed: ${[...STANDARDS_EVENT_SCHEMA_TOP_KEYS].join(", ")})`,
+      );
+    }
+  }
+
+  const events = doc["x-pane-events"];
+  if (!events || typeof events !== "object" || Array.isArray(events)) {
+    throw errors.invalidRequest(
+      "schema['x-pane-events'] is required and must be an object",
+    );
+  }
+  const eventsObj = events as Record<string, unknown>;
+  if (Object.keys(eventsObj).length === 0) {
+    throw errors.invalidRequest(
+      "schema['x-pane-events'] must declare at least one event type",
+    );
+  }
+
+  const defs = (doc.$defs ?? {}) as Record<string, unknown>;
+  const out: EventSchema = { events: {} };
+
+  for (const [type, entryRaw] of Object.entries(eventsObj)) {
+    if (!TYPE_RX.test(type)) {
+      throw errors.invalidRequest(
+        `schema['x-pane-events']: type "${type}" must match ${TYPE_RX}`,
+      );
+    }
+    if (!entryRaw || typeof entryRaw !== "object" || Array.isArray(entryRaw)) {
+      throw errors.invalidRequest(
+        `schema['x-pane-events'].${type} must be an object`,
+      );
+    }
+    const entry = entryRaw as Record<string, unknown>;
+    for (const k of Object.keys(entry)) {
+      if (!STANDARDS_EVENT_ENTRY_KEYS.has(k)) {
+        throw errors.invalidRequest(
+          `schema['x-pane-events'].${type}: unknown key '${k}' (allowed: ${[...STANDARDS_EVENT_ENTRY_KEYS].join(", ")})`,
+        );
+      }
+    }
+
+    // payload: either a $ref into $defs OR an inline JSON Schema.
+    const payloadRaw = entry.payload;
+    if (
+      !payloadRaw ||
+      typeof payloadRaw !== "object" ||
+      Array.isArray(payloadRaw)
+    ) {
+      throw errors.invalidRequest(
+        `schema['x-pane-events'].${type}.payload must be an object (a $ref into $defs, or an inline JSON Schema)`,
+      );
+    }
+    let resolvedPayload: object;
+    const payloadObj = payloadRaw as Record<string, unknown>;
+    if (typeof payloadObj["$ref"] === "string") {
+      const refRaw = payloadObj["$ref"] as string;
+      const m = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(refRaw);
+      if (!m) {
+        throw errors.invalidRequest(
+          `schema['x-pane-events'].${type}.payload.$ref must match '#/$defs/<Name>' (cross-doc refs are not supported)`,
+        );
+      }
+      const target = defs[m[1] as string];
+      if (!target || typeof target !== "object" || Array.isArray(target)) {
+        throw errors.invalidRequest(
+          `schema['x-pane-events'].${type}.payload.$ref '${refRaw}' does not resolve under $defs`,
+        );
+      }
+      resolvedPayload = target as object;
+    } else {
+      resolvedPayload = payloadObj as object;
+    }
+
+    // Compile to confirm it's a valid JSON Schema — uses the 2020-12 Ajv
+    // instance (same one recordSchema uses) so 2020-12-only vocabulary
+    // (prefixItems, etc.) is accepted.
+    try {
+      ajv2020.compile(resolvedPayload);
+    } catch (err) {
+      throw errors.invalidRequest(
+        `schema['x-pane-events'].${type}.payload is not a valid JSON Schema 2020-12: ${(err as Error).message}`,
+      );
+    }
+
+    // emit: non-empty subset of {agent, page}.
+    if (!Array.isArray(entry.emit) || entry.emit.length === 0) {
+      throw errors.invalidRequest(
+        `schema['x-pane-events'].${type}.emit must be a non-empty array`,
+      );
+    }
+    const emittedBy: EmittedBy[] = [];
+    for (const v of entry.emit as unknown[]) {
+      if (typeof v !== "string" || !STANDARDS_EVENT_EMIT_PRINCIPALS.has(v)) {
+        throw errors.invalidRequest(
+          `schema['x-pane-events'].${type}.emit values must be 'page' or 'agent' (got '${String(v)}')`,
+        );
+      }
+      if (!emittedBy.includes(v as EmittedBy)) {
+        emittedBy.push(v as EmittedBy);
+      }
+    }
+
+    out.events[type] = { payload: resolvedPayload, emittedBy };
+  }
+
   return out;
 }
 

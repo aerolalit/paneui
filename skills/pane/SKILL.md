@@ -408,6 +408,57 @@ Each entry under `events` declares:
 }
 ```
 
+### Standards-aligned shape (`x-pane-events`) — recommended for new templates (#300)
+
+The legacy shape above stays supported. New templates should prefer the
+**standards-aligned** form, which mirrors the `x-pane-collections` extension
+used for `recordSchema`: a JSON Schema 2020-12 document with one namespaced
+extension. Same vocabulary an agent already knows from records, so you only
+learn one convention across both event and record schemas.
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+
+$defs:
+  ReviewSubmitted:
+    type: object
+    properties:
+      rating: { type: integer, minimum: 1, maximum: 5 }
+      message: { type: string, maxLength: 4000 }
+    required: [rating]
+  AssistantReply:
+    type: object
+    properties:
+      title:   { type: string }
+      message: { type: string }
+    required: [title, message]
+
+x-pane-events:
+  review.submitted:
+    payload: { $ref: "#/$defs/ReviewSubmitted" }
+    emit:    [page]               # subset of {agent, page}
+  assistant.reply:
+    payload: { $ref: "#/$defs/AssistantReply" }
+    emit:    [agent]
+```
+
+Mapping from the legacy shape:
+
+| Legacy | Standards (`x-pane-events`) |
+|---|---|
+| top-level `events` | `x-pane-events` |
+| `payload: {...inline JSON Schema}` | `payload: { $ref: "#/$defs/<TypeName>" }` (or inline) |
+| `emittedBy: [...]` | `emit: [...]` |
+
+Both shapes normalize to the same internal representation at validation
+time, so every downstream surface (events route, WS replay, schema-compat)
+behaves identically. The relay rejects a document that mixes both —
+pick one per template.
+
+Inline payloads (no `$ref`) are accepted in the new shape too for terse
+single-use schemas; `$defs` only earns its keep when two events share a
+payload type or a template has many events.
+
 ## View-only templates (reports, dashboards, charts)
 
 The event schema is **optional**. A template created with no `--event-schema` is
