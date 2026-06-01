@@ -3,6 +3,11 @@
 -- and index *names* don't auto-update, so we rename them explicitly to keep
 -- the schema in step with Prisma's naming convention.
 
+-- 0. Rename the SurfaceStatus enum type (postgres-only — sqlite has no
+--    distinct enum type, the column is just TEXT with a check). Renaming
+--    the type updates every column typed by it; no per-column ALTER needed.
+ALTER TYPE "SurfaceStatus" RENAME TO "PaneStatus";
+
 -- 1. Rename the two tables that change name.
 ALTER TABLE "surfaces" RENAME TO "panes";
 ALTER TABLE "surface_records" RENAME TO "pane_records";
