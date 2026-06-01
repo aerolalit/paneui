@@ -13,8 +13,11 @@ describe("config", () => {
     expect(c.MAX_ARTIFACT_BYTES).toBe(2_000_000);
     expect(c.MAX_EVENT_DATA_BYTES).toBe(65_536);
     expect(c.MAX_PARTICIPANTS_PER_SESSION).toBe(32);
-    expect(c.DEFAULT_TTL_SECONDS).toBe(3600);
-    expect(c.MAX_TTL_SECONDS).toBe(86_400);
+    // #308 — DEFAULT_TTL_SECONDS bumped from 3600 (1h) to 6 months.
+    expect(c.DEFAULT_TTL_SECONDS).toBe(15_768_000);
+    // #308 — MAX_TTL_SECONDS bumped from 86_400 (1d) to 1 year so 6-month
+    // defaults fit comfortably under the cap.
+    expect(c.MAX_TTL_SECONDS).toBe(31_536_000);
     expect(c.TTL_SWEEP_SECONDS).toBe(60);
     expect(c.REGISTER_RATE_LIMIT).toBe(5);
     expect(c.REGISTER_RATE_WINDOW_SECONDS).toBe(3600);
@@ -299,6 +302,53 @@ describe("validateProductionConfig", () => {
       PUBLIC_URL: "https://pane.example.com",
     });
     expect(() => validateProductionConfig(c)).not.toThrow();
+  });
+});
+
+describe("retention config (#308)", () => {
+  it("defaults DEFAULT_TTL_SECONDS to 6 months and MAX_TTL_SECONDS to 1 year", () => {
+    const c = loadConfig({});
+    expect(c.DEFAULT_TTL_SECONDS).toBe(15_768_000); // 180 days
+    expect(c.MAX_TTL_SECONDS).toBe(31_536_000); // 1 year
+  });
+
+  it("defaults HARD_RETENTION_DAYS_FREE=30 and HARD_RETENTION_DAYS_PAID=null", () => {
+    const c = loadConfig({});
+    expect(c.HARD_RETENTION_DAYS_FREE).toBe(30);
+    expect(c.HARD_RETENTION_DAYS_PAID).toBeNull();
+  });
+
+  it("HARD_DELETE_SWEEP_SECONDS defaults to 1 hour; 0 disables", () => {
+    expect(loadConfig({}).HARD_DELETE_SWEEP_SECONDS).toBe(3600);
+    expect(
+      loadConfig({ HARD_DELETE_SWEEP_SECONDS: "0" }).HARD_DELETE_SWEEP_SECONDS,
+    ).toBe(0);
+  });
+
+  it("accepts overrides", () => {
+    const c = loadConfig({
+      DEFAULT_TTL_SECONDS: "86400",
+      MAX_TTL_SECONDS: "604800",
+      HARD_RETENTION_DAYS_FREE: "7",
+      HARD_RETENTION_DAYS_PAID: "365",
+      HARD_DELETE_SWEEP_SECONDS: "600",
+    });
+    expect(c.DEFAULT_TTL_SECONDS).toBe(86_400);
+    expect(c.MAX_TTL_SECONDS).toBe(604_800);
+    expect(c.HARD_RETENTION_DAYS_FREE).toBe(7);
+    expect(c.HARD_RETENTION_DAYS_PAID).toBe(365);
+    expect(c.HARD_DELETE_SWEEP_SECONDS).toBe(600);
+  });
+
+  it("rejects DEFAULT_TTL_SECONDS > MAX_TTL_SECONDS", () => {
+    expect(() =>
+      loadConfig({ DEFAULT_TTL_SECONDS: "200", MAX_TTL_SECONDS: "100" }),
+    ).toThrow(/must be <= MAX_TTL_SECONDS/);
+  });
+
+  it("rejects negative or zero retention values", () => {
+    expect(() => loadConfig({ HARD_RETENTION_DAYS_FREE: "0" })).toThrow();
+    expect(() => loadConfig({ HARD_RETENTION_DAYS_FREE: "-1" })).toThrow();
   });
 });
 
