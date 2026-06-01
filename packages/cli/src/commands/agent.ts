@@ -12,6 +12,7 @@ import type { ParsedArgs } from "../argv.js";
 import { runRegister } from "./register.js";
 import { runLogout } from "./logout.js";
 import { runClaim } from "./claim.js";
+import { runSetKey } from "./set-key.js";
 import { fail } from "../output.js";
 
 export const agentHelp = `pane agent — manage this agent's identity on the relay
@@ -25,6 +26,10 @@ Verbs:
   claim <code>      Bind this agent to a human via a one-shot claim code the
                     human generated in their Settings UI (POST /v1/agents/claim).
                     One-way; no unclaim in v1.
+  set-key <key>     Save a new API key into the CLI config file. Used after
+                    regenerating the agent's key in the relay's My-agents UI:
+                    the human pastes the new key here so subsequent commands
+                    authenticate as the same agent.
   logout            Clear the locally-saved relay URL + API key. Does NOT
                     revoke the key on the relay — use 'pane key revoke' for
                     that.
@@ -46,18 +51,21 @@ export async function runAgent(args: ParsedArgs): Promise<void> {
     case "claim":
       await runClaim(verbArgs);
       break;
+    case "set-key":
+      await runSetKey(verbArgs);
+      break;
     case "logout":
       await runLogout(verbArgs);
       break;
     case undefined:
       fail(
-        "missing verb — usage: pane agent <register|claim|logout> (run 'pane agent --help')",
+        "missing verb — usage: pane agent <register|claim|set-key|logout> (run 'pane agent --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown agent verb '${verb}' — expected register|claim|logout (run 'pane agent --help')`,
+        `unknown agent verb '${verb}' — expected register|claim|set-key|logout (run 'pane agent --help')`,
         "invalid_args",
       );
   }

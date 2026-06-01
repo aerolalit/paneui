@@ -587,9 +587,10 @@ describe("GET /my-agents (signed in)", () => {
       data: {
         name: "CodeReviewer",
         keyHash: "z".repeat(64),
-        keyPrefix: "z",
+        keyPrefix: "pane_abc123",
         ownerHumanId: humanId,
         claimedAt: new Date(),
+        lastUsedAt: new Date(),
       },
     });
     const res = await app.fetch(
@@ -598,6 +599,52 @@ describe("GET /my-agents (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("CodeReviewer");
+    // The agent row now surfaces the keyPrefix, the relative
+    // last-used time, and a Regenerate-key button.
+    expect(html).toContain("pane_abc123");
+    expect(html).toContain("last used today");
+    expect(html).toContain("Regenerate key");
+    expect(html).toContain('data-act="rotate"');
+  });
+
+  it("hides the Regenerate-key button on revoked agents", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.agent.create({
+      data: {
+        name: "Revoked",
+        keyHash: "y".repeat(64),
+        keyPrefix: "pane_xyz",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+        revokedAt: new Date(),
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/my-agents", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("Revoked");
+    // No rotate affordance on a revoked agent — rotation doesn't unrevoke.
+    expect(html).not.toContain('data-act="rotate"');
+  });
+
+  it("shows 'last used never' when an agent hasn't authenticated yet", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.agent.create({
+      data: {
+        name: "FreshAgent",
+        keyHash: "w".repeat(64),
+        keyPrefix: "pane_fresh",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+        lastUsedAt: null,
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/my-agents", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain("last used never");
   });
 });
 

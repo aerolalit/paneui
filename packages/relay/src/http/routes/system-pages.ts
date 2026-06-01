@@ -973,10 +973,38 @@ systemPages.get("/my-agents", async (c) => {
           <p class="empty-state-body">Use the Generate claim code button above, then run <code>pane agent claim &lt;code&gt;</code> on the agent's machine. Each claim binds an existing agent key to your account — it doesn't replace the key.</p>
         </div>`
         : `<ul class="list">${agents
-            .map(
-              (a) =>
-                `<li><div><div class="title">${escapeHtml(a.name)}</div><div class="meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${a.claimedAt ? escapeHtml(a.claimedAt.toISOString().slice(0, 10)) : "—"}</div></div>${a.revokedAt ? `<span class="pill muted">Revoked</span>` : `<span class="pill good">Active</span>`}</li>`,
-            )
+            .map((a) => {
+              const lastUsed = a.lastUsedAt
+                ? formatRelativeDate(a.lastUsedAt, new Date())
+                : "never";
+              const claimed = a.claimedAt
+                ? escapeHtml(a.claimedAt.toISOString().slice(0, 10))
+                : "—";
+              const status = a.revokedAt
+                ? `<span class="pill muted">Revoked</span>`
+                : `<span class="pill good">Active</span>`;
+              // Rotation is only meaningful for non-revoked agents; hide
+              // the button on revoked rows so the human can't mint a key
+              // for an inert identity.
+              const rotateBtn = a.revokedAt
+                ? ""
+                : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
+              return `<li data-agent-id="${escapeHtml(a.id)}">
+                <div style="min-width:0;flex:1;">
+                  <div class="title">${escapeHtml(a.name)}</div>
+                  <div class="meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${claimed} · last used ${escapeHtml(lastUsed)}</div>
+                  <div class="rotate-out" hidden style="margin-top:10px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:12px 14px;">
+                    <div style="font-size:12px;color:var(--accent);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">New API key</div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                      <code class="rotate-value" style="font-size:14px;background:var(--panel);padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid var(--accent-border);user-select:all;word-break:break-all;"></code>
+                      <button class="btn ghost rotate-copy" type="button" style="padding:6px 12px;font-size:13px;min-height:36px;">Copy</button>
+                    </div>
+                    <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Won't be shown again. Copy now and run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or paste into <code>PANE_API_KEY</code>).</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}</div>
+              </li>`;
+            })
             .join("")}</ul>`
     }
   </div>
@@ -1012,6 +1040,86 @@ systemPages.get("/my-agents", async (c) => {
           ok = true;
         } else {
           // Fallback for non-secure contexts (e.g. http on mobile).
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.top = "0";
+          ta.style.left = "0";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+      } catch {
+        ok = false;
+      }
+      btn.textContent = ok ? "Copied!" : "Copy failed";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+
+    // Regenerate-key handler — same disclosure pattern as the claim-code
+    // generator: POST returns the raw key once, we reveal it inline and
+    // hide the rotate button so the human can't accidentally double-rotate
+    // before they've copied the first key out.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button[data-act='rotate']");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const name = btn.getAttribute("data-name") || "this agent";
+      if (!confirm(
+        "Regenerate the API key for " + name + "?\\n\\n" +
+        "The current key will stop working immediately. You'll see the new key once."
+      )) return;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "Regenerating…";
+      try {
+        const res = await fetch("/v1/self/agents/" + encodeURIComponent(id) + "/rotate-key", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          let detail = "HTTP " + res.status;
+          try {
+            const errBody = await res.json();
+            if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+          } catch (_) {}
+          alert("Couldn't regenerate key: " + detail);
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          return;
+        }
+        const body = await res.json();
+        const li = btn.closest("li[data-agent-id]");
+        const reveal = li.querySelector(".rotate-out");
+        li.querySelector(".rotate-value").textContent = body.api_key;
+        reveal.hidden = false;
+        // Hide the rotate button so the human focuses on copying.
+        btn.remove();
+      } catch (_) {
+        alert("Network error — try again.");
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
+    // Copy-to-clipboard for the revealed new key. Same approach as the
+    // claim-code copy button.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button.rotate-copy");
+      if (!btn) return;
+      const li = btn.closest("li[data-agent-id]");
+      const code = (li.querySelector(".rotate-value") || {}).textContent || "";
+      if (!code) return;
+      const original = btn.textContent;
+      let ok = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+          ok = true;
+        } else {
           const ta = document.createElement("textarea");
           ta.value = code;
           ta.setAttribute("readonly", "");
