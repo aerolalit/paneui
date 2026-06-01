@@ -501,3 +501,310 @@ describe("shell — download-attachment-request handler", () => {
     expect(downloadCalls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #298 phase 2 — record-mutate-request handler
+// ---------------------------------------------------------------------------
+
+describe("shell — record-mutate-request handler", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let iframePostSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    bootShell();
+    fetchSpy = vi.fn();
+    (window as unknown as { fetch: typeof fetchSpy }).fetch = fetchSpy;
+    const iframe = document.getElementById("frame") as HTMLIFrameElement;
+    const cw = iframe.contentWindow!;
+    iframePostSpy = vi.fn();
+    (cw as unknown as { postMessage: typeof iframePostSpy }).postMessage =
+      iframePostSpy;
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function dispatchFromIframe(data: unknown): void {
+    const iframe = document.getElementById("frame") as HTMLIFrameElement;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow as Window,
+      }),
+    );
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    for (let i = 0; i < 8; i++) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  }
+
+  function findMutateReply(id: string):
+    | {
+        kind: string;
+        id: string;
+        ok: boolean;
+        record?: unknown;
+        error?: { code: string; message: string; details?: unknown };
+      }
+    | undefined {
+    const c = iframePostSpy.mock.calls.find(
+      (call) =>
+        (call[0] as { kind?: string }).kind === "record-mutate-result" &&
+        (call[0] as { id?: string }).id === id,
+    );
+    return c?.[0] as
+      | {
+          kind: string;
+          id: string;
+          ok: boolean;
+          record?: unknown;
+          error?: { code: string; message: string; details?: unknown };
+        }
+      | undefined;
+  }
+
+  const PERSISTED_RECORD = {
+    id: "rec_x",
+    collection: "comments",
+    key: "cmt_1",
+    data: { body: "hi" },
+    version: 1,
+    seq: 1,
+    author: { kind: "human", id: "h_alice" },
+    created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: "2026-06-01T00:00:00.000Z",
+    deleted_at: null,
+  };
+
+  it("create: POSTs to /v1/.../records/:collection without record_key and replies ok:true with the row", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/records/comments")) {
+        return new Response(JSON.stringify({ record: PERSISTED_RECORD }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ticket: "tkt_x" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m1",
+      op: "create",
+      collection: "comments",
+      data: { body: "hi" },
+    });
+    await flushMicrotasks();
+
+    const call = fetchSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("/records/comments"),
+    );
+    expect(call).toBeTruthy();
+    expect(call![0] as string).toContain(
+      `/v1/surfaces/${SESSION_ID}/records/comments`,
+    );
+    const init = call![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ data: { body: "hi" } });
+    // Authorization header carries the participant token from CFG.
+    expect((init.headers as Record<string, string>)["authorization"]).toBe(
+      CFG.wsTicketAuthorization,
+    );
+
+    const reply = findMutateReply("m1");
+    expect(reply).toMatchObject({ ok: true, record: PERSISTED_RECORD });
+  });
+
+  it("upsert: POSTs with record_key in the body", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/records/comments")) {
+        return new Response(JSON.stringify({ record: PERSISTED_RECORD }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m2",
+      op: "upsert",
+      collection: "comments",
+      recordKey: "cmt_1",
+      data: { body: "hi" },
+    });
+    await flushMicrotasks();
+
+    const call = fetchSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("/records/comments"),
+    );
+    expect((call![1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({
+      record_key: "cmt_1",
+      data: { body: "hi" },
+    });
+    expect(findMutateReply("m2")).toMatchObject({ ok: true });
+  });
+
+  it("update: PATCHes /:recordKey with data + optional if_match", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/records/comments/cmt_1")) {
+        return new Response(
+          JSON.stringify({ record: { ...PERSISTED_RECORD, version: 2 } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m3",
+      op: "update",
+      collection: "comments",
+      recordKey: "cmt_1",
+      data: { body: "v2" },
+      ifMatch: 1,
+    });
+    await flushMicrotasks();
+
+    const call = fetchSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("/records/comments/cmt_1"),
+    );
+    expect((call![1] as RequestInit).method).toBe("PATCH");
+    expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({
+      data: { body: "v2" },
+      if_match: 1,
+    });
+    const reply = findMutateReply("m3");
+    expect(reply?.ok).toBe(true);
+    expect((reply!.record as { version: number }).version).toBe(2);
+  });
+
+  it("delete: DELETEs /:recordKey and replies ok:true on 204", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/records/comments/cmt_1")) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m4",
+      op: "delete",
+      collection: "comments",
+      recordKey: "cmt_1",
+    });
+    await flushMicrotasks();
+
+    const call = fetchSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("/records/comments/cmt_1"),
+    );
+    expect((call![1] as RequestInit).method).toBe("DELETE");
+    expect(findMutateReply("m4")).toMatchObject({ ok: true });
+  });
+
+  it("forwards the relay's error envelope on 4xx (with details for conflict)", async () => {
+    const conflictBody = {
+      error: {
+        code: "conflict",
+        message:
+          "record version mismatch — current version is 5, caller passed if_match=2",
+        details: { current: { ...PERSISTED_RECORD, version: 5 } },
+      },
+    };
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (typeof url === "string" && url.includes("/records/comments/cmt_1")) {
+        return new Response(JSON.stringify(conflictBody), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m5",
+      op: "update",
+      collection: "comments",
+      recordKey: "cmt_1",
+      data: { body: "x" },
+      ifMatch: 2,
+    });
+    await flushMicrotasks();
+
+    const reply = findMutateReply("m5");
+    expect(reply).toMatchObject({
+      ok: false,
+      error: {
+        code: "conflict",
+        details: { current: { version: 5 } },
+      },
+    });
+  });
+
+  it("rejects with invalid_request on op='update' missing recordKey (no fetch fired)", async () => {
+    fetchSpy.mockImplementation(async () => {
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m6",
+      op: "update",
+      collection: "comments",
+      data: { body: "x" },
+      // recordKey intentionally omitted
+    });
+    await flushMicrotasks();
+
+    expect(findMutateReply("m6")).toMatchObject({
+      ok: false,
+      error: { code: "invalid_request" },
+    });
+    // No records fetch should have fired — only the ws-ticket mint.
+    const recordsCalls = fetchSpy.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("/records/"),
+    );
+    expect(recordsCalls).toHaveLength(0);
+  });
+
+  it("rejects unknown ops with invalid_request", async () => {
+    fetchSpy.mockImplementation(async () => {
+      return new Response(JSON.stringify({ ticket: "t" }), { status: 200 });
+    });
+
+    dispatchFromIframe({
+      __pane: 1,
+      v: 1,
+      kind: "record-mutate-request",
+      id: "m7",
+      op: "purge", // not a valid op
+      collection: "comments",
+    });
+    await flushMicrotasks();
+
+    expect(findMutateReply("m7")).toMatchObject({
+      ok: false,
+      error: { code: "invalid_request" },
+    });
+  });
+});

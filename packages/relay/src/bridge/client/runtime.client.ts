@@ -118,6 +118,56 @@ interface PaneApi {
    */
   readonly inputData: unknown;
   /**
+   * Per-surface mutable record collections (#298). Read API: snapshot the
+   * current rows for a collection or subscribe to live deltas (upserts +
+   * deletes). Write API: create-or-upsert, optimistically update, or delete
+   * a row via the shell's HTTP CRUD bridge. All operations are sandboxed
+   * through the shell; the iframe never reaches the relay directly.
+   *
+   * Mutator errors carry the relay's error code via `.code` on the rejected
+   * Error — e.g. `record_collection_not_found`, `record_schema_violation`,
+   * `author_not_allowed`, `conflict` (with `details.current` for if_match
+   * mismatch), `gone`.
+   */
+  readonly records: {
+    snapshot(collection: string): unknown[];
+    on(
+      collection: string,
+      handler: (ev: {
+        kind: "upsert" | "delete";
+        collection: string;
+        record: { key: string; seq: number; [k: string]: unknown };
+      }) => void,
+    ): () => void;
+    /** Create a new row; the relay generates a `rec_<cuid>` key. */
+    create(collection: string, data: unknown): Promise<unknown>;
+    /**
+     * Create-or-return-existing for a client-supplied key. Duplicate key
+     * returns the existing row (no version bump, no broadcast — idempotent).
+     */
+    upsert(
+      collection: string,
+      recordKey: string,
+      data: unknown,
+    ): Promise<unknown>;
+    /**
+     * Update a row's data. Optional `ifMatch` carries optimistic locking;
+     * mismatch rejects with `code: "conflict"` and `details.current` set.
+     */
+    update(
+      collection: string,
+      recordKey: string,
+      data: unknown,
+      opts?: { ifMatch?: number },
+    ): Promise<unknown>;
+    /** Soft-delete. Optional `ifMatch` carries optimistic locking. */
+    delete(
+      collection: string,
+      recordKey: string,
+      opts?: { ifMatch?: number },
+    ): Promise<void>;
+  };
+  /**
    * Resolves exactly once, when the shell's `init` frame has been processed
    * and `inputData` + the historical event replay are available. Pages that
    * read `inputData` or react to past events on first paint should `await`
@@ -176,6 +226,18 @@ declare global {
   const handlers = new Map<string, Set<(ev: SerializedEvent) => void>>();
   const pendingEmits = new Map<string, PendingEmit>();
   const pendingUploads = new Map<string, PendingUpload>();
+  // #298 phase 2 — record-mutate-request RPC correlation. Each pending entry
+  // is resolved on the matching record-mutate-result frame or rejected on
+  // its 30s timeout. The shape mirrors PendingUpload but the resolve type
+  // is loose (`unknown`) because the shell echoes back the relay's record
+  // shape; the runtime hands it through unchanged.
+  interface PendingRecordMutate {
+    resolve: (record: unknown) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }
+  const pendingRecordMutates = new Map<string, PendingRecordMutate>();
+  let nextRecordMutateId = 1;
   const pendingDownloads = new Map<string, PendingDownload>();
   const pendingSaves = new Map<string, PendingSave>();
   const stateEvents: SerializedEvent[] = [];
@@ -555,6 +617,32 @@ declare global {
       }
       return;
     }
+    // #298 phase 2 — reply to a record-mutate-request. Matches by id;
+    // resolves with the persisted row (or void for delete) on ok=true,
+    // rejects with a PaneError carrying the relay's code on ok=false.
+    if (m.kind === "record-mutate-result") {
+      const rid: string | undefined = m.id;
+      if (!rid || !pendingRecordMutates.has(rid)) return;
+      const pr = pendingRecordMutates.get(rid)!;
+      pendingRecordMutates.delete(rid);
+      clearTimeout(pr.timer);
+      if (m.ok === true) {
+        pr.resolve(m.record);
+      } else {
+        const errInfo = (m.error || {}) as {
+          code?: string;
+          message?: string;
+          details?: unknown;
+        };
+        const err: PaneError = new Error(
+          errInfo.message || errInfo.code || "record mutation failed",
+        );
+        if (errInfo.code) err.code = errInfo.code;
+        if ("details" in errInfo) err.details = errInfo.details;
+        pr.reject(err);
+      }
+      return;
+    }
     // #298 — records: snapshot seed + live deltas. The shell brokers all of
     // this; the iframe just maintains a mirror keyed by (collection, key).
     if (m.kind === "record-snapshot") {
@@ -663,41 +751,92 @@ declare global {
         if (s) s.delete(handler);
       };
     },
-    // Phase-1 stubs. The mutator path needs a postMessage RPC to the shell
-    // (which has the bearer token + can call /v1/...); the shell-side
-    // record-mutate-request handler is the missing piece. Tracked as
-    // follow-up to #298.
-    create(): Promise<never> {
-      return Promise.reject(
-        new Error(
-          "pane.records.create is not yet implemented; use the CLI " +
-            "(`pane records upsert`) or your agent's HTTP path. Tracked as " +
-            "follow-up to #298.",
-        ),
-      );
+    // #298 phase 2 — mutators. Each posts a record-mutate-request to the
+    // shell and awaits the matching record-mutate-result via correlation-id
+    // RPC. The shell brokers the HTTP CRUD call (the iframe sandbox blocks
+    // direct fetch). Same pattern as uploadBlob / downloadBlob.
+    create(collection: string, data: unknown): Promise<unknown> {
+      return sendRecordMutate({ op: "create", collection, data });
     },
-    upsert(): Promise<never> {
-      return Promise.reject(
-        new Error(
-          "pane.records.upsert is not yet implemented; see pane.records.create",
-        ),
-      );
+    upsert(
+      collection: string,
+      recordKey: string,
+      data: unknown,
+    ): Promise<unknown> {
+      return sendRecordMutate({ op: "upsert", collection, recordKey, data });
     },
-    update(): Promise<never> {
-      return Promise.reject(
-        new Error(
-          "pane.records.update is not yet implemented; see pane.records.create",
-        ),
-      );
+    update(
+      collection: string,
+      recordKey: string,
+      data: unknown,
+      opts?: { ifMatch?: number },
+    ): Promise<unknown> {
+      const req: Record<string, unknown> = {
+        op: "update",
+        collection,
+        recordKey,
+        data,
+      };
+      if (opts && typeof opts.ifMatch === "number")
+        req["ifMatch"] = opts.ifMatch;
+      return sendRecordMutate(req);
     },
-    delete(): Promise<never> {
-      return Promise.reject(
-        new Error(
-          "pane.records.delete is not yet implemented; see pane.records.create",
-        ),
-      );
+    delete(
+      collection: string,
+      recordKey: string,
+      opts?: { ifMatch?: number },
+    ): Promise<void> {
+      const req: Record<string, unknown> = {
+        op: "delete",
+        collection,
+        recordKey,
+      };
+      if (opts && typeof opts.ifMatch === "number")
+        req["ifMatch"] = opts.ifMatch;
+      return sendRecordMutate(req).then(() => undefined);
     },
   };
+
+  // #298 phase 2 — post a record-mutate-request to the shell and await the
+  // matching result via correlation-id RPC. Timeout is 30s (same as
+  // uploadBlob); a hung shell rejects with `code: "ws_timeout"` rather than
+  // leaving the template's promise pending forever.
+  const RECORD_MUTATE_TIMEOUT_MS = 30_000;
+  function sendRecordMutate(req: Record<string, unknown>): Promise<unknown> {
+    if (!shellOrigin) {
+      return Promise.reject(
+        Object.assign(
+          new Error("pane bridge not initialised (no init frame yet)"),
+          {
+            code: "not_initialised",
+          },
+        ),
+      );
+    }
+    return new Promise((resolve, reject) => {
+      const id = "rec_" + nextRecordMutateId++;
+      const timer = setTimeout(() => {
+        if (!pendingRecordMutates.has(id)) return;
+        pendingRecordMutates.delete(id);
+        const err: PaneError = new Error(
+          "record mutate timed out after " +
+            RECORD_MUTATE_TIMEOUT_MS +
+            "ms (shell unresponsive)",
+        );
+        err.code = "ws_timeout";
+        reject(err);
+      }, RECORD_MUTATE_TIMEOUT_MS);
+      pendingRecordMutates.set(id, { resolve, reject, timer });
+      const frame: OutboundFrame = {
+        __pane: 1,
+        v: 1,
+        kind: "record-mutate-request",
+        id,
+        ...req,
+      };
+      parent.postMessage(frame, shellOrigin);
+    });
+  }
 
   window.pane = Object.freeze({
     emit,
