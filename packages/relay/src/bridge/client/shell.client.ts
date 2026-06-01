@@ -30,6 +30,105 @@ export {};
 // `import type` is fully erased by the compiler — nothing reaches this IIFE.
 import type { PaneFrameEnvelope, ShellToRuntimeKind } from "./protocol.js";
 
+// #296 — inlined RecordStore.
+//
+// Why inlined: shell.client.ts is compiled by tsc (not bundled) and the
+// resulting JS is then loaded by the relay's loadClient() helper and evaluated
+// as a CLASSIC script inside the browser AND under jsdom in the unit tests.
+// A cross-module `import { RecordStore } from "./record-store.js"` would
+// survive into the compiled output as a top-level `import` statement, which
+// is a SyntaxError in classic-script eval. So we keep two copies of the
+// class:
+//
+//   * The CANONICAL one lives in ./record-store.ts and is unit-tested
+//     directly (record-store.test.ts, 11 tests).
+//   * The INLINE one below is loaded into the shell IIFE. Must stay in
+//     sync with the canonical source.
+//
+// A future bundler pass over shell.client.ts could eliminate this
+// duplication, but that's its own structural change.
+
+interface ShellSerializedRecord {
+  id: string;
+  collection: string;
+  key: string;
+  data: unknown;
+  version: number;
+  seq: number;
+  author: { kind: "agent" | "human" | "system"; id: string };
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+interface ShellDeletedRecordRef {
+  id: string;
+  key: string;
+  seq: number;
+  deleted_at: string;
+}
+interface ShellRecordUpsertMessage {
+  kind: "record.upsert";
+  collection: string;
+  record: ShellSerializedRecord;
+}
+interface ShellRecordDeleteMessage {
+  kind: "record.delete";
+  collection: string;
+  record: ShellDeletedRecordRef;
+}
+type ShellRecordDelta =
+  | { kind: "upsert"; collection: string; record: ShellSerializedRecord }
+  | { kind: "delete"; collection: string; record: ShellDeletedRecordRef };
+
+class RecordStore {
+  private readonly byCollection = new Map<
+    string,
+    Map<string, ShellSerializedRecord>
+  >();
+  private readonly lastSeq = new Map<string, number>();
+
+  applyUpsert(msg: ShellRecordUpsertMessage): ShellRecordDelta | null {
+    const last = this.lastSeq.get(msg.collection) ?? 0;
+    if (msg.record.seq <= last) return null;
+    let inner = this.byCollection.get(msg.collection);
+    if (!inner) {
+      inner = new Map();
+      this.byCollection.set(msg.collection, inner);
+    }
+    inner.set(msg.record.key, msg.record);
+    this.lastSeq.set(msg.collection, msg.record.seq);
+    return { kind: "upsert", collection: msg.collection, record: msg.record };
+  }
+
+  applyDelete(msg: ShellRecordDeleteMessage): ShellRecordDelta | null {
+    const last = this.lastSeq.get(msg.collection) ?? 0;
+    if (msg.record.seq <= last) return null;
+    const inner = this.byCollection.get(msg.collection);
+    if (inner) inner.delete(msg.record.key);
+    this.lastSeq.set(msg.collection, msg.record.seq);
+    return { kind: "delete", collection: msg.collection, record: msg.record };
+  }
+
+  snapshot(collection: string): ShellSerializedRecord[] {
+    const inner = this.byCollection.get(collection);
+    if (!inner) return [];
+    return Array.from(inner.values());
+  }
+
+  observedCollections(): string[] {
+    return Array.from(this.lastSeq.keys());
+  }
+
+  reconnectCursorQuery(): string {
+    if (this.lastSeq.size === 0) return "";
+    const parts: string[] = [];
+    for (const [name, seq] of this.lastSeq.entries()) {
+      parts.push(`since_record_seq.${encodeURIComponent(name)}=${seq}`);
+    }
+    return parts.join("&");
+  }
+}
+
 /** An outbound frame the shell posts to the iframe. */
 type OutboundFrame = PaneFrameEnvelope & {
   kind: ShellToRuntimeKind;
@@ -91,6 +190,10 @@ interface SerializedEvent {
   let replayDone = false;
   const replayBuffer: SerializedEvent[] = [];
   let lastEventId = 0;
+  // #296 — per-shell record store. Keyed by (collection, recordKey); seq
+  // tracking drives the reconnect cursors. The iframe-postMessage routing
+  // that exposes this to `pane.records.*` is #298's scope.
+  const recordStore = new RecordStore();
   let ws: WebSocket | null = null;
   let backoff = 1000;
   // Guards against overlapping connections. `connect()` can be reached from two
@@ -461,6 +564,15 @@ interface SerializedEvent {
     }
     let qs = "?ticket=" + encodeURIComponent(ticket);
     if (lastEventId > 0) qs += "&since=" + lastEventId;
+    // #296 — auto-subscribe to every declared record collection. The relay
+    // (#295) expands `subscribe_records=*` against the surface's
+    // recordSchema; a surface with no record_schema gets an empty list and
+    // sees no record traffic. On reconnect, advance each collection's
+    // cursor from the store so the relay's replay skips already-observed
+    // rows.
+    qs += "&subscribe_records=*";
+    const cursorQs = recordStore.reconnectCursorQuery();
+    if (cursorQs.length > 0) qs += "&" + cursorQs;
     const sock = new WebSocket(CFG.wsUrl + qs);
     ws = sock;
 
@@ -482,6 +594,30 @@ interface SerializedEvent {
       if (msg && msg["kind"] === "system.replay.complete") {
         replayDone = true;
         sendIframeInit();
+        return;
+      }
+      // #296 — record-delta routing. record.replay.complete is a per-collection
+      // handshake sentinel from the relay's #295 path; the shell uses it to
+      // mark the collection as fully synced but otherwise drops it (no
+      // forwarding into the iframe needed today — #298's runtime API can
+      // expose a `.ready` promise if it wants one). record.upsert and
+      // record.delete fold into the store; the iframe-postMessage routing
+      // for these is #298's scope.
+      const kind = msg["kind"];
+      if (kind === "record.upsert") {
+        recordStore.applyUpsert(
+          msg as unknown as Parameters<RecordStore["applyUpsert"]>[0],
+        );
+        return;
+      }
+      if (kind === "record.delete") {
+        recordStore.applyDelete(
+          msg as unknown as Parameters<RecordStore["applyDelete"]>[0],
+        );
+        return;
+      }
+      if (kind === "record.replay.complete") {
+        // Sentinel — store already advanced via the replayed deltas above it.
         return;
       }
       if (msg && msg["error"]) {
