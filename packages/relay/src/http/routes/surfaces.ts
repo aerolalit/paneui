@@ -921,6 +921,17 @@ surfaces.post("/:id/upgrade", requireAgent, async (c) => {
       unknown
     > | null,
     newInputSchema: targetVersion.inputSchema as Record<string, unknown> | null,
+    // #290 — record-schema diff. Reaches into the recordSchema column added
+    // by #288; a missing column reads as null, which compareRecordSchema
+    // treats as additive-only.
+    oldRecordSchema: surface.templateVersion.recordSchema as Record<
+      string,
+      unknown
+    > | null,
+    newRecordSchema: targetVersion.recordSchema as Record<
+      string,
+      unknown
+    > | null,
   });
   if (breaks.length > 0 && compat === "strict") {
     throw errors.schemaIncompatibleUpgrade(breaks);
