@@ -13,8 +13,14 @@ import {
   type SlidingWindowLimiter,
 } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
-import { isEvent, subscribe } from "../http/broadcast.js";
-import { SYSTEM_REPLAY_COMPLETE } from "./messages.js";
+import { isEvent, isRecordDelta, subscribe } from "../http/broadcast.js";
+import {
+  SYSTEM_REPLAY_COMPLETE,
+  recordDelete,
+  recordReplayComplete,
+  recordUpsert,
+} from "./messages.js";
+import { serializeRecord } from "../core/records.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
@@ -47,6 +53,91 @@ export interface WsDeps {
 }
 
 const STREAM_RX = /^\/v1\/surfaces\/([^/]+)\/stream(\?.*)?$/;
+
+// #295 — cap on rows replayed per collection per connect. Above this, a
+// client sees the first N and then catches up via the GET pagination route
+// using the last seq it received as `?since=`. Generous enough for typical
+// reconnect cases (a few hundred new comments since last seen) without
+// streaming a 50k-row collection over WS in one shot.
+const MAX_RECORDS_REPLAY_BATCH = 1_000;
+
+// #295 — parsed record-replay subscription for a connection. Empty
+// `collections` = no record traffic on this connection (the default if
+// `?subscribe_records` is absent).
+interface RecordSubscriptions {
+  collections: string[];
+  sinceByCollection: Map<string, number>;
+}
+
+class RecordSubscriptionError extends Error {}
+
+// Exposed for unit testing — see ws/parse-record-subscriptions.test.ts.
+export const __recordSubsInternals = {
+  RecordSubscriptionError,
+  parse: (url: URL, surface: SurfaceWithArtifactVersion) =>
+    parseRecordSubscriptions(url, surface),
+};
+
+// Parse `?subscribe_records=` + `?since_record_seq.<name>=` from the WS
+// upgrade URL. Throws RecordSubscriptionError on a malformed param so the
+// caller can reject the upgrade with 400 — better to fail loudly than
+// silently miss messages because of a typo.
+function parseRecordSubscriptions(
+  url: URL,
+  surface: SurfaceWithArtifactVersion,
+): RecordSubscriptions | null {
+  const raw = url.searchParams.get("subscribe_records");
+  if (raw === null) return null;
+
+  // Declared collections from the surface's pinned templateVersion.
+  const recordSchema = (
+    surface.templateVersion as unknown as { recordSchema: unknown }
+  ).recordSchema as Record<string, unknown> | null;
+  const xpc =
+    recordSchema && typeof recordSchema === "object"
+      ? ((recordSchema["x-pane-collections"] as Record<string, unknown>) ??
+        null)
+      : null;
+  const declared = xpc ? Object.keys(xpc) : [];
+
+  let collections: string[];
+  if (raw === "*") {
+    collections = declared;
+  } else {
+    collections = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    for (const name of collections) {
+      if (!declared.includes(name)) {
+        throw new RecordSubscriptionError(
+          `subscribe_records: collection '${name}' is not declared in this surface's template recordSchema (declared: ${declared.join(", ") || "none"})`,
+        );
+      }
+    }
+  }
+
+  const sinceByCollection = new Map<string, number>();
+  for (const [k, v] of url.searchParams.entries()) {
+    const m = /^since_record_seq\.(.+)$/.exec(k);
+    if (!m) continue;
+    const name = m[1]!;
+    if (!collections.includes(name)) {
+      throw new RecordSubscriptionError(
+        `since_record_seq.${name}: collection is not in subscribe_records`,
+      );
+    }
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new RecordSubscriptionError(
+        `since_record_seq.${name} must be a non-negative integer`,
+      );
+    }
+    sinceByCollection.set(name, n);
+  }
+
+  return { collections, sinceByCollection };
+}
 
 // Heartbeat interval. The relay pings every open socket on this cadence; any
 // socket that has not answered a ping with a pong since the previous tick is
@@ -296,8 +387,25 @@ async function handleUpgrade(
       if (Number.isInteger(n) && n >= 0) since = n;
     }
 
+    // #295 — record-replay subscription params:
+    //   ?subscribe_records=*          → subscribe to all declared collections
+    //   ?subscribe_records=a,b        → subscribe to those two
+    //   ?since_record_seq.<name>=N    → per-collection replay cursor
+    let recordSubscriptions: RecordSubscriptions | null = null;
+    try {
+      recordSubscriptions = parseRecordSubscriptions(url, surface);
+    } catch (err) {
+      if (err instanceof RecordSubscriptionError) {
+        sendUpgradeError(socket, 400, err.message, { surfaceId });
+        return;
+      }
+      throw err;
+    }
+
+    // Capture in lexical scope so handleConnection (closure-free) can use it.
+    const localSubs = recordSubscriptions;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleConnection(ws, deps, surfaceId, author, since);
+      void handleConnection(ws, deps, surfaceId, author, since, localSubs);
     });
   } catch (err) {
     log.error("ws upgrade failed", {
@@ -400,6 +508,7 @@ async function handleConnection(
   surfaceId: string,
   author: Author,
   sinceCursor: number | null,
+  recordSubs: RecordSubscriptions | null,
 ): Promise<void> {
   const { prisma } = deps;
   const openedAt = Date.now();
@@ -462,18 +571,77 @@ async function handleConnection(
   }
   sendJson(ws, SYSTEM_REPLAY_COMPLETE);
 
-  // 3) Subscribe to live broadcast. De-dupe vs replay: only forward events
-  //    strictly newer than the last replayed id.
+  // 2b) #295 — record replay. For each subscribed collection, drain rows
+  //     (including tombstones) with seq > <client's since_record_seq for that
+  //     collection>, emit them as record.upsert / record.delete messages,
+  //     then emit record.replay.complete. The lastReplaySeq map drives
+  //     dedup in the live subscribe callback below.
+  const lastReplaySeq = new Map<string, number>();
+  if (recordSubs && recordSubs.collections.length > 0) {
+    for (const name of recordSubs.collections) {
+      const since = recordSubs.sinceByCollection.get(name) ?? 0;
+      const col = await prisma.recordCollection.findUnique({
+        where: { surfaceId_name: { surfaceId, name } },
+      });
+      if (!col) {
+        // Declared collection with no rows yet — emit only the sentinel so
+        // the client knows replay is done.
+        sendJson(ws, recordReplayComplete(name, since));
+        lastReplaySeq.set(name, since);
+        continue;
+      }
+      const rows = await prisma.surfaceRecord.findMany({
+        where: { collectionId: col.id, seq: { gt: since } },
+        orderBy: { seq: "asc" },
+        take: MAX_RECORDS_REPLAY_BATCH,
+      });
+      for (const row of rows) {
+        if (row.deletedAt) {
+          sendJson(
+            ws,
+            recordDelete(name, {
+              id: row.id,
+              key: row.recordKey,
+              seq: row.seq,
+              deleted_at: row.deletedAt.toISOString(),
+            }),
+          );
+        } else {
+          sendJson(ws, recordUpsert(name, serializeRecord(row, name)));
+        }
+      }
+      const last = rows.length > 0 ? rows[rows.length - 1]!.seq : since;
+      sendJson(ws, recordReplayComplete(name, last));
+      lastReplaySeq.set(name, last);
+    }
+  }
+
+  // 3) Subscribe to live broadcast. De-dupe vs replay: events strictly newer
+  //    than the last replayed id; record deltas strictly newer than the
+  //    per-collection last replay seq. Record messages for collections this
+  //    client didn't subscribe to are dropped.
   const lastReplayId =
     replay.length > 0 ? replay[replay.length - 1]!.id : (sinceCursor ?? 0);
+  const subscribedSet = recordSubs
+    ? new Set(recordSubs.collections)
+    : new Set<string>();
   const unsub = subscribe(surfaceId, (m) => {
-    // Pre-#291 behaviour: this handler forwards events only. Record-delta
-    // messages (kind: "record.*") now share the same broadcast channel
-    // (#291); filter them here. Forwarding records to WS clients lands in
-    // #295 (handleConnection record replay + dedup).
-    if (!isEvent(m)) return;
-    const n = Number(m.id);
-    if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, m);
+    if (isEvent(m)) {
+      const n = Number(m.id);
+      if (Number.isFinite(n) && n > lastReplayId) sendJson(ws, m);
+      return;
+    }
+    if (isRecordDelta(m)) {
+      // Only record.upsert and record.delete carry actual state changes —
+      // record.replay.complete is a handshake sentinel emitted by this
+      // handler itself, not by the writer, so it never appears here.
+      if (m.kind !== "record.upsert" && m.kind !== "record.delete") return;
+      if (!subscribedSet.has(m.collection)) return;
+      const lastSeq = lastReplaySeq.get(m.collection) ?? 0;
+      if (m.record.seq > lastSeq) sendJson(ws, m);
+      return;
+    }
+    // Unknown kind — ignore. Forwards-compatible with future wire shapes.
   });
 
   ws.on("message", async (raw) => {
