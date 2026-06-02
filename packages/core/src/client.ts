@@ -55,6 +55,20 @@ export interface RelayResponse {
  * Request body for POST /v1/templates — create a named, reusable template plus
  * its v1 content. Mirrors `createArtifactSchema` from ./schemas.js.
  */
+/** Response from POST /v1/query. */
+export interface QueryResponse {
+  /** Ordered column names exactly as DuckDB returned them. */
+  columns: string[];
+  /** Result rows; each row is an array of values aligned to `columns`. */
+  rows: unknown[][];
+  /** True if the result was capped by the relay's per-query row cap. */
+  truncated: boolean;
+  /** Tells the caller which panes the query saw and how it was scoped. */
+  scope: { kind: "human" | "agent"; pane_count: number };
+  /** Wall-clock milliseconds the relay spent serving the query. */
+  elapsed_ms: number;
+}
+
 export interface CreateArtifactRequest {
   name: string;
   slug?: string;
@@ -294,6 +308,28 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<EventsPage>(r);
+  }
+
+  // ----- #355: SQL query API --------------------------------------------
+
+  /**
+   * POST /v1/query — run a read-only SQL query against the agent's own
+   * scoped data (panes, records, events). The relay scopes the result at
+   * the view layer; the agent can never see rows whose pane.owner_human_id
+   * does not match the caller's scope. Three views are exposed:
+   *
+   *   - panes     (id, title, template_id, template_version, status, …)
+   *   - records   (id, pane_id, collection, key, data, version, seq, …)
+   *   - events    (id, pane_id, type, ts, author_kind, author_id, data, …)
+   *
+   * `data` is a JSON column — use Postgres-style operators (->>, ->) to
+   * project into it. Cap: 10,000 result rows (response.truncated=true
+   * signals the cap was hit); statement timeout: 10 seconds.
+   */
+  async query(sql: string): Promise<QueryResponse> {
+    const r = await this.call("POST", "/v1/query", { sql });
+    if (!r.ok) this.fail(r);
+    return this.asObject<QueryResponse>(r);
   }
 
   // ----- #297: records CRUD ---------------------------------------------
