@@ -510,3 +510,362 @@ describe("POST /v1/query — happy paths", () => {
     expect(typeof body.elapsed_ms).toBe("number");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2 — per-collection / per-event-type materialized views.
+// ---------------------------------------------------------------------------
+
+// Schema with a `todos` collection (title TEXT, done BOOLEAN).
+const todosRecordSchema = {
+  $defs: {
+    Todo: {
+      type: "object",
+      required: ["title", "done"],
+      properties: {
+        title: { type: "string", minLength: 1 },
+        done: { type: "boolean" },
+      },
+    },
+  },
+  "x-pane-collections": {
+    todos: {
+      schema: { $ref: "#/$defs/Todo" },
+      write: ["agent", "page"],
+      delete: ["agent", "page"],
+    },
+  },
+};
+
+// Schema declaring two event types (legacy `events` shape).
+const todoEventSchema = {
+  events: {
+    "todo.added": {
+      emittedBy: ["agent"],
+      payload: {
+        type: "object",
+        properties: {
+          todoKey: { type: "string" },
+          message: { type: "string" },
+        },
+      },
+    },
+    "todo.toggled": {
+      emittedBy: ["agent"],
+      payload: {
+        type: "object",
+        properties: {
+          todoKey: { type: "string" },
+          message: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+async function seedPaneWithSchemas(
+  agentId: string,
+  humanId: string,
+  title: string,
+  recordSchema: unknown,
+  eventSchema: unknown,
+): Promise<string> {
+  const template = await prisma.template.create({
+    data: { ownerId: agentId, latestVersion: 1 },
+  });
+  const version = await prisma.templateVersion.create({
+    data: {
+      templateId: template.id,
+      version: 1,
+      templateType: "html-inline",
+      templateSource: "<html></html>",
+      recordSchema: recordSchema as object,
+      eventSchema: eventSchema as object,
+    },
+  });
+  const paneId = `pan_${randomBytes(8).toString("hex")}`;
+  await prisma.pane.create({
+    data: {
+      id: paneId,
+      agentId,
+      ownerHumanId: humanId,
+      templateVersionId: version.id,
+      title,
+      expiresAt: new Date(Date.now() + 3600_000),
+    },
+  });
+  return paneId;
+}
+
+describe("POST /v1/query — Phase 2: per-collection views", () => {
+  it("exposes each collection as a typed SQL table with the user-schema columns", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p, "todos", { title: "buy milk", done: false });
+    await seedRecord(p, "todos", { title: "ship pr", done: true });
+
+    // Agent-natural query: no JSON operators, no WHERE collection = …
+    const res = await postQuery(
+      agent.apiKey,
+      "SELECT title, done FROM todos ORDER BY title",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      columns: string[];
+      rows: [string, boolean][];
+    };
+    expect(body.columns).toEqual(["title", "done"]);
+    expect(body.rows).toEqual([
+      ["buy milk", false],
+      ["ship pr", true],
+    ]);
+  });
+
+  it("exposes `_`-prefixed metadata + key + pane_id + pane_title columns", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "my pane",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p, "todos", { title: "x", done: false });
+
+    const res = await postQuery(
+      agent.apiKey,
+      "SELECT key, pane_id, pane_title, _version, _seq, _author, _deleted FROM todos",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      columns: string[];
+      rows: unknown[][];
+    };
+    expect(body.columns).toEqual([
+      "key",
+      "pane_id",
+      "pane_title",
+      "_version",
+      "_seq",
+      "_author",
+      "_deleted",
+    ]);
+    expect(body.rows.length).toBe(1);
+    const [, paneIdCell, paneTitleCell, version, , author, deleted] =
+      body.rows[0]!;
+    expect(paneIdCell).toBe(p);
+    expect(paneTitleCell).toBe("my pane");
+    expect(version).toBe(1);
+    expect(author).toBe("agent");
+    expect(deleted).toBe(false);
+  });
+
+  it("merges the same collection across panes when schemas agree", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p1 = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p1",
+      todosRecordSchema,
+      null,
+    );
+    const p2 = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p2",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p1, "todos", { title: "from-p1", done: false });
+    await seedRecord(p2, "todos", { title: "from-p2", done: true });
+
+    const res = await postQuery(
+      agent.apiKey,
+      "SELECT title, pane_title FROM todos ORDER BY title",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string, string][] };
+    expect(body.rows).toEqual([
+      ["from-p1", "p1"],
+      ["from-p2", "p2"],
+    ]);
+  });
+
+  it("exposes _deleted flag so tombstones are visible without leaking by default", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p, "todos", { title: "alive", done: false });
+
+    // Insert a soft-deleted record by hand to test the _deleted flag.
+    const coll = await prisma.recordCollection.findFirst({
+      where: { paneId: p, name: "todos" },
+    });
+    await prisma.recordCollection.update({
+      where: { id: coll!.id },
+      data: { seq: { increment: 1 } },
+    });
+    const seqAfter = (await prisma.recordCollection.findUnique({
+      where: { id: coll!.id },
+    }))!.seq;
+    await prisma.paneRecord.create({
+      data: {
+        collectionId: coll!.id,
+        recordKey: `rec_${randomBytes(6).toString("hex")}`,
+        data: { title: "dead", done: false },
+        version: 1,
+        seq: seqAfter,
+        authorKind: "agent",
+        authorId: "test",
+        deletedAt: new Date(),
+      },
+    });
+
+    const res = await postQuery(
+      agent.apiKey,
+      "SELECT title, _deleted FROM todos ORDER BY title",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string, boolean][] };
+    expect(body.rows).toEqual([
+      ["alive", false],
+      ["dead", true],
+    ]);
+  });
+
+  it("exposes events as separate tables, dotted types slugified to underscores", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      null,
+      todoEventSchema,
+    );
+    await seedEvent(p, "todo.added", { todoKey: "rec_a", message: "added a" });
+    await seedEvent(p, "todo.added", { todoKey: "rec_b", message: "added b" });
+    await seedEvent(p, "todo.toggled", {
+      todoKey: "rec_a",
+      message: "done",
+    });
+
+    const r1 = await postQuery(
+      agent.apiKey,
+      "SELECT todoKey, message FROM todo_added ORDER BY todoKey",
+    );
+    expect(r1.status).toBe(200);
+    expect((await r1.json()) as { rows: [string, string][] }).toMatchObject({
+      rows: [
+        ["rec_a", "added a"],
+        ["rec_b", "added b"],
+      ],
+    });
+
+    const r2 = await postQuery(
+      agent.apiKey,
+      "SELECT COUNT(*) AS n FROM todo_toggled",
+    );
+    expect(r2.status).toBe(200);
+    expect((await r2.json()) as { rows: [number][] }).toMatchObject({
+      rows: [[1]],
+    });
+  });
+
+  it("type conflict across panes for the same collection raises view_conflict", async () => {
+    const conflicting = {
+      $defs: {
+        Todo: {
+          type: "object",
+          properties: {
+            // `done` is integer here vs boolean in todosRecordSchema → conflict
+            done: { type: "integer" },
+            title: { type: "string" },
+          },
+        },
+      },
+      "x-pane-collections": {
+        todos: {
+          schema: { $ref: "#/$defs/Todo" },
+          write: ["agent"],
+          delete: ["agent"],
+        },
+      },
+    };
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p1",
+      todosRecordSchema,
+      null,
+    );
+    await seedPaneWithSchemas(agent.agentId, humanId, "p2", conflicting, null);
+
+    const res = await postQuery(agent.apiKey, "SELECT * FROM todos");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("view_conflict");
+  });
+
+  it("back-compat: the generic records / events views still work alongside per-collection views", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p, "todos", { title: "phase-1-shape", done: false });
+
+    const legacy = await postQuery(
+      agent.apiKey,
+      "SELECT data->>'title' AS t FROM records WHERE collection = 'todos'",
+    );
+    expect(legacy.status).toBe(200);
+    expect((await legacy.json()) as { rows: [string][] }).toMatchObject({
+      rows: [["phase-1-shape"]],
+    });
+  });
+
+  it("SHOW TABLES lists the per-collection + per-event-type views", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      todosRecordSchema,
+      todoEventSchema,
+    );
+
+    const res = await postQuery(agent.apiKey, "SHOW TABLES");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: string[][] };
+    const names = body.rows.map((r) => r[0]);
+    expect(names).toEqual(
+      expect.arrayContaining(["panes", "records", "events"]),
+    );
+    expect(names).toEqual(expect.arrayContaining(["todos"]));
+    expect(names).toEqual(
+      expect.arrayContaining(["todo_added", "todo_toggled"]),
+    );
+  });
+});

@@ -1270,29 +1270,57 @@ own scoped panes, records, and events. The relay scopes results at the
 view layer — you can never see a row whose `pane.owner_human_id` doesn't
 match yours.
 
-**Three tables** (rows already scoped):
+### Two layers of tables — pick the right one
+
+**Per-collection / per-event-type tables** — the natural shape (preferred):
+
+Each `x-pane-collections.<name>` becomes a typed table named after the
+collection. Each `x-pane-events`/`events` type becomes a table named after
+the slugified event type (`todo.added` → `todo_added`). Columns are
+projected from the declared JSON Schema; pane metadata is exposed via
+`_`-prefixed columns so it can't collide with your data.
+
+```sql
+SELECT title, done FROM todos WHERE _deleted = false;
+SELECT pane_title, key, _version FROM comments ORDER BY _created_at DESC;
+SELECT COUNT(*) FROM todo_added WHERE ts > NOW() - INTERVAL '1 hour';
+```
+
+`SHOW TABLES` and `DESCRIBE <table>` reveal the per-session schema.
+
+| Column kind | Convention |
+|---|---|
+| User-schema fields (`title`, `done`, …) | natural names, no prefix |
+| Foreign-key-ish identifiers | unprefixed: `key`, `pane_id`, `pane_title` |
+| Pane-internal metadata | `_` prefix: `_created_at`, `_updated_at`, `_version`, `_seq`, `_deleted`, `_author` |
+| Event-type-internal | `id`, `ts` (unprefixed — idiomatic), then `_author`, `_author_id`, `_template_version_id` |
+
+**Generic / fallback tables** — when a property isn't in the schema, or
+when you want raw access:
 
 | Table | Columns |
 |---|---|
 | `panes`   | `id, title, template_id, template_version, status, created_at, expires_at, deleted_at, metadata, input_data` |
-| `records` | `id, pane_id, collection, key, data, version, seq, author_kind, author_id, created_at, updated_at, deleted_at` |
-| `events`  | `id, pane_id, type, ts, author_kind, author_id, data, template_version_id` |
+| `records` | `id, pane_id, collection, key, data (JSON), version, seq, author_kind, author_id, created_at, updated_at, deleted_at` |
+| `events`  | `id, pane_id, type, ts, author_kind, author_id, data (JSON), template_version_id` |
 
-`data` is a JSON column — project with Postgres-style operators:
+Use Postgres-style operators on the `data` column:
+`data->>'title'` (text), `(data->>'done')::boolean` (cast),
+`data->'nested'->>'inner_field'` (deep).
 
-- `data->>'title'` — text
-- `(data->>'done')::boolean` — cast
-- `data->'nested'->>'inner_field'` — deep
-
-**Rules:**
+### Rules
 
 - SELECT / WITH / SHOW / DESCRIBE / EXPLAIN / PRAGMA only.
-- One statement per call. Multi-statement queries are rejected (factor into
-  a CTE or UNION instead).
-- Result is capped at 10 000 rows (`truncated: true` if hit); statement
-  timeout is 10 s.
+- One statement per call. Multi-statement queries are rejected (factor
+  into a CTE or UNION instead).
+- Result capped at 10 000 rows (`truncated: true` if hit); statement
+  timeout 10 s.
+- If two of your panes declare the same collection with **different**
+  types for the same column, the materialiser refuses with
+  `view_conflict` — scope to one pane with `pane query --pane <id>`
+  (Phase-3 flag) or republish the templates with consistent types.
 
-**Examples:**
+### Examples
 
 ```sh
 pane query "SELECT title FROM panes ORDER BY created_at DESC LIMIT 10"
@@ -1301,8 +1329,12 @@ pane query "SELECT type, COUNT(*) AS n FROM events
             WHERE ts > NOW() - INTERVAL '1 hour'
             GROUP BY 1 ORDER BY n DESC"
 
-pane query "SELECT data->>'title' AS title, version
-            FROM records WHERE collection = 'todos' AND deleted_at IS NULL"
+# Phase 2 natural form
+pane query "SELECT title, done FROM todos WHERE _deleted = false"
+
+# Phase 1 generic form — still works, useful as fallback
+pane query "SELECT data->>'title' AS title FROM records
+            WHERE collection = 'todos' AND deleted_at IS NULL"
 
 pane query --format csv "SELECT …" > report.csv
 echo "SELECT …" | pane query
@@ -1311,11 +1343,6 @@ pane query --file ./report.sql
 
 Output formats: `--format json | csv | tsv | table` (default: `table` for
 TTYs, `json` otherwise — pipe-friendly without extra flags).
-
-> Phase 2 ([#355](https://github.com/aerolalit/paneui/issues/355)) will materialize
-> per-collection / per-event-type views so you can write `SELECT title FROM
-> todos` instead of `SELECT data->>'title' FROM records WHERE collection =
-> 'todos'`. The current shape is the wire-level baseline.
 
 ## The watch → Monitor pattern
 
