@@ -5,7 +5,7 @@
 // story: dev / staging / prod, or personal / work agents on the same relay,
 // without re-running `pane agent register` between them.
 //
-// File layout (current):
+// On-disk shape:
 //
 //   {
 //     "current_profile": "prod",
@@ -14,10 +14,6 @@
 //       "dev":  { "url": "http://localhost:3000", "api_key": "pane_…" }
 //     }
 //   }
-//
-// Backward compatibility: the pre-profile layout was `{ url, apiKey }`.
-// `readStore` accepts both shapes; on the next write we persist the new
-// shape, migrating the flat one into a `default` profile. No user action.
 //
 // Tiny and synchronous; no deps. Holds secrets — files written mode 0600.
 
@@ -43,8 +39,12 @@ export interface Store {
   profiles: Record<string, Profile>;
 }
 
-/** Name of the profile created when migrating a pre-profile config file. */
-export const LEGACY_DEFAULT_PROFILE = "default";
+/**
+ * Default profile name when the user runs `pane agent register` without
+ * `--profile` on a fresh install. Stable, predictable, and short enough to
+ * type in `pane --profile default …` if needed.
+ */
+export const DEFAULT_PROFILE_NAME = "default";
 
 /** Profile-name validation (a-z, A-Z, 0-9, _ and -, 1..32 chars). */
 const PROFILE_NAME_RX = /^[A-Za-z0-9_-]{1,32}$/;
@@ -62,11 +62,8 @@ export function storePath(): string {
 }
 
 /**
- * Read the persisted config. Returns an empty store if the file is missing
- * or unparseable. Accepts both the current `{ current_profile, profiles }`
- * shape and the legacy flat `{ url, apiKey }` — the latter is read as a
- * single `default` profile, but the file itself is left alone until the
- * next `writeStoreFull` call rewrites it in the new shape.
+ * Read the persisted config. Returns an empty store if the file is missing,
+ * unparseable, or doesn't carry a `profiles` object.
  */
 export function readStore(): Store {
   let text: string;
@@ -85,50 +82,32 @@ export function readStore(): Store {
     return { profiles: {} };
   }
   const obj = parsed as Record<string, unknown>;
-
-  // Current shape: { current_profile, profiles: { [name]: { url, api_key } } }
-  if (obj["profiles"] && typeof obj["profiles"] === "object") {
-    const rawProfiles = obj["profiles"] as Record<string, unknown>;
-    const profiles: Record<string, Profile> = {};
-    for (const [name, raw] of Object.entries(rawProfiles)) {
-      if (raw === null || typeof raw !== "object") continue;
-      const p = raw as Record<string, unknown>;
-      const profile: Profile = {};
-      if (typeof p["url"] === "string") profile.url = p["url"];
-      // Accept either `api_key` (canonical on-disk) or `apiKey` (legacy
-      // top-level field name) inside a profile — operators hand-editing
-      // the file keep working both ways.
-      if (typeof p["api_key"] === "string") profile.apiKey = p["api_key"];
-      else if (typeof p["apiKey"] === "string") profile.apiKey = p["apiKey"];
-      profiles[name] = profile;
-    }
-    const currentProfile =
-      typeof obj["current_profile"] === "string"
-        ? (obj["current_profile"] as string)
-        : undefined;
-    // If the named current profile was deleted out-of-band, drop it back
-    // to undefined so the resolver can fall through to env / default URL.
-    return {
-      currentProfile:
-        currentProfile && profiles[currentProfile] !== undefined
-          ? currentProfile
-          : undefined,
-      profiles,
-    };
+  if (!obj["profiles"] || typeof obj["profiles"] !== "object") {
+    return { profiles: {} };
   }
-
-  // Legacy flat shape: { url, apiKey } → migrate to a single `default` profile.
-  if (typeof obj["url"] === "string" || typeof obj["apiKey"] === "string") {
-    const legacy: Profile = {};
-    if (typeof obj["url"] === "string") legacy.url = obj["url"];
-    if (typeof obj["apiKey"] === "string") legacy.apiKey = obj["apiKey"];
-    return {
-      currentProfile: LEGACY_DEFAULT_PROFILE,
-      profiles: { [LEGACY_DEFAULT_PROFILE]: legacy },
-    };
+  const rawProfiles = obj["profiles"] as Record<string, unknown>;
+  const profiles: Record<string, Profile> = {};
+  for (const [name, raw] of Object.entries(rawProfiles)) {
+    if (raw === null || typeof raw !== "object") continue;
+    const p = raw as Record<string, unknown>;
+    const profile: Profile = {};
+    if (typeof p["url"] === "string") profile.url = p["url"];
+    if (typeof p["api_key"] === "string") profile.apiKey = p["api_key"];
+    profiles[name] = profile;
   }
-
-  return { profiles: {} };
+  const currentProfile =
+    typeof obj["current_profile"] === "string"
+      ? (obj["current_profile"] as string)
+      : undefined;
+  // If the named current profile was deleted out-of-band, drop it back to
+  // undefined so the resolver can fall through to env / default URL.
+  return {
+    currentProfile:
+      currentProfile && profiles[currentProfile] !== undefined
+        ? currentProfile
+        : undefined,
+    profiles,
+  };
 }
 
 /** Serialise a Store to the on-disk JSON shape (snake_case fields). */
@@ -163,8 +142,8 @@ export function writeStoreFull(store: Store): string {
 /**
  * Upsert a single profile and write back. If `setCurrent` is true, the
  * profile becomes the active one. If the store had no current profile yet
- * (empty store, or migrating from legacy), the newly-written profile
- * becomes current regardless — there's no other choice that makes sense.
+ * (empty store), the newly-written profile becomes current regardless —
+ * there's no other choice that makes sense.
  */
 export function upsertProfile(
   name: string,
