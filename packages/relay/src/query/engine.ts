@@ -126,6 +126,17 @@ interface EventRow {
   template_version_id: string | null;
 }
 
+export interface RunQueryOptions {
+  /**
+   * If set, restrict the query's view of `panes`, `records`, `events`, and
+   * every per-collection / per-event-type view to this one pane. Resolves
+   * Phase 2's view_conflict by collapsing the schema union to a single
+   * template version. The pane must already be in the caller's default
+   * scope; otherwise the query sees no rows (scope.pane_count = 0).
+   */
+  paneId?: string | null;
+}
+
 // Run an agent SQL query end-to-end. Throws QueryError on validation /
 // scope / execution failures; callers should let those bubble to the
 // route handler which turns them into structured 4xx responses.
@@ -133,6 +144,7 @@ export async function runQuery(
   prisma: PrismaClient,
   caller: ScopedCaller,
   rawSql: unknown,
+  opts: RunQueryOptions = {},
 ): Promise<QueryResult> {
   const validation = validateAgentSql(rawSql);
   if (!validation.ok) {
@@ -141,16 +153,17 @@ export async function runQuery(
   const sql = validation.normalizedSql;
 
   const started = Date.now();
-  const data = await loadScopedData(prisma, caller);
+  const data = await loadScopedData(prisma, caller, { paneId: opts.paneId });
 
   // Spin up a fresh in-memory DuckDB. We discard it after the query, so
-  // creating one per call is acceptable for Phase 1.
+  // creating one per call is acceptable.
   const inst = await DuckDBInstance.create(":memory:");
   const conn = await inst.connect();
 
   try {
-    await materializeViews(conn, data);
-    const result = await raceTimeout(
+    await materializeViews(conn, data, sql);
+    const result = await runWithInterruptTimeout(
+      conn,
       () => executeAgentSql(conn, sql),
       STATEMENT_TIMEOUT_MS,
     );
@@ -168,31 +181,52 @@ export async function runQuery(
   }
 }
 
-// DuckDB doesn't expose a Postgres-style `statement_timeout` SET parameter;
-// the engine is interrupted externally. Phase 1 uses a Promise.race wrapper
-// — the in-flight query keeps running on the worker thread but the caller's
-// HTTP request returns quickly. Phase 3 should swap this for
-// connection.interrupt() so the DuckDB worker actually unwinds.
-async function raceTimeout<T>(
+// DuckDB doesn't expose a Postgres-style `statement_timeout` SET parameter,
+// so we enforce timeouts externally. Earlier phases used a Promise.race —
+// HTTP returned quickly but the DuckDB worker thread kept running, holding
+// memory + CPU. This wraps the same idea around `connection.interrupt()`
+// so the worker actually unwinds when the deadline hits.
+async function runWithInterruptTimeout<T>(
+  conn: { interrupt: () => void },
   body: () => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new QueryError(
-            "query_timeout",
-            `query exceeded the ${timeoutMs}ms limit`,
-            "narrow the query with a WHERE clause, add an aggregate, or LIMIT the result set",
-          ),
-        ),
-      timeoutMs,
-    );
+  let timedOut = false;
+
+  // Attach a swallow-handler to the body's promise so the post-interrupt
+  // rejection (which DuckDB raises when we abort an in-flight query) doesn't
+  // surface as an unhandledRejection. The body's own success path remains
+  // unaffected.
+  const bodyPromise = body().catch((err) => {
+    if (timedOut) {
+      // Convert into a rejection that the Promise.race below never sees,
+      // because the timeoutPromise already won.
+      return new Promise<T>(() => {});
+    }
+    throw err;
   });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        conn.interrupt();
+      } catch {
+        // Best-effort: even if interrupt fails, the timeout still rejects.
+      }
+      reject(
+        new QueryError(
+          "query_timeout",
+          `query exceeded the ${timeoutMs}ms limit`,
+          "narrow the query with a WHERE clause, add an aggregate, or LIMIT the result set",
+        ),
+      );
+    }, timeoutMs);
+  });
+
   try {
-    return await Promise.race([body(), timeoutPromise]);
+    return await Promise.race([bodyPromise, timeoutPromise]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -201,8 +235,9 @@ async function raceTimeout<T>(
 async function loadScopedData(
   prisma: PrismaClient,
   caller: ScopedCaller,
+  opts: { paneId?: string | null } = {},
 ): Promise<ScopedData> {
-  const scope = await resolveScope(prisma, caller);
+  const scope = await resolveScope(prisma, caller, { paneId: opts.paneId });
   const paneIds = scope.paneIds;
 
   if (paneIds.length === 0) {
@@ -358,8 +393,13 @@ function dedupTemplateVersions(
 }
 
 async function materializeViews(
-  conn: { run: (sql: string) => Promise<unknown> },
+  conn: {
+    run: (sql: string) => Promise<unknown>;
+    getTableNames: (sql: string, qualified: boolean) => readonly string[];
+  },
   data: ScopedData,
+  /** The user's SQL — used for lazy materialization. */
+  sql: string,
 ): Promise<void> {
   // The data lives in DuckDB JSON columns; we build the views as if we'd
   // typed columns + a JSON `data` blob for record/event payloads. Phase 2
@@ -450,6 +490,7 @@ async function materializeViews(
 
   // Generic views — kept for back-compat with Phase 1 and as the escape
   // hatch when a property a query needs isn't declared in the schema.
+  // Always materialized: cheap, and `SHOW TABLES` needs them visible.
   await conn.run(`CREATE VIEW panes AS SELECT * FROM _pane_raw`);
   await conn.run(`CREATE VIEW records AS SELECT * FROM _record_raw`);
   await conn.run(`CREATE VIEW events AS SELECT * FROM _event_raw`);
@@ -461,18 +502,87 @@ async function materializeViews(
   // etc.) plus the standard `_` metadata columns. Two panes that share a
   // collection name + compatible schemas get merged into one view; a
   // type conflict raises view_conflict so the caller scopes with --pane <id>.
+  //
+  // Lazy materialization: only emit DDL for views the query references.
+  // SHOW TABLES / DESCRIBE / EXPLAIN need the full set, so we eager-build
+  // when the SQL starts with one of those keywords. Everything else passes
+  // through getTableNames — DuckDB's parser tells us which tables the SQL
+  // touches without executing.
   const fingerprint = buildSchemaFingerprint(data.templateVersions);
+  const referenced = await referencedViewNames(conn, sql);
+  const allDdls = buildViewDdl(fingerprint);
+  const filteredDdls =
+    referenced === "all"
+      ? allDdls
+      : allDdls.filter((ddl) => referencedDdlMatches(ddl, referenced));
+
+  // Conflicts are only fatal if the user's query actually touches the
+  // conflicting view. Lazy mode skips conflicts in views the query doesn't
+  // reference; eager mode (introspection) reports the first conflict.
   if (fingerprint.conflicts.length > 0) {
-    const first = fingerprint.conflicts[0]!;
-    throw new QueryError(
-      "view_conflict",
-      `${first.scope} '${first.name}' has incompatible types for column '${first.column}' across your panes: ${first.seenTypes.join(", ")}`,
-      "scope the query to a single pane with --pane <id> until the schema divergence is resolved (or republish the templates with a consistent column type)",
-    );
+    const fatal = fingerprint.conflicts.find((c) => {
+      if (referenced === "all") return true;
+      // Resolve collection name → viewName (- → _); event type → slug.
+      const viewName =
+        c.scope === "collection"
+          ? c.name.replace(/-/g, "_")
+          : c.name.replace(/[^a-zA-Z0-9_]/g, "_");
+      return referenced.has(viewName);
+    });
+    if (fatal) {
+      throw new QueryError(
+        "view_conflict",
+        `${fatal.scope} '${fatal.name}' has incompatible types for column '${fatal.column}' across your panes: ${fatal.seenTypes.join(", ")}`,
+        "scope the query to a single pane with --pane <id> until the schema divergence is resolved (or republish the templates with a consistent column type)",
+      );
+    }
   }
-  for (const ddl of buildViewDdl(fingerprint)) {
+
+  for (const ddl of filteredDdls) {
     await conn.run(ddl);
   }
+}
+
+// Determine which per-collection / per-event-type views the agent's SQL
+// references. Returns the literal string "all" if we should eager-build
+// every view (introspection queries, parser failures). Otherwise a Set of
+// the unquoted view names the query touches.
+async function referencedViewNames(
+  conn: {
+    getTableNames: (sql: string, qualified: boolean) => readonly string[];
+  },
+  sql: string,
+): Promise<"all" | Set<string>> {
+  const trimmed = sql.trim().toLowerCase();
+  // Introspection queries need every view visible — SHOW TABLES enumerates
+  // them, DESCRIBE / EXPLAIN need targets to exist. Be conservative.
+  if (
+    trimmed.startsWith("show") ||
+    trimmed.startsWith("describe") ||
+    trimmed.startsWith("desc ") ||
+    trimmed.startsWith("explain") ||
+    trimmed.startsWith("pragma")
+  ) {
+    return "all";
+  }
+  try {
+    const names = conn.getTableNames(sql, false);
+    return new Set(names);
+  } catch {
+    // Parser failed (unusual — DuckDB's parser is forgiving). Fall back to
+    // eager materialization so the agent still gets a useful error from
+    // the real execution.
+    return "all";
+  }
+}
+
+// `buildViewDdl` emits the CREATE VIEW string for each materialized view;
+// the view name appears as `CREATE VIEW "<name>" AS …`. Extract it so we
+// can match the lazy-materialization set against the DDL list.
+function referencedDdlMatches(ddl: string, referenced: Set<string>): boolean {
+  const match = ddl.match(/CREATE VIEW\s+"([^"]+)"/);
+  if (!match) return true; // unknown DDL shape → emit it (safe fallback)
+  return referenced.has(match[1]!);
 }
 
 // Batch INSERT helper. DuckDB's VALUES clause is fine for the row counts

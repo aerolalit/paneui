@@ -22,13 +22,28 @@ query.post("/", async (c) => {
 
   const body = (await c.req.json().catch(() => null)) as {
     sql?: unknown;
+    pane_id?: unknown;
   } | null;
   if (body === null || typeof body !== "object") {
     throw errors.invalidRequest(
       "request body must be a JSON object",
       undefined,
-      'pass the query as { "sql": "SELECT ..." }',
+      'pass the query as { "sql": "SELECT ...", "pane_id": "pan_..." }',
     );
+  }
+
+  // Optional pane_id scopes the query to a single pane — resolves the
+  // Phase 2 view_conflict case where two panes' schemas disagree.
+  let paneId: string | null = null;
+  if (body.pane_id !== undefined && body.pane_id !== null) {
+    if (typeof body.pane_id !== "string" || !body.pane_id.startsWith("pan_")) {
+      throw errors.invalidRequest(
+        "pane_id must be a pane id string (starts with 'pan_')",
+        undefined,
+        'pass { "sql": "...", "pane_id": "pan_xxx" } to scope to one pane',
+      );
+    }
+    paneId = body.pane_id;
   }
 
   try {
@@ -36,6 +51,7 @@ query.post("/", async (c) => {
       prisma,
       { agentId: agent.id, ownerHumanId: agent.ownerHumanId ?? null },
       body.sql,
+      { paneId },
     );
     return c.json(result, 200);
   } catch (err) {

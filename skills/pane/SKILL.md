@@ -1318,7 +1318,12 @@ Use Postgres-style operators on the `data` column:
 - If two of your panes declare the same collection with **different**
   types for the same column, the materialiser refuses with
   `view_conflict` — scope to one pane with `pane query --pane <id>`
-  (Phase-3 flag) or republish the templates with consistent types.
+  or republish the templates with consistent types.
+- Lazy materialization: only the views the query references are built.
+  A `view_conflict` on a collection your query doesn't touch is silently
+  skipped (you only see the error if you actually `FROM <conflicting>`).
+  `SHOW TABLES` / `DESCRIBE` force eager mode so introspection always
+  shows the full picture.
 
 ### Examples
 
@@ -1329,12 +1334,15 @@ pane query "SELECT type, COUNT(*) AS n FROM events
             WHERE ts > NOW() - INTERVAL '1 hour'
             GROUP BY 1 ORDER BY n DESC"
 
-# Phase 2 natural form
+# Natural form (Phase 2)
 pane query "SELECT title, done FROM todos WHERE _deleted = false"
 
-# Phase 1 generic form — still works, useful as fallback
+# Generic form (Phase 1) — still works, useful as fallback
 pane query "SELECT data->>'title' AS title FROM records
             WHERE collection = 'todos' AND deleted_at IS NULL"
+
+# Scope to one pane (resolves view_conflict, or just narrows the search)
+pane query --pane pan_xxx "SELECT title FROM todos"
 
 pane query --format csv "SELECT …" > report.csv
 echo "SELECT …" | pane query

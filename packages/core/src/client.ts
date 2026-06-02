@@ -316,18 +316,25 @@ export class PaneClient {
    * POST /v1/query — run a read-only SQL query against the agent's own
    * scoped data (panes, records, events). The relay scopes the result at
    * the view layer; the agent can never see rows whose pane.owner_human_id
-   * does not match the caller's scope. Three views are exposed:
+   * does not match the caller's scope. Three generic views (panes, records,
+   * events) are always exposed; per-collection / per-event-type views are
+   * also materialized for any schemas declared on the caller's templates.
    *
-   *   - panes     (id, title, template_id, template_version, status, …)
-   *   - records   (id, pane_id, collection, key, data, version, seq, …)
-   *   - events    (id, pane_id, type, ts, author_kind, author_id, data, …)
+   * `opts.paneId` narrows the scope to a single pane — handy when two of
+   * the caller's panes declare the same collection with incompatible types
+   * and the materializer would otherwise raise view_conflict.
    *
    * `data` is a JSON column — use Postgres-style operators (->>, ->) to
    * project into it. Cap: 10,000 result rows (response.truncated=true
    * signals the cap was hit); statement timeout: 10 seconds.
    */
-  async query(sql: string): Promise<QueryResponse> {
-    const r = await this.call("POST", "/v1/query", { sql });
+  async query(
+    sql: string,
+    opts: { paneId?: string } = {},
+  ): Promise<QueryResponse> {
+    const body: { sql: string; pane_id?: string } = { sql };
+    if (opts.paneId !== undefined) body.pane_id = opts.paneId;
+    const r = await this.call("POST", "/v1/query", body);
     if (!r.ok) this.fail(r);
     return this.asObject<QueryResponse>(r);
   }
