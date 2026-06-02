@@ -10,7 +10,13 @@
 
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
-import { readStore, writeStore } from "../store.js";
+import {
+  isValidProfileName,
+  LEGACY_DEFAULT_PROFILE,
+  readStore,
+  resolveProfile,
+  upsertProfile,
+} from "../store.js";
 import { printJson, fail } from "../output.js";
 
 const KNOWN_FLAGS = ["url"];
@@ -19,23 +25,30 @@ const KNOWN_BOOLS: string[] = [];
 export const setKeyHelp = `pane agent set-key <api-key> — save a new API key to the local config
 
 Usage:
-  pane agent set-key <api-key> [--url <url>]
+  pane agent set-key <api-key> [--url <url>] [--profile <name>]
 
 After regenerating an agent's API key in the relay's My-agents UI, run
 this on the agent's machine to land the new key in the CLI config file
 (\${XDG_CONFIG_HOME:-~/.config}/pane/config.json, mode 0600). Every later
 command then works with no PANE_API_KEY env var.
 
+The key is saved under the ACTIVE profile (unless --profile picks a different
+one). To add a brand-new profile by hand (e.g. for an out-of-band key from a
+closed-registration relay), use 'pane config add'.
+
 If you'd rather not touch the config file at all, set the new key as the
 PANE_API_KEY env var on the agent process — both work.
 
 Options:
-  --url <url>     Also update the saved relay URL. Useful when pointing the
-                  agent at a different relay alongside the key swap.
-  -h, --help      Show this help.
+  --url <url>         Also update the saved relay URL on the target profile.
+                      Useful when pointing the agent at a different relay
+                      alongside the key swap.
+  --profile <name>    Target this profile instead of the active one. Created
+                      if it doesn't exist.
+  -h, --help          Show this help.
 
 Output (stdout, JSON):
-  { saved_to, key_prefix }
+  { saved_to, profile, key_prefix }
 
 The key is never echoed back. To verify, run \`pane key list\` afterwards.`;
 
@@ -72,16 +85,34 @@ export async function runSetKey(args: ParsedArgs): Promise<void> {
     );
   }
 
-  const patch: { apiKey: string; url?: string } = { apiKey };
+  // Profile selection mirrors `pane agent register`: --profile flag →
+  // PANE_PROFILE env → store's current_profile → 'default'.
+  const profileFlag = args.flags.get("profile") ?? process.env.PANE_PROFILE;
+  const store = readStore();
+  const profileName =
+    profileFlag !== undefined && profileFlag !== ""
+      ? profileFlag
+      : (store.currentProfile ?? LEGACY_DEFAULT_PROFILE);
+
+  if (!isValidProfileName(profileName)) {
+    fail(
+      `invalid profile name '${profileName}' — letters, digits, _ and -, up to 32 chars`,
+      "invalid_args",
+    );
+  }
+
   const urlFlag = args.flags.get("url");
+  const patch: { apiKey: string; url?: string } = { apiKey };
   if (urlFlag !== undefined) patch.url = urlFlag;
 
-  const saved = writeStore(patch);
-  // Re-read so we report the prefix from the persisted value, not the
+  const saved = upsertProfile(profileName, patch);
+  // Re-resolve so we report the prefix from the persisted value, not the
   // argument — defensive against future write-side normalisation.
   const after = readStore();
+  const reread = resolveProfile(after, profileName);
   printJson({
     saved_to: saved,
-    key_prefix: keyPrefixOf(after.apiKey ?? apiKey),
+    profile: profileName,
+    key_prefix: keyPrefixOf(reread?.profile.apiKey ?? apiKey),
   });
 }

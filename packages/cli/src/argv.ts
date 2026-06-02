@@ -117,7 +117,7 @@ export function parseArgs(
  * so adding a new global flag updates one place. `url` / `api-key` are the
  * relay-target overrides; `help` / `json` are universal display modes.
  */
-const GLOBAL_FLAGS: readonly string[] = ["url", "api-key"];
+const GLOBAL_FLAGS: readonly string[] = ["url", "api-key", "profile"];
 const GLOBAL_BOOLS: readonly string[] = ["help", "json"];
 
 /**
