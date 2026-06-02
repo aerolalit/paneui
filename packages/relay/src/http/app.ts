@@ -29,6 +29,7 @@ import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
 import events from "./routes/events.js";
 import records from "./routes/records.js";
+import query from "./routes/query.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
 import feedback from "./routes/feedback.js";
@@ -321,6 +322,9 @@ export function buildApp(
     }),
   );
   app.route("/v1/panes/:id/records/:collection", records);
+  // POST /v1/query — agent-facing SQL over the caller's scoped panes /
+  // records / events. See issue #355 + packages/relay/src/query/.
+  app.route("/v1/query", query);
   // Phase F — public catalog + install flow. MUST mount the human-side
   // marketplace BEFORE the agent-CRUD `templates` router: the latter has
   // a `/:id` route that would otherwise capture `/public` (`id=public`)

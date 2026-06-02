@@ -15,6 +15,7 @@ export type {
   ListBlobsOptions,
   AttachmentTokenAuditEntry,
   AttachmentTokenListResponse,
+  QueryResponse,
 } from "./client.js";
 
 export { openStream } from "./stream.js";

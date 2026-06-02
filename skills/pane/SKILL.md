@@ -1263,6 +1263,60 @@ Adding optional fields, adding new collections, and changing `write` / `delete`
 principal lists are compatible (existing rows still validate; authz only
 affects new operations).
 
+## Querying your data with SQL (#355)
+
+`pane query "<SQL>"` runs read-only PostgreSQL-flavoured SQL against your
+own scoped panes, records, and events. The relay scopes results at the
+view layer — you can never see a row whose `pane.owner_human_id` doesn't
+match yours.
+
+**Three tables** (rows already scoped):
+
+| Table | Columns |
+|---|---|
+| `panes`   | `id, title, template_id, template_version, status, created_at, expires_at, deleted_at, metadata, input_data` |
+| `records` | `id, pane_id, collection, key, data, version, seq, author_kind, author_id, created_at, updated_at, deleted_at` |
+| `events`  | `id, pane_id, type, ts, author_kind, author_id, data, template_version_id` |
+
+`data` is a JSON column — project with Postgres-style operators:
+
+- `data->>'title'` — text
+- `(data->>'done')::boolean` — cast
+- `data->'nested'->>'inner_field'` — deep
+
+**Rules:**
+
+- SELECT / WITH / SHOW / DESCRIBE / EXPLAIN / PRAGMA only.
+- One statement per call. Multi-statement queries are rejected (factor into
+  a CTE or UNION instead).
+- Result is capped at 10 000 rows (`truncated: true` if hit); statement
+  timeout is 10 s.
+
+**Examples:**
+
+```sh
+pane query "SELECT title FROM panes ORDER BY created_at DESC LIMIT 10"
+
+pane query "SELECT type, COUNT(*) AS n FROM events
+            WHERE ts > NOW() - INTERVAL '1 hour'
+            GROUP BY 1 ORDER BY n DESC"
+
+pane query "SELECT data->>'title' AS title, version
+            FROM records WHERE collection = 'todos' AND deleted_at IS NULL"
+
+pane query --format csv "SELECT …" > report.csv
+echo "SELECT …" | pane query
+pane query --file ./report.sql
+```
+
+Output formats: `--format json | csv | tsv | table` (default: `table` for
+TTYs, `json` otherwise — pipe-friendly without extra flags).
+
+> Phase 2 ([#355](https://github.com/aerolalit/paneui/issues/355)) will materialize
+> per-collection / per-event-type views so you can write `SELECT title FROM
+> todos` instead of `SELECT data->>'title' FROM records WHERE collection =
+> 'todos'`. The current shape is the wire-level baseline.
+
 ## The watch → Monitor pattern
 
 `pane watch` is built to be a **monitored subprocess**. It blocks until the
