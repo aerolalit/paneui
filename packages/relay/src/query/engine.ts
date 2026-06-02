@@ -26,6 +26,11 @@ import {
   type ResolvedScope,
 } from "./scope.js";
 import { validateAgentSql } from "./parser.js";
+import {
+  buildSchemaFingerprint,
+  buildViewDdl,
+  type TemplateVersionSchemas,
+} from "./view-builder.js";
 
 export interface QueryResult {
   columns: string[];
@@ -74,6 +79,12 @@ interface ScopedData {
   panes: PaneRow[];
   records: RecordRow[];
   events: EventRow[];
+  /**
+   * Unique template versions referenced by the caller's panes, with their
+   * record/event schemas. Dedup'd by templateVersionId — many panes can
+   * share the same version. Drives the per-collection view materialiser.
+   */
+  templateVersions: TemplateVersionSchemas[];
 }
 
 interface PaneRow {
@@ -200,6 +211,7 @@ async function loadScopedData(
       panes: [],
       records: [],
       events: [],
+      templateVersions: [],
     };
   }
 
@@ -212,7 +224,13 @@ async function loadScopedData(
         id: true,
         title: true,
         templateVersion: {
-          select: { templateId: true, version: true },
+          select: {
+            id: true,
+            templateId: true,
+            version: true,
+            recordSchema: true,
+            eventSchema: true,
+          },
         },
         status: true,
         createdAt: true,
@@ -310,7 +328,33 @@ async function loadScopedData(
       data: e.data,
       template_version_id: e.templateVersionId,
     })),
+    templateVersions: dedupTemplateVersions(panes),
   };
+}
+
+// Walk the caller's panes and collect each unique template_version's
+// record_schema + event_schema. Many panes can share a version; we only
+// need one copy per template_version_id to compile the per-collection
+// fingerprint.
+function dedupTemplateVersions(
+  panes: Array<{
+    templateVersion: {
+      id: string;
+      recordSchema: unknown;
+      eventSchema: unknown;
+    } | null;
+  }>,
+): TemplateVersionSchemas[] {
+  const seen = new Set<string>();
+  const out: TemplateVersionSchemas[] = [];
+  for (const p of panes) {
+    const v = p.templateVersion;
+    if (!v) continue;
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push({ recordSchema: v.recordSchema, eventSchema: v.eventSchema });
+  }
+  return out;
 }
 
 async function materializeViews(
@@ -404,12 +448,31 @@ async function materializeViews(
     e.template_version_id,
   ]);
 
-  // The agent-facing views. For Phase 1 these are essentially passthroughs
-  // of the raw tables; Phase 2 generates per-collection / per-event-type
-  // views layered on top of these.
+  // Generic views — kept for back-compat with Phase 1 and as the escape
+  // hatch when a property a query needs isn't declared in the schema.
   await conn.run(`CREATE VIEW panes AS SELECT * FROM _pane_raw`);
   await conn.run(`CREATE VIEW records AS SELECT * FROM _record_raw`);
   await conn.run(`CREATE VIEW events AS SELECT * FROM _event_raw`);
+
+  // Phase 2 — per-collection / per-event-type views. Compile the union of
+  // schemas across every template version the caller's panes reference, then
+  // emit one CREATE VIEW per unique collection name + event type. The view
+  // exposes user-schema fields as typed columns (title TEXT, done BOOLEAN,
+  // etc.) plus the standard `_` metadata columns. Two panes that share a
+  // collection name + compatible schemas get merged into one view; a
+  // type conflict raises view_conflict so the caller scopes with --pane <id>.
+  const fingerprint = buildSchemaFingerprint(data.templateVersions);
+  if (fingerprint.conflicts.length > 0) {
+    const first = fingerprint.conflicts[0]!;
+    throw new QueryError(
+      "view_conflict",
+      `${first.scope} '${first.name}' has incompatible types for column '${first.column}' across your panes: ${first.seenTypes.join(", ")}`,
+      "scope the query to a single pane with --pane <id> until the schema divergence is resolved (or republish the templates with a consistent column type)",
+    );
+  }
+  for (const ddl of buildViewDdl(fingerprint)) {
+    await conn.run(ddl);
+  }
 }
 
 // Batch INSERT helper. DuckDB's VALUES clause is fine for the row counts
