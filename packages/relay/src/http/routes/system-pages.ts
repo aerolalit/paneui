@@ -267,6 +267,7 @@ function layout(args: {
     ${nav("panes", "My panes", "/my-panes")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
+    ${nav("trash", "Trash", "/trash")}
     ${nav("settings", "Settings", "/settings")}
   </nav>
 </header>
@@ -532,13 +533,15 @@ systemPages.get("/my-panes", async (c) => {
   // bound participant on the same pane shows up exactly once. Revoked
   // participants are filtered out so a kicked human's panes don't linger
   // on their list.
-  // #305 — hide soft-deleted panes from /my-panes. The /trash page
-  // (#306) is the dedicated view for trashed rows; mixing them into the
-  // live list would force every user to mentally filter "live" vs "in
-  // trash" at every glance.
+  // #305 — hide soft-deleted panes from /my-panes by default. The /trash
+  // page (#309) is the dedicated trash view; #310 lets the human opt
+  // soft-deleted rows back into this view via ?show_deleted=true so they
+  // can see "everything I have, live and trashed" in one list without
+  // tab-hopping.
+  const showDeleted = c.req.query("show_deleted") === "true";
   const panes = await prisma.pane.findMany({
     where: {
-      deletedAt: null,
+      ...(showDeleted ? {} : { deletedAt: null }),
       OR: [
         { ownerHumanId: human.id },
         { participants: { some: { humanId: human.id, revokedAt: null } } },
@@ -551,6 +554,7 @@ systemPages.get("/my-panes", async (c) => {
       status: true,
       createdAt: true,
       expiresAt: true,
+      deletedAt: true,
       agent: { select: { name: true } },
       templateVersion: {
         select: {
@@ -559,7 +563,17 @@ systemPages.get("/my-panes", async (c) => {
       },
     },
   });
-  const body = `<h1>My panes</h1>
+  // #310 — toggle between "live only" (default) and "show trashed too".
+  // The link is rendered as a small text-button in the page header so the
+  // human can flip the view without leaving for /trash. /trash remains the
+  // dedicated home for restore/purge actions.
+  const toggleLink = showDeleted
+    ? `<a class="btn ghost" href="/my-panes" style="padding:6px 14px;font-size:13px;">Hide trashed</a>`
+    : `<a class="btn ghost" href="/my-panes?show_deleted=true" style="padding:6px 14px;font-size:13px;">Show trashed</a>`;
+  const body = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h1 style="margin:0;">My panes</h1>
+    ${toggleLink}
+  </div>
   <p style="color:var(--muted);font-size:14.5px;">Panes you own. Panes created by claimed agents on your behalf appear here.</p>
   <div class="card">
     ${
@@ -572,15 +586,23 @@ systemPages.get("/my-panes", async (c) => {
           </div>`
         : `<ul class="pane-cards">${panes
             .map((s) => {
+              const isTrashed = s.deletedAt !== null;
               const isActive =
-                s.status === "open" && s.expiresAt.getTime() > Date.now();
-              const statusBadge = isActive
-                ? `<span class="pill good">Active</span>`
-                : `<span class="pill muted">Closed</span>`;
+                !isTrashed &&
+                s.status === "open" &&
+                s.expiresAt.getTime() > Date.now();
+              const statusBadge = isTrashed
+                ? `<span class="pill" style="background:#fff4ec;color:#b34700;">Trashed</span>`
+                : isActive
+                  ? `<span class="pill good">Active</span>`
+                  : `<span class="pill muted">Closed</span>`;
               // Open is an actual link to the cookie-authed owner shell
               // (/panes/:id) — distinct from the share-link path
               // (/s/:token). No participant token in the URL; the pane_login
-              // cookie does the auth, so a stolen URL is inert.
+              // cookie does the auth, so a stolen URL is inert. Trashed
+              // panes 404 on the owner shell (see loadOwnedPane #305), so
+              // we skip the Open button for them — /trash has Restore +
+              // Purge instead.
               const openAction = isActive
                 ? `<a class="btn ghost" href="/panes/${encodeURIComponent(s.id)}" style="padding:6px 14px;font-size:13px;">Open</a>`
                 : "";
@@ -592,7 +614,7 @@ systemPages.get("/my-panes", async (c) => {
               const initials = paneInitials(templateName);
               const hue = paneHue(s.id);
               const createdLabel = formatRelativeDate(s.createdAt, new Date());
-              return `<li class="pane-card">
+              return `<li class="pane-card"${isTrashed ? ' style="opacity:0.6;"' : ""}>
                 <div class="pane-card-tile" style="--tile-h:${hue};" aria-hidden="true">${escapeHtml(initials)}</div>
                 <div class="pane-card-main">
                   <div class="pane-card-title">${escapeHtml(s.title)}</div>
@@ -630,10 +652,15 @@ systemPages.get("/my-templates", async (c) => {
   // (authored), and templates the human has installed from the public
   // catalog. Installed entries carry the #267 PR C blocked-upgrade
   // pill when an auto-advance was refused by the compat gate.
+  // #310 — show-deleted toggle: same UX as /my-panes.
+  const showDeleted = c.req.query("show_deleted") === "true";
   const [templates, installs] = await Promise.all([
     prisma.template.findMany({
-      // #305 — soft-deleted templates live on /trash, not here.
-      where: { deletedAt: null, owner: { ownerHumanId: human.id } },
+      // #305 — soft-deleted templates live on /trash by default; #310 opt-in.
+      where: {
+        ...(showDeleted ? {} : { deletedAt: null }),
+        owner: { ownerHumanId: human.id },
+      },
       orderBy: { lastUsedAt: { sort: "desc", nulls: "last" } },
       take: 50,
       select: {
@@ -646,6 +673,7 @@ systemPages.get("/my-templates", async (c) => {
         createdAt: true,
         scopes: true,
         installCount: true,
+        deletedAt: true,
       },
     }),
     prisma.humanTemplateInstall.findMany({
@@ -761,9 +789,12 @@ systemPages.get("/my-templates", async (c) => {
             const desc = t.description
               ? escapeHtml(t.description)
               : "<em>no description</em>";
-            const statusPill = t.publishedAt
-              ? `<span class="pill good">Published · ${t.installCount} installs</span>`
-              : `<span class="pill muted">Private</span>`;
+            const isTrashed = t.deletedAt !== null;
+            const statusPill = isTrashed
+              ? `<span class="pill" style="background:#fff4ec;color:#b34700;">Trashed</span>`
+              : t.publishedAt
+                ? `<span class="pill good">Published · ${t.installCount} installs</span>`
+                : `<span class="pill muted">Private</span>`;
             const scopesCsv = ((t.scopes as string[] | null) ?? []).join(", ");
             const btnLabel = t.publishedAt ? "Unpublish" : "Publish to catalog";
             const btnAct = t.publishedAt ? "unpublish" : "publish";
@@ -862,7 +893,14 @@ systemPages.get("/my-templates", async (c) => {
             });
           })();
         </script>`;
-  const body = `<h1>My templates</h1>
+  // #310 — show-deleted toggle in the page header.
+  const templatesToggleLink = showDeleted
+    ? `<a class="btn ghost" href="/my-templates" style="padding:6px 14px;font-size:13px;">Hide trashed</a>`
+    : `<a class="btn ghost" href="/my-templates?show_deleted=true" style="padding:6px 14px;font-size:13px;">Show trashed</a>`;
+  const body = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h1 style="margin:0;">My templates</h1>
+    ${templatesToggleLink}
+  </div>
   <p style="color:var(--muted);font-size:14.5px;">Templates created by agents you own. Templates you've installed from the public catalog appear below.</p>
   <h2>Authored</h2>
   <div class="card">
@@ -1024,11 +1062,16 @@ systemPages.get("/my-agents", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  // #305 — soft-deleted agents live on /trash. A revoked agent (revokedAt
-  // != null) is still surfaced here with a "Revoked" pill, since revocation
-  // and trash are distinct lifecycle states.
+  // #305 — soft-deleted agents live on /trash by default. A revoked agent
+  // (revokedAt != null) is still surfaced here with a "Revoked" pill, since
+  // revocation and trash are distinct lifecycle states.
+  // #310 — ?show_deleted=true opts trashed agents back into the view.
+  const showDeleted = c.req.query("show_deleted") === "true";
   const agents = await prisma.agent.findMany({
-    where: { ownerHumanId: human.id, deletedAt: null },
+    where: {
+      ownerHumanId: human.id,
+      ...(showDeleted ? {} : { deletedAt: null }),
+    },
     orderBy: { claimedAt: { sort: "desc", nulls: "last" } },
     select: {
       id: true,
@@ -1037,9 +1080,16 @@ systemPages.get("/my-agents", async (c) => {
       claimedAt: true,
       lastUsedAt: true,
       revokedAt: true,
+      deletedAt: true,
     },
   });
-  const body = `<h1>My agents</h1>
+  const agentsToggleLink = showDeleted
+    ? `<a class="btn ghost" href="/my-agents" style="padding:6px 14px;font-size:13px;">Hide trashed</a>`
+    : `<a class="btn ghost" href="/my-agents?show_deleted=true" style="padding:6px 14px;font-size:13px;">Show trashed</a>`;
+  const body = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h1 style="margin:0;">My agents</h1>
+    ${agentsToggleLink}
+  </div>
   <p style="color:var(--muted);font-size:14.5px;">Agents bound to you via the claim flow. Each agent's API key still works after claim — claiming just records ownership.</p>
   <div class="card">
     <div class="row" style="justify-content:space-between;margin-bottom:6px;">
@@ -1073,15 +1123,19 @@ systemPages.get("/my-agents", async (c) => {
               const claimed = a.claimedAt
                 ? escapeHtml(a.claimedAt.toISOString().slice(0, 10))
                 : "—";
-              const status = a.revokedAt
-                ? `<span class="pill muted">Revoked</span>`
-                : `<span class="pill good">Active</span>`;
-              // Rotation is only meaningful for non-revoked agents; hide
-              // the button on revoked rows so the human can't mint a key
-              // for an inert identity.
-              const rotateBtn = a.revokedAt
-                ? ""
-                : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
+              const isTrashed = a.deletedAt !== null;
+              const status = isTrashed
+                ? `<span class="pill" style="background:#fff4ec;color:#b34700;">Trashed</span>`
+                : a.revokedAt
+                  ? `<span class="pill muted">Revoked</span>`
+                  : `<span class="pill good">Active</span>`;
+              // Rotation is only meaningful for non-revoked, non-trashed
+              // agents; hide the button on either so the human can't mint a
+              // key for an inert identity.
+              const rotateBtn =
+                a.revokedAt || isTrashed
+                  ? ""
+                  : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
               return `<li data-agent-id="${escapeHtml(a.id)}">
                 <div style="min-width:0;flex:1;">
                   <div class="title">${escapeHtml(a.name)}</div>
@@ -1239,6 +1293,185 @@ systemPages.get("/my-agents", async (c) => {
       body,
       active: "agents",
     }),
+  );
+});
+
+// ----------------------------------------------------------------------
+// GET /trash — soft-deleted panes + templates, with restore + purge.
+// ----------------------------------------------------------------------
+//
+// #309 — Renders the human's trash. The HTML is server-rendered (lists
+// from prisma), the row-level Restore + Purge buttons fire client-side
+// fetches against /v1/my-trash/* (#309's cookie-authed routes). On
+// success the row is removed from the DOM; on failure we surface the
+// error code/message inline so the user knows what to do (the most
+// common refusal is `409 conflict` on a template purge when a live pane
+// still references it).
+//
+// Why the data is loaded server-side: a logged-in /trash visit should
+// show the list immediately, not flash an empty state then a list. The
+// mutations are still cookie-authed JSON so an accidental F5 doesn't
+// double-fire.
+systemPages.get("/trash", async (c) => {
+  const human = c.get("human");
+  if (!human) {
+    return c.html(
+      layout({ title: "Trash", email: null, body: loggedOutPrompt() }),
+    );
+  }
+  const prisma = c.get("prisma");
+  const [panes, templates] = await Promise.all([
+    prisma.pane.findMany({
+      where: {
+        deletedAt: { not: null },
+        OR: [{ ownerHumanId: human.id }, { agent: { ownerHumanId: human.id } }],
+      },
+      orderBy: { deletedAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        deletedAt: true,
+        agent: { select: { name: true } },
+        templateVersion: {
+          select: { template: { select: { name: true, slug: true } } },
+        },
+      },
+      take: 200,
+    }),
+    prisma.template.findMany({
+      where: {
+        deletedAt: { not: null },
+        owner: { ownerHumanId: human.id },
+      },
+      orderBy: { deletedAt: "desc" },
+      select: { id: true, name: true, slug: true, deletedAt: true },
+      take: 200,
+    }),
+  ]);
+
+  const now = new Date();
+  const panesSection =
+    panes.length === 0
+      ? `<p style="color:var(--muted);font-size:14px;">No panes in trash.</p>`
+      : `<ul class="list" id="trash-panes">${panes
+          .map((p) => {
+            const templateName =
+              p.templateVersion.template.name ??
+              p.templateVersion.template.slug ??
+              "ad-hoc template";
+            const deletedLabel = formatRelativeDate(p.deletedAt as Date, now);
+            return `<li data-pane-id="${escapeHtml(p.id)}">
+              <div style="min-width:0;flex:1;">
+                <div class="title">${escapeHtml(p.title)}</div>
+                <div class="meta">${escapeHtml(templateName)} · ${escapeHtml(p.agent.name)}</div>
+                <div class="meta" style="color:var(--muted);"><code>${escapeHtml(p.id)}</code> · trashed ${escapeHtml(deletedLabel)}</div>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn ghost" type="button" data-act="restore-pane" data-id="${escapeHtml(p.id)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Restore</button>
+                <button class="btn ghost" type="button" data-act="purge-pane" data-id="${escapeHtml(p.id)}" style="padding:6px 12px;font-size:13px;min-height:36px;color:#a4361b;">Delete forever</button>
+                <span class="trash-status" style="color:var(--muted);font-size:13px;"></span>
+              </div>
+            </li>`;
+          })
+          .join("")}</ul>`;
+
+  const templatesSection =
+    templates.length === 0
+      ? `<p style="color:var(--muted);font-size:14px;">No templates in trash.</p>`
+      : `<ul class="list" id="trash-templates">${templates
+          .map((t) => {
+            const title = escapeHtml(t.name ?? t.slug ?? t.id);
+            const deletedLabel = formatRelativeDate(t.deletedAt as Date, now);
+            return `<li data-template-id="${escapeHtml(t.id)}">
+              <div style="min-width:0;flex:1;">
+                <div class="title">${title}</div>
+                <div class="meta" style="color:var(--muted);"><code>${escapeHtml(t.id)}</code> · trashed ${escapeHtml(deletedLabel)}</div>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn ghost" type="button" data-act="restore-template" data-id="${escapeHtml(t.id)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Restore</button>
+                <button class="btn ghost" type="button" data-act="purge-template" data-id="${escapeHtml(t.id)}" style="padding:6px 12px;font-size:13px;min-height:36px;color:#a4361b;">Delete forever</button>
+                <span class="trash-status" style="color:var(--muted);font-size:13px;"></span>
+              </div>
+            </li>`;
+          })
+          .join("")}</ul>`;
+
+  const isEmpty = panes.length === 0 && templates.length === 0;
+  const body = `<h1>Trash</h1>
+  <p style="color:var(--muted);font-size:14.5px;">Items here are recoverable. Free-tier rows are permanently deleted 30 days after they land in trash; paid-tier rows are kept until you delete them. "Delete forever" skips the wait.</p>
+  ${
+    isEmpty
+      ? `<div class="card"><div class="empty-state">
+          <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          <h3 class="empty-state-headline">Nothing in trash</h3>
+          <p class="empty-state-body">Closed panes and deleted templates land here for recovery.</p>
+        </div></div>`
+      : `<h2 style="margin-top:18px;">Panes (${panes.length})</h2>
+         <div class="card">${panesSection}</div>
+         <h2 style="margin-top:24px;">Templates (${templates.length})</h2>
+         <div class="card">${templatesSection}</div>`
+  }
+  <script>
+    (function() {
+      const root = document.querySelector('main');
+      if (!root) return;
+      root.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('button[data-act]');
+        if (!btn) return;
+        const act = btn.dataset.act;
+        const id = btn.dataset.id;
+        if (!act || !id) return;
+        const verb = act.startsWith('restore') ? 'Restore' : 'Delete forever';
+        if (act.startsWith('purge')) {
+          // Permanent delete confirms — the hard-delete sweeper would
+          // eventually reclaim the row, but an explicit purge skips that
+          // window and is irreversible.
+          const ok = confirm('Permanently delete this ' + (act.endsWith('pane') ? 'pane' : 'template') + '? This cannot be undone.');
+          if (!ok) return;
+        }
+        const li = btn.closest('li');
+        const status = li ? li.querySelector('.trash-status') : null;
+        // Disable both buttons on the row so a double-click can't fire a
+        // restore + purge race against the same row.
+        const buttons = li ? li.querySelectorAll('button[data-act]') : [];
+        buttons.forEach(b => { b.disabled = true; });
+        if (status) status.textContent = (verb === 'Restore' ? 'Restoring…' : 'Deleting…');
+        const isPane = act.endsWith('pane');
+        const path = isPane
+          ? '/v1/my-trash/panes/' + encodeURIComponent(id) + (act.startsWith('restore') ? '/restore' : '')
+          : '/v1/my-trash/templates/' + encodeURIComponent(id) + (act.startsWith('restore') ? '/restore' : '');
+        const method = act.startsWith('restore') ? 'POST' : 'DELETE';
+        try {
+          const res = await fetch(path, { method, credentials: 'same-origin' });
+          if (!res.ok && res.status !== 204) {
+            let msg = 'HTTP ' + res.status;
+            try {
+              const body = await res.json();
+              if (body && body.error) {
+                msg = body.error.message || body.error.code || msg;
+                if (body.error.hint) msg += ' — ' + body.error.hint;
+              }
+            } catch {}
+            if (status) status.textContent = msg;
+            buttons.forEach(b => { b.disabled = false; });
+            return;
+          }
+          // Success: drop the row, and update the section count.
+          if (li) li.remove();
+          // If the section is now empty, reload to render the empty state.
+          const remaining = document.querySelectorAll(
+            '#trash-panes li, #trash-templates li',
+          );
+          if (remaining.length === 0) location.reload();
+        } catch (e) {
+          if (status) status.textContent = 'Network error';
+          buttons.forEach(b => { b.disabled = false; });
+        }
+      });
+    })();
+  </script>`;
+  return c.html(
+    layout({ title: "Trash", email: human.email, body, active: "trash" }),
   );
 });
 
