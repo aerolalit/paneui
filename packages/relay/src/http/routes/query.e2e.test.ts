@@ -1114,3 +1114,63 @@ describe("POST /v1/query — Phase 3: lazy materialization", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// TIMESTAMP serialization — DuckDB returns DuckDBTimestampValue etc. (with
+// BigInt internals), which JSON.stringify can't handle. The engine's
+// normalizeCell now converts these to strings. Without the fix any SELECT
+// on a TIMESTAMP / DATE / TIME column on `panes`, `events`, or a per-
+// collection view returns 500.
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/query — TIMESTAMP / DATE / TIME serialization", () => {
+  it("selecting a TIMESTAMP literal returns an ISO-8601 string", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+    const res = await postQuery(
+      apiKey,
+      "SELECT TIMESTAMP '2026-06-02 12:34:56.789' AS ts",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string][] };
+    expect(body.rows[0]![0]).toBe("2026-06-02T12:34:56.789Z");
+  });
+
+  it("selecting a DATE literal returns the canonical YYYY-MM-DD string", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+    const res = await postQuery(apiKey, "SELECT DATE '2026-06-02' AS d");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string][] };
+    expect(body.rows[0]![0]).toBe("2026-06-02");
+  });
+
+  it("selecting a TIME literal returns the canonical HH:MM:SS string", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+    const res = await postQuery(apiKey, "SELECT TIME '12:34:56' AS t");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string][] };
+    expect(body.rows[0]![0]).toBe("12:34:56");
+  });
+
+  it("the panes view's created_at + expires_at round-trip as ISO-8601", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneOwnedByHuman(agent.agentId, humanId, "with timestamps");
+
+    const res = await postQuery(
+      agent.apiKey,
+      "SELECT title, created_at, expires_at FROM panes",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: [string, string, string][] };
+    expect(body.rows.length).toBe(1);
+    const [, createdAt, expiresAt] = body.rows[0]!;
+    expect(createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
+    expect(expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
+    expect(new Date(createdAt).toISOString().slice(0, 10)).toBe(
+      createdAt.slice(0, 10),
+    );
+  });
+});
