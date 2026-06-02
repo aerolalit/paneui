@@ -13,14 +13,24 @@ import {
   type SlidingWindowLimiter,
 } from "../http/rate-limit.js";
 import { randomUUID } from "node:crypto";
-import { isEvent, isRecordDelta, subscribe } from "../http/broadcast.js";
+import {
+  isEvent,
+  isRecordDelta,
+  isTemplateRecordDelta,
+  subscribe,
+  subscribeToTemplate,
+} from "../http/broadcast.js";
 import {
   SYSTEM_REPLAY_COMPLETE,
   recordDelete,
   recordReplayComplete,
   recordUpsert,
+  templateRecordDelete,
+  templateRecordReplayComplete,
+  templateRecordUpsert,
 } from "./messages.js";
 import { serializeRecord } from "../core/records.js";
+import { serializeTemplateRecord } from "../core/template-records.js";
 import { ApiError, errors, serializeApiError } from "../http/errors.js";
 import { serializeEvent } from "../http/serialize.js";
 import { appendSystemEvent, writeEvent } from "../core/events.js";
@@ -82,6 +92,65 @@ export const __recordSubsInternals = {
 // upgrade URL. Throws RecordSubscriptionError on a malformed param so the
 // caller can reject the upgrade with 400 — better to fail loudly than
 // silently miss messages because of a typo.
+// Parses `?subscribe_template_records=*|name,name` + per-collection cursors.
+// Returns null when the param is absent. Validation mirrors
+// parseRecordSubscriptions but reads from templateRecordSchema instead of
+// recordSchema.
+function parseTemplateRecordSubscriptions(
+  url: URL,
+  pane: PaneWithTemplateVersion,
+): RecordSubscriptions | null {
+  const raw = url.searchParams.get("subscribe_template_records");
+  if (raw === null) return null;
+
+  const tplSchema = (
+    pane.templateVersion as unknown as { templateRecordSchema: unknown }
+  ).templateRecordSchema as Record<string, unknown> | null;
+  const xpc =
+    tplSchema && typeof tplSchema === "object"
+      ? ((tplSchema["x-pane-collections"] as Record<string, unknown>) ?? null)
+      : null;
+  const declared = xpc ? Object.keys(xpc) : [];
+
+  let collections: string[];
+  if (raw === "*") {
+    collections = declared;
+  } else {
+    collections = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    for (const name of collections) {
+      if (!declared.includes(name)) {
+        throw new RecordSubscriptionError(
+          `subscribe_template_records: collection '${name}' is not declared in this pane's template template_record_schema (declared: ${declared.join(", ") || "none"})`,
+        );
+      }
+    }
+  }
+
+  const sinceByCollection = new Map<string, number>();
+  for (const [k, v] of url.searchParams.entries()) {
+    const m = /^since_template_record_seq\.(.+)$/.exec(k);
+    if (!m) continue;
+    const name = m[1]!;
+    if (!collections.includes(name)) {
+      throw new RecordSubscriptionError(
+        `since_template_record_seq.${name}: collection is not in subscribe_template_records`,
+      );
+    }
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new RecordSubscriptionError(
+        `since_template_record_seq.${name} must be a non-negative integer`,
+      );
+    }
+    sinceByCollection.set(name, n);
+  }
+
+  return { collections, sinceByCollection };
+}
+
 function parseRecordSubscriptions(
   url: URL,
   pane: PaneWithTemplateVersion,
@@ -391,8 +460,10 @@ async function handleUpgrade(
     //   ?subscribe_records=a,b        → subscribe to those two
     //   ?since_record_seq.<name>=N    → per-collection replay cursor
     let recordSubscriptions: RecordSubscriptions | null = null;
+    let templateRecordSubscriptions: RecordSubscriptions | null = null;
     try {
       recordSubscriptions = parseRecordSubscriptions(url, pane);
+      templateRecordSubscriptions = parseTemplateRecordSubscriptions(url, pane);
     } catch (err) {
       if (err instanceof RecordSubscriptionError) {
         sendUpgradeError(socket, 400, err.message, { paneId });
@@ -403,8 +474,19 @@ async function handleUpgrade(
 
     // Capture in lexical scope so handleConnection (closure-free) can use it.
     const localSubs = recordSubscriptions;
+    const localTplSubs = templateRecordSubscriptions;
+    const templateId = pane.templateVersion.templateId;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleConnection(ws, deps, paneId, author, since, localSubs);
+      void handleConnection(
+        ws,
+        deps,
+        paneId,
+        author,
+        since,
+        localSubs,
+        localTplSubs,
+        templateId,
+      );
     });
   } catch (err) {
     log.error("ws upgrade failed", {
@@ -508,6 +590,8 @@ async function handleConnection(
   author: Author,
   sinceCursor: number | null,
   recordSubs: RecordSubscriptions | null,
+  templateRecordSubs: RecordSubscriptions | null,
+  templateId: string,
 ): Promise<void> {
   const { prisma } = deps;
   const openedAt = Date.now();
@@ -615,6 +699,52 @@ async function handleConnection(
     }
   }
 
+  // 2c) Template-record replay (template-level records). Same pattern as
+  //     per-pane records but the collection lives on Template (head) rather
+  //     than this pane. Drains rows from template_records via the named
+  //     collection. The lastTplReplaySeq map drives dedup in the live
+  //     subscribe callback below.
+  const lastTplReplaySeq = new Map<string, number>();
+  if (templateRecordSubs && templateRecordSubs.collections.length > 0) {
+    for (const name of templateRecordSubs.collections) {
+      const since = templateRecordSubs.sinceByCollection.get(name) ?? 0;
+      const col = await prisma.templateRecordCollection.findUnique({
+        where: { templateId_name: { templateId, name } },
+      });
+      if (!col) {
+        sendJson(ws, templateRecordReplayComplete(name, since));
+        lastTplReplaySeq.set(name, since);
+        continue;
+      }
+      const rows = await prisma.templateRecord.findMany({
+        where: { collectionId: col.id, seq: { gt: since } },
+        orderBy: { seq: "asc" },
+        take: MAX_RECORDS_REPLAY_BATCH,
+      });
+      for (const row of rows) {
+        if (row.deletedAt) {
+          sendJson(
+            ws,
+            templateRecordDelete(name, {
+              id: row.id,
+              key: row.recordKey,
+              seq: row.seq,
+              deleted_at: row.deletedAt.toISOString(),
+            }),
+          );
+        } else {
+          sendJson(
+            ws,
+            templateRecordUpsert(name, serializeTemplateRecord(row, name)),
+          );
+        }
+      }
+      const last = rows.length > 0 ? rows[rows.length - 1]!.seq : since;
+      sendJson(ws, templateRecordReplayComplete(name, last));
+      lastTplReplaySeq.set(name, last);
+    }
+  }
+
   // 3) Subscribe to live broadcast. De-dupe vs replay: events strictly newer
   //    than the last replayed id; record deltas strictly newer than the
   //    per-collection last replay seq. Record messages for collections this
@@ -623,6 +753,9 @@ async function handleConnection(
     replay.length > 0 ? replay[replay.length - 1]!.id : (sinceCursor ?? 0);
   const subscribedSet = recordSubs
     ? new Set(recordSubs.collections)
+    : new Set<string>();
+  const tplSubscribedSet = templateRecordSubs
+    ? new Set(templateRecordSubs.collections)
     : new Set<string>();
   const unsub = subscribe(paneId, (m) => {
     if (isEvent(m)) {
@@ -641,6 +774,19 @@ async function handleConnection(
       return;
     }
     // Unknown kind — ignore. Forwards-compatible with future wire shapes.
+  });
+
+  // 3b) Subscribe to the template bus. Same dedup discipline as the pane bus.
+  const unsubTemplate = subscribeToTemplate(templateId, (m) => {
+    if (!isTemplateRecordDelta(m)) return;
+    if (
+      m.kind !== "template-record.upsert" &&
+      m.kind !== "template-record.delete"
+    )
+      return;
+    if (!tplSubscribedSet.has(m.collection)) return;
+    const lastSeq = lastTplReplaySeq.get(m.collection) ?? 0;
+    if (m.record.seq > lastSeq) sendJson(ws, m);
   });
 
   ws.on("message", async (raw) => {
@@ -666,6 +812,7 @@ async function handleConnection(
       openMs: Date.now() - openedAt,
     });
     unsub();
+    unsubTemplate();
     // Deregister from the live presence registry FIRST (and await it, so the
     // participant.left event's agentCountLive reflects this socket already
     // being gone) THEN insert + broadcast the participant.left event. The

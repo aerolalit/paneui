@@ -41,9 +41,14 @@ import type {
 } from "@prisma/client";
 import type { ValidateFunction } from "ajv";
 import { ApiError, errors } from "../http/errors.js";
+import { publishToTemplate } from "../http/broadcast.js";
 import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
 import type { Config } from "../config.js";
+import {
+  templateRecordDelete as makeTemplateRecordDelete,
+  templateRecordUpsert as makeTemplateRecordUpsert,
+} from "../ws/messages.js";
 
 // -------------------------------------------------------------------------
 // Types
@@ -440,8 +445,15 @@ export async function writeTemplateRecord(
     }
   }
 
+  const serialized = serializeTemplateRecord(row, input.collectionName);
+  if (!deduped) {
+    publishToTemplate(
+      template.id,
+      makeTemplateRecordUpsert(input.collectionName, serialized),
+    );
+  }
   return {
-    record: serializeTemplateRecord(row, input.collectionName),
+    record: serialized,
     deduped,
   };
 }
@@ -517,9 +529,12 @@ export async function updateTemplateRecord(
   // with writeTemplateRecord and to give callers a single auth shape.
   void author;
 
-  return {
-    record: serializeTemplateRecord(updated, input.collectionName),
-  };
+  const serialized = serializeTemplateRecord(updated, input.collectionName);
+  publishToTemplate(
+    template.id,
+    makeTemplateRecordUpsert(input.collectionName, serialized),
+  );
+  return { record: serialized };
 }
 
 // -------------------------------------------------------------------------
@@ -535,7 +550,7 @@ export async function deleteTemplateRecord(
   const { prisma } = deps;
   resolveCollection(template, input.collectionName); // 404s if undeclared
 
-  await prisma.$transaction(async (tx) => {
+  const deleted = await prisma.$transaction(async (tx) => {
     const col = await tx.templateRecordCollection.findUnique({
       where: {
         templateId_name: {
@@ -569,7 +584,7 @@ export async function deleteTemplateRecord(
       where: { id: col.id },
       data: { seq: { increment: 1 } },
     });
-    await tx.templateRecord.update({
+    return tx.templateRecord.update({
       where: { id: existing.id },
       data: {
         deletedAt: new Date(),
@@ -577,6 +592,15 @@ export async function deleteTemplateRecord(
       },
     });
   });
+  publishToTemplate(
+    template.id,
+    makeTemplateRecordDelete(input.collectionName, {
+      id: deleted.id,
+      key: deleted.recordKey,
+      seq: deleted.seq,
+      deleted_at: (deleted.deletedAt ?? deleted.updatedAt).toISOString(),
+    }),
+  );
 }
 
 // -------------------------------------------------------------------------

@@ -83,6 +83,40 @@ export type RecordDeltaMessage =
   | RecordReplayCompleteMessage;
 
 // ---------------------------------------------------------------------------
+// Template-level record wire shapes
+// ---------------------------------------------------------------------------
+
+/**
+ * Live template-level record state change. Broadcast to every pane derived
+ * from the template (regardless of pinned version) — clients filter by the
+ * collection name they subscribed to. Wire shape mirrors RecordUpsertMessage
+ * but uses a distinct `kind` so iframe-side `pane.records.*` and
+ * `pane.template.records.*` namespaces don't collapse.
+ */
+export interface TemplateRecordUpsertMessage {
+  kind: "template-record.upsert";
+  collection: string;
+  record: SerializedRecord;
+}
+
+export interface TemplateRecordDeleteMessage {
+  kind: "template-record.delete";
+  collection: string;
+  record: DeletedRecordRef;
+}
+
+export interface TemplateRecordReplayCompleteMessage {
+  kind: "template-record.replay.complete";
+  collection: string;
+  seq: number;
+}
+
+export type TemplateRecordDeltaMessage =
+  | TemplateRecordUpsertMessage
+  | TemplateRecordDeleteMessage
+  | TemplateRecordReplayCompleteMessage;
+
+// ---------------------------------------------------------------------------
 // System-level sentinels (existing — moved here for one-stop wire-shape ref)
 // ---------------------------------------------------------------------------
 
@@ -114,6 +148,7 @@ export interface SystemReplayCompleteMessage {
 export type WireMessage =
   | SerializedEvent
   | RecordDeltaMessage
+  | TemplateRecordDeltaMessage
   | SystemReplayCompleteMessage;
 
 // ---------------------------------------------------------------------------
@@ -140,6 +175,27 @@ export function recordReplayComplete(
   seq: number,
 ): RecordReplayCompleteMessage {
   return { kind: "record.replay.complete", collection, seq };
+}
+
+export function templateRecordUpsert(
+  collection: string,
+  record: SerializedRecord,
+): TemplateRecordUpsertMessage {
+  return { kind: "template-record.upsert", collection, record };
+}
+
+export function templateRecordDelete(
+  collection: string,
+  record: DeletedRecordRef,
+): TemplateRecordDeleteMessage {
+  return { kind: "template-record.delete", collection, record };
+}
+
+export function templateRecordReplayComplete(
+  collection: string,
+  seq: number,
+): TemplateRecordReplayCompleteMessage {
+  return { kind: "template-record.replay.complete", collection, seq };
 }
 
 export const SYSTEM_REPLAY_COMPLETE: SystemReplayCompleteMessage = {
