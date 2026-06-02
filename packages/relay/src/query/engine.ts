@@ -20,7 +20,11 @@
 
 import { DuckDBInstance } from "@duckdb/node-api";
 import type { PrismaClient } from "@prisma/client";
-import { resolveScope, type ScopedCaller, type ResolvedScope } from "./scope.js";
+import {
+  resolveScope,
+  type ScopedCaller,
+  type ResolvedScope,
+} from "./scope.js";
 import { validateAgentSql } from "./parser.js";
 
 export interface QueryResult {
@@ -476,9 +480,9 @@ async function executeAgentSql(
 
   // DuckDB returns BigInt for INTEGER/BIGINT columns; coerce to Number
   // when safe, otherwise stringify. Same for Date — return ISO-8601.
-  const rows = rawRows.slice(0, OUTPUT_ROW_CAP).map((row) =>
-    row.map((cell) => normalizeCell(cell)),
-  );
+  const rows = rawRows
+    .slice(0, OUTPUT_ROW_CAP)
+    .map((row) => row.map((cell) => normalizeCell(cell)));
 
   return {
     columns,
@@ -492,7 +496,10 @@ function normalizeCell(v: unknown): unknown {
   if (typeof v === "bigint") {
     // BigInt is JSON.stringify-unfriendly; downcast when safe, otherwise
     // return as a string so the consumer can parse if they care about precision.
-    if (v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    if (
+      v >= BigInt(Number.MIN_SAFE_INTEGER) &&
+      v <= BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
       return Number(v);
     }
     return v.toString();

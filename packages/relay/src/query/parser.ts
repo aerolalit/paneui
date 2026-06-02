@@ -96,7 +96,9 @@ function stripComments(sql: string): string {
 // Returns either an ok-result carrying the trimmed SQL, or an error-result
 // the route handler can turn into a 400. Callers should branch on the
 // `ok` field — no exceptions are thrown.
-export function validateAgentSql(rawSql: unknown): SqlValidationResult | SqlValidationError {
+export function validateAgentSql(
+  rawSql: unknown,
+): SqlValidationResult | SqlValidationError {
   if (typeof rawSql !== "string") {
     return {
       ok: false,

@@ -406,7 +406,10 @@ describe("POST /v1/query — scope isolation", () => {
       standalone.agentId,
       "standalone's pane",
     );
-    await seedRecord(standaloneP, "todos", { title: "standalone-todo", done: false });
+    await seedRecord(standaloneP, "todos", {
+      title: "standalone-todo",
+      done: false,
+    });
 
     // A second standalone agent — must not see the first's data.
     const other = await seedStandaloneAgent();

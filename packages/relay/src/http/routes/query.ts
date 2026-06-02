@@ -20,7 +20,9 @@ query.post("/", async (c) => {
   const prisma = c.get("prisma");
   const agent = c.get("agent");
 
-  const body = (await c.req.json().catch(() => null)) as { sql?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as {
+    sql?: unknown;
+  } | null;
   if (body === null || typeof body !== "object") {
     throw errors.invalidRequest(
       "request body must be a JSON object",
@@ -41,7 +43,8 @@ query.post("/", async (c) => {
       // Map to the standard error envelope. Use 400 for caller-side problems
       // (bad SQL, scope_too_large) and 422 for execution failures (timeout,
       // DuckDB raised a parser/eval error).
-      const status = err.code === "query_timeout" || err.code === "query_error" ? 422 : 400;
+      const status =
+        err.code === "query_timeout" || err.code === "query_error" ? 422 : 400;
       // Throwing a structured error here would route through app.onError;
       // for clarity, build the envelope inline. Keep the shape consistent
       // with the rest of /v1.

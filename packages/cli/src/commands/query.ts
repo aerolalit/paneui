@@ -14,12 +14,7 @@ import { fail, failFromError, printJson } from "../output.js";
 import { readFileSync } from "node:fs";
 import type { QueryResponse } from "@paneui/core";
 
-const KNOWN_FLAGS = new Set([
-  "file",
-  "format",
-  "url",
-  "api-key",
-]);
+const KNOWN_FLAGS = new Set(["file", "format", "url", "api-key"]);
 const KNOWN_BOOLS = new Set(["help"]);
 
 const VALID_FORMATS = new Set(["json", "csv", "tsv", "table"]);
@@ -147,10 +142,14 @@ async function readAllStdin(): Promise<string> {
 // --------------------------------------------------------------------------
 
 function writeDelimited(result: QueryResponse, sep: string): void {
-  process.stdout.write(result.columns.map(escapeDelimited.bind(null, sep)).join(sep) + "\n");
+  process.stdout.write(
+    result.columns.map((c: string) => escapeDelimited(sep, c)).join(sep) + "\n",
+  );
   for (const row of result.rows) {
     process.stdout.write(
-      row.map((c) => escapeDelimited(sep, formatCellForText(c))).join(sep) + "\n",
+      row
+        .map((c: unknown) => escapeDelimited(sep, formatCellForText(c)))
+        .join(sep) + "\n",
     );
   }
   if (result.truncated) {
@@ -181,14 +180,19 @@ function writeTable(result: QueryResponse): void {
   const cells: string[][] = [];
   cells.push(result.columns.slice());
   for (const row of result.rows) {
-    cells.push(row.map((c) => formatCellForText(c)));
+    cells.push(row.map((c: unknown) => formatCellForText(c)));
   }
   // Compute column widths (cap at 80 to keep the table sane for wide JSON).
   const COL_MAX = 80;
-  const widths = result.columns.map((_, ci) =>
-    Math.min(COL_MAX, Math.max(...cells.map((r) => visualWidth(r[ci] ?? "")))),
+  const widths = result.columns.map((_: string, ci: number) =>
+    Math.min(
+      COL_MAX,
+      Math.max(...cells.map((r: string[]) => visualWidth(r[ci] ?? ""))),
+    ),
   );
-  const rule = "─".repeat(widths.reduce((a, b) => a + b, 0) + (widths.length - 1) * 3);
+  const rule = "─".repeat(
+    widths.reduce((a: number, b: number) => a + b, 0) + (widths.length - 1) * 3,
+  );
   // Header
   process.stdout.write(formatRow(cells[0]!, widths) + "\n");
   process.stdout.write(rule + "\n");
