@@ -40,6 +40,10 @@ import { runConfig, configHelp } from "./commands/config.js";
 import { runBlob, blobHelp } from "./commands/attachment.js";
 import { runSkill, skillHelp } from "./commands/skill.js";
 import { runRecords, recordsHelp } from "./commands/records.js";
+import {
+  runTemplateRecords,
+  templateRecordsHelp,
+} from "./commands/template-records.js";
 import { runQuery, queryHelp } from "./commands/query.js";
 import { runTrash, trashHelp } from "./commands/trash.js";
 import { VERSION } from "./version.js";
@@ -65,6 +69,9 @@ Pane commands (operate on the core noun — a live UI channel):
 Other noun groups:
   template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
+  template-records  Owner-curated content scoped to a Template head
+                    (list | get | upsert | update | delete), visible to
+                    every pane derived from any version of the template.
   key               YOUR agent's API key (list | revoke).
   taste             YOUR agent's freeform UI taste notes
                     (get | set | clear) — presentation preferences the agent
@@ -171,6 +178,7 @@ async function main(): Promise<void> {
     config: configHelp,
     skill: skillHelp,
     records: recordsHelp,
+    "template-records": templateRecordsHelp,
     query: queryHelp,
     trash: trashHelp,
   };
@@ -246,6 +254,9 @@ async function main(): Promise<void> {
       break;
     case "records":
       await runRecords(args);
+      break;
+    case "template-records":
+      await runTemplateRecords(args);
       break;
     case "query":
       await runQuery(args);

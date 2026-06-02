@@ -24,6 +24,7 @@ import { initTracing, shutdownTracing } from "./telemetry/tracing.js";
 import { initLogs, shutdownLogs } from "./telemetry/logs.js";
 import { invalidateSchemaCache } from "./core/validation.js";
 import { sweepRecordTombstones } from "./core/records.js";
+import { sweepTemplateRecordTombstones } from "./core/template-records.js";
 import { sweepAuthTokens, authSweepIntervalSeconds } from "./auth-sweeper.js";
 import { sweepHardDeletable } from "./hard-delete-sweeper.js";
 import type { AttachmentStore } from "./attachments/store.js";
@@ -139,15 +140,22 @@ function startRecordTombstoneSweeper(
   const jitter = () =>
     Math.floor(Math.random() * Math.min(2000, intervalSec * 100));
   const tick = (): void => {
-    void sweepRecordTombstones(prisma, ttlSec)
-      .then((count) => {
-        if (count > 0) log.debug("record tombstones swept", { count });
+    void Promise.allSettled([
+      sweepRecordTombstones(prisma, ttlSec),
+      sweepTemplateRecordTombstones(prisma, ttlSec),
+    ])
+      .then((results) => {
+        let total = 0;
+        for (const r of results) {
+          if (r.status === "fulfilled") total += r.value;
+          else
+            log.warn("record tombstone sweep error", {
+              error:
+                r.reason instanceof Error ? r.reason.message : String(r.reason),
+            });
+        }
+        if (total > 0) log.debug("record tombstones swept", { count: total });
       })
-      .catch((e) =>
-        log.warn("record tombstone sweep error", {
-          error: e instanceof Error ? e.message : String(e),
-        }),
-      )
       .finally(() => {
         setTimeout(tick, intervalSec * 1000 + jitter());
       });

@@ -235,6 +235,8 @@ export function comparePaneSchemas(args: {
   newInputSchema: JsonSchemaLike | null;
   oldRecordSchema?: RecordSchema | null;
   newRecordSchema?: RecordSchema | null;
+  oldTemplateRecordSchema?: RecordSchema | null;
+  newTemplateRecordSchema?: RecordSchema | null;
 }): SchemaBreak[] {
   return [
     ...compareEventSchema(args.oldEventSchema, args.newEventSchema),
@@ -243,6 +245,17 @@ export function comparePaneSchemas(args: {
       args.oldRecordSchema ?? null,
       args.newRecordSchema ?? null,
     ),
+    // Template-level record schema follows the same compat rules as
+    // per-pane record_schema — collections must not be removed, row schemas
+    // must not narrow. Rebadge each break's path under `template_record_schema`
+    // so the operator can tell which kind broke.
+    ...compareRecordSchema(
+      args.oldTemplateRecordSchema ?? null,
+      args.newTemplateRecordSchema ?? null,
+    ).map((b) => ({
+      ...b,
+      path: b.path.replace(/^record_schema/, "template_record_schema"),
+    })),
   ];
 }
 
