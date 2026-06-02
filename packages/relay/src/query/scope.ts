@@ -29,6 +29,16 @@ export interface ResolvedScope {
 
 const PANE_FETCH_LIMIT = 5_000;
 
+export interface ResolveScopeOpts {
+  /**
+   * Restrict the scope to a single pane id. Mirrors the security model:
+   * the pane is only included if it would already be visible to the caller
+   * under the default scope. Missing / not-owned panes return an empty
+   * paneIds (the engine then surfaces a clean not-found to the caller).
+   */
+  paneId?: string | null;
+}
+
 // Look up the panes this caller is allowed to query. The returned ids
 // drive the WHERE clause on every materialized view in the DuckDB session.
 //
@@ -37,27 +47,28 @@ const PANE_FETCH_LIMIT = 5_000;
 export async function resolveScope(
   prisma: PrismaClient,
   caller: ScopedCaller,
+  opts: ResolveScopeOpts = {},
 ): Promise<ResolvedScope> {
-  if (caller.ownerHumanId) {
-    const rows = await prisma.pane.findMany({
-      where: {
-        ownerHumanId: caller.ownerHumanId,
-        deletedAt: null,
-      },
+  const baseWhere = caller.ownerHumanId
+    ? { ownerHumanId: caller.ownerHumanId, deletedAt: null }
+    : { agentId: caller.agentId, ownerHumanId: null, deletedAt: null };
+  const kind: "human" | "agent" = caller.ownerHumanId ? "human" : "agent";
+
+  // --pane <id> narrows the scope to one row, but the row must still pass
+  // the default predicate — caller can't peek at another human's pane by
+  // guessing the id.
+  if (opts.paneId !== undefined && opts.paneId !== null) {
+    const row = await prisma.pane.findFirst({
+      where: { ...baseWhere, id: opts.paneId },
       select: { id: true },
-      take: PANE_FETCH_LIMIT,
     });
-    return { kind: "human", paneIds: rows.map((r) => r.id) };
+    return { kind, paneIds: row ? [row.id] : [] };
   }
 
   const rows = await prisma.pane.findMany({
-    where: {
-      agentId: caller.agentId,
-      ownerHumanId: null,
-      deletedAt: null,
-    },
+    where: baseWhere,
     select: { id: true },
     take: PANE_FETCH_LIMIT,
   });
-  return { kind: "agent", paneIds: rows.map((r) => r.id) };
+  return { kind, paneIds: rows.map((r) => r.id) };
 }

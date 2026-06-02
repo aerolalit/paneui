@@ -869,3 +869,248 @@ describe("POST /v1/query — Phase 2: per-collection views", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 3 — --pane scope + lazy materialization + interrupt timeout
+// ---------------------------------------------------------------------------
+
+async function postQueryWith(
+  apiKey: string,
+  body: { sql: string; pane_id?: string },
+): Promise<Response> {
+  return app.fetch(
+    new Request("http://t/v1/query", {
+      method: "POST",
+      headers: bearer(apiKey),
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+describe("POST /v1/query — Phase 3: pane_id scope", () => {
+  it("narrows the scope to a single pane when pane_id is passed", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p1 = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p1",
+      todosRecordSchema,
+      null,
+    );
+    const p2 = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p2",
+      todosRecordSchema,
+      null,
+    );
+    await seedRecord(p1, "todos", { title: "from-p1", done: false });
+    await seedRecord(p2, "todos", { title: "from-p2", done: true });
+
+    const res = await postQueryWith(agent.apiKey, {
+      sql: "SELECT title FROM todos ORDER BY title",
+      pane_id: p1,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: string[][];
+      scope: { pane_count: number };
+    };
+    expect(body.rows.map((r) => r[0])).toEqual(["from-p1"]);
+    expect(body.scope.pane_count).toBe(1);
+  });
+
+  it("resolves view_conflict by scoping to a single pane", async () => {
+    const conflicting = {
+      $defs: {
+        Todo: {
+          type: "object",
+          properties: {
+            done: { type: "integer" },
+            title: { type: "string" },
+          },
+        },
+      },
+      "x-pane-collections": {
+        todos: {
+          schema: { $ref: "#/$defs/Todo" },
+          write: ["agent"],
+          delete: ["agent"],
+        },
+      },
+    };
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    const p1 = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p1",
+      todosRecordSchema,
+      null,
+    );
+    await seedPaneWithSchemas(agent.agentId, humanId, "p2", conflicting, null);
+    await seedRecord(p1, "todos", { title: "ok", done: false });
+
+    const conflictRes = await postQueryWith(agent.apiKey, {
+      sql: "SELECT title FROM todos",
+    });
+    expect(conflictRes.status).toBe(400);
+    expect(
+      ((await conflictRes.json()) as { error: { code: string } }).error.code,
+    ).toBe("view_conflict");
+
+    const okRes = await postQueryWith(agent.apiKey, {
+      sql: "SELECT title FROM todos",
+      pane_id: p1,
+    });
+    expect(okRes.status).toBe(200);
+    const body = (await okRes.json()) as { rows: string[][] };
+    expect(body.rows).toEqual([["ok"]]);
+  });
+
+  it("returns empty result when pane_id points outside the caller's scope (no enumeration oracle)", async () => {
+    const alice = await seedHuman();
+    const aliceAgent = await seedClaimedAgent(alice.humanId);
+    await seedPaneOwnedByHuman(aliceAgent.agentId, alice.humanId, "alice's");
+
+    const bob = await seedHuman();
+    const bobAgent = await seedClaimedAgent(bob.humanId);
+    const bobP = await seedPaneOwnedByHuman(
+      bobAgent.agentId,
+      bob.humanId,
+      "bob's",
+    );
+    await seedRecord(bobP, "todos", { title: "stealth", done: false });
+
+    const res = await postQueryWith(aliceAgent.apiKey, {
+      sql: "SELECT * FROM panes",
+      pane_id: bobP,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: unknown[][];
+      scope: { pane_count: number };
+    };
+    expect(body.rows).toEqual([]);
+    expect(body.scope.pane_count).toBe(0);
+  });
+
+  it("rejects pane_id that doesn't look like a pane id (400)", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+    const res = await postQueryWith(apiKey, {
+      sql: "SELECT 1",
+      pane_id: "not-a-pane-id",
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /v1/query — Phase 3: lazy materialization", () => {
+  it("does not error on view_conflict in a collection the query doesn't reference", async () => {
+    // Two panes both declare `todos` but with conflicting types. A third
+    // pane declares `comments`. A query against `comments` must not be
+    // tripped up by the unrelated `todos` conflict — lazy materialization
+    // only builds the views the query references.
+    const commentsOnly = {
+      $defs: {
+        Comment: {
+          type: "object",
+          required: ["body"],
+          properties: { body: { type: "string" } },
+        },
+      },
+      "x-pane-collections": {
+        comments: {
+          schema: { $ref: "#/$defs/Comment" },
+          write: ["agent"],
+          delete: ["agent"],
+        },
+      },
+    };
+    const conflictingTodos = {
+      $defs: {
+        Todo: {
+          type: "object",
+          properties: {
+            done: { type: "integer" },
+            title: { type: "string" },
+          },
+        },
+      },
+      "x-pane-collections": {
+        todos: {
+          schema: { $ref: "#/$defs/Todo" },
+          write: ["agent"],
+          delete: ["agent"],
+        },
+      },
+    };
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p1",
+      todosRecordSchema,
+      null,
+    );
+    const pComments = await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p2",
+      commentsOnly,
+      null,
+    );
+    await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p3",
+      conflictingTodos,
+      null,
+    );
+    await seedRecord(pComments, "comments", { body: "hello" });
+
+    // Touching `comments` only → must succeed even though `todos` conflicts.
+    const ok = await postQuery(agent.apiKey, "SELECT body FROM comments");
+    expect(ok.status).toBe(200);
+    expect((await ok.json()) as { rows: [string][] }).toMatchObject({
+      rows: [["hello"]],
+    });
+
+    // Sanity: touching `todos` directly still surfaces the conflict.
+    const conflict = await postQuery(agent.apiKey, "SELECT * FROM todos");
+    expect(conflict.status).toBe(400);
+    expect(
+      ((await conflict.json()) as { error: { code: string } }).error.code,
+    ).toBe("view_conflict");
+  });
+
+  it("SHOW TABLES still surfaces every materialized view (introspection forces eager mode)", async () => {
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneWithSchemas(
+      agent.agentId,
+      humanId,
+      "p",
+      todosRecordSchema,
+      todoEventSchema,
+    );
+    const res = await postQuery(agent.apiKey, "SHOW TABLES");
+    expect(res.status).toBe(200);
+    const names = ((await res.json()) as { rows: string[][] }).rows.map(
+      (r) => r[0],
+    );
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "panes",
+        "records",
+        "events",
+        "todos",
+        "todo_added",
+        "todo_toggled",
+      ]),
+    );
+  });
+});

@@ -14,7 +14,7 @@ import { fail, failFromError, printJson } from "../output.js";
 import { readFileSync } from "node:fs";
 import type { QueryResponse } from "@paneui/core";
 
-const KNOWN_FLAGS = new Set(["file", "format", "url", "api-key"]);
+const KNOWN_FLAGS = new Set(["file", "format", "pane", "url", "api-key"]);
 const KNOWN_BOOLS = new Set(["help"]);
 
 const VALID_FORMATS = new Set(["json", "csv", "tsv", "table"]);
@@ -44,6 +44,9 @@ Options:
   --file <path>       read SQL from a file instead of an argument / stdin
   --format <fmt>      json | csv | tsv | table  (default: table for TTYs,
                       json otherwise)
+  --pane <id>         scope the query to a single pane (resolves Phase 2
+                      view_conflict when two of your panes have the same
+                      collection name with different schemas)
   --url <url>         relay base URL  (overrides PANE_URL)
   --api-key <key>     agent API key   (overrides PANE_API_KEY)
   -h, --help          show this help
@@ -104,10 +107,21 @@ export async function runQuery(args: ParsedArgs): Promise<void> {
     );
   }
 
+  const paneId = args.flags.get("pane");
+  if (paneId !== undefined && paneId !== "" && !paneId.startsWith("pan_")) {
+    fail(
+      `--pane must be a pane id (starts with 'pan_'); got '${paneId}'`,
+      "invalid_args",
+    );
+  }
+
   const client = makeClient(args);
   let result: QueryResponse;
   try {
-    result = await client.query(sql);
+    result = await client.query(
+      sql,
+      paneId !== undefined && paneId !== "" ? { paneId } : {},
+    );
   } catch (e) {
     failFromError(e);
     return; // unreachable; failFromError exits
