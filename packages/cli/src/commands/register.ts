@@ -13,7 +13,7 @@ import { DEFAULT_RELAY_URL } from "../config.js";
 import { printJson, fail, failUpgradeRequired } from "../output.js";
 import {
   isValidProfileName,
-  LEGACY_DEFAULT_PROFILE,
+  DEFAULT_PROFILE_NAME,
   readStore,
   resolveProfile,
   upsertProfile,
@@ -63,7 +63,7 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
   assertKnownFlags(args, KNOWN_FLAGS, KNOWN_BOOLS, "pane agent register");
 
   // Profile selection for the WRITE side: --profile flag → PANE_PROFILE env
-  // → the store's current profile → LEGACY_DEFAULT_PROFILE ('default') for
+  // → the store's current profile → DEFAULT_PROFILE_NAME ('default') for
   // a fresh install. We deliberately don't fall through to "no profile, use
   // a fresh name" — the agent needs to end up somewhere callable, and
   // 'default' is a stable, predictable home.
@@ -72,7 +72,7 @@ export async function runRegister(args: ParsedArgs): Promise<void> {
   const profileName =
     profileFlag !== undefined && profileFlag !== ""
       ? profileFlag
-      : (store.currentProfile ?? LEGACY_DEFAULT_PROFILE);
+      : (store.currentProfile ?? DEFAULT_PROFILE_NAME);
 
   if (!isValidProfileName(profileName)) {
     fail(

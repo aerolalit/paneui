@@ -1,6 +1,5 @@
-// Unit tests for the persisted CLI config store (multi-profile shape +
-// legacy-flat back-compat) and resolveConfig's store fallback. Each test
-// points XDG_CONFIG_HOME at a fresh temp dir.
+// Unit tests for the persisted CLI config store and resolveConfig's store
+// fallback. Each test points XDG_CONFIG_HOME at a fresh temp dir.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -189,35 +188,46 @@ describe("store", () => {
   });
 });
 
-describe("readStore — legacy flat shape back-compat", () => {
-  it("reads { url, apiKey } as a single 'default' profile", () => {
+describe("readStore — rejects malformed shapes", () => {
+  it("returns an empty store for a flat { url, apiKey } file (no migration)", () => {
     mkdirSync(join(dir, "pane"), { recursive: true });
     writeFileSync(
       storePath(),
       JSON.stringify({ url: "https://old.test", apiKey: "pk_old" }),
     );
-    expect(readStore()).toEqual({
-      currentProfile: "default",
-      profiles: { default: { url: "https://old.test", apiKey: "pk_old" } },
-    });
+    // No back-compat. Files without a `profiles` object look like a fresh
+    // install — re-run `pane agent register` (or `pane config add`) to
+    // populate.
+    expect(readStore()).toEqual({ profiles: {} });
   });
 
-  it("rewrites the file in the new shape on the next write", () => {
+  it("ignores per-profile entries that aren't objects", () => {
     mkdirSync(join(dir, "pane"), { recursive: true });
     writeFileSync(
       storePath(),
-      JSON.stringify({ url: "https://old.test", apiKey: "pk_old" }),
+      JSON.stringify({
+        current_profile: "prod",
+        profiles: { prod: "not-an-object", dev: { url: "https://x" } },
+      }),
     );
-    // Trigger a write — register adds a new profile, but legacy 'default'
-    // is still readable after.
-    upsertProfile("default", { apiKey: "pk_new" });
-    const raw = readFileSync(storePath(), "utf8");
-    expect(raw).toContain('"profiles"');
-    expect(raw).toContain('"current_profile"');
-    expect(readStore()).toEqual({
-      currentProfile: "default",
-      profiles: { default: { url: "https://old.test", apiKey: "pk_new" } },
-    });
+    const s = readStore();
+    expect(s.profiles["prod"]).toBeUndefined();
+    expect(s.profiles["dev"]).toEqual({ url: "https://x" });
+    // currentProfile pointed at a now-missing entry → undefined.
+    expect(s.currentProfile).toBeUndefined();
+  });
+
+  it("ignores camelCase apiKey inside a profile (only api_key is read)", () => {
+    mkdirSync(join(dir, "pane"), { recursive: true });
+    writeFileSync(
+      storePath(),
+      JSON.stringify({
+        current_profile: "p",
+        profiles: { p: { url: "https://x", apiKey: "leaked" } },
+      }),
+    );
+    const s = readStore();
+    expect(s.profiles["p"]).toEqual({ url: "https://x" });
   });
 });
 

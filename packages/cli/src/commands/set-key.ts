@@ -12,7 +12,7 @@ import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
 import {
   isValidProfileName,
-  LEGACY_DEFAULT_PROFILE,
+  DEFAULT_PROFILE_NAME,
   readStore,
   resolveProfile,
   upsertProfile,
@@ -92,7 +92,7 @@ export async function runSetKey(args: ParsedArgs): Promise<void> {
   const profileName =
     profileFlag !== undefined && profileFlag !== ""
       ? profileFlag
-      : (store.currentProfile ?? LEGACY_DEFAULT_PROFILE);
+      : (store.currentProfile ?? DEFAULT_PROFILE_NAME);
 
   if (!isValidProfileName(profileName)) {
     fail(
