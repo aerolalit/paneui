@@ -679,8 +679,44 @@ function normalizeCell(v: unknown): unknown {
   }
   if (v instanceof Date) return v.toISOString();
   if (typeof v === "object" && v !== null) {
-    // DuckDB returns nested objects for STRUCT/MAP/LIST; pass through —
-    // the route serializer turns these into JSON.
+    // DuckDB returns rich value objects (not JS Date) for temporal columns:
+    //   DuckDBTimestampValue            { micros: bigint }
+    //   DuckDBTimestampTZValue          { micros: bigint }
+    //   DuckDBTimestampMillisecondsValue { millis: bigint }
+    //   DuckDBTimestampSecondsValue     { seconds: bigint }
+    //   DuckDBTimestampNanosecondsValue { nanos: bigint }
+    //   DuckDBDateValue                 { days: number }
+    //   DuckDBTimeValue                 { micros: bigint }
+    //   DuckDBTimeTZValue               { ... }
+    //   DuckDBIntervalValue             { months, days, micros }
+    //
+    // Their toString() returns the canonical textual form (e.g.
+    // "2026-06-02 12:34:56.789" for timestamps) but they don't serialize
+    // through JSON.stringify because of the BigInt fields. Convert to a
+    // string here so the route's c.json(...) doesn't blow up on response.
+    // For TIMESTAMP we rewrite to ISO-8601 so the wire format matches the
+    // rest of the relay's responses (which all use ISO with T + Z).
+    const ctor = v.constructor && v.constructor.name;
+    if (typeof ctor === "string" && ctor.startsWith("DuckDB")) {
+      const s = String(v);
+      if (
+        ctor === "DuckDBTimestampValue" ||
+        ctor === "DuckDBTimestampMillisecondsValue" ||
+        ctor === "DuckDBTimestampSecondsValue" ||
+        ctor === "DuckDBTimestampNanosecondsValue"
+      ) {
+        // "2026-06-02 12:34:56.789" → "2026-06-02T12:34:56.789Z"
+        return s.replace(" ", "T") + "Z";
+      }
+      if (ctor === "DuckDBTimestampTZValue") {
+        // Already carries timezone info; just normalize the separator.
+        return s.replace(" ", "T");
+      }
+      // DATE / TIME / INTERVAL / etc. — return the canonical textual form.
+      return s;
+    }
+    // Other DuckDB outputs (STRUCT, MAP, LIST as plain objects/arrays):
+    // pass through. JSON.stringify handles plain object/array fine.
     return v;
   }
   return v;
