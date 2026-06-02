@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent } from "./agent.js";
 import { parseArgs } from "../argv.js";
-import { writeStore, storePath } from "../store.js";
+import { upsertProfile, storePath } from "../store.js";
 
 const BOOLS = new Set(["json", "once", "help", "print-key", "yes"]);
 function argv(tokens: string[]) {
@@ -70,10 +70,14 @@ describe("runAgent dispatch", () => {
   });
 
   it("routes `logout` to runLogout — clears the store", async () => {
-    // Seed the store, then prove `pane agent logout` empties it. The
-    // bigger logout behaviour lives in logout.test; here we only need to
-    // see that the dispatcher routed to runLogout at all.
-    writeStore({ url: "https://relay.test", apiKey: "pk_test" });
+    // Seed a single profile, then prove `pane agent logout` removes it
+    // (and, since it was the last profile, deletes the file). The bigger
+    // logout behaviour lives in logout.test; here we only need to see
+    // that the dispatcher routed to runLogout at all.
+    upsertProfile("default", {
+      url: "https://relay.test",
+      apiKey: "pk_test",
+    });
     expect(existsSync(storePath())).toBe(true);
     await run(["logout"]);
     expect(exitCode).toBeUndefined();

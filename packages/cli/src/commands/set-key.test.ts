@@ -54,33 +54,34 @@ async function run(tokens: string[]): Promise<void> {
 }
 
 describe("pane agent set-key", () => {
-  it("writes the supplied key to the config file (mode 0600)", async () => {
+  it("writes the supplied key under the active profile (mode 0600)", async () => {
     const key = "pane_" + "a".repeat(32);
     await run([key]);
     const out = JSON.parse(stdout);
     expect(out.saved_to).toContain(join(xdgDir, "pane", "config.json"));
     expect(out.key_prefix).toBe("pane_aaaaaa");
+    expect(out.profile).toBe("default"); // fresh install → 'default'
 
     const written = JSON.parse(readFileSync(out.saved_to, "utf8")) as {
-      apiKey: string;
+      current_profile: string;
+      profiles: Record<string, { url?: string; api_key: string }>;
     };
-    expect(written.apiKey).toBe(key);
+    expect(written.current_profile).toBe("default");
+    expect(written.profiles["default"]!.api_key).toBe(key);
   });
 
-  it("preserves an existing relay URL when only the key is rotated", async () => {
-    // Pre-populate the config with a URL.
-    const { writeStore } = await import("../store.js");
-    writeStore({ url: "https://relay.example.test" });
+  it("preserves an existing relay URL on the profile when only the key is rotated", async () => {
+    const { upsertProfile } = await import("../store.js");
+    upsertProfile("default", { url: "https://relay.example.test" });
 
     const key = "pane_" + "b".repeat(32);
     await run([key]);
     const out = JSON.parse(stdout);
     const written = JSON.parse(readFileSync(out.saved_to, "utf8")) as {
-      url: string;
-      apiKey: string;
+      profiles: Record<string, { url: string; api_key: string }>;
     };
-    expect(written.url).toBe("https://relay.example.test");
-    expect(written.apiKey).toBe(key);
+    expect(written.profiles["default"]!.url).toBe("https://relay.example.test");
+    expect(written.profiles["default"]!.api_key).toBe(key);
   });
 
   it("optionally updates the relay URL alongside the key", async () => {
@@ -88,11 +89,27 @@ describe("pane agent set-key", () => {
     await run([key, "--url", "https://different.example.test"]);
     const out = JSON.parse(stdout);
     const written = JSON.parse(readFileSync(out.saved_to, "utf8")) as {
-      url: string;
-      apiKey: string;
+      profiles: Record<string, { url: string; api_key: string }>;
     };
-    expect(written.url).toBe("https://different.example.test");
-    expect(written.apiKey).toBe(key);
+    expect(written.profiles["default"]!.url).toBe(
+      "https://different.example.test",
+    );
+    expect(written.profiles["default"]!.api_key).toBe(key);
+  });
+
+  it("targets a named profile when --profile is given", async () => {
+    const { upsertProfile, readStore } = await import("../store.js");
+    upsertProfile("prod", { url: "https://prod", apiKey: "pk_old" });
+    upsertProfile("dev", { url: "https://dev", apiKey: "pk_dev" });
+    const before = readStore();
+    expect(before.currentProfile).toBe("prod");
+
+    const key = "pane_" + "9".repeat(32);
+    await run([key, "--profile", "dev"]);
+    const after = readStore();
+    expect(after.currentProfile).toBe("prod"); // unchanged
+    expect(after.profiles["dev"]!.apiKey).toBe(key);
+    expect(after.profiles["prod"]!.apiKey).toBe("pk_old"); // untouched
   });
 
   it("never echoes the key in stdout", async () => {

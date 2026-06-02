@@ -6,6 +6,8 @@
 // behind the shape and the rename from the older flat layout.
 //
 // Config: PANE_URL and PANE_API_KEY (env), overridable with --url / --api-key.
+// Multiple environments live as named profiles in
+// $XDG_CONFIG_HOME/pane/config.json; pick one with --profile or PANE_PROFILE.
 // Output is JSON by default. Every noun self-documents via --help.
 
 import { parseArgs, ArgvError } from "./argv.js";
@@ -91,13 +93,19 @@ Run \`pane <command> --help\` for command-specific options.
 Config:
   PANE_URL          Relay base URL.        Override: --url <url>
   PANE_API_KEY      Agent API key.         Override: --api-key <key>
+  PANE_PROFILE      Active profile name.   Override: --profile <name>
   'pane agent register' provisions the API key and saves it (with the URL) to
-  \${XDG_CONFIG_HOME:-~/.config}/pane/config.json — afterwards commands need
-  only PANE_URL (or nothing) set.
+  \${XDG_CONFIG_HOME:-~/.config}/pane/config.json under a named profile —
+  afterwards commands need no env vars. Manage multiple environments
+  (dev/staging/prod) with 'pane config list / use / add / rm'.
 
 Global flags:
   -h, --help        Show help.
   -v, --version     Print version.
+  --profile <name>  Pick a saved profile for this invocation (overrides
+                    PANE_PROFILE and the saved 'current_profile').
+  --url <url>       Relay base URL — bypasses profile selection entirely.
+  --api-key <key>   Agent API key — bypasses profile selection entirely.
 
 Output: stdout is machine-readable JSON; errors go to stderr as
 {"error":{"code","message"}} with a non-zero exit.`;
