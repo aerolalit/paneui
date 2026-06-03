@@ -314,44 +314,52 @@ describe("template-record WS broadcast", () => {
     ws.close();
   });
 
-  it("broadcasts to BOTH derived panes simultaneously", async () => {
-    const { apiKey } = await seedAgent();
-    const { templateId } = await createTemplate(apiKey);
-    const a = await createPaneFromTemplate(apiKey, templateId);
-    const b = await createPaneFromTemplate(apiKey, templateId);
+  // Postgres CI: this test exercises two WS handshakes + replay + a live
+  // write, total wall time can run ~5s on a cold CI runner. Vitest's default
+  // 5s test timeout doesn't leave headroom. Bumped to 15s so postgres has
+  // room without forcing the sqlite path (which finishes in <1s) to wait.
+  it(
+    "broadcasts to BOTH derived panes simultaneously",
+    { timeout: 15000 },
+    async () => {
+      const { apiKey } = await seedAgent();
+      const { templateId } = await createTemplate(apiKey);
+      const a = await createPaneFromTemplate(apiKey, templateId);
+      const b = await createPaneFromTemplate(apiKey, templateId);
 
-    const wsA = connect(a.paneId, a.agentToken, "*");
-    const wsB = connect(b.paneId, b.agentToken, "*");
-    const qA = new FrameQueue(wsA);
-    const qB = new FrameQueue(wsB);
-    await waitOpen(wsA);
-    await waitOpen(wsB);
-    await qA.until(
-      (m) =>
-        m.kind === "template-record.replay.complete" &&
-        m.collection === "questions",
-    );
-    await qB.until(
-      (m) =>
-        m.kind === "template-record.replay.complete" &&
-        m.collection === "questions",
-    );
+      const wsA = connect(a.paneId, a.agentToken, "*");
+      const wsB = connect(b.paneId, b.agentToken, "*");
+      const qA = new FrameQueue(wsA);
+      const qB = new FrameQueue(wsB);
+      await waitOpen(wsA);
+      await waitOpen(wsB);
+      await qA.until(
+        (m) =>
+          m.kind === "template-record.replay.complete" &&
+          m.collection === "questions",
+      );
+      await qB.until(
+        (m) =>
+          m.kind === "template-record.replay.complete" &&
+          m.collection === "questions",
+      );
 
-    await upsertTemplateRecord(apiKey, templateId, "q_both", "for everyone");
+      await upsertTemplateRecord(apiKey, templateId, "q_both", "for everyone");
 
-    const deltaA = (await qA.until(
-      (m) =>
-        m.kind === "template-record.upsert" && m.collection === "questions",
-    )) as { record?: { key: string } };
-    const deltaB = (await qB.until(
-      (m) =>
-        m.kind === "template-record.upsert" && m.collection === "questions",
-    )) as { record?: { key: string } };
-    expect(deltaA.record!.key).toBe("q_both");
-    expect(deltaB.record!.key).toBe("q_both");
-    wsA.close();
-    wsB.close();
-  });
+      const deltaA = (await qA.until(
+        (m) =>
+          m.kind === "template-record.upsert" && m.collection === "questions",
+      )) as { record?: { key: string } };
+      const deltaB = (await qB.until(
+        (m) =>
+          m.kind === "template-record.upsert" && m.collection === "questions",
+      )) as { record?: { key: string } };
+      expect(deltaA.record!.key).toBe("q_both");
+      expect(deltaB.record!.key).toBe("q_both");
+      wsA.close();
+      wsB.close();
+    },
+  );
 
   it("rejects subscribe_template_records=undeclared with 400", async () => {
     const { apiKey } = await seedAgent();
