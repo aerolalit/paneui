@@ -21,6 +21,7 @@ import { requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
+import { log } from "../../log.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
 import {
   deleteTemplateRecord,
@@ -622,6 +623,58 @@ myTemplates.post("/:id/unpublish", requireHuman, async (c) => {
   });
 
   return c.json({ id, published_at: null });
+});
+
+// DELETE /v1/my-templates/:id — soft-delete a template the human owns.
+//
+// Mirrors DELETE /v1/my-panes/:id (cookie-authed soft-delete) but for the
+// template head. Versions stay on disk; panes pinned to those versions
+// keep working until they expire. Sweeper #304 hard-deletes the row past
+// retention. Strict-cascade refusal lives on the agent-authed
+// /v1/templates/:id — for the human-shell path we prefer "remove from my
+// list" semantics over a 409, which would be confusing in a tile menu.
+//
+// 404 if the template doesn't exist or isn't owned by one of the human's
+// claimed agents. Idempotent: a second DELETE on an already-trashed
+// template returns 204.
+myTemplates.delete("/:id", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { id: true, ownerHumanId: true } } },
+  });
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    throw errors.notFound();
+  }
+  if (template.deletedAt !== null) {
+    return c.body(null, 204);
+  }
+
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.template.update({
+      where: { id },
+      data: { deletedAt: now },
+    }),
+    prisma.deletionLog.create({
+      data: {
+        entityType: "template",
+        entityId: id,
+        ownerHumanId: human.id,
+        ownerAgentId: template.owner.id,
+        phase: "soft_deleted",
+        reason: "human_delete",
+        at: now,
+      },
+    }),
+  ]);
+
+  log.info("my-templates: soft-deleted", { templateId: id, humanId: human.id });
+  return c.body(null, 204);
 });
 
 // POST /v1/my-templates/:id/launch — create a pane from an installed template.

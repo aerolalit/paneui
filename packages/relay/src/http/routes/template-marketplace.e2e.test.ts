@@ -1040,6 +1040,112 @@ describe("GET /v1/templates/catalog (agent, #279 PR C)", () => {
 });
 
 // ----------------------------------------------------------------------
+// DELETE /v1/my-templates/:id — cookie-authed soft-delete (iter4).
+// ----------------------------------------------------------------------
+describe("DELETE /v1/my-templates/:id (human)", () => {
+  async function seedOwnedTemplate(humanId: string) {
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed-del",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Deletable",
+        slug: "deletable",
+        latestVersion: 1,
+      },
+    });
+    return { agentId: agent.id, templateId: tmpl.id };
+  }
+
+  it("requires auth (401 without cookie)", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x", { method: "DELETE" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when the template isn't owned by the calling human", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const apiKey = generateApiKey();
+    const stranger = await prisma.agent.create({
+      data: {
+        name: "stranger-del",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Stranger",
+        latestVersion: 1,
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tmpl.id}`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(404);
+    const row = await prisma.template.findUnique({ where: { id: tmpl.id } });
+    expect(row!.deletedAt).toBeNull();
+  });
+
+  it("soft-deletes an owned template + writes a DeletionLog row", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { agentId, templateId } = await seedOwnedTemplate(humanId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(204);
+    const row = await prisma.template.findUnique({ where: { id: templateId } });
+    expect(row!.deletedAt).not.toBeNull();
+    const logs = await prisma.deletionLog.findMany({
+      where: { entityType: "template", entityId: templateId },
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.phase).toBe("soft_deleted");
+    expect(logs[0]!.reason).toBe("human_delete");
+    expect(logs[0]!.ownerHumanId).toBe(humanId);
+    expect(logs[0]!.ownerAgentId).toBe(agentId);
+  });
+
+  it("is idempotent — second DELETE returns 204 without a new log row", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedOwnedTemplate(humanId);
+    await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(204);
+    const logs = await prisma.deletionLog.findMany({
+      where: { entityType: "template", entityId: templateId },
+    });
+    expect(logs).toHaveLength(1);
+  });
+});
+
+// ----------------------------------------------------------------------
 // POST /v1/my-templates/:id/launch — open a pane from an installed template.
 // ----------------------------------------------------------------------
 describe("POST /v1/my-templates/:id/launch (human)", () => {

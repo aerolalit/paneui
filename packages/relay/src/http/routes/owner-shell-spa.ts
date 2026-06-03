@@ -47,6 +47,10 @@ interface TemplateRef {
    *  Drives the "X panes →" chip on My Templates tiles that jumps to the
    *  Panes view filtered to this template. */
   paneCount: number;
+  /** True when the human owns this template AND it's currently published
+   *  to the public catalog. Drives the Publish/Unpublish toggle in the
+   *  tile menu. Always false for installed-only or discover tiles. */
+  isPublished: boolean;
 }
 
 interface PaneRef {
@@ -123,6 +127,7 @@ async function loadShellData(
             id: true,
             name: true,
             slug: true,
+            publishedAt: true,
             ...latestVersionInclude,
           },
         }),
@@ -136,6 +141,7 @@ async function loadShellData(
             id: true,
             name: true,
             slug: true,
+            publishedAt: true,
             deletedAt: true,
             ...latestVersionInclude,
           },
@@ -150,6 +156,7 @@ async function loadShellData(
         id: true,
         name: true,
         slug: true,
+        publishedAt: true,
         ...latestVersionInclude,
       },
     }),
@@ -202,6 +209,7 @@ async function loadShellData(
     id: string;
     name: string | null;
     slug: string | null;
+    publishedAt: Date | null;
     versions: Array<{ inputSchema: unknown }>;
   }): TemplateRef {
     return {
@@ -210,6 +218,7 @@ async function loadShellData(
       slug: t.slug,
       isAgentInit: hasRequiredInputs(t.versions[0]?.inputSchema),
       paneCount: paneCountByTemplate.get(t.id) ?? 0,
+      isPublished: t.publishedAt !== null,
     };
   }
   const ownedTemplates = ownedTemplatesRaw.map(toRef);
@@ -291,6 +300,9 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           .join("");
 
   // Home "All templates" grid — owned + installed deduped (by id).
+  // Compose a set of "owned" ids so the home grid can tag the matching
+  // tile as owned (it appears in both lists; the owned tile wins).
+  const ownedIds = new Set(data.ownedTemplates.map((t) => t.id));
   const homeAllTemplates = dedupTemplates([
     ...data.ownedTemplates,
     ...data.installs.map((i) => i.template),
@@ -298,20 +310,29 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   const homeAppsHtml =
     homeAllTemplates.length === 0
       ? `<div class="empty-strip" style="grid-column:1/-1;">Your library is empty. Install one from the catalog or run <code>pane template create</code>.</div>`
-      : homeAllTemplates.map((t) => appTile(t, { launchable: true })).join("");
+      : homeAllTemplates
+          .map((t) =>
+            appTile(t, {
+              launchable: true,
+              menu: ownedIds.has(t.id) ? "owned" : "installed",
+            }),
+          )
+          .join("");
 
   // Templates view grids.
   const minesHtml =
     data.ownedTemplates.length === 0
       ? `<div class="empty-strip" style="grid-column:1/-1;">No templates yet. Run <code>pane template create</code> from a claimed agent.</div>`
       : data.ownedTemplates
-          .map((t) => appTile(t, { launchable: true }))
+          .map((t) => appTile(t, { launchable: true, menu: "owned" }))
           .join("");
   const installedHtml =
     data.installs.length === 0
       ? `<div class="empty-strip" style="grid-column:1/-1;">No installs yet.</div>`
       : data.installs
-          .map((i) => appTile(i.template, { launchable: true }))
+          .map((i) =>
+            appTile(i.template, { launchable: true, menu: "installed" }),
+          )
           .join("");
   const discoverHtml =
     data.publicCatalog.length === 0
@@ -496,26 +517,51 @@ function favPaneTile(p: PaneRef): string {
 
 function appTile(
   t: TemplateRef,
-  opts: { launchable: boolean; install?: boolean },
+  opts: {
+    launchable: boolean;
+    install?: boolean;
+    /** `owned` shows Publish/Unpublish + Delete; `installed` shows
+     *  Uninstall; omit on discover tiles (no menu). */
+    menu?: "owned" | "installed";
+  },
 ): string {
   const name = t.name ?? t.slug ?? t.id;
   const hue = paneHue(t.id);
   const initials = paneInitials(name);
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
+  // The badge sits at the top-right of the tile, with a clear icon
+  // alongside the word so the type registers at a glance. Earlier versions
+  // tucked a 10px text pill at the bottom — too easy to miss.
   const badge = t.isAgentInit
-    ? `<span class="tile-badge agent-init" title="Needs an agent to set input data before launch">agent-init</span>`
-    : `<span class="tile-badge ready" title="Ready to launch — no setup needed">ready</span>`;
+    ? `<span class="tile-corner agent-init" title="Agent-init template — an agent must seed input_data before launch">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+        agent-init
+      </span>`
+    : `<span class="tile-corner ready" title="Ready to launch — no setup needed">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+        ready
+      </span>`;
+  // Triple-dots menu — Publish/Unpublish/Delete for owned, Uninstall for
+  // installed. Discover tiles get no menu.
+  const menuBtn = opts.menu
+    ? `<button class="tile-menu-btn" data-template-menu="${escapeHtml(t.id)}" data-template-menu-kind="${opts.menu}" data-template-name="${escapeHtml(name)}" data-template-published="${t.isPublished ? "1" : "0"}" title="More" aria-label="More">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
+      </button>`
+    : "";
   // "X panes →" chip — clickable footer that opens the Panes view filtered
   // to this template. Only shown when there's at least one live pane.
   const paneCountChip =
     t.paneCount > 0
       ? `<button class="pane-count-chip" data-template-filter="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" title="Show panes from this template">${t.paneCount} ${t.paneCount === 1 ? "pane" : "panes"} →</button>`
       : "";
-  return `<div class="app-tile-wrap" data-template-id="${escapeHtml(t.id)}">
+  const wrapCls = t.isAgentInit
+    ? "app-tile-wrap agent-init"
+    : "app-tile-wrap ready";
+  return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
+    ${badge}${menuBtn}
     <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}"${dataAttr}>
       <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
       <div class="label">${escapeHtml(name)}</div>
-      ${badge}
     </button>
     ${paneCountChip}
   </div>`;
@@ -690,14 +736,48 @@ const EXTRA_CSS = `
   }
   .filter-banner button:hover { color: var(--ink); border-color: rgba(255,255,255,0.20); }
 
-  /* "agent-init" / "ready" pill on every template tile. */
-  .tile-badge {
-    display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px;
-    border-radius: 4px; margin-top: 6px; letter-spacing: 0.02em;
+  /* "agent-init" / "ready" corner badge — top-left of every template
+     tile. Bigger, brighter, and paired with an icon so the type
+     registers at a glance (previous 10px text pill was missable). */
+  .tile-corner {
+    position: absolute; top: 6px; left: 6px; z-index: 2;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10.5px; font-weight: 600; line-height: 1;
+    padding: 4px 7px; border-radius: 999px;
+    letter-spacing: 0.02em;
     font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    pointer-events: auto; user-select: none;
+    backdrop-filter: blur(6px);
   }
-  .tile-badge.agent-init { color: #c4b5fd; background: rgba(196,181,253,0.12); border: 1px solid rgba(196,181,253,0.25); }
-  .tile-badge.ready { color: #5eead4; background: rgba(94,234,212,0.10); border: 1px solid rgba(94,234,212,0.22); }
+  .tile-corner.agent-init {
+    color: #e9deff;
+    background: rgba(168, 85, 247, 0.30);
+    border: 1px solid rgba(196, 181, 253, 0.55);
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.10) inset;
+  }
+  .tile-corner.ready {
+    color: #ccfbf1;
+    background: rgba(20, 184, 166, 0.28);
+    border: 1px solid rgba(94, 234, 212, 0.50);
+    box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.10) inset;
+  }
+
+  /* Triple-dots menu trigger on owned + installed tiles. Top-right;
+     mirrors the corner-badge position on the left. */
+  .app-tile-wrap .tile-menu-btn {
+    position: absolute; top: 6px; right: 6px; z-index: 2;
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(10,13,20,0.55); border: 1px solid rgba(255,255,255,0.08);
+    color: var(--ink-mute); border-radius: 6px; cursor: pointer; padding: 0;
+    backdrop-filter: blur(4px); transition: color 120ms, transform 120ms;
+  }
+  .app-tile-wrap .tile-menu-btn:hover { color: var(--ink); transform: scale(1.06); }
+
+  /* Subtle outer accent on the wrap so the type carries even without
+     a visible badge (e.g. when scrolling fast / dense grid). */
+  .app-tile-wrap.agent-init .app-tile { box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.18); }
+  .app-tile-wrap.ready .app-tile { box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18); }
 
   /* Lightweight floating popover for pane-row triple-dots menu. */
   .pane-menu-pop {
@@ -894,8 +974,9 @@ const SHELL_JS = `
   // /my-templates page.
   document.body.addEventListener('click', async (ev) => {
     // Sub-controls inside the tile have their own handlers (pane-count chip,
-    // future favorites controls). Bail so we don't double-fire.
+    // tile-menu trigger). Bail so we don't double-fire.
     if (ev.target instanceof HTMLElement && ev.target.closest('button[data-template-filter]')) return;
+    if (ev.target instanceof HTMLElement && ev.target.closest('button[data-template-menu]')) return;
     const tile = ev.target instanceof HTMLElement &&
       (ev.target.closest('.fav-tile') || ev.target.closest('.app-tile'));
     if (!tile) return;
@@ -1038,6 +1119,94 @@ const SHELL_JS = `
           alert('Network error — try again.');
           target.disabled = false;
         }
+      }
+    });
+  });
+
+  // Template-tile triple-dots menu — Publish/Unpublish/Delete on owned
+  // tiles, Uninstall on installed tiles. Reuses the .pane-menu-pop style.
+  document.body.addEventListener('click', (ev) => {
+    const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-template-menu]');
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const tid = btn.getAttribute('data-template-menu');
+    const kind = btn.getAttribute('data-template-menu-kind');
+    const name = btn.getAttribute('data-template-name') || '';
+    const published = btn.getAttribute('data-template-published') === '1';
+    if (!tid || !kind) return;
+    closeMenu();
+    const pop = document.createElement('div');
+    pop.className = 'pane-menu-pop';
+    let html = '';
+    if (kind === 'owned') {
+      html += published
+        ? '<button data-act="unpublish">Unpublish</button>'
+        : '<button data-act="publish">Publish to store</button>';
+      html += '<button data-act="delete" class="danger">Delete template</button>';
+    } else if (kind === 'installed') {
+      html += '<button data-act="uninstall" class="danger">Uninstall</button>';
+    }
+    pop.innerHTML = html;
+    document.body.appendChild(pop);
+    const rect = btn.getBoundingClientRect();
+    pop.style.top = rect.bottom + 4 + 'px';
+    pop.style.left = Math.max(8, rect.right - pop.offsetWidth) + 'px';
+    if (rect.bottom + pop.offsetHeight > window.innerHeight - 8) {
+      pop.style.top = (rect.top - pop.offsetHeight - 4) + 'px';
+    }
+    openMenu = pop;
+
+    pop.addEventListener('click', async (mev) => {
+      const target = mev.target instanceof HTMLElement && mev.target.closest('button[data-act]');
+      if (!target) return;
+      mev.stopPropagation();
+      const act = target.getAttribute('data-act');
+
+      async function callAction(path, method, okStatuses) {
+        target.disabled = true;
+        try {
+          const res = await fetch(path, { method, credentials: 'same-origin' });
+          if (!okStatuses.includes(res.status)) {
+            const body = await res.json().catch(() => ({}));
+            alert('Failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+            target.disabled = false;
+            return false;
+          }
+          return true;
+        } catch {
+          alert('Network error — try again.');
+          target.disabled = false;
+          return false;
+        }
+      }
+
+      if (act === 'publish') {
+        if (!confirm('Publish "' + name + '" to the public Template Store? Anyone will be able to install it.')) return;
+        const ok = await callAction('/v1/my-templates/' + encodeURIComponent(tid) + '/publish', 'POST', [200, 201]);
+        if (ok) { closeMenu(); location.reload(); }
+      } else if (act === 'unpublish') {
+        if (!confirm('Unpublish "' + name + '" from the store? Existing installs keep working.')) return;
+        const ok = await callAction('/v1/my-templates/' + encodeURIComponent(tid) + '/unpublish', 'POST', [200]);
+        if (ok) { closeMenu(); location.reload(); }
+      } else if (act === 'delete') {
+        if (!confirm('Delete "' + name + '"? Existing panes derived from it keep working until they expire.')) return;
+        const ok = await callAction('/v1/my-templates/' + encodeURIComponent(tid), 'DELETE', [204]);
+        if (ok) {
+          closeMenu();
+          // Remove every tile referencing this template from the DOM,
+          // and decrement the My Templates count chip.
+          document.querySelectorAll('.app-tile-wrap[data-template-id="' + CSS.escape(tid) + '"]').forEach((el) => el.remove());
+          const navCount = document.querySelector('#nav-items button[data-view="mine"] .count');
+          if (navCount) {
+            const n = parseInt(navCount.textContent || '0', 10);
+            if (!isNaN(n) && n > 0) navCount.textContent = String(n - 1);
+          }
+        }
+      } else if (act === 'uninstall') {
+        if (!confirm('Uninstall "' + name + '"? You can install it again later from the Template Store.')) return;
+        const ok = await callAction('/v1/templates/' + encodeURIComponent(tid) + '/uninstall', 'POST', [200, 204]);
+        if (ok) { closeMenu(); location.reload(); }
       }
     });
   });
