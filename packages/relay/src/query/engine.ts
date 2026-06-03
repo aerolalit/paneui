@@ -80,6 +80,18 @@ interface ScopedData {
   records: RecordRow[];
   events: EventRow[];
   /**
+   * Template heads referenced by the caller's panes. One row per unique
+   * templateId; carries the head's name so per-template-collection views
+   * can expose a friendly `template_name` column.
+   */
+  templates: TemplateRow[];
+  /**
+   * Live template records (across every template referenced by the caller's
+   * panes). Drives the `template_records` view + per-template-collection
+   * `tpl_<name>` views.
+   */
+  templateRecords: TemplateRecordRow[];
+  /**
    * Unique template versions referenced by the caller's panes, with their
    * record/event schemas. Dedup'd by templateVersionId — many panes can
    * share the same version. Drives the per-collection view materialiser.
@@ -103,6 +115,27 @@ interface PaneRow {
 interface RecordRow {
   id: string;
   pane_id: string;
+  collection: string;
+  key: string;
+  data: unknown;
+  version: number;
+  seq: number;
+  author_kind: string;
+  author_id: string;
+  created_at: Date;
+  updated_at: Date;
+  deleted_at: Date | null;
+}
+
+interface TemplateRow {
+  id: string;
+  name: string | null;
+  slug: string | null;
+}
+
+interface TemplateRecordRow {
+  id: string;
+  template_id: string;
   collection: string;
   key: string;
   data: unknown;
@@ -246,11 +279,13 @@ async function loadScopedData(
       panes: [],
       records: [],
       events: [],
+      templates: [],
+      templateRecords: [],
       templateVersions: [],
     };
   }
 
-  // Three parallel reads. The caller-scope was already applied via
+  // Parallel reads. The caller-scope was already applied via
   // pane.id IN paneIds, so these queries can never bleed across humans.
   const [panes, records, events] = await Promise.all([
     prisma.pane.findMany({
@@ -265,6 +300,7 @@ async function loadScopedData(
             version: true,
             recordSchema: true,
             eventSchema: true,
+            templateRecordSchema: true,
           },
         },
         status: true,
@@ -310,11 +346,61 @@ async function loadScopedData(
     }),
   ]);
 
+  // Resolve unique template ids from the panes we just loaded — feeds
+  // both the template head and the template-records dataset. Avoid a
+  // separate prisma roundtrip when no pane resolved a templateId.
+  const templateIds = Array.from(
+    new Set(
+      panes
+        .map((p) => p.templateVersion?.templateId)
+        .filter((v): v is string => typeof v === "string"),
+    ),
+  );
+
+  const [templates, templateRecords] =
+    templateIds.length === 0
+      ? [
+          [] as Array<{ id: string; name: string | null; slug: string | null }>,
+          [],
+        ]
+      : await Promise.all([
+          prisma.template.findMany({
+            where: { id: { in: templateIds } },
+            select: { id: true, name: true, slug: true },
+          }),
+          prisma.templateRecord.findMany({
+            where: { collection: { templateId: { in: templateIds } } },
+            take: SCOPE_RECORD_CAP + 1,
+            select: {
+              id: true,
+              recordKey: true,
+              data: true,
+              version: true,
+              seq: true,
+              authorKind: true,
+              authorId: true,
+              createdAt: true,
+              updatedAt: true,
+              deletedAt: true,
+              collection: {
+                select: { templateId: true, name: true },
+              },
+            },
+          }),
+        ]);
+
   if (records.length > SCOPE_RECORD_CAP) {
     throw new QueryError(
       "scope_too_large",
       `more than ${SCOPE_RECORD_CAP} records across your panes — query API caps the live load`,
       "scope to a single pane with --pane <id>, or use pane records list per pane (paginated)",
+    );
+  }
+  if (templateRecords.length > SCOPE_RECORD_CAP) {
+    throw new QueryError(
+      "scope_too_large",
+      `more than ${SCOPE_RECORD_CAP} template records across the templates your panes reference — query API caps the live load`,
+      "scope to a single pane with --pane <id>, or page through pane template-records list per template",
     );
   }
   if (events.length > SCOPE_EVENT_CAP) {
@@ -363,6 +449,25 @@ async function loadScopedData(
       data: e.data,
       template_version_id: e.templateVersionId,
     })),
+    templates: templates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+    })),
+    templateRecords: templateRecords.map((r) => ({
+      id: r.id,
+      template_id: r.collection.templateId,
+      collection: r.collection.name,
+      key: r.recordKey,
+      data: r.data,
+      version: r.version,
+      seq: r.seq,
+      author_kind: r.authorKind,
+      author_id: r.authorId,
+      created_at: r.createdAt,
+      updated_at: r.updatedAt,
+      deleted_at: r.deletedAt,
+    })),
     templateVersions: dedupTemplateVersions(panes),
   };
 }
@@ -377,6 +482,7 @@ function dedupTemplateVersions(
       id: string;
       recordSchema: unknown;
       eventSchema: unknown;
+      templateRecordSchema?: unknown;
     } | null;
   }>,
 ): TemplateVersionSchemas[] {
@@ -387,7 +493,11 @@ function dedupTemplateVersions(
     if (!v) continue;
     if (seen.has(v.id)) continue;
     seen.add(v.id);
-    out.push({ recordSchema: v.recordSchema, eventSchema: v.eventSchema });
+    out.push({
+      recordSchema: v.recordSchema,
+      eventSchema: v.eventSchema,
+      templateRecordSchema: v.templateRecordSchema ?? null,
+    });
   }
   return out;
 }
@@ -448,6 +558,29 @@ async function materializeViews(
       template_version_id TEXT
     )
   `);
+  await conn.run(`
+    CREATE TABLE _template_raw (
+      id TEXT,
+      name TEXT,
+      slug TEXT
+    )
+  `);
+  await conn.run(`
+    CREATE TABLE _template_record_raw (
+      id TEXT,
+      template_id TEXT,
+      collection TEXT,
+      key TEXT,
+      data JSON,
+      version INTEGER,
+      seq INTEGER,
+      author_kind TEXT,
+      author_id TEXT,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP,
+      deleted_at TIMESTAMP
+    )
+  `);
 
   await insertRows(conn, "_pane_raw", data.panes, (p) => [
     p.id,
@@ -488,12 +621,37 @@ async function materializeViews(
     e.template_version_id,
   ]);
 
+  await insertRows(conn, "_template_raw", data.templates, (t) => [
+    t.id,
+    t.name,
+    t.slug,
+  ]);
+
+  await insertRows(conn, "_template_record_raw", data.templateRecords, (r) => [
+    r.id,
+    r.template_id,
+    r.collection,
+    r.key,
+    JSON.stringify(r.data),
+    r.version,
+    r.seq,
+    r.author_kind,
+    r.author_id,
+    r.created_at,
+    r.updated_at,
+    r.deleted_at,
+  ]);
+
   // Generic views — kept for back-compat with Phase 1 and as the escape
   // hatch when a property a query needs isn't declared in the schema.
   // Always materialized: cheap, and `SHOW TABLES` needs them visible.
   await conn.run(`CREATE VIEW panes AS SELECT * FROM _pane_raw`);
   await conn.run(`CREATE VIEW records AS SELECT * FROM _record_raw`);
   await conn.run(`CREATE VIEW events AS SELECT * FROM _event_raw`);
+  await conn.run(`CREATE VIEW templates AS SELECT * FROM _template_raw`);
+  await conn.run(
+    `CREATE VIEW template_records AS SELECT * FROM _template_record_raw`,
+  );
 
   // Phase 2 — per-collection / per-event-type views. Compile the union of
   // schemas across every template version the caller's panes reference, then

@@ -48,8 +48,14 @@ export interface PerEventTypeView {
 }
 
 export interface SchemaFingerprint {
-  /** Materialized views to expose, one per collection. */
+  /** Materialized views to expose, one per per-pane collection. */
   collections: PerCollectionView[];
+  /**
+   * Materialized views for template-level records, one per declared
+   * template collection. Named with a `tpl_` prefix to avoid collision
+   * with per-pane collection views of the same name.
+   */
+  templateCollections: PerCollectionView[];
   /** Materialized views to expose, one per event type. */
   eventTypes: PerEventTypeView[];
   /**
@@ -74,6 +80,7 @@ export interface SchemaConflict {
 export interface TemplateVersionSchemas {
   recordSchema: unknown;
   eventSchema: unknown;
+  templateRecordSchema?: unknown;
 }
 
 // Build the per-collection + per-event-type fingerprint by walking every
@@ -85,11 +92,22 @@ export function buildSchemaFingerprint(
 ): SchemaFingerprint {
   // collection-name → column-name → sqlType (first seen)
   const collectionColumns = new Map<string, Map<string, CompiledColumn>>();
+  const templateCollectionColumns = new Map<
+    string,
+    Map<string, CompiledColumn>
+  >();
   const eventColumns = new Map<string, Map<string, CompiledColumn>>();
   const conflicts: SchemaConflict[] = [];
 
   for (const v of versions) {
     walkRecordSchema(v.recordSchema, collectionColumns, conflicts);
+    walkRecordSchema(
+      v.templateRecordSchema,
+      templateCollectionColumns,
+      conflicts,
+      // The conflict scope label is still "collection" — the view layer
+      // disambiguates by the `tpl_` prefix.
+    );
     walkEventSchema(v.eventSchema, eventColumns, conflicts);
   }
 
@@ -98,6 +116,13 @@ export function buildSchemaFingerprint(
       ([name, cols]) => ({
         collection: name,
         viewName: viewNameForCollection(name),
+        columns: Array.from(cols.values()),
+      }),
+    ),
+    templateCollections: Array.from(templateCollectionColumns.entries()).map(
+      ([name, cols]) => ({
+        collection: name,
+        viewName: `tpl_${viewNameForCollection(name)}`,
         columns: Array.from(cols.values()),
       }),
     ),
@@ -266,6 +291,9 @@ export function buildViewDdl(fingerprint: SchemaFingerprint): string[] {
   for (const view of fingerprint.collections) {
     ddl.push(buildCollectionView(view));
   }
+  for (const view of fingerprint.templateCollections) {
+    ddl.push(buildTemplateCollectionView(view));
+  }
   for (const view of fingerprint.eventTypes) {
     ddl.push(buildEventTypeView(view));
   }
@@ -293,6 +321,33 @@ ${userColsBlock}  r.key AS key,
   (r.deleted_at IS NOT NULL) AS _deleted
 FROM _record_raw r
 LEFT JOIN _pane_raw p ON p.id = r.pane_id
+WHERE r.collection = '${escapeStringLiteral(view.collection)}'`;
+}
+
+// Per-template-collection view. Same column shape as the per-pane collection
+// view (typed user columns + the standard `_*` metadata), but reads from
+// _template_record_raw, joins to _template_raw for `template_id` / friendly
+// `template_name`, and uses `tpl_<collection>` as the view name.
+function buildTemplateCollectionView(view: PerCollectionView): string {
+  const userCols = view.columns
+    .map(
+      (c) =>
+        `  ${c.extractExpr.replace(/\bdata\b/g, "r.data")} AS ${quoteIdent(c.name)}`,
+    )
+    .join(",\n");
+  const userColsBlock = userCols ? userCols + ",\n" : "";
+  return `CREATE VIEW ${quoteIdent(view.viewName)} AS SELECT
+${userColsBlock}  r.key AS key,
+  r.template_id AS template_id,
+  t.name AS template_name,
+  r.created_at AS _created_at,
+  r.updated_at AS _updated_at,
+  r.version AS _version,
+  r.seq AS _seq,
+  r.author_kind AS _author,
+  (r.deleted_at IS NOT NULL) AS _deleted
+FROM _template_record_raw r
+LEFT JOIN _template_raw t ON t.id = r.template_id
 WHERE r.collection = '${escapeStringLiteral(view.collection)}'`;
 }
 
