@@ -674,7 +674,7 @@ systemPages.get("/my-panes", (c) => c.redirect("/home#panes", 301));
 // ----------------------------------------------------------------------
 // GET /my-templates — list of templates owned by the human's agents
 // ----------------------------------------------------------------------
-systemPages.get("/my-templates", (c) => c.redirect("/home#apps", 301));
+systemPages.get("/my-templates", (c) => c.redirect("/home#mine", 301));
 
 // ----------------------------------------------------------------------
 // GET /my-templates/:id/content — template-records management view.
@@ -914,10 +914,10 @@ systemPages.get("/my-templates/:id/content", async (c) => {
 // (parallel to App Store / Play Store). Both legacy paths 301 here so
 // old links + bookmarks still resolve.
 // ----------------------------------------------------------------------
-systemPages.get("/apps", (c) => c.redirect("/home#apps", 301));
-systemPages.get("/public-templates", (c) => c.redirect("/home#apps", 301));
+systemPages.get("/apps", (c) => c.redirect("/home#mine", 301));
+systemPages.get("/public-templates", (c) => c.redirect("/home#store", 301));
 
-systemPages.get("/template-store", (c) => c.redirect("/home#apps", 301));
+systemPages.get("/template-store", (c) => c.redirect("/home#store", 301));
 
 // ----------------------------------------------------------------------
 // GET /my-agents — list of claimed agents
@@ -1180,7 +1180,10 @@ systemPages.get("/my-agents", async (c) => {
 // show the list immediately, not flash an empty state then a list. The
 // mutations are still cookie-authed JSON so an accidental F5 doesn't
 // double-fire.
-systemPages.get("/trash", (c) => c.redirect("/home#trash", 301));
+// Trash no longer has a tab in the SPA — old links land on Home; the
+// SPA's hash-router silently remaps "#trash" too. Auto-purge handles
+// soft-deleted rows in the background.
+systemPages.get("/trash", (c) => c.redirect("/home", 301));
 
 // ----------------------------------------------------------------------
 // GET /settings — email, sign-out

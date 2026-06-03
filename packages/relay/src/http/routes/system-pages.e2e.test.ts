@@ -240,15 +240,16 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('class="brand"');
     expect(html).toContain('class="logo"');
     expect(html).toContain('data-view="home"');
-    expect(html).toContain('data-view="templates"');
     expect(html).toContain('data-view="panes"');
-    expect(html).toContain('data-view="trash"');
+    expect(html).toContain('data-view="store"');
+    expect(html).toContain('data-view="mine"');
+    expect(html).not.toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
     expect(html).toContain('class="greet"');
     expect(html).toContain("Alice");
   });
 
-  it("Home view server-renders favorites + recents + all-apps with empty states", async () => {
+  it("Home view server-renders favorites + recents + all-templates with empty states", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
@@ -262,18 +263,26 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain("Your library is empty");
   });
 
-  it("Templates view server-renders three categories: Yours / Installed / Discover", async () => {
+  it("Template Store view renders the Discover grid", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain(">Discover<");
+    expect(html).toContain('id="apps-discover"');
+  });
+
+  it("My Templates view renders Yours + Installed grids", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain(">Yours<");
-    expect(html).toContain(">Installed from catalog<");
-    expect(html).toContain(">Discover<");
+    expect(html).toContain(">Installed from store<");
     expect(html).toContain('id="apps-mine"');
     expect(html).toContain('id="apps-installed"');
-    expect(html).toContain('id="apps-discover"');
   });
 
   it("surfaces a claimed-agent's template in the Apps `Yours` grid", async () => {
@@ -351,11 +360,11 @@ describe("Owner-shell SPA at /home", () => {
 describe("Legacy multi-route 301s to the SPA", () => {
   it.each([
     ["/my-panes", "/home#panes"],
-    ["/my-templates", "/home#apps"],
-    ["/template-store", "/home#apps"],
-    ["/trash", "/home#trash"],
-    ["/apps", "/home#apps"],
-    ["/public-templates", "/home#apps"],
+    ["/my-templates", "/home#mine"],
+    ["/template-store", "/home#store"],
+    ["/trash", "/home"],
+    ["/apps", "/home#mine"],
+    ["/public-templates", "/home#store"],
   ])("%s → 301 → %s", async (from, to) => {
     const res = await app.fetch(new Request(`http://t${from}`));
     expect(res.status).toBe(301);
