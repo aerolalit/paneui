@@ -37,6 +37,7 @@ import feedback from "./routes/feedback.js";
 import attachments from "./routes/attachments.js";
 import trash from "./routes/trash.js";
 import myTrash from "./routes/my-trash.js";
+import { myPanes } from "./routes/my-panes.js";
 import blobBridge from "../bridge/attachment-bridge.js";
 import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
 import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
@@ -371,6 +372,9 @@ export function buildApp(
   app.route("/v1/trash", trash);
   // #309 — /v1/my-trash: same surface but cookie-authed for the /trash UI.
   app.route("/v1/my-trash", myTrash);
+  // Cookie-authed pane lifecycle (currently soft-delete). Lets the owner
+  // shell delete a pane the human owns without minting an agent token.
+  app.route("/v1/my-panes", myPanes);
   // POST /s/:participantToken/attachments — human-side attachment upload (follow-up C
   // of #156). Mounted BEFORE the general /s bridge so the POST route is
   // matched cleanly; the bridge module only registers GET endpoints, but

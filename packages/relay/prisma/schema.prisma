@@ -85,6 +85,7 @@ model Human {
   logins         Login[]
   claimedAgents  Agent[]
   templateInstalls HumanTemplateInstall[]
+  templateFavorites HumanTemplateFavorite[]
   claimCodes     ClaimCode[]
   // Panes owned by this human (Phase A — Pane.ownerHumanId)
   ownedPanes  Pane[]
@@ -221,6 +222,22 @@ model HumanTemplateInstall {
   @@map("human_template_installs")
 }
 
+// Star/pin a template. Independent of install — a publisher can favorite
+// their own authored template (which they didn't install), and a human
+// can star several installs but only keep a subset on Home's Favorites
+// strip. Cascade on either side: a deleted human/template clears favs.
+model HumanTemplateFavorite {
+  humanId    String   @map("human_id")
+  human      Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  templateId String   @map("template_id")
+  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now()) @map("added_at")
+
+  @@id([humanId, templateId])
+  @@index([humanId, addedAt])
+  @@map("human_template_favorites")
+}
+
 model Feedback {
   id             String   @id @default(cuid())
   agentId        String?  @map("agent_id")
@@ -274,6 +291,7 @@ model Template {
 
   attachments   Attachment[]
   installs      HumanTemplateInstall[]
+  favorites     HumanTemplateFavorite[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
 
   // Template-level mutable record collections (shared across every pane

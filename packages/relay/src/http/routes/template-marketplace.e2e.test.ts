@@ -1043,6 +1043,9 @@ describe("GET /v1/templates/catalog (agent, #279 PR C)", () => {
 // POST /v1/my-templates/:id/launch — open a pane from an installed template.
 // ----------------------------------------------------------------------
 describe("POST /v1/my-templates/:id/launch (human)", () => {
+  // Seeds an agent + template owned by `humanId`. The owned-launch path will
+  // accept these templates without requiring an install — so tests that
+  // assert "no install ⇒ 404" must seed via `seedStrangerTemplate` instead.
   async function seedClaimedTemplateForHuman(humanId: string) {
     const apiKey = generateApiKey();
     const agent = await prisma.agent.create({
@@ -1075,6 +1078,38 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
     return { agentId: agent.id, templateId: tmpl.id, versionId: v1.id };
   }
 
+  // Same shape, but owned by an unclaimed agent so the calling human has no
+  // ownership claim. The launch path falls back to install-checks for these.
+  async function seedStrangerTemplate() {
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "stranger",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Stranger Template",
+        slug: "stranger",
+        latestVersion: 1,
+        publishedAt: new Date(),
+      },
+    });
+    const v1 = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p>v1</p>",
+        eventSchema: null,
+      },
+    });
+    return { agentId: agent.id, templateId: tmpl.id, versionId: v1.id };
+  }
+
   it("requires a login cookie (401 without auth)", async () => {
     const res = await app.fetch(
       new Request("http://t/v1/my-templates/x/launch", { method: "POST" }),
@@ -1082,9 +1117,9 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 404 when there is no install for this human", async () => {
-    const { humanId, cookie } = await seedLoggedInHuman();
-    const { templateId } = await seedClaimedTemplateForHuman(humanId);
+  it("returns 404 when the template isn't owned and has no install", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedStrangerTemplate();
     const res = await app.fetch(
       new Request(`http://t/v1/my-templates/${templateId}/launch`, {
         method: "POST",
@@ -1095,9 +1130,9 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns 404 when the install has been uninstalled", async () => {
+  it("returns 404 when the install has been uninstalled and template isn't owned", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
-    const { templateId } = await seedClaimedTemplateForHuman(humanId);
+    const { templateId } = await seedStrangerTemplate();
     await prisma.humanTemplateInstall.create({
       data: {
         humanId,
@@ -1115,6 +1150,28 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
       }),
     );
     expect(res.status).toBe(404);
+  });
+
+  it("launches an owned template at its latestVersion even without an install", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { agentId, templateId, versionId } =
+      await seedClaimedTemplateForHuman(humanId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { pane_id: string };
+    const pane = await prisma.pane.findUnique({
+      where: { id: body.pane_id },
+    });
+    expect(pane).not.toBeNull();
+    expect(pane!.ownerHumanId).toBe(humanId);
+    expect(pane!.agentId).toBe(agentId);
+    expect(pane!.templateVersionId).toBe(versionId);
   });
 
   it("creates a pane pinned to installedVersion and returns the human URL", async () => {
@@ -1155,5 +1212,167 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
     expect(pane!.templateVersionId).toBe(versionId);
     expect(pane!.creatorKind).toBe("human");
     expect(pane!.creatorId).toBe(humanId);
+  });
+});
+
+// ----------------------------------------------------------------------
+// Favorites — POST/DELETE /v1/my-templates/:id/favorite
+// ----------------------------------------------------------------------
+describe("Template favorites (cookie-authed)", () => {
+  async function seedPublishedStranger() {
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "stranger-fav",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Favable",
+        slug: "favable",
+        latestVersion: 1,
+        publishedAt: new Date(),
+      },
+    });
+    return { templateId: tmpl.id };
+  }
+
+  it("POST /favorite requires auth", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x/favorite", { method: "POST" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("DELETE /favorite requires auth", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-templates/x/favorite", { method: "DELETE" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("starring a published template inserts a HumanTemplateFavorite row", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedPublishedStranger();
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/favorite`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const row = await prisma.humanTemplateFavorite.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(row).not.toBeNull();
+  });
+
+  it("starring twice is idempotent (no error, single row)", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedPublishedStranger();
+    await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/favorite`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/favorite`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const rows = await prisma.humanTemplateFavorite.findMany({
+      where: { humanId, templateId },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it("DELETE /favorite removes the row and is idempotent on missing rows", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const { templateId } = await seedPublishedStranger();
+    await prisma.humanTemplateFavorite.create({
+      data: { humanId, templateId },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/favorite`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(204);
+    const row = await prisma.humanTemplateFavorite.findUnique({
+      where: { humanId_templateId: { humanId, templateId } },
+    });
+    expect(row).toBeNull();
+
+    // A second DELETE on the absent row still returns 204.
+    const res2 = await app.fetch(
+      new Request(`http://t/v1/my-templates/${templateId}/favorite`, {
+        method: "DELETE",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res2.status).toBe(204);
+  });
+
+  it("returns 404 when the template is unpublished and not visible to the human", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const apiKey = generateApiKey();
+    const stranger = await prisma.agent.create({
+      data: {
+        name: "private-author",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Private",
+        slug: "private",
+        latestVersion: 1,
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tmpl.id}/favorite`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("an owner can favorite their own unpublished template", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed-fav",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "My Draft",
+        slug: "my-draft",
+        latestVersion: 1,
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tmpl.id}/favorite`, {
+        method: "POST",
+        headers: withCookie(cookie),
+      }),
+    );
+    expect(res.status).toBe(200);
   });
 });
