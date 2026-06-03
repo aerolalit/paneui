@@ -453,7 +453,7 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    grid-template-columns: 44px 1fr auto auto;
+    grid-template-columns: 44px 1fr auto auto auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;
