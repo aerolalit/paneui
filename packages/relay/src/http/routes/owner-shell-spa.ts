@@ -69,13 +69,6 @@ interface ShellData {
     templateVersion: number;
     templateName: string | null;
   }>;
-  /** Soft-deleted templates + panes (the trash view). */
-  trash: Array<{
-    kind: "pane" | "template";
-    id: string;
-    name: string;
-    deletedAt: Date;
-  }>;
 }
 
 async function loadShellData(
@@ -83,8 +76,7 @@ async function loadShellData(
   human: HumanRow,
 ): Promise<ShellData> {
   // One human owns N claimed agents; their templates are the "Yours"
-  // section. We resolve the agent set once and reuse it for both the
-  // template list and the trash query.
+  // section under My Templates.
   const claimedAgents = await prisma.agent.findMany({
     where: { ownerHumanId: human.id, deletedAt: null },
     select: { id: true },
@@ -102,131 +94,95 @@ async function loadShellData(
     },
   };
 
-  const [
-    ownedTemplatesRaw,
-    installs,
-    publicCatalogRaw,
-    panes,
-    trashedTemplates,
-    trashedPanes,
-    favoriteRows,
-  ] = await Promise.all([
-    claimedAgentIds.length === 0
-      ? Promise.resolve([])
-      : prisma.template.findMany({
-          where: {
-            ownerId: { in: claimedAgentIds },
-            deletedAt: null,
-            name: { not: null },
-          },
-          orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            ...latestVersionInclude,
-          },
-        }),
-    prisma.humanTemplateInstall.findMany({
-      where: { humanId: human.id, uninstalledAt: null },
-      orderBy: { installedAt: "desc" },
-      select: {
-        installedVersion: true,
-        template: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            deletedAt: true,
-            ...latestVersionInclude,
-          },
-        },
-      },
-    }),
-    prisma.template.findMany({
-      where: { publishedAt: { not: null }, deletedAt: null },
-      orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
-      take: 40,
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        ...latestVersionInclude,
-      },
-    }),
-    prisma.pane.findMany({
-      where: {
-        deletedAt: null,
-        OR: [
-          { ownerHumanId: human.id },
-          {
-            participants: {
-              some: { humanId: human.id, revokedAt: null },
+  const [ownedTemplatesRaw, installs, publicCatalogRaw, panes, favoriteRows] =
+    await Promise.all([
+      claimedAgentIds.length === 0
+        ? Promise.resolve([])
+        : prisma.template.findMany({
+            where: {
+              ownerId: { in: claimedAgentIds },
+              deletedAt: null,
+              name: { not: null },
+            },
+            orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              ...latestVersionInclude,
+            },
+          }),
+      prisma.humanTemplateInstall.findMany({
+        where: { humanId: human.id, uninstalledAt: null },
+        orderBy: { installedAt: "desc" },
+        select: {
+          installedVersion: true,
+          template: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              deletedAt: true,
+              ...latestVersionInclude,
             },
           },
-        ],
-      },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      select: {
-        id: true,
-        title: true,
-        status: true,
-        createdAt: true,
-        expiresAt: true,
-        templateVersion: {
-          select: {
-            version: true,
-            template: { select: { name: true, slug: true } },
+        },
+      }),
+      prisma.template.findMany({
+        where: { publishedAt: { not: null }, deletedAt: null },
+        orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
+        take: 40,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          ...latestVersionInclude,
+        },
+      }),
+      prisma.pane.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { ownerHumanId: human.id },
+            {
+              participants: {
+                some: { humanId: human.id, revokedAt: null },
+              },
+            },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          createdAt: true,
+          expiresAt: true,
+          templateVersion: {
+            select: {
+              version: true,
+              template: { select: { name: true, slug: true } },
+            },
           },
         },
-      },
-    }),
-    claimedAgentIds.length === 0
-      ? Promise.resolve([])
-      : prisma.template.findMany({
-          where: {
-            ownerId: { in: claimedAgentIds },
-            deletedAt: { not: null },
-          },
-          orderBy: { deletedAt: "desc" },
-          take: 50,
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            deletedAt: true,
-          },
-        }),
-    prisma.pane.findMany({
-      where: {
-        ownerHumanId: human.id,
-        deletedAt: { not: null },
-      },
-      orderBy: { deletedAt: "desc" },
-      take: 50,
-      select: {
-        id: true,
-        title: true,
-        deletedAt: true,
-      },
-    }),
-    prisma.humanTemplateFavorite.findMany({
-      where: { humanId: human.id },
-      orderBy: { addedAt: "desc" },
-      select: {
-        template: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            deletedAt: true,
-            ...latestVersionInclude,
+      }),
+      prisma.humanTemplateFavorite.findMany({
+        where: { humanId: human.id },
+        orderBy: { addedAt: "desc" },
+        select: {
+          template: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              deletedAt: true,
+              ...latestVersionInclude,
+            },
           },
         },
-      },
-    }),
-  ]);
+      }),
+    ]);
 
   const favoriteIds = new Set(favoriteRows.map((f) => f.template.id));
   function toRef(t: {
@@ -254,21 +210,6 @@ async function loadShellData(
     .filter((f) => f.template.deletedAt === null)
     .map((f) => toRef(f.template));
 
-  const trash: ShellData["trash"] = [
-    ...trashedTemplates.map((t) => ({
-      kind: "template" as const,
-      id: t.id,
-      name: t.name ?? t.slug ?? t.id,
-      deletedAt: t.deletedAt!,
-    })),
-    ...trashedPanes.map((p) => ({
-      kind: "pane" as const,
-      id: p.id,
-      name: p.title,
-      deletedAt: p.deletedAt!,
-    })),
-  ].sort((a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
-
   return {
     ownedTemplates,
     installs: liveInstalls.map((i) => ({
@@ -289,7 +230,6 @@ async function loadShellData(
         p.templateVersion?.template?.slug ??
         null,
     })),
-    trash,
   };
 }
 
@@ -367,14 +307,8 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   // Panes list.
   const panesHtml =
     data.panes.length === 0
-      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="templates" style="color:var(--brand-1);cursor:pointer;">Templates</a>.</li>`
+      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--brand-1);cursor:pointer;">My Templates</a> or the <a data-go="store" style="color:var(--brand-1);cursor:pointer;">Template Store</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
-
-  // Trash list.
-  const trashHtml =
-    data.trash.length === 0
-      ? `<li class="empty-strip">Trash is empty.</li>`
-      : data.trash.map((it) => trashRow(it)).join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -404,19 +338,20 @@ function renderHtml(human: HumanRow, data: ShellData): string {
         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L12 3l9 9"/><path d="M5 10v10h14V10"/></svg></span>
         <span class="label">Home</span>
       </button></li>
-      <li><button data-view="templates">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
-        <span class="label">Templates</span>
-        <span class="count">${tplLibraryCount}</span>
-      </button></li>
       <li><button data-view="panes">
         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg></span>
         <span class="label">Panes</span>
         <span class="count">${panesCount}</span>
       </button></li>
-      <li><button data-view="trash">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></span>
-        <span class="label">Trash</span>
+      <li><button data-view="store">
+        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18l-1.5 5H4.5L3 3z"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M9 12h6"/></svg></span>
+        <span class="label">Template Store</span>
+        <span class="count">${data.publicCatalog.length}</span>
+      </button></li>
+      <li><button data-view="mine">
+        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+        <span class="label">My Templates</span>
+        <span class="count">${tplLibraryCount}</span>
       </button></li>
     </ul>
     <div class="me">
@@ -425,7 +360,10 @@ function renderHtml(human: HumanRow, data: ShellData): string {
         <div class="name">${escapeHtml(displayName)}</div>
         <div class="sub">${escapeHtml(human.email)}</div>
       </div>
-      <button id="signout" title="Sign out" aria-label="Sign out" style="margin-left:auto;background:transparent;border:none;color:var(--ink-mute);cursor:pointer;padding:6px;border-radius:6px;">
+      <a href="/settings" title="Settings" aria-label="Settings" style="margin-left:auto;color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </a>
+      <button id="signout" title="Sign out" aria-label="Sign out" style="background:transparent;border:none;color:var(--ink-mute);cursor:pointer;padding:6px;border-radius:6px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </button>
     </div>
@@ -444,7 +382,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <div class="section">
         <div class="section-head">
           <h2>Favorites</h2>
-          <a data-go="templates">Edit</a>
+          <a data-go="mine">Edit</a>
         </div>
         <div class="favs" id="favs">${favsHtml}</div>
       </div>
@@ -460,32 +398,10 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <div class="section">
         <div class="section-head">
           <h2>All templates</h2>
-          <a data-go="templates">Browse catalog →</a>
+          <a data-go="store">Browse Template Store →</a>
         </div>
         <div class="apps-grid" id="home-apps">${homeAppsHtml}</div>
       </div>
-    </section>
-
-    <section class="view" data-view="templates">
-      <div class="view-head">
-        <div>
-          <h1>Templates</h1>
-          <div class="sub">Apps you can launch into a pane.</div>
-        </div>
-      </div>
-      <div class="search">
-        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="apps-search" placeholder="Search templates…" autocomplete="off" />
-      </div>
-
-      <div class="cat-row"><h3>Yours</h3><span class="count">${data.ownedTemplates.length}</span></div>
-      <div class="apps-grid" id="apps-mine">${minesHtml}</div>
-
-      <div class="cat-row"><h3>Installed from catalog</h3><span class="count">${data.installs.length}</span></div>
-      <div class="apps-grid" id="apps-installed">${installedHtml}</div>
-
-      <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
-      <div class="apps-grid" id="apps-discover">${discoverHtml}</div>
     </section>
 
     <section class="view" data-view="panes">
@@ -498,14 +414,39 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <ul class="panes-list" id="panes-list">${panesHtml}</ul>
     </section>
 
-    <section class="view" data-view="trash">
+    <section class="view" data-view="store">
       <div class="view-head">
         <div>
-          <h1>Trash</h1>
-          <div class="sub">Soft-deleted apps + panes. Restore within 30 days, then auto-purged.</div>
+          <h1>Template Store</h1>
+          <div class="sub">Public templates anyone can install. Click a tile to add it to your library and launch.</div>
         </div>
       </div>
-      <ul class="trash-list" id="trash-list">${trashHtml}</ul>
+      <div class="search">
+        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
+        <input id="store-search" placeholder="Search the Template Store…" autocomplete="off" />
+      </div>
+
+      <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
+      <div class="apps-grid" id="apps-discover">${discoverHtml}</div>
+    </section>
+
+    <section class="view" data-view="mine">
+      <div class="view-head">
+        <div>
+          <h1>My Templates</h1>
+          <div class="sub">Templates you own or have installed. Click to launch.</div>
+        </div>
+      </div>
+      <div class="search">
+        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
+        <input id="mine-search" placeholder="Search your templates…" autocomplete="off" />
+      </div>
+
+      <div class="cat-row"><h3>Yours</h3><span class="count">${data.ownedTemplates.length}</span></div>
+      <div class="apps-grid" id="apps-mine">${minesHtml}</div>
+
+      <div class="cat-row"><h3>Installed from store</h3><span class="count">${data.installs.length}</span></div>
+      <div class="apps-grid" id="apps-installed">${installedHtml}</div>
     </section>
 
   </main>
@@ -589,19 +530,6 @@ function paneRow(p: ShellData["panes"][number]): string {
     <button class="menu-btn" title="More" aria-label="More" data-noopen="1" data-pane-menu="${escapeHtml(p.id)}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
     </button>
-  </li>`;
-}
-
-function trashRow(it: ShellData["trash"][number]): string {
-  const kindLabel = it.kind === "pane" ? "Pane" : "Template";
-  const rel = relativeDate(it.deletedAt);
-  return `<li>
-    <div><div class="name">${escapeHtml(kindLabel)} — ${escapeHtml(it.name)}</div>
-    <div class="when">${escapeHtml(it.id)} · deleted ${escapeHtml(rel)}</div></div>
-    <div class="trash-actions">
-      <button class="btn" data-trash-act="restore" data-trash-kind="${escapeHtml(it.kind)}" data-trash-id="${escapeHtml(it.id)}">Restore</button>
-      <button class="btn danger" data-trash-act="purge" data-trash-kind="${escapeHtml(it.kind)}" data-trash-id="${escapeHtml(it.id)}">Purge</button>
-    </div>
   </li>`;
 }
 
@@ -734,19 +662,20 @@ const EXTRA_CSS = `
 //      anchors; pane-row uses data-href + a JS click handler since
 //      the row contains a non-link menu button).
 //   3. Tile click → POST /v1/my-templates/:id/launch → redirect to the
-//      new pane.
+//      new pane. Discover tiles (data-needs-install) install first, then
+//      launch in the same click.
 //   4. Search inputs filter visible tiles/rows live.
-//   5. Trash buttons (Restore / Purge) hit /v1/my-trash/* and reload.
-//   6. Sign-out → POST /v1/auth/logout → /login.
+//   5. Sign-out → POST /v1/auth/logout → /login.
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'templates', 'panes', 'trash'];
+  const VIEWS = ['home', 'panes', 'store', 'mine'];
   function activate(view) {
-    // Back-compat: the previous build used the hash "#apps" — silently
-    // remap so existing bookmarks / browser-back state still land somewhere
-    // sensible.
-    if (view === 'apps') view = 'templates';
+    // Back-compat: prior builds used the hashes "#apps" / "#templates" /
+    // "#trash". Remap them so old links / browser-back state still land
+    // somewhere sensible.
+    if (view === 'apps' || view === 'templates') view = 'mine';
+    if (view === 'trash') view = 'home';
     if (!VIEWS.includes(view)) view = 'home';
     document.querySelectorAll('.view').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-view') === view);
@@ -829,9 +758,9 @@ const SHELL_JS = `
     }
   });
 
-  // Tile click → launch (for installed/owned) or 404 (discover; would
-  // need an install first). We route through the existing cookie-authed
-  // launch endpoint; on failure we surface the relay's error message.
+  // Tile click → launch. Discover tiles (data-needs-install) auto-install
+  // first and then launch in the same click — no detour through the old
+  // /my-templates page.
   document.body.addEventListener('click', async (ev) => {
     // Star toggle is handled by its own listener above; bail early so we
     // don't trigger launch when the user clicks the star.
@@ -842,25 +771,37 @@ const SHELL_JS = `
     const id = tile.getAttribute('data-template-id');
     if (!id) return;
     const needsInstall = tile.getAttribute('data-needs-install') === '1';
-    if (needsInstall) {
-      // For now, send the user to the existing /my-templates page where
-      // they can install. A future iteration can install + launch inline.
-      alert('Install this template from /my-templates first, then launch it.');
-      return;
-    }
     const labelEl = tile.querySelector('.label');
     const origLabel = labelEl ? labelEl.textContent : '';
-    if (labelEl) labelEl.textContent = 'Launching…';
+    function reset() {
+      if (labelEl) labelEl.textContent = origLabel;
+      tile.disabled = false;
+    }
     tile.disabled = true;
     try {
+      if (needsInstall) {
+        if (labelEl) labelEl.textContent = 'Installing…';
+        const ins = await fetch('/v1/templates/' + encodeURIComponent(id) + '/install', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+          body: '{}',
+        });
+        if (!ins.ok) {
+          reset();
+          const body = await ins.json().catch(() => ({}));
+          alert('Install failed: ' + ((body.error && body.error.message) || ('HTTP ' + ins.status)));
+          return;
+        }
+      }
+      if (labelEl) labelEl.textContent = 'Launching…';
       const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'same-origin',
       });
       if (!res.ok) {
-        if (labelEl) labelEl.textContent = origLabel;
-        tile.disabled = false;
+        reset();
         const body = await res.json().catch(() => ({}));
         alert('Launch failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
         return;
@@ -869,8 +810,7 @@ const SHELL_JS = `
       const url = body.urls && body.urls.humans && body.urls.humans[0];
       if (url) location.href = url;
     } catch (e) {
-      if (labelEl) labelEl.textContent = origLabel;
-      tile.disabled = false;
+      reset();
       alert('Network error — try again.');
     }
   });
@@ -985,36 +925,8 @@ const SHELL_JS = `
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { input.value = ''; apply(); } });
   }
   bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
-  bindSearch('apps-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
-
-  // Trash actions
-  document.body.addEventListener('click', async (ev) => {
-    const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-trash-act]');
-    if (!btn) return;
-    const act = btn.getAttribute('data-trash-act');
-    const kind = btn.getAttribute('data-trash-kind');
-    const id = btn.getAttribute('data-trash-id');
-    if (!act || !kind || !id) return;
-    if (act === 'purge' && !confirm('Permanently delete this ' + kind + '? This can\\'t be undone.')) return;
-    const path = '/v1/my-trash/' + encodeURIComponent(kind) + 's/' + encodeURIComponent(id) +
-      (act === 'restore' ? '/restore' : '');
-    const method = act === 'restore' ? 'POST' : 'DELETE';
-    btn.disabled = true;
-    try {
-      const res = await fetch(path, { method, credentials: 'same-origin' });
-      if (!res.ok && res.status !== 204) {
-        const body = await res.json().catch(() => ({}));
-        alert('Failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
-        btn.disabled = false;
-        return;
-      }
-      // Reload to re-render the trash list with the row removed.
-      location.reload();
-    } catch (e) {
-      btn.disabled = false;
-      alert('Network error — try again.');
-    }
-  });
+  bindSearch('store-search', ['#apps-discover .app-tile-wrap']);
+  bindSearch('mine-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap']);
 
   // Initial view selection from the URL hash.
   activate(viewFromHash());

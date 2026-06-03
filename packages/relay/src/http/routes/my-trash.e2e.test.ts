@@ -283,38 +283,30 @@ describe("DELETE /v1/my-trash/templates/:id", () => {
   });
 });
 
-describe("Trash UI is now /home#trash in the SPA", () => {
-  it("/trash redirects to /home#trash (301) — legacy URL stays alive", async () => {
+describe("Trash tab removed from the owner-shell SPA (iter2)", () => {
+  // The shell no longer carries a Trash tab — auto-purge handles cleanup,
+  // and the legacy /trash URL now lands on Home. The /v1/my-trash JSON
+  // routes above remain available for CLI / API callers.
+  it("/trash redirects to /home (301)", async () => {
     const res = await app.fetch(new Request("http://t/trash"));
     expect(res.status).toBe(301);
-    expect(res.headers.get("location")).toBe("/home#trash");
+    expect(res.headers.get("location")).toBe("/home");
   });
 
-  it("Trash view in the SPA lists trashed rows", async () => {
+  it("the SPA shell does not render a trash view or trash-action buttons", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const agentId = await seedClaimedAgent(humanId);
-    const paneId = await seedTrashedPane({ agentId, ownerHumanId: humanId });
-    const templateId = await seedTrashedTemplate(agentId);
+    // Seed some trashed rows just to be sure they don't leak into the shell.
+    await seedTrashedPane({ agentId, ownerHumanId: humanId });
+    await seedTrashedTemplate(agentId);
 
     const res = await app.fetch(
       new Request("http://t/home", { headers: { ...withCookie(cookie) } }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain(paneId);
-    expect(html).toContain(templateId);
-    // Inline action buttons on each trashed row.
-    expect(html).toContain('data-trash-act="restore"');
-    expect(html).toContain('data-trash-act="purge"');
-  });
-
-  it("Trash view shows the empty-state when nothing is trashed", async () => {
-    const { cookie } = await seedLoggedInHuman();
-    const res = await app.fetch(
-      new Request("http://t/home", { headers: { ...withCookie(cookie) } }),
-    );
-    const html = await res.text();
-    expect(html).toContain("Trash is empty");
+    expect(html).not.toContain('data-view="trash"');
+    expect(html).not.toContain("data-trash-act=");
   });
 });
 
