@@ -1,0 +1,111 @@
+name: build-branch-image
+
+# Builds a Postgres relay image from ANY branch and pushes it to GHCR under
+# immutable, non-shared tags — so you can smoke-test a feature branch on the
+# hosted dev relay without merging it to main first.
+#
+# This is deliberately SEPARATE from release-image.yml. release-image pushes
+# the shared `:latest` / `:latest-postgres` / semver tags that self-hosters
+# pull; running it on an unreviewed feature branch would clobber those. This
+# workflow only ever pushes:
+#
+#   ghcr.io/<owner>/paneui:sha-<7>-postgres        (immutable, per-commit)
+#   ghcr.io/<owner>/paneui:branch-<sanitized>-postgres  (convenience, moves)
+#
+# It never touches `:latest`, `:main`, or any semver tag.
+#
+# Why Postgres-only: the hosted dev relay (ca-eur-dev-pane) runs Postgres, so
+# that's the only variant a branch deploy needs. SQLite branch images would
+# just burn build minutes.
+#
+# Trigger (manual only). Normally you don't run this directly — the
+# paneui-ops `deploy-branch.sh` orchestrator fires it for you and then chains
+# the dev deploy. To run it standalone:
+#
+#   gh workflow run build-branch-image.yml --repo aerolalit/paneui --ref <branch>
+#
+# The resulting :sha-<7>-postgres tag is what dev-relay-deploy (in paneui-ops)
+# consumes via its `sha` input.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  # One build per branch at a time; a newer push supersedes an in-flight build.
+  group: build-branch-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: build and push branch image (postgres)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Compute the two tags by hand rather than via docker/metadata-action.
+      # metadata-action's `flavor: latest=true` default would re-tag `:latest`,
+      # which is exactly the clobber this workflow exists to avoid — so we keep
+      # tag derivation explicit and auditable. Branch names can contain `/`
+      # (e.g. feat/foo) and other characters illegal in a Docker tag; sanitize
+      # to [A-Za-z0-9._-], collapsing anything else to `-`.
+      - name: Derive image tags
+        id: meta
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          IMAGE="ghcr.io/${OWNER}/paneui"
+          SHA7="${GITHUB_SHA:0:7}"
+          RAW_BRANCH="${GITHUB_REF_NAME}"
+          SAFE_BRANCH=$(printf '%s' "$RAW_BRANCH" | sed -E 's/[^A-Za-z0-9._-]+/-/g' | sed -E 's/^-+|-+$//g')
+          SHA_TAG="${IMAGE}:sha-${SHA7}-postgres"
+          BRANCH_TAG="${IMAGE}:branch-${SAFE_BRANCH}-postgres"
+          {
+            echo "tags=${SHA_TAG},${BRANCH_TAG}"
+            echo "sha_tag=${SHA_TAG}"
+            echo "branch_tag=${BRANCH_TAG}"
+            echo "sha7=${SHA7}"
+          } >> "$GITHUB_OUTPUT"
+          echo "→ will push:"
+          echo "    ${SHA_TAG}"
+          echo "    ${BRANCH_TAG}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push (postgres)
+        uses: docker/build-push-action@v7
+        with:
+          # Build context is the monorepo root — the Dockerfile copies the
+          # workspace manifests and expects root context.
+          context: .
+          file: packages/relay/Dockerfile
+          build-args: |
+            DATABASE_PROVIDER=postgres
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # Share the postgres cache scope with release-image so branch builds
+          # reuse layers from the last main build (and vice-versa).
+          cache-from: type=gha,scope=postgres
+          cache-to: type=gha,mode=max,scope=postgres
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## Branch image pushed"
+            echo ""
+            echo "- Commit: \`${{ steps.meta.outputs.sha7 }}\` on \`${{ github.ref_name }}\`"
+            echo "- Immutable: \`${{ steps.meta.outputs.sha_tag }}\`"
+            echo "- Convenience: \`${{ steps.meta.outputs.branch_tag }}\`"
+            echo ""
+            echo "Deploy to dev with the SHA tag via paneui-ops \`dev-relay-deploy\` (sha=\`${{ github.sha }}\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
