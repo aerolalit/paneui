@@ -245,6 +245,11 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('data-view="mine"');
     expect(html).not.toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
+    // Footer utility links must stay reachable from the shell. /my-agents is
+    // where the claim-code generator lives — it has no data-view (full-page
+    // nav), so it regressed out of the SPA once already.
+    expect(html).toContain('href="/my-agents"');
+    expect(html).toContain('href="/settings"');
     expect(html).toContain('class="greet"');
     expect(html).toContain("Alice");
   });

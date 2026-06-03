@@ -155,6 +155,9 @@ export const OWNER_SHELL_CSS = `
   .nav .me .who { font-size: 13px; line-height: 1.2; }
   .nav .me .who .name { color: var(--ink); font-weight: 500; }
   .nav .me .who .sub  { color: var(--ink-mute); font-size: 11px; }
+  /* Push the footer icon cluster (My agents, Settings, Sign out) to the
+     right edge, after the avatar + identity block. */
+  .nav .me > a:first-of-type { margin-left: auto; }
 
   @media (max-width: 720px) {
     .nav {
@@ -166,7 +169,20 @@ export const OWNER_SHELL_CSS = `
       justify-content: space-around;
       padding-bottom: var(--safe-bottom);
     }
-    .nav .brand, .nav .me { display: none; }
+    .nav .brand { display: none; }
+    /* The footer holds the only links to the full-page /my-agents and
+       /settings routes (plus sign-out). Hiding it on mobile stranded those
+       pages — reachable only by typing the URL. Keep it visible as a compact
+       icon strip at the end of the bottom bar; drop the avatar + identity
+       text, which don't earn their space on a phone. */
+    .nav .me {
+      flex: none;
+      border-top: none;
+      padding: 6px 6px calc(6px + var(--safe-bottom));
+      gap: 2px;
+    }
+    .nav .me .avatar, .nav .me .who { display: none; }
+    .nav .me > a:first-of-type { margin-left: 0; }
     .nav .items {
       flex-direction: row;
       flex: 1;
