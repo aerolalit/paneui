@@ -35,6 +35,7 @@ import type { SerializedEvent } from "../types.js";
 import type {
   RecordDeltaMessage,
   SystemReplayCompleteMessage,
+  TemplateRecordDeltaMessage,
   WireMessage,
 } from "../ws/messages.js";
 import { redisEnabled, redisPub, redisSub } from "../redis.js";
@@ -51,10 +52,24 @@ export function isEvent(m: WireMessage): m is SerializedEvent {
   return !("kind" in m);
 }
 
-/** True iff `m` is a record delta (any of the `record.*` kinds). */
+/** True iff `m` is a per-pane record delta (any of the `record.*` kinds). */
 export function isRecordDelta(m: WireMessage): m is RecordDeltaMessage {
   return (
-    "kind" in m && typeof m.kind === "string" && m.kind.startsWith("record.")
+    "kind" in m &&
+    typeof m.kind === "string" &&
+    m.kind.startsWith("record.") &&
+    !m.kind.startsWith("template-record.")
+  );
+}
+
+/** True iff `m` is a template-level record delta (`template-record.*`). */
+export function isTemplateRecordDelta(
+  m: WireMessage,
+): m is TemplateRecordDeltaMessage {
+  return (
+    "kind" in m &&
+    typeof m.kind === "string" &&
+    m.kind.startsWith("template-record.")
   );
 }
 
@@ -234,6 +249,37 @@ export function openWaiter(paneId: string): {
     },
     close: unsub,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Template-level record broadcast
+// ---------------------------------------------------------------------------
+//
+// The bus is keyed by an opaque string; the existing `publish/subscribe`
+// works equally well for per-pane and per-template events. We namespace the
+// template bus key as `tpl:<templateId>` so a pane id and a template id can
+// never collide, and so the WS handler can subscribe to BOTH the pane bus
+// and the template bus on the same connection without conflating them.
+
+/** Bus key for template-level record broadcast. */
+export function templateBusKey(templateId: string): string {
+  return `tpl:${templateId}`;
+}
+
+/** Publish a template-record delta to every WS connected to a derived pane. */
+export function publishToTemplate(
+  templateId: string,
+  msg: TemplateRecordDeltaMessage,
+): void {
+  publish(templateBusKey(templateId), msg);
+}
+
+/** Subscribe to a template's record-delta stream. */
+export function subscribeToTemplate(
+  templateId: string,
+  fn: (m: WireMessage) => void,
+): () => void {
+  return subscribe(templateBusKey(templateId), fn);
 }
 
 // Test-only: drop the cached "subscription wired" flag and listeners so a test
