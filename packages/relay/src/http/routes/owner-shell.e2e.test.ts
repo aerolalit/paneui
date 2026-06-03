@@ -155,32 +155,29 @@ describe("GET /panes/:id", () => {
     expect(html).toContain("Test Pane");
   });
 
-  it("embeds the system-pages top nav so the owner can navigate away", async () => {
-    // Without this, /panes/:id traps the owner — browser back is the
-    // only way to reach /home, /my-panes, etc.
+  it("renders the slim account bar without system-page tabs", async () => {
+    // The pane viewer is a focused single-pane surface: it shows the account
+    // bar (brand + presence + email + sign out) but intentionally omits the
+    // Home / My panes / My templates / ... tab strip. The brand logo links
+    // back to /home, so the owner still has a way out.
     const { cookie, paneId } = await seedOwnedPane();
     const res = await app.fetch(
       new Request(`http://t/panes/${paneId}`, withCookie(cookie)),
     );
     const html = await res.text();
-    expect(html).toContain("top-nav-tabs");
+    // The system-pages tab strip is gone.
+    expect(html).not.toContain("top-nav-tabs");
+    expect(html).not.toContain('href="/my-panes"');
+    expect(html).not.toContain('href="/my-templates"');
+    expect(html).not.toContain('href="/my-agents"');
+    expect(html).not.toContain('href="/settings"');
+    // The brand still links back to /home — the way out.
     expect(html).toContain('href="/home"');
-    expect(html).toContain('href="/my-panes"');
-    expect(html).toContain('href="/my-templates"');
-    expect(html).toContain('href="/my-agents"');
-    expect(html).toContain('href="/settings"');
-    // The "My panes" tab is the active one (we're on a pane page).
-    expect(html).toMatch(
-      /class="top-nav-tab active"[^>]*href="\/my-panes"|href="\/my-panes"[^>]*aria-current="page"/,
-    );
-    // Owner's email is shown in the account block.
+    // Owner's email + sign out are shown in the account block.
     expect(html).toContain("alice@example.com");
     expect(html).toContain('id="top-nav-signout"');
-    // Presence pills moved INTO the top nav (one row + tabs row) instead of
-    // a separate dark <header> below it — folding the duplicated brand row
-    // out. Confirm the connection + agent status spans the shell client
-    // updates are present in the top nav, and the standalone dark header
-    // (with class="brand-name") is gone.
+    // Presence pills live in the top nav (connection + agent status). The
+    // standalone dark header (class="brand-name") is gone.
     expect(html).toContain('id="dot"');
     expect(html).toContain('id="status"');
     expect(html).toContain('id="agent-dot"');
