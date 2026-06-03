@@ -477,49 +477,21 @@ export interface ShellArgs {
   // (≤280 chars, one `\n` allowed). Rendered into the shell band above the
   // iframe — HTML-escaped at render. Null when the agent didn't pass one.
   preamble: string | null;
-  // Optional top-nav block — rendered above the existing dark presence
-  // header. The owner-shell route passes this so a logged-in pane owner
-  // gets the same Home / My panes / My templates / My agents / Settings
-  // tabs they see on the system pages, instead of being stuck with only the
-  // browser back button. The capability-token mount (/s/<token>) leaves this
-  // null — anonymous callers don't have access to those pages anyway.
-  topNav: { email: string; active?: string } | null;
+  // Optional top-nav block — the slim account bar (brand + presence pills +
+  // email + sign out) rendered above the iframe for a logged-in pane owner.
+  // No system-page tabs: a pane viewer is a focused, single-pane surface, so
+  // it carries only "where am I / what's the relay doing / who am I" chrome.
+  // The capability-token mount (/s/<token>) leaves this null — anonymous
+  // callers get no account bar at all.
+  topNav: { email: string } | null;
 }
-
-// Slug → label + href for the system-pages tabs the owner-shell embeds. Kept
-// in one list so adding / renaming a system page only needs an edit here AND
-// in src/http/routes/system-pages.ts (which mounts the routes). The shell's
-// stale-tab risk vs. the source of truth in system-pages.ts is small —
-// pre-existing panes share the same tab set, and a missing slug on either
-// side just shows an inactive tab.
-const TOP_NAV_TABS: ReadonlyArray<{
-  slug: string;
-  label: string;
-  href: string;
-}> = [
-  { slug: "home", label: "Home", href: "/home" },
-  { slug: "catalog", label: "Template store", href: "/template-store" },
-  { slug: "panes", label: "My panes", href: "/my-panes" },
-  { slug: "templates", label: "My templates", href: "/my-templates" },
-  { slug: "agents", label: "My agents", href: "/my-agents" },
-  { slug: "settings", label: "Settings", href: "/settings" },
-];
 
 function renderTopNav(args: ShellArgs): string {
   if (!args.topNav) return "";
-  const { email, active } = args.topNav;
-  const tabs = TOP_NAV_TABS.map((t) => {
-    const isActive = active === t.slug;
-    const cls = isActive ? "top-nav-tab active" : "top-nav-tab";
-    const aria = isActive ? ' aria-current="page"' : "";
-    return `<a class="${cls}" href="${t.href}"${aria}>${htmlEscape(t.label)}</a>`;
-  }).join("");
-  // Presence pills live in the SAME bar as the brand + account when the top
-  // nav is rendered — previously the shell stacked a second dark `<header>`
-  // below the nav just to hold them, producing three visible header rows
-  // (brand row, presence row, tabs row). One row each for "where am I" and
-  // "what is the relay doing" is enough; presence sits beside the email so
-  // the eye picks up both states without scanning vertically.
+  const { email } = args.topNav;
+  // Presence pills live in the SAME bar as the brand + account — one row for
+  // "where am I" (brand) and "what is the relay doing" (presence) beside the
+  // email, so the eye picks up both states without scanning vertically.
   const closedLabel = args.isClosed ? "pane closed" : "no agent yet";
   return `<div class="top-nav">
   <div class="top-nav-bar">
@@ -563,7 +535,6 @@ function renderTopNav(args: ShellArgs): string {
       <button id="top-nav-signout" class="top-nav-signout" type="button">Sign out</button>
     </div>
   </div>
-  <nav class="top-nav-tabs" aria-label="Primary">${tabs}</nav>
 </div>`;
 }
 
@@ -683,20 +654,6 @@ export function renderShell(args: ShellArgs): string {
     cursor: pointer; flex: none;
   }
   .top-nav-signout:hover { border-color: #a78bfa; color: #cdbcff; }
-  .top-nav-tabs {
-    display: flex; gap: 2px;
-    padding: 0 max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right));
-    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  }
-  .top-nav-tabs::-webkit-scrollbar { display: none; }
-  .top-nav-tab {
-    flex: none; text-decoration: none; color: #8a93a6;
-    font-size: 13px; font-weight: 500; line-height: 1;
-    padding: 9px 11px; border-bottom: 2px solid transparent;
-    white-space: nowrap;
-  }
-  .top-nav-tab:hover { color: #e7ecf3; }
-  .top-nav-tab.active { color: #a78bfa; font-weight: 600; border-bottom-color: #a78bfa; }
   /* Agent-supplied context band — sits between any header / top-nav and the
      iframe. The accent stripe + speech-bubble glyph telegraphs "this is the
      agent talking to you" so the message reads as context, not chrome. */
