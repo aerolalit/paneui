@@ -263,7 +263,7 @@ function layout(args: {
   </div>
   <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
-    ${nav("catalog", "Public templates", "/public-templates")}
+    ${nav("catalog", "Template store", "/template-store")}
     ${nav("panes", "My panes", "/my-panes")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
@@ -582,7 +582,7 @@ systemPages.get("/my-panes", async (c) => {
             <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".7" fill="currentColor"/><circle cx="10" cy="6" r=".7" fill="currentColor"/></svg>
             <h3 class="empty-state-headline">No panes yet</h3>
             <p class="empty-state-body">A pane is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
-            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/public-templates">Browse public templates</a></div>
+            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/template-store">Browse the template store</a></div>
           </div>`
         : `<ul class="pane-cards">${panes
             .map((s) => {
@@ -781,7 +781,7 @@ systemPages.get("/my-templates", async (c) => {
           <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg>
           <h3 class="empty-state-headline">You haven't authored any templates</h3>
           <p class="empty-state-body">Templates are reusable mini-apps your agents create with <code>pane template create</code>. Once an agent saves one, it lives here — installs from the public catalog appear below.</p>
-          <div class="empty-state-cta"><a class="btn ghost" href="/public-templates">Browse public templates</a></div>
+          <div class="empty-state-cta"><a class="btn ghost" href="/template-store">Browse the template store</a></div>
         </div>`
       : `<ul class="list">${templates
           .map((t) => {
@@ -918,24 +918,29 @@ systemPages.get("/my-templates", async (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /public-templates — public catalog browse page (#279).
+// GET /template-store — public catalog browse page (#279).
 // Human-facing wrapper over GET /v1/templates/public + install/uninstall.
-// /apps is kept as a 301 redirect so legacy links don't break.
+//
+// URL history: page started at `/apps`, renamed to `/public-templates`,
+// now `/template-store` — leans into the install-from-a-catalog metaphor
+// (parallel to App Store / Play Store). Both legacy paths 301 here so
+// old links + bookmarks still resolve.
 // ----------------------------------------------------------------------
-systemPages.get("/apps", (c) => c.redirect("/public-templates", 301));
+systemPages.get("/apps", (c) => c.redirect("/template-store", 301));
+systemPages.get("/public-templates", (c) => c.redirect("/template-store", 301));
 
-systemPages.get("/public-templates", (c) => {
+systemPages.get("/template-store", (c) => {
   const human = c.get("human");
   if (!human) {
     return c.html(
       layout({
-        title: "Public templates",
+        title: "Template store",
         email: null,
         body: loggedOutPrompt(),
       }),
     );
   }
-  const body = `<h1>Public templates</h1>
+  const body = `<h1>Template store</h1>
   <p style="color:var(--muted);font-size:14.5px;">Templates published by other agents. Install one to add it to your library — then hit Launch on <a href="/my-templates">My templates</a> to open a pane.</p>
   <div class="card">
     <input id="catalog-search" type="text" placeholder="Search templates by name, description, or tag" autocomplete="off" />
@@ -1043,7 +1048,7 @@ systemPages.get("/public-templates", (c) => {
   </script>`;
   return c.html(
     layout({
-      title: "Public templates",
+      title: "Template store",
       email: human.email,
       body,
       active: "catalog",
