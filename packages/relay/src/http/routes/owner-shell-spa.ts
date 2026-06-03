@@ -18,6 +18,14 @@ import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
 import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
+import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
+
+// Wrap a shared nav glyph (nav-meta.ts) in the SPA's <svg> conventions so the
+// sidebar / account / mobile-bar icons stay byte-identical to the legacy
+// system-pages tab icons — one source of truth, no drift. `size` is px.
+function spaIco(key: NavKey, size: number): string {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_GLYPHS[key]}</svg>`;
+}
 
 // ----- Public entry: serve the SPA -----
 
@@ -44,7 +52,7 @@ interface TemplateRef {
    *  some out-of-band caller) to seed input_data before it's useful. */
   isAgentInit: boolean;
   /** Number of live panes the human has derived from this template.
-   *  Drives the "X panes →" chip on My Templates tiles that jumps to the
+   *  Drives the "X panes →" chip on My templates tiles that jumps to the
    *  Panes view filtered to this template. */
   paneCount: number;
   /** True when the human owns this template AND it's currently published
@@ -89,7 +97,7 @@ async function loadShellData(
   human: HumanRow,
 ): Promise<ShellData> {
   // One human owns N claimed agents; their templates are the "Yours"
-  // section under My Templates.
+  // section under My templates.
   const claimedAgents = await prisma.agent.findMany({
     where: { ownerHumanId: human.id, deletedAt: null },
     select: { id: true },
@@ -196,7 +204,7 @@ async function loadShellData(
   ]);
 
   // Pane counts per template id — drives the "X panes →" chip on tiles
-  // in My Templates so the human can jump straight to their instances.
+  // in My templates so the human can jump straight to their instances.
   const paneCountByTemplate = new Map<string, number>();
   for (const p of panesRaw) {
     const tid = p.templateVersion?.template?.id;
@@ -344,7 +352,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   // Panes list.
   const panesHtml =
     data.panes.length === 0
-      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--brand-1);cursor:pointer;">My Templates</a> or the <a data-go="store" style="color:var(--brand-1);cursor:pointer;">Template Store</a>.</li>`
+      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--brand-1);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--brand-1);cursor:pointer;">Template store</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
   return `<!doctype html>
@@ -372,22 +380,22 @@ function renderHtml(human: HumanRow, data: ShellData): string {
     </div>
     <ul class="items" id="nav-items">
       <li><button data-view="home" class="active">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L12 3l9 9"/><path d="M5 10v10h14V10"/></svg></span>
-        <span class="label">Home</span>
+        <span class="icon">${spaIco("home", 18)}</span>
+        <span class="label">${NAV_LABELS.home}</span>
       </button></li>
       <li><button data-view="panes">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg></span>
-        <span class="label">Panes</span>
+        <span class="icon">${spaIco("panes", 18)}</span>
+        <span class="label">${NAV_LABELS.panes}</span>
         <span class="count">${panesCount}</span>
       </button></li>
       <li><button data-view="store">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18l-1.5 5H4.5L3 3z"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M9 12h6"/></svg></span>
-        <span class="label">Template Store</span>
+        <span class="icon">${spaIco("store", 18)}</span>
+        <span class="label">${NAV_LABELS.store}</span>
         <span class="count">${data.publicCatalog.length}</span>
       </button></li>
       <li><button data-view="mine">
-        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
-        <span class="label">My Templates</span>
+        <span class="icon">${spaIco("templates", 18)}</span>
+        <span class="label">${NAV_LABELS.templates}</span>
         <span class="count">${tplLibraryCount}</span>
       </button></li>
     </ul>
@@ -400,24 +408,24 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <!-- Mobile-only trigger: a single "Account" tab in the bottom bar that
            toggles the .acct-links popover. Hidden on desktop, where the links
            render inline in the footer. -->
-      <button class="acct-tab" id="acct-tab" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="acct-links" aria-label="Account">
-        <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></span>
-        <span class="label">Account</span>
+      <button class="acct-tab" id="acct-tab" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="acct-links" aria-label="${NAV_LABELS.account}">
+        <span class="icon">${spaIco("account", 20)}</span>
+        <span class="label">${NAV_LABELS.account}</span>
       </button>
       <!-- The action links. Inline icon row on desktop; popover sheet on mobile.
            Same DOM nodes both ways — a single #signout, no duplication. -->
       <div class="acct-links" id="acct-links" role="menu">
-        <a class="acct-link" href="/my-agents" role="menuitem" title="My agents" aria-label="My agents">
-          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
-          <span class="txt">My agents</span>
+        <a class="acct-link" href="/my-agents" role="menuitem" title="${NAV_LABELS.agents}" aria-label="${NAV_LABELS.agents}">
+          <span class="ico">${spaIco("agents", 16)}</span>
+          <span class="txt">${NAV_LABELS.agents}</span>
         </a>
-        <a class="acct-link" href="/settings" role="menuitem" title="Settings" aria-label="Settings">
-          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
-          <span class="txt">Settings</span>
+        <a class="acct-link" href="/settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
+          <span class="ico">${spaIco("settings", 16)}</span>
+          <span class="txt">${NAV_LABELS.settings}</span>
         </a>
-        <button class="acct-link" id="signout" type="button" role="menuitem" title="Sign out" aria-label="Sign out">
-          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
-          <span class="txt">Sign out</span>
+        <button class="acct-link" id="signout" type="button" role="menuitem" title="${NAV_LABELS.signout}" aria-label="${NAV_LABELS.signout}">
+          <span class="ico">${spaIco("signout", 16)}</span>
+          <span class="txt">${NAV_LABELS.signout}</span>
         </button>
       </div>
     </div>
@@ -452,7 +460,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <div class="section">
         <div class="section-head">
           <h2>All templates</h2>
-          <a data-go="store">Browse Template Store →</a>
+          <a data-go="store">Browse Template store →</a>
         </div>
         <div class="apps-grid" id="home-apps">${homeAppsHtml}</div>
       </div>
@@ -478,13 +486,13 @@ function renderHtml(human: HumanRow, data: ShellData): string {
     <section class="view" data-view="store">
       <div class="view-head">
         <div>
-          <h1>Template Store</h1>
+          <h1>Template store</h1>
           <div class="sub">Public templates anyone can install. Click a tile to add it to your library and launch.</div>
         </div>
       </div>
       <div class="search">
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="store-search" placeholder="Search the Template Store…" autocomplete="off" />
+        <input id="store-search" placeholder="Search the Template store…" autocomplete="off" />
       </div>
 
       <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
@@ -494,7 +502,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
     <section class="view" data-view="mine">
       <div class="view-head">
         <div>
-          <h1>My Templates</h1>
+          <h1>My templates</h1>
           <div class="sub">Templates you own or have installed. Click to launch.</div>
         </div>
       </div>
@@ -1219,7 +1227,7 @@ const SHELL_JS = `
       }
 
       if (act === 'publish') {
-        if (!confirm('Publish "' + name + '" to the public Template Store? Anyone will be able to install it.')) return;
+        if (!confirm('Publish "' + name + '" to the public Template store? Anyone will be able to install it.')) return;
         const ok = await callAction('/v1/my-templates/' + encodeURIComponent(tid) + '/publish', 'POST', [200, 201]);
         if (ok) { closeMenu(); location.reload(); }
       } else if (act === 'unpublish') {
@@ -1232,7 +1240,7 @@ const SHELL_JS = `
         if (ok) {
           closeMenu();
           // Remove every tile referencing this template from the DOM,
-          // and decrement the My Templates count chip.
+          // and decrement the My templates count chip.
           document.querySelectorAll('.app-tile-wrap[data-template-id="' + CSS.escape(tid) + '"]').forEach((el) => el.remove());
           const navCount = document.querySelector('#nav-items button[data-view="mine"] .count');
           if (navCount) {
@@ -1241,7 +1249,7 @@ const SHELL_JS = `
           }
         }
       } else if (act === 'uninstall') {
-        if (!confirm('Uninstall "' + name + '"? You can install it again later from the Template Store.')) return;
+        if (!confirm('Uninstall "' + name + '"? You can install it again later from the Template store.')) return;
         const ok = await callAction('/v1/templates/' + encodeURIComponent(tid) + '/uninstall', 'POST', [200, 204]);
         if (ok) { closeMenu(); location.reload(); }
       }

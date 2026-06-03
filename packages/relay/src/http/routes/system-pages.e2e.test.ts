@@ -510,6 +510,51 @@ describe("GET /settings (signed in)", () => {
   });
 });
 
+// The legacy system-pages chrome (rendered on standalone pages like /settings
+// and /my-agents) must use the SAME nav labels and icons as the owner-shell
+// SPA — they share NAV_LABELS / NAV_GLYPHS in nav-meta.ts. These assertions
+// lock that in so the two navs can't drift back apart.
+describe("owner nav consistency (system-pages chrome)", () => {
+  it("renders the canonical sentence-case labels, no retired tabs", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/settings", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Canonical labels (match the SPA sidebar exactly).
+    for (const label of [
+      "Home",
+      "Panes",
+      "Template store",
+      "My templates",
+      "My agents",
+      "Settings",
+    ]) {
+      expect(html).toContain(`>${label}</span>`);
+    }
+    // Retired / old-style labels must be gone.
+    expect(html).not.toContain("My panes");
+    expect(html).not.toContain("My Templates"); // title-case variant retired
+    expect(html).not.toContain(">Trash<");
+    expect(html).not.toContain("/trash");
+  });
+
+  it("uses the shared canonical icons (storefront for store, grid for templates)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/settings", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Storefront awning path = Template store (NOT the 2x2 grid it used to
+    // share with My templates).
+    expect(html).toContain(`d="M3 3h18l-1.5 5H4.5L3 3z"`);
+    // The old document-style My templates icon must be gone.
+    expect(html).not.toContain(`d="M4 5h13l3 3v11`);
+    // The old person-style My agents icon must be gone (now a robot).
+    expect(html).not.toContain(`d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"`);
+  });
+});
+
 describe("auth.verify redirect", () => {
   it("redirects newly-verified humans to /home by default", async () => {
     const { generateMagicLinkToken, hashMagicLinkToken } =
