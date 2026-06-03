@@ -85,7 +85,10 @@ model Human {
   logins         Login[]
   claimedAgents  Agent[]
   templateInstalls HumanTemplateInstall[]
-  templateFavorites HumanTemplateFavorite[]
+  // Panes the human has starred. Pane-level (not template-level) because
+  // people use *instances*, not their templates — Home's Favorites strip
+  // surfaces what the human keeps coming back to.
+  paneFavorites  HumanPaneFavorite[]
   claimCodes     ClaimCode[]
   // Panes owned by this human (Phase A — Pane.ownerHumanId)
   ownedPanes  Pane[]
@@ -222,20 +225,22 @@ model HumanTemplateInstall {
   @@map("human_template_installs")
 }
 
-// Star/pin a template. Independent of install — a publisher can favorite
-// their own authored template (which they didn't install), and a human
-// can star several installs but only keep a subset on Home's Favorites
-// strip. Cascade on either side: a deleted human/template clears favs.
-model HumanTemplateFavorite {
-  humanId    String   @map("human_id")
-  human      Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
-  templateId String   @map("template_id")
-  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  addedAt    DateTime @default(now()) @map("added_at")
+// Star/pin a pane — Home's Favorites strip surfaces these. We star
+// instances, not templates, because people use a specific pane (the
+// scratchpad they keep open, the dashboard they check) — the template
+// is just where the pane came from. Cascade on either side: a deleted
+// human/pane clears favs (soft-deleted pane still keeps the row so
+// restore re-surfaces the favorite).
+model HumanPaneFavorite {
+  humanId String   @map("human_id")
+  human   Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  paneId  String   @map("pane_id")
+  pane    Pane     @relation(fields: [paneId], references: [id], onDelete: Cascade)
+  addedAt DateTime @default(now()) @map("added_at")
 
-  @@id([humanId, templateId])
+  @@id([humanId, paneId])
   @@index([humanId, addedAt])
-  @@map("human_template_favorites")
+  @@map("human_pane_favorites")
 }
 
 model Feedback {
@@ -291,7 +296,6 @@ model Template {
 
   attachments   Attachment[]
   installs      HumanTemplateInstall[]
-  favorites     HumanTemplateFavorite[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
 
   // Template-level mutable record collections (shared across every pane
@@ -415,6 +419,7 @@ model Pane {
   attachments     Attachment[]
   // #288 — per-pane mutable record collections.
   recordCollections RecordCollection[]
+  favorites         HumanPaneFavorite[]
 
   // #302 — soft-delete timestamp. NULL = active. When the TTL sweeper
   // (#303) fires it sets `deletedAt = now()` instead of `DELETE`-ing the

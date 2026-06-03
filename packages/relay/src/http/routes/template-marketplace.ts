@@ -624,67 +624,6 @@ myTemplates.post("/:id/unpublish", requireHuman, async (c) => {
   return c.json({ id, published_at: null });
 });
 
-// POST /v1/my-templates/:id/favorite — star a template for the calling human.
-//
-// Independent of install — a publisher can favorite their own authored template
-// without installing it, and an installed template doesn't appear in Favorites
-// until explicitly starred. Idempotent: a second POST is a no-op.
-//
-// 404 if the template doesn't exist or the human can't see it. Visibility =
-// owned-by-this-human OR published OR already-installed-by-this-human (same
-// rules the SPA's loadShellData applies).
-myTemplates.post("/:id/favorite", requireHuman, async (c) => {
-  const prisma = c.get("prisma");
-  const human = c.get("human");
-  const id = c.req.param("id");
-  if (!id) throw errors.invalidRequest("missing template id");
-
-  const template = await prisma.template.findUnique({
-    where: { id },
-    include: { owner: { select: { ownerHumanId: true } } },
-  });
-  if (!template) throw errors.notFound();
-
-  const ownedByHuman = template.owner.ownerHumanId === human.id;
-  const published = template.publishedAt !== null;
-  let visible = ownedByHuman || published;
-  if (!visible) {
-    const install = await prisma.humanTemplateInstall.findUnique({
-      where: {
-        humanId_templateId: { humanId: human.id, templateId: id },
-      },
-      select: { uninstalledAt: true },
-    });
-    visible = !!install && install.uninstalledAt === null;
-  }
-  if (!visible) throw errors.notFound();
-
-  await prisma.humanTemplateFavorite.upsert({
-    where: {
-      humanId_templateId: { humanId: human.id, templateId: id },
-    },
-    create: { humanId: human.id, templateId: id },
-    update: {},
-  });
-
-  return c.json({ id, favorited: true });
-});
-
-// DELETE /v1/my-templates/:id/favorite — unstar. Idempotent: a row that's
-// already absent returns 204 with no error.
-myTemplates.delete("/:id/favorite", requireHuman, async (c) => {
-  const prisma = c.get("prisma");
-  const human = c.get("human");
-  const id = c.req.param("id");
-  if (!id) throw errors.invalidRequest("missing template id");
-
-  await prisma.humanTemplateFavorite.deleteMany({
-    where: { humanId: human.id, templateId: id },
-  });
-
-  return c.body(null, 204);
-});
-
 // POST /v1/my-templates/:id/launch — create a pane from an installed template.
 //
 // Closes the dead-end-UX gap where Install added the template to the human's

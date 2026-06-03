@@ -43,7 +43,23 @@ interface TemplateRef {
    *  input_schema with required fields — i.e. it needs an agent (or
    *  some out-of-band caller) to seed input_data before it's useful. */
   isAgentInit: boolean;
-  /** True when this template is currently starred by the human. */
+  /** Number of live panes the human has derived from this template.
+   *  Drives the "X panes →" chip on My Templates tiles that jumps to the
+   *  Panes view filtered to this template. */
+  paneCount: number;
+}
+
+interface PaneRef {
+  id: string;
+  title: string;
+  status: string;
+  createdAt: Date;
+  expiresAt: Date;
+  templateId: string | null;
+  templateVersion: number;
+  templateName: string | null;
+  /** True when this pane is starred by the human. Drives the Home
+   *  Favorites strip and the star toggle on each pane row. */
   isFavorite: boolean;
 }
 
@@ -57,18 +73,11 @@ interface ShellData {
   }>;
   /** Public catalog rows (excluding things already installed). */
   publicCatalog: TemplateRef[];
-  /** Templates the human has starred — independent of install. */
-  favorites: TemplateRef[];
   /** Panes the human owns or has joined as participant, ordered newest first. */
-  panes: Array<{
-    id: string;
-    title: string;
-    status: string;
-    createdAt: Date;
-    expiresAt: Date;
-    templateVersion: number;
-    templateName: string | null;
-  }>;
+  panes: PaneRef[];
+  /** Subset of `panes` the human has starred. Home Favorites strip
+   *  renders these as openable pane cards. */
+  favoritePanes: PaneRef[];
 }
 
 async function loadShellData(
@@ -94,97 +103,101 @@ async function loadShellData(
     },
   };
 
-  const [ownedTemplatesRaw, installs, publicCatalogRaw, panes, favoriteRows] =
-    await Promise.all([
-      claimedAgentIds.length === 0
-        ? Promise.resolve([])
-        : prisma.template.findMany({
-            where: {
-              ownerId: { in: claimedAgentIds },
-              deletedAt: null,
-              name: { not: null },
-            },
-            orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              ...latestVersionInclude,
-            },
-          }),
-      prisma.humanTemplateInstall.findMany({
-        where: { humanId: human.id, uninstalledAt: null },
-        orderBy: { installedAt: "desc" },
-        select: {
-          installedVersion: true,
-          template: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              deletedAt: true,
-              ...latestVersionInclude,
-            },
+  const [
+    ownedTemplatesRaw,
+    installs,
+    publicCatalogRaw,
+    panesRaw,
+    favoriteRows,
+  ] = await Promise.all([
+    claimedAgentIds.length === 0
+      ? Promise.resolve([])
+      : prisma.template.findMany({
+          where: {
+            ownerId: { in: claimedAgentIds },
+            deletedAt: null,
+            name: { not: null },
+          },
+          orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            ...latestVersionInclude,
+          },
+        }),
+    prisma.humanTemplateInstall.findMany({
+      where: { humanId: human.id, uninstalledAt: null },
+      orderBy: { installedAt: "desc" },
+      select: {
+        installedVersion: true,
+        template: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            deletedAt: true,
+            ...latestVersionInclude,
           },
         },
-      }),
-      prisma.template.findMany({
-        where: { publishedAt: { not: null }, deletedAt: null },
-        orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
-        take: 40,
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          ...latestVersionInclude,
-        },
-      }),
-      prisma.pane.findMany({
-        where: {
-          deletedAt: null,
-          OR: [
-            { ownerHumanId: human.id },
-            {
-              participants: {
-                some: { humanId: human.id, revokedAt: null },
-              },
-            },
-          ],
-        },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          title: true,
-          status: true,
-          createdAt: true,
-          expiresAt: true,
-          templateVersion: {
-            select: {
-              version: true,
-              template: { select: { name: true, slug: true } },
+      },
+    }),
+    prisma.template.findMany({
+      where: { publishedAt: { not: null }, deletedAt: null },
+      orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
+      take: 40,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        ...latestVersionInclude,
+      },
+    }),
+    prisma.pane.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { ownerHumanId: human.id },
+          {
+            participants: {
+              some: { humanId: human.id, revokedAt: null },
             },
           },
-        },
-      }),
-      prisma.humanTemplateFavorite.findMany({
-        where: { humanId: human.id },
-        orderBy: { addedAt: "desc" },
-        select: {
-          template: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              deletedAt: true,
-              ...latestVersionInclude,
-            },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        createdAt: true,
+        expiresAt: true,
+        templateVersion: {
+          select: {
+            version: true,
+            template: { select: { id: true, name: true, slug: true } },
           },
         },
-      }),
-    ]);
+      },
+    }),
+    prisma.humanPaneFavorite.findMany({
+      where: { humanId: human.id, pane: { deletedAt: null } },
+      orderBy: { addedAt: "desc" },
+      select: { paneId: true },
+    }),
+  ]);
 
-  const favoriteIds = new Set(favoriteRows.map((f) => f.template.id));
+  // Pane counts per template id — drives the "X panes →" chip on tiles
+  // in My Templates so the human can jump straight to their instances.
+  const paneCountByTemplate = new Map<string, number>();
+  for (const p of panesRaw) {
+    const tid = p.templateVersion?.template?.id;
+    if (tid) {
+      paneCountByTemplate.set(tid, (paneCountByTemplate.get(tid) ?? 0) + 1);
+    }
+  }
+
   function toRef(t: {
     id: string;
     name: string | null;
@@ -196,7 +209,7 @@ async function loadShellData(
       name: t.name,
       slug: t.slug,
       isAgentInit: hasRequiredInputs(t.versions[0]?.inputSchema),
-      isFavorite: favoriteIds.has(t.id),
+      paneCount: paneCountByTemplate.get(t.id) ?? 0,
     };
   }
   const ownedTemplates = ownedTemplatesRaw.map(toRef);
@@ -206,9 +219,23 @@ async function loadShellData(
   const publicCatalog = publicCatalogRaw
     .filter((t) => !installedIds.has(t.id))
     .map(toRef);
-  const favorites = favoriteRows
-    .filter((f) => f.template.deletedAt === null)
-    .map((f) => toRef(f.template));
+
+  const favoritePaneIds = new Set(favoriteRows.map((r) => r.paneId));
+  const panes: PaneRef[] = panesRaw.map((p) => ({
+    id: p.id,
+    title: p.title,
+    status: p.status,
+    createdAt: p.createdAt,
+    expiresAt: p.expiresAt,
+    templateId: p.templateVersion?.template?.id ?? null,
+    templateVersion: p.templateVersion?.version ?? 0,
+    templateName:
+      p.templateVersion?.template?.name ??
+      p.templateVersion?.template?.slug ??
+      null,
+    isFavorite: favoritePaneIds.has(p.id),
+  }));
+  const favoritePanes = panes.filter((p) => p.isFavorite);
 
   return {
     ownedTemplates,
@@ -217,19 +244,8 @@ async function loadShellData(
       installedVersion: i.installedVersion,
     })),
     publicCatalog,
-    favorites,
-    panes: panes.map((p) => ({
-      id: p.id,
-      title: p.title,
-      status: p.status,
-      createdAt: p.createdAt,
-      expiresAt: p.expiresAt,
-      templateVersion: p.templateVersion?.version ?? 0,
-      templateName:
-        p.templateVersion?.template?.name ??
-        p.templateVersion?.template?.slug ??
-        null,
-    })),
+    panes,
+    favoritePanes,
   };
 }
 
@@ -255,13 +271,14 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   }
   const stats = statsBits.join(" · ");
 
-  // Build the favorites strip from the favorites table (independent of installs).
+  // Home Favorites strip — pane-level. A pane is what the human actually
+  // uses (and re-visits); the template is just where it came from.
   const favsHtml =
-    data.favorites.length === 0
-      ? `<div class="empty-strip">No favorites yet. Tap the star on a template to pin it here.</div>`
-      : data.favorites
+    data.favoritePanes.length === 0
+      ? `<div class="empty-strip">No favorites yet. Tap the star on any pane to pin it here.</div>`
+      : data.favoritePanes
           .slice(0, 12)
-          .map((t) => favTile(t))
+          .map((p) => favPaneTile(p))
           .join("");
 
   // Recents strip from panes.
@@ -273,8 +290,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           .map((p) => recentCard(p))
           .join("");
 
-  // Home "All templates" grid — owned + installed deduped (by id, preserving
-  // the merged isFavorite flag from whichever copy appeared first).
+  // Home "All templates" grid — owned + installed deduped (by id).
   const homeAllTemplates = dedupTemplates([
     ...data.ownedTemplates,
     ...data.installs.map((i) => i.template),
@@ -411,6 +427,13 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           <div class="sub">Live sessions you own or joined. Click to open.</div>
         </div>
       </div>
+      <!-- Filter banner shown when the user arrives here from a template
+           tile's "X panes →" chip. Hidden by default; populated + revealed
+           by JS. -->
+      <div id="pane-filter-banner" class="filter-banner" hidden>
+        <span>Showing panes from <strong id="pane-filter-name"></strong></span>
+        <button id="pane-filter-clear" type="button">Clear</button>
+      </div>
       <ul class="panes-list" id="panes-list">${panesHtml}</ul>
     </section>
 
@@ -459,14 +482,16 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 
 // ----- Tile / row HTML helpers -----
 
-function favTile(t: TemplateRef): string {
-  const name = t.name ?? t.slug ?? t.id;
-  const hue = paneHue(t.id);
-  const initials = paneInitials(name);
-  return `<button class="fav-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}">
+// Home Favorites strip — each tile is a pane (an instance), not a template.
+// Clicking opens the pane directly.
+function favPaneTile(p: PaneRef): string {
+  const label = p.title || p.id;
+  const hue = paneHue(p.id);
+  const initials = paneInitials(label);
+  return `<a class="fav-tile" href="/panes/${encodeURIComponent(p.id)}" data-pane-id="${escapeHtml(p.id)}">
     <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
-    <div class="label">${escapeHtml(name)}</div>
-  </button>`;
+    <div class="label">${escapeHtml(label)}</div>
+  </a>`;
 }
 
 function appTile(
@@ -480,24 +505,23 @@ function appTile(
   const badge = t.isAgentInit
     ? `<span class="tile-badge agent-init" title="Needs an agent to set input data before launch">agent-init</span>`
     : `<span class="tile-badge ready" title="Ready to launch — no setup needed">ready</span>`;
-  const starCls = t.isFavorite ? "star active" : "star";
-  const starLabel = t.isFavorite ? "Unfavorite" : "Favorite";
-  const starPath = t.isFavorite
-    ? `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>`
-    : `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`;
+  // "X panes →" chip — clickable footer that opens the Panes view filtered
+  // to this template. Only shown when there's at least one live pane.
+  const paneCountChip =
+    t.paneCount > 0
+      ? `<button class="pane-count-chip" data-template-filter="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" title="Show panes from this template">${t.paneCount} ${t.paneCount === 1 ? "pane" : "panes"} →</button>`
+      : "";
   return `<div class="app-tile-wrap" data-template-id="${escapeHtml(t.id)}">
     <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}"${dataAttr}>
       <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
       <div class="label">${escapeHtml(name)}</div>
       ${badge}
     </button>
-    <button class="${starCls}" data-fav-toggle="${escapeHtml(t.id)}" data-fav-on="${t.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
-      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
-    </button>
+    ${paneCountChip}
   </div>`;
 }
 
-function recentCard(p: ShellData["panes"][number]): string {
+function recentCard(p: PaneRef): string {
   const tplName = p.templateName ?? p.title ?? p.id;
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
@@ -512,7 +536,7 @@ function recentCard(p: ShellData["panes"][number]): string {
   </a>`;
 }
 
-function paneRow(p: ShellData["panes"][number]): string {
+function paneRow(p: PaneRef): string {
   const tplName = p.templateName ?? p.title ?? p.id;
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
@@ -520,13 +544,24 @@ function paneRow(p: ShellData["panes"][number]): string {
   const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
   const statusCls = isOpen ? "open" : "closed";
   const statusText = isOpen ? "open" : "closed";
-  return `<li class="pane-row" data-pane-id="${escapeHtml(p.id)}" data-href="/panes/${encodeURIComponent(p.id)}">
+  const tplAttr = p.templateId
+    ? ` data-template-id="${escapeHtml(p.templateId)}"`
+    : "";
+  const starCls = p.isFavorite ? "row-star active" : "row-star";
+  const starLabel = p.isFavorite ? "Unfavorite" : "Favorite";
+  const starPath = p.isFavorite
+    ? `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>`
+    : `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`;
+  return `<li class="pane-row" data-pane-id="${escapeHtml(p.id)}" data-href="/panes/${encodeURIComponent(p.id)}"${tplAttr}>
     <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
     <div class="info">
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
     <div class="status ${statusCls}">${statusText}</div>
+    <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
+    </button>
     <button class="menu-btn" title="More" aria-label="More" data-noopen="1" data-pane-menu="${escapeHtml(p.id)}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
     </button>
@@ -615,18 +650,45 @@ const EXTRA_CSS = `
   .btn.danger { color: var(--pink); border-color: rgba(251,113,133,0.3); }
   .btn.danger:hover { color: var(--pink); border-color: var(--pink); }
 
-  /* Tile wrap holds the tile + the floating star toggle. */
-  .app-tile-wrap { position: relative; }
-  .app-tile-wrap .star {
-    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
-    display: inline-flex; align-items: center; justify-content: center;
-    background: rgba(10,13,20,0.55); border: 1px solid rgba(255,255,255,0.08);
-    color: var(--ink-mute); border-radius: 6px; cursor: pointer; padding: 0;
-    backdrop-filter: blur(4px); transition: color 120ms, transform 120ms;
+  /* Tile wrap holds the tile + the "X panes →" footer chip. */
+  .app-tile-wrap { position: relative; display: flex; flex-direction: column; }
+  .app-tile-wrap .pane-count-chip {
+    margin-top: 4px; padding: 4px 8px; font-size: 11px;
+    background: transparent; border: 1px solid rgba(255,255,255,0.10);
+    color: var(--ink-mute); border-radius: 4px; cursor: pointer;
+    align-self: flex-start; transition: color 120ms, border-color 120ms;
+    font: inherit; line-height: 1.2;
   }
-  .app-tile-wrap .star:hover { color: var(--brand-1); transform: scale(1.06); }
-  .app-tile-wrap .star.active { color: #fbbf24; }
-  .app-tile-wrap .star.active:hover { color: #fbbf24; }
+  .app-tile-wrap .pane-count-chip:hover {
+    color: var(--brand-1); border-color: rgba(147, 197, 253, 0.4);
+  }
+
+  /* Star toggle on each pane row — sits before the triple-dots menu. */
+  .pane-row .row-star {
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; padding: 6px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 120ms, transform 120ms;
+  }
+  .pane-row .row-star:hover { color: var(--brand-1); transform: scale(1.08); }
+  .pane-row .row-star.active { color: #fbbf24; }
+  .pane-row .row-star.active:hover { color: #fbbf24; }
+
+  /* Filter banner above the Panes list when filtered by a template. */
+  .filter-banner {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 10px 14px; margin: 0 0 12px 0;
+    background: rgba(147, 197, 253, 0.08);
+    border: 1px solid rgba(147, 197, 253, 0.20);
+    border-radius: 8px; color: var(--ink); font-size: 13px;
+  }
+  .filter-banner strong { color: var(--brand-1); font-weight: 600; }
+  .filter-banner button {
+    background: transparent; border: 1px solid rgba(255,255,255,0.10);
+    color: var(--ink-mute); padding: 4px 10px; border-radius: 4px;
+    cursor: pointer; font: inherit; font-size: 12px;
+  }
+  .filter-banner button:hover { color: var(--ink); border-color: rgba(255,255,255,0.20); }
 
   /* "agent-init" / "ready" pill on every template tile. */
   .tile-badge {
@@ -714,20 +776,20 @@ const SHELL_JS = `
     location.href = '/login';
   });
 
-  // Star toggle on a tile — POST/DELETE the favorite, then update the icon
-  // in place. Avoids a full reload so the user stays in flow.
+  // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon
+  // in place, and add/remove the row from the Home favorites strip.
   document.body.addEventListener('click', async (ev) => {
-    const star = ev.target instanceof HTMLElement && ev.target.closest('button[data-fav-toggle]');
+    const star = ev.target instanceof HTMLElement && ev.target.closest('button[data-pane-fav-toggle]');
     if (!star) return;
     ev.preventDefault();
     ev.stopPropagation();
-    const id = star.getAttribute('data-fav-toggle');
-    if (!id) return;
+    const paneId = star.getAttribute('data-pane-fav-toggle');
+    if (!paneId) return;
     const on = star.getAttribute('data-fav-on') === '1';
     const method = on ? 'DELETE' : 'POST';
     star.disabled = true;
     try {
-      const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/favorite', {
+      const res = await fetch('/v1/my-panes/' + encodeURIComponent(paneId) + '/favorite', {
         method, credentials: 'same-origin',
       });
       if (!res.ok && res.status !== 204) {
@@ -736,21 +798,51 @@ const SHELL_JS = `
         return;
       }
       const newOn = !on;
-      // Update every tile referencing this template (same id can appear
-      // in multiple grids — Yours, Installed, Home All-templates).
-      document.querySelectorAll('button[data-fav-toggle="' + CSS.escape(id) + '"]').forEach((el) => {
-        const wantOn = newOn;
-        el.setAttribute('data-fav-on', wantOn ? '1' : '0');
-        el.setAttribute('title', wantOn ? 'Unfavorite' : 'Favorite');
-        el.setAttribute('aria-label', wantOn ? 'Unfavorite' : 'Favorite');
-        el.classList.toggle('active', wantOn);
-        const svg = el.querySelector('svg');
-        if (svg) {
-          svg.innerHTML = wantOn
-            ? '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>'
-            : '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+      star.setAttribute('data-fav-on', newOn ? '1' : '0');
+      star.setAttribute('title', newOn ? 'Unfavorite' : 'Favorite');
+      star.setAttribute('aria-label', newOn ? 'Unfavorite' : 'Favorite');
+      star.classList.toggle('active', newOn);
+      const svg = star.querySelector('svg');
+      if (svg) {
+        svg.innerHTML = newOn
+          ? '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>'
+          : '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+      }
+      // Mirror the change in the Home Favorites strip without a reload.
+      const favs = document.getElementById('favs');
+      if (favs) {
+        if (newOn) {
+          const row = star.closest('.pane-row');
+          const titleEl = row && row.querySelector('.title');
+          const iconEl = row && row.querySelector('.icon');
+          const title = titleEl ? (titleEl.textContent || paneId) : paneId;
+          const iconStyle = iconEl ? iconEl.getAttribute('style') || '' : '';
+          const iconText = iconEl ? (iconEl.textContent || '?') : '?';
+          // Strip the placeholder "no favorites yet" message if it was here.
+          const empty = favs.querySelector('.empty-strip');
+          if (empty) empty.remove();
+          const tile = document.createElement('a');
+          tile.className = 'fav-tile';
+          tile.href = '/panes/' + encodeURIComponent(paneId);
+          tile.setAttribute('data-pane-id', paneId);
+          tile.innerHTML =
+            '<div class="icon" style="' + iconStyle.replace(/"/g, '&quot;') + '">' +
+              iconText.replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) +
+            '</div>' +
+            '<div class="label"></div>';
+          (tile.querySelector('.label')).textContent = title;
+          favs.appendChild(tile);
+        } else {
+          const existing = favs.querySelector('[data-pane-id="' + CSS.escape(paneId) + '"]');
+          if (existing) existing.remove();
+          if (favs.children.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-strip';
+            empty.textContent = 'No favorites yet. Tap the star on any pane to pin it here.';
+            favs.appendChild(empty);
+          }
         }
-      });
+      }
     } catch (e) {
       alert('Network error — try again.');
     } finally {
@@ -758,16 +850,58 @@ const SHELL_JS = `
     }
   });
 
+  // Pane-count chip on a template tile — jump to Panes view filtered to
+  // the clicked template. The handler runs BEFORE the tile-click listener
+  // because the chip is matched first; we stopPropagation so the parent
+  // tile doesn't try to launch a new pane.
+  document.body.addEventListener('click', (ev) => {
+    const chip = ev.target instanceof HTMLElement && ev.target.closest('button[data-template-filter]');
+    if (!chip) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const tid = chip.getAttribute('data-template-filter');
+    const tname = chip.getAttribute('data-template-name') || '';
+    if (!tid) return;
+    applyPaneFilter(tid, tname);
+    activate('panes');
+  });
+
+  // Clear button on the filter banner.
+  document.getElementById('pane-filter-clear')?.addEventListener('click', () => {
+    applyPaneFilter(null, '');
+  });
+
+  function applyPaneFilter(templateId, templateName) {
+    const banner = document.getElementById('pane-filter-banner');
+    const nameEl = document.getElementById('pane-filter-name');
+    const rows = document.querySelectorAll('#panes-list .pane-row');
+    if (templateId) {
+      if (banner) banner.hidden = false;
+      if (nameEl) nameEl.textContent = templateName || 'this template';
+      rows.forEach((row) => {
+        const match = row.getAttribute('data-template-id') === templateId;
+        row.style.display = match ? '' : 'none';
+      });
+    } else {
+      if (banner) banner.hidden = true;
+      if (nameEl) nameEl.textContent = '';
+      rows.forEach((row) => { row.style.display = ''; });
+    }
+  }
+
   // Tile click → launch. Discover tiles (data-needs-install) auto-install
   // first and then launch in the same click — no detour through the old
   // /my-templates page.
   document.body.addEventListener('click', async (ev) => {
-    // Star toggle is handled by its own listener above; bail early so we
-    // don't trigger launch when the user clicks the star.
-    if (ev.target instanceof HTMLElement && ev.target.closest('button[data-fav-toggle]')) return;
+    // Sub-controls inside the tile have their own handlers (pane-count chip,
+    // future favorites controls). Bail so we don't double-fire.
+    if (ev.target instanceof HTMLElement && ev.target.closest('button[data-template-filter]')) return;
     const tile = ev.target instanceof HTMLElement &&
       (ev.target.closest('.fav-tile') || ev.target.closest('.app-tile'));
     if (!tile) return;
+    // Home favorites strip — favPaneTile is an <a> with its own navigation;
+    // let the browser handle it instead of going through the launch path.
+    if (tile.tagName === 'A') return;
     const id = tile.getAttribute('data-template-id');
     if (!id) return;
     const needsInstall = tile.getAttribute('data-needs-install') === '1';
