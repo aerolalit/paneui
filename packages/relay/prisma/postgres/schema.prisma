@@ -237,6 +237,10 @@ model Template {
   installs      HumanTemplateInstall[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
 
+  // Template-level mutable record collections. See sqlite schema for the
+  // full design notes; the storage shape is identical.
+  templateRecordCollections TemplateRecordCollection[]
+
   // #302 — soft-delete timestamp. See sqlite schema for semantics.
   deletedAt     DateTime?         @map("deleted_at")
 
@@ -265,6 +269,8 @@ model TemplateVersion {
   // Schema-only column for now; validation, writers, and routes ship in
   // follow-up issues (#289 / #291 / #292).
   recordSchema   Json?     @map("record_schema")
+  // Template-level record-collection declaration. See sqlite schema.
+  templateRecordSchema Json? @map("template_record_schema")
   createdAt      DateTime  @default(now()) @map("created_at")
   panes       Pane[]
   // Back-relation for Event.templateVersion (#268). See the sqlite schema's
@@ -463,6 +469,39 @@ model PaneRecord {
   @@unique([collectionId, recordKey])
   @@index([collectionId, seq])
   @@map("pane_records")
+}
+
+// Template-level record collection — see the sqlite schema for the design.
+model TemplateRecordCollection {
+  id         String           @id @default(cuid())
+  templateId String           @map("template_id")
+  template   Template         @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name       String
+  seq        Int              @default(0)
+  records    TemplateRecord[]
+
+  @@unique([templateId, name])
+  @@map("template_record_collections")
+}
+
+// One row per template-level record. Column-for-column parallel to PaneRecord.
+model TemplateRecord {
+  id           String                   @id @default(cuid())
+  collectionId String                   @map("collection_id")
+  collection   TemplateRecordCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  recordKey    String                   @map("record_key")
+  data         Json
+  version      Int                      @default(1)
+  seq          Int
+  authorKind   String                   @map("author_kind")
+  authorId     String                   @map("author_id")
+  deletedAt    DateTime?                @map("deleted_at")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+
+  @@unique([collectionId, recordKey])
+  @@index([collectionId, seq])
+  @@map("template_records")
 }
 
 // A binary attachment scoped to a template, a pane, or an agent's reusable

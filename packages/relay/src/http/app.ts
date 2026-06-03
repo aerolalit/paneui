@@ -29,6 +29,7 @@ import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
 import events from "./routes/events.js";
 import records from "./routes/records.js";
+import templateRecords from "./routes/template-records.js";
 import query from "./routes/query.js";
 import keys from "./routes/keys.js";
 import taste from "./routes/taste.js";
@@ -332,6 +333,21 @@ export function buildApp(
   // and apply requireAgent middleware, 401-ing the human caller.
   app.route("/v1/templates", templateMarketplace);
   app.route("/v1/templates", templatePublish);
+  // Template-level records router. Mount BEFORE the agent-CRUD `templates`
+  // router so the more specific `/:id/template-records/...` path wins; the
+  // generic templates router only has `/:id` and `/:id/versions` so order
+  // is not strictly load-bearing, but matching the pattern used for
+  // marketplace + publish keeps the file scan readable.
+  app.use(
+    "/v1/templates/:id/template-records/:collection/*",
+    bodyLimit({
+      maxSize: config.MAX_EVENT_DATA_BYTES + 64 * 1024,
+      onError: () => {
+        throw apiErrors.payloadTooLarge();
+      },
+    }),
+  );
+  app.route("/v1/templates/:id/template-records/:collection", templateRecords);
   app.route("/v1/templates", templates);
   // Cookie-authed publish/unpublish for the /my-templates UI (#279 PR B).
   // Distinct base path so it can't collide with the agent-authed

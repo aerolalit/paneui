@@ -451,6 +451,117 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
   }
 
+  // ----- template-level records CRUD ------------------------------------
+
+  /**
+   * GET /v1/templates/:id/template-records/:collection — owner-only list of
+   * a template's curated records. Same wire shape as listRecords, separate
+   * route so the relay can route owner-vs-page access independently.
+   */
+  async listTemplateRecords(
+    templateIdOrSlug: string,
+    collection: string,
+    opts: { since?: number; limit?: number } = {},
+  ): Promise<{
+    records: SerializedRecord[];
+    next_since: number;
+    has_more: boolean;
+  }> {
+    const q = new URLSearchParams();
+    if (opts.since != null) q.set("since", String(opts.since));
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    const r = await this.call(
+      "GET",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}${qs ? "?" + qs : ""}`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject(r);
+  }
+
+  /**
+   * Client-side scan helper — same shape as `getRecord` but for template
+   * records. Walks listTemplateRecords until the key matches.
+   */
+  async getTemplateRecord(
+    templateIdOrSlug: string,
+    collection: string,
+    recordKey: string,
+  ): Promise<SerializedRecord | null> {
+    let since: number | undefined;
+    for (;;) {
+      const page = await this.listTemplateRecords(
+        templateIdOrSlug,
+        collection,
+        { since, limit: 200 },
+      );
+      const hit = page.records.find((r) => r.key === recordKey);
+      if (hit) return hit;
+      if (!page.has_more) return null;
+      since = page.next_since;
+    }
+  }
+
+  /**
+   * POST /v1/templates/:id/template-records/:collection — owner-only
+   * create-or-return-existing.
+   */
+  async upsertTemplateRecord(
+    templateIdOrSlug: string,
+    collection: string,
+    body: { record_key?: string; data: unknown },
+  ): Promise<{ record: SerializedRecord; deduped: boolean }> {
+    const r = await this.call(
+      "POST",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    const out = this.asObject<{
+      record: SerializedRecord;
+      deduped?: boolean;
+    }>(r);
+    return { record: out.record, deduped: out.deduped ?? false };
+  }
+
+  /**
+   * PATCH /v1/templates/:id/template-records/:collection/:recordKey —
+   * optimistic-locked update.
+   */
+  async updateTemplateRecord(
+    templateIdOrSlug: string,
+    collection: string,
+    recordKey: string,
+    body: { data: unknown; if_match?: number },
+  ): Promise<{ record: SerializedRecord }> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<{ record: SerializedRecord }>(r);
+  }
+
+  /**
+   * DELETE /v1/templates/:id/template-records/:collection/:recordKey —
+   * soft-delete.
+   */
+  async deleteTemplateRecord(
+    templateIdOrSlug: string,
+    collection: string,
+    recordKey: string,
+    opts: { ifMatch?: number } = {},
+  ): Promise<void> {
+    const body = opts.ifMatch != null ? { if_match: opts.ifMatch } : undefined;
+    const r = await this.call(
+      "DELETE",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
   /** POST /v1/panes/:id/events — append an agent event. */
   async sendEvent(
     paneId: string,

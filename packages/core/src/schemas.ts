@@ -110,6 +110,11 @@ export const createArtifactSchema = z.object({
   input_schema: z.record(z.string(), z.unknown()).optional(),
   // Optional records declaration (#287 / #289). See inlineArtifactSchema above.
   record_schema: z.unknown().optional(),
+  // Optional template-level records declaration. Same JSON Schema 2020-12 +
+  // x-pane-collections grammar as record_schema; stored separately on the
+  // version so the publisher can curate shared content visible to every
+  // derived pane.
+  template_record_schema: z.unknown().optional(),
 });
 
 // POST /v1/templates/:id/versions — append a new version (content only).
@@ -121,6 +126,8 @@ export const createArtifactVersionSchema = z.object({
   input_schema: z.record(z.string(), z.unknown()).optional(),
   // Optional records declaration (#287 / #289). See inlineArtifactSchema above.
   record_schema: z.unknown().optional(),
+  // Optional template-level records declaration. Same grammar as record_schema.
+  template_record_schema: z.unknown().optional(),
 });
 
 // PATCH /v1/templates/:id — update head metadata only (never content).

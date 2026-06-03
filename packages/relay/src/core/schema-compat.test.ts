@@ -728,4 +728,60 @@ describe("comparePaneSchemas — combined gate", () => {
     });
     expect(breaks).toEqual([]);
   });
+
+  it("template_record_schema removal is reported with re-badged path", () => {
+    const oldTpl: RecordSchema = {
+      $defs: {
+        Row: { type: "object", properties: { text: { type: "string" } } },
+      },
+      "x-pane-collections": {
+        questions: { schema: { $ref: "#/$defs/Row" } },
+      },
+    };
+    const breaks = comparePaneSchemas({
+      oldEventSchema: ev({}),
+      newEventSchema: ev({}),
+      oldInputSchema: null,
+      newInputSchema: null,
+      oldTemplateRecordSchema: oldTpl,
+      newTemplateRecordSchema: null,
+    });
+    expect(breaks.length).toBe(1);
+    expect(breaks[0]!.path).toBe(
+      "template_record_schema['x-pane-collections'].questions",
+    );
+  });
+
+  it("template_record_schema narrowing reported under template_record_schema path", () => {
+    const oldTpl: RecordSchema = {
+      $defs: {
+        Row: { type: "object", properties: { text: { type: "string" } } },
+      },
+      "x-pane-collections": {
+        questions: { schema: { $ref: "#/$defs/Row" } },
+      },
+    };
+    const newTpl: RecordSchema = {
+      $defs: {
+        Row: {
+          type: "object",
+          properties: { text: { type: "string" } },
+          required: ["text"], // tightening — adding required is a break
+        },
+      },
+      "x-pane-collections": {
+        questions: { schema: { $ref: "#/$defs/Row" } },
+      },
+    };
+    const breaks = comparePaneSchemas({
+      oldEventSchema: ev({}),
+      newEventSchema: ev({}),
+      oldInputSchema: null,
+      newInputSchema: null,
+      oldTemplateRecordSchema: oldTpl,
+      newTemplateRecordSchema: newTpl,
+    });
+    expect(breaks.length).toBeGreaterThan(0);
+    expect(breaks[0]!.path.startsWith("template_record_schema")).toBe(true);
+  });
 });

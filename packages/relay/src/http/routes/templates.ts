@@ -37,6 +37,7 @@ function validateVersionContent(
     event_schema: unknown;
     input_schema?: unknown;
     record_schema?: unknown;
+    template_record_schema?: unknown;
   },
 ): EventSchema | null {
   if (Buffer.byteLength(content.source, "utf8") > config.MAX_ARTIFACT_BYTES) {
@@ -75,6 +76,15 @@ function validateVersionContent(
     });
     validateRecordSchemaShape(content.record_schema);
   }
+  // template_record_schema reuses the per-pane records shape validator (same
+  // JSON Schema 2020-12 + x-pane-collections grammar, separate storage).
+  if (content.template_record_schema !== undefined) {
+    assertSchemaWithinLimits(content.template_record_schema, {
+      maxBytes: config.MAX_SCHEMA_BYTES,
+      maxDepth: config.MAX_SCHEMA_DEPTH,
+    });
+    validateRecordSchemaShape(content.template_record_schema);
+  }
   return eventSchema;
 }
 
@@ -112,6 +122,8 @@ function serializeVersion(v: {
   templateSource: string;
   eventSchema: Prisma.JsonValue;
   inputSchema: Prisma.JsonValue;
+  recordSchema?: Prisma.JsonValue;
+  templateRecordSchema?: Prisma.JsonValue;
   createdAt: Date;
 }) {
   return {
@@ -122,6 +134,8 @@ function serializeVersion(v: {
     // null = view-only template (no event vocabulary).
     event_schema: v.eventSchema ?? null,
     input_schema: v.inputSchema ?? null,
+    record_schema: v.recordSchema ?? null,
+    template_record_schema: v.templateRecordSchema ?? null,
     created_at: v.createdAt.toISOString(),
   };
 }
@@ -151,6 +165,7 @@ templates.post("/", async (c) => {
     event_schema,
     input_schema,
     record_schema,
+    template_record_schema,
   } = parsed.data;
 
   const eventSchema = validateVersionContent(config, {
@@ -159,6 +174,7 @@ templates.post("/", async (c) => {
     event_schema,
     input_schema,
     record_schema,
+    template_record_schema,
   });
 
   // Per-agent template cap (count-then-create — a soft cap, see the pane
@@ -204,6 +220,10 @@ templates.post("/", async (c) => {
           recordSchema:
             record_schema !== undefined
               ? (record_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          templateRecordSchema:
+            template_record_schema !== undefined
+              ? (template_record_schema as Prisma.InputJsonValue)
               : Prisma.JsonNull,
         },
       });
@@ -255,8 +275,14 @@ templates.post("/:id/versions", async (c) => {
       "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
     );
   }
-  const { source, type, event_schema, input_schema, record_schema } =
-    parsed.data;
+  const {
+    source,
+    type,
+    event_schema,
+    input_schema,
+    record_schema,
+    template_record_schema,
+  } = parsed.data;
 
   const eventSchema = validateVersionContent(config, {
     source,
@@ -264,6 +290,7 @@ templates.post("/:id/versions", async (c) => {
     event_schema,
     input_schema,
     record_schema,
+    template_record_schema,
   });
 
   if (
@@ -294,6 +321,10 @@ templates.post("/:id/versions", async (c) => {
         recordSchema:
           record_schema !== undefined
             ? (record_schema as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        templateRecordSchema:
+          template_record_schema !== undefined
+            ? (template_record_schema as Prisma.InputJsonValue)
             : Prisma.JsonNull,
       },
     });
@@ -354,6 +385,8 @@ export async function advanceFollowInstalls(
     {
       eventSchema: unknown;
       inputSchema: unknown;
+      recordSchema: unknown;
+      templateRecordSchema: unknown;
     }
   >();
   async function getVersion(v: number) {
@@ -361,7 +394,12 @@ export async function advanceFollowInstalls(
     if (cached) return cached;
     const row = await prisma.templateVersion.findUnique({
       where: { templateId_version: { templateId, version: v } },
-      select: { eventSchema: true, inputSchema: true },
+      select: {
+        eventSchema: true,
+        inputSchema: true,
+        recordSchema: true,
+        templateRecordSchema: true,
+      },
     });
     if (!row) return null;
     versionCache.set(v, row);
@@ -382,6 +420,16 @@ export async function advanceFollowInstalls(
       newEventSchema: toRow.eventSchema as unknown as EventSchema | null,
       oldInputSchema: fromRow.inputSchema as Record<string, unknown> | null,
       newInputSchema: toRow.inputSchema as Record<string, unknown> | null,
+      oldRecordSchema: fromRow.recordSchema as Record<string, unknown> | null,
+      newRecordSchema: toRow.recordSchema as Record<string, unknown> | null,
+      oldTemplateRecordSchema: fromRow.templateRecordSchema as Record<
+        string,
+        unknown
+      > | null,
+      newTemplateRecordSchema: toRow.templateRecordSchema as Record<
+        string,
+        unknown
+      > | null,
     });
     if (breaks.length === 0) {
       await prisma.humanTemplateInstall.update({
