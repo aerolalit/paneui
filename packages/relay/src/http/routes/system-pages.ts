@@ -940,6 +940,7 @@ systemPages.get("/my-templates", async (c) => {
               <div style="min-width:0;flex:1;">
                 <div class="title">${title}</div>
                 <div class="meta">${desc} · ${escapeHtml(t.shape)}</div>
+                <div class="meta" style="margin-top:6px;"><a href="/my-templates/${encodeURIComponent(t.id)}/content" style="font-size:13px;">Manage content →</a></div>
                 <details class="pub-form" style="margin-top:6px;">
                   <summary style="cursor:pointer;font-size:13px;color:var(--accent);">${btnLabel}</summary>
                   <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
@@ -1048,6 +1049,235 @@ systemPages.get("/my-templates", async (c) => {
   return c.html(
     layout({
       title: "My templates",
+      email: human.email,
+      body,
+      active: "templates",
+    }),
+  );
+});
+
+// ----------------------------------------------------------------------
+// GET /my-templates/:id/content — template-records management view.
+//
+// Owner-only (the calling human must own the template's agent). Lists
+// every collection declared in the template's latest version's
+// templateRecordSchema, with the existing rows + an "Add row" form per
+// collection. Writes go through /v1/my-templates/:id/template-records/:c
+// (cookie-authed, defined in template-marketplace.ts) and the page
+// refreshes its row list inline on success.
+//
+// This is the publisher-side surface for curating shared content that
+// every pane derived from the template sees in real time. The data path
+// is: write here → relay broadcasts template-record.* on every derived
+// pane's WS → page-side bridge fires pane.template.records.on handlers
+// in each iframe.
+// ----------------------------------------------------------------------
+systemPages.get("/my-templates/:id/content", async (c) => {
+  const human = c.get("human");
+  if (!human) {
+    return c.html(
+      layout({
+        title: "Template content",
+        email: null,
+        body: loggedOutPrompt(),
+      }),
+    );
+  }
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  // 404 (not 401/403) on miss or not-owned — same shape as the existing
+  // owner-only routes; never confirms the existence of someone else's
+  // template to the caller.
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    return c.html(
+      layout({
+        title: "Template content",
+        email: human.email,
+        body: `<div class="card"><h1>Template not found</h1><p>This template does not exist or is not yours. <a href="/my-templates">Back to My templates</a>.</p></div>`,
+        active: "templates",
+      }),
+      404,
+    );
+  }
+  const version = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: template.id,
+        version: template.latestVersion,
+      },
+    },
+    select: { templateRecordSchema: true, version: true },
+  });
+  const tplSchema = (version?.templateRecordSchema ?? null) as Record<
+    string,
+    unknown
+  > | null;
+  const xpc = (tplSchema?.["x-pane-collections"] ?? null) as Record<
+    string,
+    unknown
+  > | null;
+  const collections: string[] = xpc ? Object.keys(xpc) : [];
+  const name = template.name ?? template.slug ?? template.id;
+  const subtitle = `v${version?.version ?? template.latestVersion} · ${collections.length === 0 ? "no template-level collections declared" : `${collections.length} collection${collections.length === 1 ? "" : "s"}`}`;
+
+  // Render shell HTML; the row lists hydrate client-side from
+  // /v1/my-templates/:id/template-records/:collection so a fresh write
+  // (or a delete) can refresh without a full reload.
+  let body = `<p style="margin:0 0 4px;"><a href="/my-templates" style="font-size:13px;">← My templates</a></p>
+  <h1>${escapeHtml(name)} · content</h1>
+  <p style="color:var(--muted);font-size:14px;margin:0 0 18px;">${escapeHtml(subtitle)}</p>`;
+
+  if (collections.length === 0) {
+    body += `<div class="card empty-state">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>
+      <h3 class="empty-state-headline">No template-level collections declared</h3>
+      <p class="empty-state-body">This template doesn't carry a <code>template_record_schema</code>. Add one when publishing a new version to make shared content available — derived panes will see updates live through <code>pane.template.records</code>.</p>
+    </div>`;
+  } else {
+    for (const collection of collections) {
+      // Each collection block: heading + add-form + an empty &lt;ul&gt;
+      // that the client populates on load. Keys are CSS-escaped via
+      // [data-collection="..."] selectors so collection names with hyphens
+      // stay safe.
+      body += `<section class="card" data-collection="${escapeHtml(collection)}">
+        <h2 style="margin:0 0 12px;font-size:16px;letter-spacing:-0.005em;">${escapeHtml(collection)}</h2>
+        <form class="trec-add" data-collection="${escapeHtml(collection)}" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input class="trec-key" type="text" placeholder="record key (optional)" style="flex:0 1 180px;min-width:140px;" />
+          <input class="trec-data" type="text" placeholder='data JSON, e.g. {"text":"Hello"}' required style="flex:1 1 240px;min-width:200px;font-family:&quot;SF Mono&quot;,Menlo,Consolas,monospace;font-size:13px;" />
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <ul class="list trec-rows" data-collection="${escapeHtml(collection)}"><li class="empty">Loading…</li></ul>
+      </section>`;
+    }
+
+    body += `<script>
+      // Client-side hydration. Each collection block has a UL the script
+      // populates via GET /v1/my-templates/:id/template-records/:collection.
+      // Mutations (add / delete) hit the matching POST / DELETE under the
+      // same prefix and re-render the affected list on success.
+      const TEMPLATE_ID = ${JSON.stringify(template.id)};
+
+      function escape(s) {
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      async function loadCollection(name) {
+        const ul = document.querySelector(\`ul.trec-rows[data-collection="\${CSS.escape(name)}"]\`);
+        if (!ul) return;
+        ul.innerHTML = '<li class="empty">Loading…</li>';
+        try {
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}?since=0\`,
+            { credentials: 'same-origin' },
+          );
+          if (!res.ok) {
+            ul.innerHTML = '<li class="empty">Failed to load (' + res.status + ')</li>';
+            return;
+          }
+          const body = await res.json();
+          const live = (body.records || []).filter((r) => r.deleted_at === null);
+          if (!live.length) {
+            ul.innerHTML = '<li class="empty">No rows yet — add one above.</li>';
+            return;
+          }
+          ul.innerHTML = live.map((r) => {
+            const dataStr = JSON.stringify(r.data);
+            return '<li data-key="' + escape(r.key) + '">'
+              + '<div><div class="title">' + escape(r.key) + '</div>'
+              + '<div class="meta"><code>' + escape(dataStr) + '</code></div>'
+              + '<div class="meta meta-dim" style="color:var(--muted);">v' + escape(r.version) + ' · ' + escape(r.author.kind) + '</div></div>'
+              + '<div><button class="btn ghost trec-delete" data-key="' + escape(r.key) + '" data-version="' + escape(r.version) + '">Delete</button></div>'
+              + '</li>';
+          }).join('');
+        } catch (e) {
+          ul.innerHTML = '<li class="empty">Network error</li>';
+        }
+      }
+
+      // Initial load for every declared collection.
+      for (const sec of document.querySelectorAll('section[data-collection]')) {
+        loadCollection(sec.getAttribute('data-collection'));
+      }
+
+      // Add-row form submit → POST.
+      document.body.addEventListener('submit', async (ev) => {
+        const form = ev.target;
+        if (!(form instanceof HTMLElement) || !form.classList.contains('trec-add')) return;
+        ev.preventDefault();
+        const name = form.getAttribute('data-collection');
+        const keyEl = form.querySelector('.trec-key');
+        const dataEl = form.querySelector('.trec-data');
+        const key = (keyEl && keyEl.value || '').trim();
+        const raw = (dataEl && dataEl.value || '').trim();
+        let data;
+        try { data = JSON.parse(raw); }
+        catch { alert('Data must be valid JSON.'); return; }
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.textContent = 'Adding…';
+        try {
+          const body = { data };
+          if (key.length > 0) body.record_key = key;
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}\`,
+            { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) },
+          );
+          if (!res.ok && res.status !== 200 && res.status !== 201) {
+            const err = await res.json().catch(() => ({}));
+            alert('Add failed: ' + (err.error && err.error.message || ('HTTP ' + res.status)));
+            btn.disabled = false; btn.textContent = 'Add';
+            return;
+          }
+          dataEl.value = ''; if (keyEl) keyEl.value = '';
+          btn.disabled = false; btn.textContent = 'Add';
+          loadCollection(name);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Add';
+          alert('Network error');
+        }
+      });
+
+      // Delete-button click → DELETE.
+      document.body.addEventListener('click', async (ev) => {
+        const target = ev.target;
+        if (!(target instanceof HTMLElement)) return;
+        const btn = target.closest('button.trec-delete');
+        if (!btn) return;
+        const li = btn.closest('li[data-key]');
+        const section = btn.closest('section[data-collection]');
+        if (!li || !section) return;
+        const name = section.getAttribute('data-collection');
+        const key = li.getAttribute('data-key');
+        if (!confirm('Delete row "' + key + '"?')) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}/\${encodeURIComponent(key)}\`,
+            { method: 'DELETE', credentials: 'same-origin' },
+          );
+          if (!res.ok && res.status !== 204) {
+            const err = await res.json().catch(() => ({}));
+            alert('Delete failed: ' + (err.error && err.error.message || ('HTTP ' + res.status)));
+            btn.disabled = false;
+            return;
+          }
+          loadCollection(name);
+        } catch (e) {
+          btn.disabled = false;
+          alert('Network error');
+        }
+      });
+    </script>`;
+  }
+
+  return c.html(
+    layout({
+      title: name + " · content",
       email: human.email,
       body,
       active: "templates",
