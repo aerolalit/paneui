@@ -168,6 +168,26 @@ interface PaneApi {
     ): Promise<void>;
   };
   /**
+   * Template-level record collections — read-only mirror of the publisher-
+   * curated content scoped to the template head, shared across every pane
+   * derived from any version of the template. Writes go through the
+   * publisher's owner tooling (`pane template-records …` CLI or the
+   * owner-shell UI); pages can only observe.
+   */
+  readonly template: {
+    readonly records: {
+      snapshot(collection: string): unknown[];
+      on(
+        collection: string,
+        handler: (ev: {
+          kind: "upsert" | "delete";
+          collection: string;
+          record: { key: string; seq: number; [k: string]: unknown };
+        }) => void,
+      ): () => void;
+    };
+  };
+  /**
    * Resolves exactly once, when the shell's `init` frame has been processed
    * and `inputData` + the historical event replay are available. Pages that
    * read `inputData` or react to past events on first paint should `await`
@@ -660,6 +680,27 @@ declare global {
       ingestRecord(op, collection, m.record);
       return;
     }
+    // Template-level records — parallel to record-* but routed to the
+    // pane.template.records.* namespace below.
+    if (m.kind === "template-record-snapshot") {
+      const cols = (m.collections || {}) as Record<string, unknown[]>;
+      for (const [name, rows] of Object.entries(cols)) {
+        for (const r of rows) {
+          ingestTemplateRecord(
+            "upsert",
+            name,
+            r as { key: string; seq: number },
+          );
+        }
+      }
+      return;
+    }
+    if (m.kind === "template-record-delta") {
+      const op = m.op as "upsert" | "delete";
+      const collection = String(m.collection);
+      ingestTemplateRecord(op, collection, m.record);
+      return;
+    }
   });
 
   // `window.pane` is frozen so the template can't tamper with the bridge. But
@@ -723,6 +764,41 @@ declare global {
           // A throwing handler must not break delivery to other subscribers.
 
           console.error("pane.records handler threw:", err);
+        }
+      }
+    }
+  }
+
+  // Template-level record store — same shape + semantics as the per-pane
+  // record store, kept separate so pane.records.* and
+  // pane.template.records.* never alias by collection name.
+  const templateRecordStore = new Map<string, Map<string, RecordRow>>();
+  const templateRecordLastSeq = new Map<string, number>();
+  const templateRecordHandlers = new Map<string, Set<RecordHandler>>();
+
+  function ingestTemplateRecord(
+    op: "upsert" | "delete",
+    collection: string,
+    record: { key: string; seq: number; [k: string]: unknown },
+  ): void {
+    const last = templateRecordLastSeq.get(collection) ?? 0;
+    if (record.seq <= last) return;
+    let inner = templateRecordStore.get(collection);
+    if (!inner) {
+      inner = new Map();
+      templateRecordStore.set(collection, inner);
+    }
+    if (op === "upsert") inner.set(record.key, record as unknown as RecordRow);
+    else inner.delete(record.key);
+    templateRecordLastSeq.set(collection, record.seq);
+    const handlers = templateRecordHandlers.get(collection);
+    if (handlers) {
+      const ev: RecordDelta = { kind: op, collection, record };
+      for (const h of handlers) {
+        try {
+          h(ev);
+        } catch (err) {
+          console.error("pane.template.records handler threw:", err);
         }
       }
     }
@@ -838,6 +914,28 @@ declare global {
     });
   }
 
+  // Read-only template-level records facade — pages can snapshot + subscribe
+  // but not mutate (writes are owner-only and go through the HTTP routes).
+  const templateRecords = {
+    snapshot(collection: string): RecordRow[] {
+      const inner = templateRecordStore.get(collection);
+      return inner ? Array.from(inner.values()) : [];
+    },
+    on(collection: string, handler: RecordHandler): () => void {
+      let set = templateRecordHandlers.get(collection);
+      if (!set) {
+        set = new Set();
+        templateRecordHandlers.set(collection, set);
+      }
+      set.add(handler);
+      return () => {
+        const s = templateRecordHandlers.get(collection);
+        if (s) s.delete(handler);
+      };
+    },
+  };
+  const template = Object.freeze({ records: Object.freeze(templateRecords) });
+
   window.pane = Object.freeze({
     emit,
     on,
@@ -847,6 +945,7 @@ declare global {
     saveBlob,
     ready,
     records,
+    template,
     get inputData(): unknown {
       return inputData;
     },

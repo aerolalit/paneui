@@ -87,6 +87,11 @@ class RecordStore {
   >();
   private readonly lastSeq = new Map<string, number>();
 
+  // Mirrored from the canonical ./record-store.ts — cursorPrefix lets us
+  // construct one store for per-pane records (default) and one for
+  // template-level records (`since_template_record_seq`).
+  constructor(private readonly cursorPrefix: string = "since_record_seq") {}
+
   applyUpsert(msg: ShellRecordUpsertMessage): ShellRecordDelta | null {
     const last = this.lastSeq.get(msg.collection) ?? 0;
     if (msg.record.seq <= last) return null;
@@ -123,7 +128,7 @@ class RecordStore {
     if (this.lastSeq.size === 0) return "";
     const parts: string[] = [];
     for (const [name, seq] of this.lastSeq.entries()) {
-      parts.push(`since_record_seq.${encodeURIComponent(name)}=${seq}`);
+      parts.push(`${this.cursorPrefix}.${encodeURIComponent(name)}=${seq}`);
     }
     return parts.join("&");
   }
@@ -194,6 +199,9 @@ interface SerializedEvent {
   // tracking drives the reconnect cursors. The iframe-postMessage routing
   // that exposes this to `pane.records.*` is #298's scope.
   const recordStore = new RecordStore();
+  // Parallel store for template-level records — distinct cursor namespace so
+  // reconnect resumes both streams independently.
+  const templateRecordStore = new RecordStore("since_template_record_seq");
   let ws: WebSocket | null = null;
   let backoff = 1000;
   // Guards against overlapping connections. `connect()` can be reached from two
@@ -475,6 +483,41 @@ interface SerializedEvent {
     frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
   }
 
+  // Template-level record delta forwarding — same shape as the per-pane
+  // record-delta path but distinguished by kind so the iframe can route to
+  // pane.template.records.on instead of pane.records.on.
+  function pushTemplateRecordDeltaToIframe(
+    op: "upsert" | "delete",
+    collection: string,
+    record: unknown,
+  ): void {
+    if (!iframeReady || !frame || !frame.contentWindow) return;
+    const frameMsg = {
+      __pane: 1 as const,
+      v: 1 as const,
+      kind: "template-record-delta" as const,
+      op,
+      collection,
+      record,
+    } as unknown as OutboundFrame;
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
+  }
+
+  function pushTemplateRecordSnapshotToIframe(): void {
+    if (!iframeReady || !frame || !frame.contentWindow) return;
+    const collections: Record<string, unknown[]> = {};
+    for (const name of templateRecordStore.observedCollections()) {
+      collections[name] = templateRecordStore.snapshot(name);
+    }
+    const frameMsg = {
+      __pane: 1 as const,
+      v: 1 as const,
+      kind: "template-record-snapshot" as const,
+      collections,
+    } as unknown as OutboundFrame;
+    frame.contentWindow.postMessage(frameMsg, IFRAME_ORIGIN);
+  }
+
   // #298 — push the initial record-snapshot to the iframe (one frame, all
   // collections). Sent right after `init` so the template's first
   // pane.records.snapshot() call sees the replayed state without waiting.
@@ -613,8 +656,11 @@ interface SerializedEvent {
     // cursor from the store so the relay's replay skips already-observed
     // rows.
     qs += "&subscribe_records=*";
+    qs += "&subscribe_template_records=*";
     const cursorQs = recordStore.reconnectCursorQuery();
     if (cursorQs.length > 0) qs += "&" + cursorQs;
+    const tplCursorQs = templateRecordStore.reconnectCursorQuery();
+    if (tplCursorQs.length > 0) qs += "&" + tplCursorQs;
     const sock = new WebSocket(CFG.wsUrl + qs);
     ws = sock;
 
@@ -672,6 +718,36 @@ interface SerializedEvent {
             (delta as { record: unknown }).record,
           );
         }
+        return;
+      }
+      if (kind === "template-record.upsert") {
+        const delta = templateRecordStore.applyUpsert(
+          msg as unknown as Parameters<RecordStore["applyUpsert"]>[0],
+        );
+        if (delta) {
+          pushTemplateRecordDeltaToIframe(
+            "upsert",
+            delta.collection,
+            (delta as { record: unknown }).record,
+          );
+        }
+        return;
+      }
+      if (kind === "template-record.delete") {
+        const delta = templateRecordStore.applyDelete(
+          msg as unknown as Parameters<RecordStore["applyDelete"]>[0],
+        );
+        if (delta) {
+          pushTemplateRecordDeltaToIframe(
+            "delete",
+            delta.collection,
+            (delta as { record: unknown }).record,
+          );
+        }
+        return;
+      }
+      if (kind === "template-record.replay.complete") {
+        // Sentinel — store already advanced via the replayed deltas above.
         return;
       }
       if (kind === "record.replay.complete") {
@@ -764,6 +840,7 @@ interface SerializedEvent {
       // #298 — push the initial record snapshot right after init so the
       // template's first pane.records.snapshot() reflects the replayed state.
       pushRecordSnapshotToIframe();
+      pushTemplateRecordSnapshotToIframe();
       return;
     }
     // upload-attachment-request: the iframe is asking the shell to POST a file to
