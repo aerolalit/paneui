@@ -397,7 +397,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
         <div class="name">${escapeHtml(displayName)}</div>
         <div class="sub">${escapeHtml(human.email)}</div>
       </div>
-      <a href="/my-agents" title="My agents" aria-label="My agents" style="margin-left:auto;color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
+      <a href="/my-agents" title="My agents" aria-label="My agents" style="color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
       </a>
       <a href="/settings" title="Settings" aria-label="Settings" style="color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
