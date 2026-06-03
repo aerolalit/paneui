@@ -65,6 +65,15 @@ export class RecordStore {
   private readonly lastSeq = new Map<string, number>();
 
   /**
+   * Reconnect-cursor query-parameter prefix. The store is parameterised on
+   * this so the shell can construct two parallel stores — one for per-pane
+   * records (`since_record_seq.`) and one for template-level records
+   * (`since_template_record_seq.`). Defaults to the per-pane prefix for
+   * back-compat with the original single-store call sites.
+   */
+  constructor(private readonly cursorPrefix: string = "since_record_seq") {}
+
+  /**
    * Apply an upsert. Replaces any existing row at (collection, key). Returns
    * the delta to forward to the iframe — null when the message is stale
    * (seq <= last observed for that collection), which can happen if the
@@ -117,7 +126,7 @@ export class RecordStore {
     if (this.lastSeq.size === 0) return "";
     const parts: string[] = [];
     for (const [name, seq] of this.lastSeq.entries()) {
-      parts.push(`since_record_seq.${encodeURIComponent(name)}=${seq}`);
+      parts.push(`${this.cursorPrefix}.${encodeURIComponent(name)}=${seq}`);
     }
     return parts.join("&");
   }
