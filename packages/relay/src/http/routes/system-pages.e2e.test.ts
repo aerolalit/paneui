@@ -247,9 +247,13 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).not.toContain('data-view="chrome"');
     // Footer utility links must stay reachable from the shell. /my-agents is
     // where the claim-code generator lives — it has no data-view (full-page
-    // nav), so it regressed out of the SPA once already.
+    // nav), so it regressed out of the SPA once already. They live in the
+    // account menu (inline on desktop, a popover behind the "Account" tab on
+    // mobile); assert both the links and the menu scaffolding are present.
     expect(html).toContain('href="/my-agents"');
     expect(html).toContain('href="/settings"');
+    expect(html).toContain('id="acct-tab"');
+    expect(html).toContain('id="acct-links"');
     expect(html).toContain('class="greet"');
     expect(html).toContain("Alice");
   });
