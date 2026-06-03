@@ -1,6 +1,8 @@
 // Cookie-authed pane lifecycle for the human-side owner shell.
 //
-//   DELETE /v1/my-panes/:id   soft-delete a pane the human owns
+//   DELETE /v1/my-panes/:id            soft-delete a pane the human owns
+//   POST   /v1/my-panes/:id/favorite   star a pane (Home favorites strip)
+//   DELETE /v1/my-panes/:id/favorite   unstar
 //
 // Parallels DELETE /v1/panes/:id (which is agent-authed) but lets the
 // human delete from the owner-shell UI without minting an agent token.
@@ -64,5 +66,57 @@ myPanes.delete("/:id", requireHuman, async (c) => {
   ]);
 
   log.info("my-panes: soft-deleted", { paneId: id, humanId: human.id });
+  return c.body(null, 204);
+});
+
+// POST /v1/my-panes/:id/favorite — star a pane for the calling human.
+//
+// Visibility check: the human must own the pane OR be an active participant.
+// We don't leak existence of unrelated panes — same 404 shape as the rest of
+// /my-* routes. Idempotent: starring twice writes one row.
+myPanes.post("/:id/favorite", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing pane id");
+
+  const pane = await prisma.pane.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      ownerHumanId: true,
+      deletedAt: true,
+      participants: {
+        where: { humanId: human.id, revokedAt: null },
+        select: { id: true },
+      },
+    },
+  });
+  const isOwner = pane && pane.ownerHumanId === human.id;
+  const isParticipant = pane && pane.participants.length > 0;
+  if (!pane || pane.deletedAt !== null || (!isOwner && !isParticipant)) {
+    throw errors.notFound();
+  }
+
+  await prisma.humanPaneFavorite.upsert({
+    where: { humanId_paneId: { humanId: human.id, paneId: id } },
+    create: { humanId: human.id, paneId: id },
+    update: {},
+  });
+
+  return c.json({ id, favorited: true });
+});
+
+// DELETE /v1/my-panes/:id/favorite — unstar. Idempotent on missing rows.
+myPanes.delete("/:id/favorite", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing pane id");
+
+  await prisma.humanPaneFavorite.deleteMany({
+    where: { humanId: human.id, paneId: id },
+  });
+
   return c.body(null, 204);
 });
