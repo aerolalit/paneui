@@ -286,6 +286,129 @@ describe("GET /home (signed in)", () => {
     expect(html).toContain("My templates");
     expect(html).toContain("Settings");
   });
+
+  it("renders the iOS-style launcher grid + Favourites + Recents sections", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Launcher grid container.
+    expect(html).toContain('class="launcher-grid"');
+    // Six destinations as tiles, with the short mobile-friendly labels
+    // ("Panes", "Templates", "Store", "Agents", "Trash", "Settings") used
+    // by the launcher AND by the mobile bottom-tab bar.
+    for (const label of [
+      ">Panes<",
+      ">Templates<",
+      ">Store<",
+      ">Agents<",
+      ">Trash<",
+      ">Settings<",
+    ]) {
+      expect(html).toContain(label);
+    }
+    // Each tile carries its inline gradient (decorative; an SVG icon
+    // child is also present).
+    expect(html).toContain("linear-gradient(135deg");
+    expect(html).toContain('class="launcher-icon"');
+
+    // Sections.
+    expect(html).toContain(">Favourites<");
+    expect(html).toContain(">Recent panes<");
+    // Empty-state copy when no installs / no panes.
+    expect(html).toContain("No favourites yet");
+    expect(html).toContain("No recent panes");
+  });
+
+  it("surfaces an installed template as a Favourite tile with the launch wiring", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed",
+        keyHash: "h".repeat(64),
+        keyPrefix: "h",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: { ownerId: agent.id, name: "My favourite", latestVersion: 1 },
+    });
+    await prisma.templateVersion.create({
+      data: {
+        templateId: tpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<html></html>",
+      },
+    });
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId: tpl.id,
+        installedVersion: 1,
+      },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Favourite tile renders with the template name + its id for the
+    // launch handler.
+    expect(html).toContain('class="fav-tile"');
+    expect(html).toContain(`data-template-id="${tpl.id}"`);
+    expect(html).toContain("My favourite");
+    // No empty-state copy when at least one install exists.
+    expect(html).not.toContain("No favourites yet");
+  });
+
+  it("surfaces a recent owned pane as a visual card", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed",
+        keyHash: "r".repeat(64),
+        keyPrefix: "r",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: { ownerId: agent.id, name: "Recent Tpl", latestVersion: 1 },
+    });
+    const version = await prisma.templateVersion.create({
+      data: {
+        templateId: tpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<html></html>",
+      },
+    });
+    await prisma.pane.create({
+      data: {
+        id: `pan_${randomBytes(8).toString("hex")}`,
+        agentId: agent.id,
+        ownerHumanId: humanId,
+        templateVersionId: version.id,
+        title: "Yesterday's pane",
+        expiresAt: new Date(Date.now() + 3600_000),
+      },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('class="pane-cards"');
+    expect(html).toContain("Yesterday's pane");
+    // Hash-coloured initials tile present.
+    expect(html).toContain("pane-card-tile");
+  });
 });
 
 describe("GET /my-panes (signed in)", () => {
