@@ -391,21 +391,35 @@ function renderHtml(human: HumanRow, data: ShellData): string {
         <span class="count">${tplLibraryCount}</span>
       </button></li>
     </ul>
-    <div class="me">
+    <div class="me" id="me">
       <div class="avatar">${escapeHtml(avatarLetter)}</div>
       <div class="who">
         <div class="name">${escapeHtml(displayName)}</div>
         <div class="sub">${escapeHtml(human.email)}</div>
       </div>
-      <a href="/my-agents" title="My agents" aria-label="My agents" style="color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
-      </a>
-      <a href="/settings" title="Settings" aria-label="Settings" style="color:var(--ink-mute);padding:6px;border-radius:6px;display:inline-flex;align-items:center;text-decoration:none;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </a>
-      <button id="signout" title="Sign out" aria-label="Sign out" style="background:transparent;border:none;color:var(--ink-mute);cursor:pointer;padding:6px;border-radius:6px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <!-- Mobile-only trigger: a single "Account" tab in the bottom bar that
+           toggles the .acct-links popover. Hidden on desktop, where the links
+           render inline in the footer. -->
+      <button class="acct-tab" id="acct-tab" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="acct-links" aria-label="Account">
+        <span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></span>
+        <span class="label">Account</span>
       </button>
+      <!-- The action links. Inline icon row on desktop; popover sheet on mobile.
+           Same DOM nodes both ways — a single #signout, no duplication. -->
+      <div class="acct-links" id="acct-links" role="menu">
+        <a class="acct-link" href="/my-agents" role="menuitem" title="My agents" aria-label="My agents">
+          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
+          <span class="txt">My agents</span>
+        </a>
+        <a class="acct-link" href="/settings" role="menuitem" title="Settings" aria-label="Settings">
+          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+          <span class="txt">Settings</span>
+        </a>
+        <button class="acct-link" id="signout" type="button" role="menuitem" title="Sign out" aria-label="Sign out">
+          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+          <span class="txt">Sign out</span>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -858,6 +872,26 @@ const SHELL_JS = `
     try { await fetch('/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
     location.href = '/login';
   });
+
+  // Account menu (mobile) — the "Account" bottom-bar tab toggles the
+  // .acct-links popover (My agents / Settings / Sign out). On desktop the
+  // trigger is display:none and the links sit inline, so this is a no-op
+  // there. Close on outside-click or Escape.
+  (function () {
+    const me = document.getElementById('me');
+    const tab = document.getElementById('acct-tab');
+    if (!me || !tab) return;
+    const close = () => { me.classList.remove('open'); tab.setAttribute('aria-expanded', 'false'); };
+    tab.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const open = me.classList.toggle('open');
+      tab.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', (ev) => {
+      if (me.classList.contains('open') && ev.target instanceof Node && !me.contains(ev.target)) close();
+    });
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+  })();
 
   // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon
   // in place, and add/remove the row from the Home favorites strip.
