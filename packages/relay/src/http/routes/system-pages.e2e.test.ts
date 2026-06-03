@@ -287,42 +287,45 @@ describe("GET /home (signed in)", () => {
     expect(html).toContain("Settings");
   });
 
-  it("renders the iOS-style launcher grid + Favourites + Recents sections", async () => {
+  it("renders gradient greeting + stats + search bar", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    // Launcher grid container.
-    expect(html).toContain('class="launcher-grid"');
-    // Six destinations as tiles, with the short mobile-friendly labels
-    // ("Panes", "Templates", "Store", "Agents", "Trash", "Settings") used
-    // by the launcher AND by the mobile bottom-tab bar.
-    for (const label of [
-      ">Panes<",
-      ">Templates<",
-      ">Store<",
-      ">Agents<",
-      ">Trash<",
-      ">Settings<",
-    ]) {
-      expect(html).toContain(label);
-    }
-    // Each tile carries its inline gradient (decorative; an SVG icon
-    // child is also present).
-    expect(html).toContain("linear-gradient(135deg");
-    expect(html).toContain('class="launcher-icon"');
-
-    // Sections.
-    expect(html).toContain(">Favourites<");
-    expect(html).toContain(">Recent panes<");
-    // Empty-state copy when no installs / no panes.
-    expect(html).toContain("No favourites yet");
-    expect(html).toContain("No recent panes");
+    // Greeting line with gradient name span.
+    expect(html).toContain('class="home-greet"');
+    expect(html).toContain('class="home-greet-name"');
+    // Local-part heuristic: alice@example.com → "Alice"
+    expect(html).toContain(">Alice<");
+    // Stats subline appears with humanised counts.
+    expect(html).toContain('class="home-stats"');
+    expect(html).toContain("templates in your library");
+    // Search bar present (full search wiring is a follow-up).
+    expect(html).toContain('id="home-search"');
+    expect(html).toContain("Search templates, panes, anything");
   });
 
-  it("surfaces an installed template as a Favourite tile with the launch wiring", async () => {
+  it("renders Favourites + Open panes + All templates sections", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Three section heads (uppercase-styled in the prototype but rendered
+    // verbatim in markup).
+    expect(html).toContain(">Favourites<");
+    expect(html).toContain(">Open panes<");
+    expect(html).toContain(">All templates<");
+    // Empty-state copies for a brand-new account (no installs, no panes,
+    // no owned templates).
+    expect(html).toContain("No favourites yet");
+    expect(html).toContain("No open panes");
+    expect(html).toContain("Your template library is empty");
+  });
+
+  it("surfaces an installed template as a 76x76 Favourite tile with launch wiring", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const agent = await prisma.agent.create({
       data: {
@@ -345,28 +348,63 @@ describe("GET /home (signed in)", () => {
       },
     });
     await prisma.humanTemplateInstall.create({
+      data: { humanId, templateId: tpl.id, installedVersion: 1 },
+    });
+
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // .favs horizontal scroll strip + .fav-tile child with the
+    // template id wired to the launch handler.
+    expect(html).toContain('class="favs"');
+    expect(html).toContain('class="fav-tile"');
+    expect(html).toContain(`data-template-id="${tpl.id}"`);
+    expect(html).toContain("My favourite");
+    expect(html).not.toContain("No favourites yet");
+    // 76×76 gradient icon class present.
+    expect(html).toContain("fav-tile-icon");
+  });
+
+  it("surfaces an owned template in the All-templates Launchpad grid", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
       data: {
-        humanId,
+        name: "claimed",
+        keyHash: "t".repeat(64),
+        keyPrefix: "t",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "My owned tpl",
+        latestVersion: 1,
+      },
+    });
+    await prisma.templateVersion.create({
+      data: {
         templateId: tpl.id,
-        installedVersion: 1,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<html></html>",
       },
     });
 
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
-    expect(res.status).toBe(200);
     const html = await res.text();
-    // Favourite tile renders with the template name + its id for the
-    // launch handler.
-    expect(html).toContain('class="fav-tile"');
+    expect(html).toContain('class="apps-grid"');
+    expect(html).toContain('class="app-tile"');
     expect(html).toContain(`data-template-id="${tpl.id}"`);
-    expect(html).toContain("My favourite");
-    // No empty-state copy when at least one install exists.
-    expect(html).not.toContain("No favourites yet");
+    expect(html).toContain("My owned tpl");
+    expect(html).not.toContain("Your template library is empty");
   });
 
-  it("surfaces a recent owned pane as a visual card", async () => {
+  it("surfaces an owned pane as a horizontal recent-card with thumb + tag", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const agent = await prisma.agent.create({
       data: {
@@ -402,12 +440,15 @@ describe("GET /home (signed in)", () => {
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
-    expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('class="pane-cards"');
+    // .recents strip + .recent-card child with the version tag.
+    expect(html).toContain('class="recents"');
+    expect(html).toContain('class="recent-card"');
     expect(html).toContain("Yesterday's pane");
-    // Hash-coloured initials tile present.
-    expect(html).toContain("pane-card-tile");
+    expect(html).toContain('class="recent-thumb"');
+    // Version tag overlay on the thumb.
+    expect(html).toContain('class="recent-tag"');
+    expect(html).toContain(">v1<");
   });
 });
 
