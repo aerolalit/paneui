@@ -21,23 +21,11 @@ import {
   resolveHumanOptional,
   type OptionalHumanAuthEnv,
 } from "../../auth/human-auth.js";
+import { BRAND_LOGO, BRAND_FAVICON_SVG } from "../../brand.js";
 
 const systemPages = new Hono<OptionalHumanAuthEnv>();
 
 systemPages.use("*", resolveHumanOptional);
-
-// The Pane brand mark — same shape as the pane shell's header logo
-// (src/bridge/routes.ts) so the system pages and the live pane read as one
-// product. Inlined as an SVG element (not a data URI) so it inherits crisp
-// rendering at the header size.
-const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-  <rect width="100" height="100" rx="22" fill="#0f172a"/>
-  <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-  <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-  <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-  <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-  <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-</svg>`;
 
 // Shared layout primitives — every system page wraps its body in this
 // shell so the visual identity is uniform.
@@ -146,8 +134,12 @@ function layout(args: {
     display: flex; align-items: center; gap: 12px;
   }
   header.pane-nav .brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; color: var(--fg); flex: none; }
-  header.pane-nav .brand svg { display: block; border-radius: 7px; }
-  header.pane-nav .brand .wordmark { font-weight: 700; font-size: 16px; letter-spacing: -0.02em; }
+  header.pane-nav .brand svg { display: block; }
+  header.pane-nav .brand .wordmark {
+    font-weight: 700; font-size: 16px; letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #93c5fd 0%, #c4b5fd 60%, #5eead4 110%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
   header.pane-nav .account { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 0; }
   .acct-email { font-size: 13px; color: var(--muted); max-width: 36vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .acct-signout { background: transparent; border: 1px solid var(--rule); color: var(--muted); font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 8px; cursor: pointer; flex: none; }
@@ -292,18 +284,54 @@ function layout(args: {
      left so the eye can lock onto a particular pane at a glance.
      The .list rule above survives for the other pages that don't need
      this density. */
-  .pane-cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
-  .pane-card { display: grid; grid-template-columns: 48px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--bg); border: 1px solid var(--rule); border-radius: 12px; }
-  @media (min-width: 640px) { .pane-card { padding: 16px 18px; gap: 18px; } }
-  .pane-card-tile { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: #fff; background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%); flex: none; user-select: none; }
+  /* Pane rows on /my-panes — tighter than the previous boxy card. The
+     prototype at /tmp/owner-shell-v2.html uses a 44px tile + mono meta
+     line + colored status pill, all sitting in a compact row. Same
+     hue-gradient tile family as /home + /template-store so the eye
+     locks onto the template across views. */
+  .pane-cards { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  .pane-card {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    transition: border-color .14s ease, transform .14s ease;
+  }
+  .pane-card:hover { border-color: hsl(var(--tile-h,260), 60%, 55%); transform: translateY(-1px); }
+  .pane-card-tile {
+    width: 44px; height: 44px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    color: #07090f;
+    background: linear-gradient(135deg, hsl(var(--tile-h,260), 80%, 70%) 0%, hsl(calc(var(--tile-h,260) + 30), 75%, 60%) 100%);
+    box-shadow: 0 4px 12px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12);
+    flex: none; user-select: none;
+  }
   .pane-card-main { min-width: 0; }
-  .pane-card-title { font-weight: 600; font-size: 15.5px; overflow-wrap: anywhere; }
-  .pane-card-meta { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; margin-top: 2px; }
+  .pane-card-title {
+    font-weight: 600; font-size: 14.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pane-card-meta {
+    font-size: 12px; color: var(--muted);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .pane-card-meta-dim { color: var(--muted); }
-  .pane-card-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .pane-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; justify-content: flex-end; }
   @media (max-width: 540px) {
     .pane-card { grid-template-columns: 44px 1fr; }
-    .pane-card-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 4px; border-top: 1px dashed var(--rule); }
+    .pane-card-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 6px; }
+    .pane-card-actions::before {
+      content: ""; display: block; width: 100%; height: 1px;
+      background: var(--rule); margin-bottom: 6px;
+    }
   }
 
   button.btn, a.btn { font: inherit; font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: var(--accent); color: #fff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; transition: background .12s ease, border-color .12s ease, color .12s ease; }
@@ -425,18 +453,15 @@ function loggedOutPrompt(): string {
 }
 
 // ----------------------------------------------------------------------
-// GET /favicon.svg — the brand mark as a real asset, referenced from
-// /manifest.webmanifest (PWA install) and as a fallback for any client
-// that doesn't pick up the inlined data URI used in <link rel="icon">.
-// The SVG body is the same shape that's inlined in the bridge shell —
-// kept here as a literal so updating the brand is a one-line change.
+// GET /favicon.svg — the brand mark as a real asset. Same shape as the
+// inline header logo + the data-URI favicon in bridge/routes.ts — all
+// three derive from the single source in src/brand.ts so they cannot
+// drift.
 // ----------------------------------------------------------------------
-const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0f172a"/><circle cx="62" cy="58" r="17" fill="#22d3ee"/><rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/><rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/><circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/><circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/></svg>`;
-
 systemPages.get("/favicon.svg", (c) => {
   c.header("Content-Type", "image/svg+xml");
   c.header("Cache-Control", "public, max-age=86400");
-  return c.body(FAVICON_SVG);
+  return c.body(BRAND_FAVICON_SVG);
 });
 
 // ----------------------------------------------------------------------
@@ -1805,12 +1830,108 @@ systemPages.get("/template-store", (c) => {
       }),
     );
   }
-  const body = `<h1>Template store</h1>
-  <p style="color:var(--muted);font-size:14.5px;">Templates published by other agents. Install one to add it to your library — then hit Launch on <a href="/my-templates">My templates</a> to open a pane.</p>
-  <div class="card">
-    <input id="catalog-search" type="text" placeholder="Search templates by name, description, or tag" autocomplete="off" />
-    <div id="catalog-results" style="margin-top:14px;"></div>
+  // Launchpad-style store: a grid of 64×64 hue-gradient tiles with name +
+  // install/uninstall affordance. Matches the prototype at
+  // /tmp/owner-shell-v2.html and the All-templates section on /home so
+  // the eye recognises the same visual language across the app.
+  const body = `<style>
+    /* Store-specific tile shape — the .app-tile shape from /home but
+       with an install/uninstall action on the back side. The action is
+       always visible (not a hover state) so touch users can find it. */
+    .store-head { margin: 4px 0 18px; }
+    .store-head h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.015em; }
+    @media (min-width: 640px) { .store-head h1 { font-size: 30px; } }
+    .store-head .sub { color: var(--muted); font-size: 14px; margin: 0; }
+
+    .store-search {
+      position: relative;
+      max-width: 480px;
+      margin: 14px 0 24px;
+    }
+    .store-search input {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      padding: 10px 14px 10px 38px;
+      color: var(--fg); font: inherit; font-size: 14.5px;
+      outline: none;
+      transition: border-color .12s ease, box-shadow .12s ease;
+    }
+    .store-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .store-search-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); pointer-events: none; line-height: 0;
+    }
+
+    .store-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 18px 14px;
+      padding: 4px 0 24px;
+    }
+    .store-card {
+      display: flex; flex-direction: column; gap: 10px;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 16px;
+      padding: 16px 14px 14px;
+      transition: border-color .14s ease, transform .14s ease, box-shadow .14s ease;
+    }
+    .store-card:hover {
+      border-color: hsl(var(--tile-h,260), 60%, 60%);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 22px rgba(0,0,0,.18);
+    }
+    .store-card-top { display: flex; gap: 12px; align-items: flex-start; }
+    .store-card-icon {
+      width: 56px; height: 56px;
+      border-radius: 14px; flex: none;
+      display: flex; align-items: center; justify-content: center;
+      color: #07090f; font-size: 20px; font-weight: 800; letter-spacing: 0.02em;
+      background: linear-gradient(135deg, hsl(var(--tile-h,260), 80%, 70%) 0%, hsl(calc(var(--tile-h,260) + 30), 75%, 60%) 100%);
+      box-shadow: 0 6px 14px rgba(0,0,0,.22), 0 1px 2px rgba(0,0,0,.14);
+    }
+    .store-card-main { min-width: 0; flex: 1; }
+    .store-card-title {
+      font-weight: 600; font-size: 14.5px; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .store-card-installs {
+      font-size: 11.5px; color: var(--muted); margin-top: 4px;
+      font-family: "SF Mono",Menlo,Consolas,monospace;
+    }
+    .store-card-desc {
+      font-size: 12.5px; color: var(--muted); line-height: 1.4;
+      overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      min-height: 2.8em;
+    }
+    .store-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .store-card-actions { display: flex; gap: 8px; align-items: center; margin-top: auto; }
+    .store-card-actions .pill { flex: none; }
+    .store-card-actions .btn {
+      flex: 1; padding: 8px 12px; min-height: 36px;
+      font-size: 13px; border-radius: 9px;
+    }
+    .store-empty { padding: 36px 18px; text-align: center; color: var(--muted); }
+  </style>
+
+  <div class="store-head">
+    <h1>Template store</h1>
+    <p class="sub">Templates published by other agents. Install one to add it to your library — then launch from <a href="/home">Home</a> or <a href="/my-templates">My templates</a>.</p>
   </div>
+
+  <div class="store-search">
+    <span class="store-search-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg>
+    </span>
+    <input id="catalog-search" type="text" placeholder="Search by name, description, or tag" autocomplete="off" />
+  </div>
+
+  <div id="catalog-results" class="store-grid"><div class="store-empty">Loading…</div></div>
+
   <script>
     const resultsEl = document.getElementById("catalog-results");
     const searchEl = document.getElementById("catalog-search");
@@ -1819,14 +1940,30 @@ systemPages.get("/template-store", (c) => {
       return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
+    // Stable hue derived from the template id — same djb2 hash the
+    // server-side helper uses so the same template gets the same tile
+    // color on /home and in the store. Keeps the visual identity
+    // consistent across views.
+    function hueFor(seed) {
+      let h = 5381;
+      for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
+      return Math.abs(h) % 360;
+    }
+    function initials(name) {
+      const t = (name || "").trim();
+      if (!t) return "?";
+      const words = t.split(/[\\s_\\-/.]+/).filter((w) => /[A-Za-z0-9]/.test(w));
+      if (words.length === 0) return t.slice(0, 2).toUpperCase();
+      if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+
     function renderItems(items, query) {
       if (!items.length) {
-        // Two empty states: search-miss (user typed something) vs. an empty
-        // catalog on first load. Different copy, different CTA.
         if (query) {
-          resultsEl.innerHTML = '<p class="empty">No templates match "' + escape(query) + '". Try fewer or different keywords.</p>';
+          resultsEl.innerHTML = '<div class="store-empty">No templates match "' + escape(query) + '". Try fewer or different keywords.</div>';
         } else {
-          resultsEl.innerHTML = '<div class="empty-state">'
+          resultsEl.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">'
             + '<svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></svg>'
             + '<h3 class="empty-state-headline">The public catalog is empty</h3>'
             + '<p class="empty-state-body">Once agents publish templates with <code>pane template publish &lt;id-or-slug&gt;</code>, the catalog appears here. Your own authored templates live on <a href="/my-templates">My templates</a>.</p>'
@@ -1834,49 +1971,57 @@ systemPages.get("/template-store", (c) => {
         }
         return;
       }
-      const html = '<ul class="list">' + items.map((t) => {
+      const html = items.map((t) => {
         const name = t.name || t.slug || t.id;
-        const tags = (t.tags || []).map((x) => '<span class="pill muted">' + escape(x) + '</span>').join(' ');
+        const hue = hueFor(t.id);
+        const tags = (t.tags || []).slice(0, 3).map((x) => '<span class="pill muted">' + escape(x) + '</span>').join(' ');
         const installedPill = t.installed
-          ? '<span class="pill good">Installed v' + escape(t.installed_version) + '</span>'
+          ? '<span class="pill good">v' + escape(t.installed_version) + '</span>'
           : '';
         const btn = t.installed
           ? '<button class="btn ghost" data-act="uninstall" data-id="' + escape(t.id) + '">Uninstall</button>'
           : '<button class="btn" data-act="install" data-id="' + escape(t.id) + '">Install</button>';
-        return '<li><div style="min-width:0;flex:1;"><div class="title">' + escape(name) + '</div>'
-          + '<div class="meta">' + (t.description ? escape(t.description) : '<em>no description</em>') + '</div>'
-          + (tags ? '<div class="meta" style="margin-top:4px;">' + tags + '</div>' : '')
-          + '<div class="meta" style="margin-top:4px;">' + escape(t.install_count) + ' installs · latest v' + escape(t.latest_version) + '</div>'
-          + '</div>'
-          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + installedPill + btn + '</div></li>';
-      }).join('') + '</ul>';
+        const desc = t.description ? escape(t.description) : '<em style="color:var(--muted);">no description</em>';
+        return '<div class="store-card" style="--tile-h:' + hue + ';">'
+          + '<div class="store-card-top">'
+          + '<div class="store-card-icon">' + escape(initials(name)) + '</div>'
+          + '<div class="store-card-main">'
+          + '<div class="store-card-title">' + escape(name) + '</div>'
+          + '<div class="store-card-installs">' + escape(t.install_count) + ' installs · latest v' + escape(t.latest_version) + '</div>'
+          + '</div></div>'
+          + '<div class="store-card-desc">' + desc + '</div>'
+          + (tags ? '<div class="store-card-tags">' + tags + '</div>' : '')
+          + '<div class="store-card-actions">' + installedPill + btn + '</div>'
+          + '</div>';
+      }).join('');
       resultsEl.innerHTML = html;
     }
 
     async function load(q) {
       const url = '/v1/templates/public' + (q ? ('?q=' + encodeURIComponent(q)) : '');
-      resultsEl.textContent = 'Loading…';
+      resultsEl.innerHTML = '<div class="store-empty">Loading…</div>';
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
         if (!res.ok) {
-          resultsEl.textContent = 'Failed to load templates (' + res.status + ').';
+          resultsEl.innerHTML = '<div class="store-empty">Failed to load templates (' + res.status + ').</div>';
           return;
         }
         const body = await res.json();
         renderItems(body.items || [], q || "");
       } catch (e) {
-        resultsEl.textContent = 'Network error — try again.';
+        resultsEl.innerHTML = '<div class="store-empty">Network error — try again.</div>';
       }
     }
 
-    // Debounce typing.
     let debounce = null;
     searchEl.addEventListener('input', () => {
       clearTimeout(debounce);
       debounce = setTimeout(() => load(searchEl.value.trim()), 200);
     });
+    searchEl.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { searchEl.value = ''; load(''); }
+    });
 
-    // Install / Uninstall click delegation.
     resultsEl.addEventListener('click', async (ev) => {
       const target = ev.target;
       if (!(target instanceof HTMLElement)) return;
@@ -1886,6 +2031,7 @@ systemPages.get("/template-store", (c) => {
       const id = btn.getAttribute('data-id');
       if (!act || !id) return;
       btn.disabled = true;
+      const originalText = btn.textContent;
       btn.textContent = act === 'install' ? 'Installing…' : 'Uninstalling…';
       try {
         const res = await fetch('/v1/templates/' + encodeURIComponent(id) + '/' + act, {
@@ -1896,16 +2042,16 @@ systemPages.get("/template-store", (c) => {
         });
         if (!res.ok && res.status !== 204) {
           btn.disabled = false;
-          btn.textContent = act === 'install' ? 'Install' : 'Uninstall';
+          btn.textContent = originalText;
           alert((act === 'install' ? 'Install' : 'Uninstall') + ' failed: HTTP ' + res.status);
           return;
         }
       } catch (e) {
         btn.disabled = false;
+        btn.textContent = originalText;
         alert('Network error — try again.');
         return;
       }
-      // Reload to reflect new installed state.
       load(searchEl.value.trim());
     });
 

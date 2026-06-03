@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
+import { BRAND_FAVICON_DATA_HREF } from "../brand.js";
 import { hashKey } from "../keys.js";
 import type { AppEnv } from "../http/env.js";
 import { errors, ApiError } from "../http/errors.js";
@@ -60,15 +61,12 @@ function publicWsBase(config: Config): string {
   return u.toString().replace(/\/$/, "");
 }
 
-// The Pane brand mark, inlined as an SVG data URI for the browser tab.
-// Inlining (vs. /favicon.ico) avoids an extra HTTP round-trip on every page
-// load and keeps the relay deployment a single binary with no static-asset
-// directory. The same shape is rendered visually in the header SVG below.
-// Both the shell's CSP (img-src 'self' data:) and the error page's CSP
-// (img-src 'self' data:) explicitly allow the data: scheme, so the icon
-// loads under both panes.
-const BRAND_FAVICON_HREF =
-  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2262%22%20cy%3D%2258%22%20r%3D%2217%22%20fill%3D%22%2322d3ee%22%2F%3E%3Crect%20x%3D%2220%22%20y%3D%2226%22%20width%3D%2240%22%20height%3D%2232%22%20rx%3D%2210%22%20fill%3D%22%230f172a%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2230%22%20width%3D%2232%22%20height%3D%2224%22%20rx%3D%227%22%20fill%3D%22%23a78bfa%22%2F%3E%3Ccircle%20cx%3D%2233.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3Ccircle%20cx%3D%2246.5%22%20cy%3D%2242%22%20r%3D%223.4%22%20fill%3D%22%230f172a%22%2F%3E%3C%2Fsvg%3E";
+// The Pane brand mark as a data URI for the browser tab. Inlined (vs.
+// /favicon.ico) avoids an extra HTTP round-trip on every page load.
+// Both the shell CSP and the error-page CSP allow `data:` in img-src.
+// Sourced from src/brand.ts so the system-pages header, /favicon.svg
+// endpoint, and this data URI cannot drift.
+const BRAND_FAVICON_HREF = BRAND_FAVICON_DATA_HREF;
 
 // Belt-and-braces alongside the iframe sandbox. Disables every powerful API the
 // browser exposes by default. Listed explicitly rather than `*=()` because the

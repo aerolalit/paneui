@@ -823,6 +823,26 @@ describe("GET /template-store (signed in)", () => {
     expect(html).toContain("/v1/templates/public");
   });
 
+  it("uses the Launchpad-style grid (matches /home All-templates visual)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/template-store", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // New grid container + per-item card class. The store-card structure
+    // mirrors the home page's app-tile but exposes the install action
+    // inline (vs. tap-to-launch on /home's tiles).
+    expect(html).toContain('class="store-grid"');
+    // Hue + initial-rendering helpers inlined client-side so the same
+    // tile color matches /home's All-templates tile for the same id.
+    expect(html).toContain("function hueFor");
+    expect(html).toContain("function initials");
+    // Search input is wrapped in the prototype-style search box with
+    // its leading SVG icon — same shape as /home's search.
+    expect(html).toContain('class="store-search"');
+    expect(html).toContain('class="store-search-icon"');
+  });
+
   it("ships two distinct empty-state copies in the client (catalog empty vs. search miss)", async () => {
     // The /template-store results list is rendered client-side, so the
     // e2e check is that the inline JS carries both copies — a regression
@@ -835,6 +855,30 @@ describe("GET /template-store (signed in)", () => {
     expect(html).toContain("The public catalog is empty");
     expect(html).toContain("pane template publish");
     expect(html).toContain("No templates match");
+  });
+});
+
+describe("brand mark consistency", () => {
+  it("/favicon.svg + the inline header logo share the same gradient body", async () => {
+    const fav = await app.fetch(new Request("http://t/favicon.svg"));
+    expect(fav.status).toBe(200);
+    expect(fav.headers.get("content-type")).toContain("image/svg+xml");
+    const favBody = await fav.text();
+    // The new logo uses a brand gradient (pane-brand-grad) + the letter
+    // "P" instead of the old robot-face shape.
+    expect(favBody).toContain("pane-brand-grad");
+    expect(favBody).toContain("linearGradient");
+    expect(favBody).toContain(">P</text>");
+
+    // The system-page header pulls in the same SVG. Render any system
+    // page and confirm the same gradient id + P appear.
+    const { cookie } = await seedLoggedInHuman();
+    const home = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const homeHtml = await home.text();
+    expect(homeHtml).toContain("pane-brand-grad");
+    expect(homeHtml).toContain(">P</text>");
   });
 });
 
