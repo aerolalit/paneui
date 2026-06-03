@@ -199,7 +199,7 @@ class FrameQueue {
       else this.buf.push(v);
     });
   }
-  next(timeoutMs = 1500): Promise<unknown> {
+  next(timeoutMs = 5000): Promise<unknown> {
     if (this.buf.length > 0) return Promise.resolve(this.buf.shift()!);
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("frame timeout")), timeoutMs);
@@ -211,7 +211,7 @@ class FrameQueue {
   }
   async until(
     predicate: (m: { kind?: string; collection?: string }) => boolean,
-    timeoutMs = 1500,
+    timeoutMs = 5000,
   ): Promise<{ kind?: string; collection?: string; [k: string]: unknown }> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -225,7 +225,11 @@ class FrameQueue {
   }
 }
 
-function waitOpen(ws: WebSocket, timeoutMs = 1500): Promise<void> {
+// Postgres CI is slower than sqlite — bump the WS-open + frame timeouts
+// from the per-pane records suite's 1500ms default to 5s so the two-pane
+// fan-out test has headroom when both sockets race through the same
+// participant.joined writes.
+function waitOpen(ws: WebSocket, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
     ws.once("open", () => {
@@ -258,7 +262,7 @@ describe("template-record WS broadcast", () => {
     let sawReplayComplete = false;
     const seenKinds: string[] = [];
     while (!sawReplayComplete) {
-      const m = (await q.next(2500)) as {
+      const m = (await q.next(5000)) as {
         kind?: string;
         type?: string;
         collection?: string;
