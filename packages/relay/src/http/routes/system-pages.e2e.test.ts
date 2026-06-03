@@ -205,6 +205,73 @@ describe("legacy /apps + /public-templates redirect to /template-store", () => {
   });
 });
 
+describe("PWA assets", () => {
+  it("serves a valid /manifest.webmanifest", async () => {
+    const res = await app.fetch(new Request("http://t/manifest.webmanifest"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(
+      "application/manifest+json",
+    );
+    const body = (await res.json()) as {
+      name: string;
+      start_url: string;
+      display: string;
+      icons: Array<{ src: string; type: string }>;
+    };
+    expect(body.name).toBe("pane");
+    expect(body.start_url).toBe("/home");
+    expect(body.display).toBe("standalone");
+    expect(body.icons[0]!.src).toBe("/favicon.svg");
+    expect(body.icons[0]!.type).toBe("image/svg+xml");
+  });
+
+  it("serves /favicon.svg as image/svg+xml", async () => {
+    const res = await app.fetch(new Request("http://t/favicon.svg"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+    const body = await res.text();
+    expect(body.startsWith("<svg")).toBe(true);
+  });
+
+  it("every layout-served page links the manifest", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain('rel="manifest"');
+    expect(html).toContain('href="/manifest.webmanifest"');
+    expect(html).toContain('name="apple-mobile-web-app-capable"');
+  });
+});
+
+describe("mobile bottom-tab navigation", () => {
+  it("renders the bottom-tabs nav alongside the header strip", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Both nav variants present on every page — CSS shows/hides via viewport.
+    expect(html).toContain('class="bottom-tabs"');
+    expect(html).toContain('aria-label="Primary (mobile)"');
+    // Bottom-bar uses shorter labels ("Store", "Panes", "Templates") so the
+    // tap targets fit on iPhone-SE width.
+    expect(html).toContain(">Store<");
+    expect(html).toContain(">Panes<");
+    expect(html).toContain(">Templates<");
+  });
+
+  it("each tab item carries its inline SVG icon", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain('class="tab-ico"');
+  });
+});
+
 describe("GET /home (signed in)", () => {
   it("renders the home page with the human's email", async () => {
     const { cookie } = await seedLoggedInHuman();

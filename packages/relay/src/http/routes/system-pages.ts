@@ -46,6 +46,20 @@ const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidde
 // bar and a horizontally scrollable tab strip — so the nav never overflows or
 // wraps awkwardly on a phone. A `prefers-color-scheme: dark` block maps the
 // palette onto the same navy the pane shell uses.
+// Tab icons used by both the top tab bar (desktop) and the bottom tab bar
+// (mobile). Tiny inline SVGs — no network round-trip, no font dependency,
+// no FOUC. Each is sized via CSS (currentColor, 22px) so it inherits the
+// active/inactive tab color uniformly.
+const TAB_ICONS: Record<string, string> = {
+  home: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg>`,
+  catalog: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`,
+  panes: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>`,
+  templates: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>`,
+  agents: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/></svg>`,
+  trash: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1.2 13a1 1 0 0 0 1 .9h7.6a1 1 0 0 0 1-.9L18 7"/></svg>`,
+  settings: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.5-2.4.9a7.5 7.5 0 0 0-1.7-1L14.5 3h-5l-.8 2.4a7.5 7.5 0 0 0-1.7 1L4.6 5.5l-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2L2.6 14.5l2 3.5 2.4-.9a7.5 7.5 0 0 0 1.7 1L9.5 21h5l.8-2.4a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.5L19.4 13z"/></svg>`,
+};
+
 function layout(args: {
   title: string;
   email: string | null;
@@ -55,7 +69,9 @@ function layout(args: {
 }): string {
   const nav = (slug: string, label: string, href: string) => {
     const cls = args.active === slug ? "tab active" : "tab";
-    return `<a class="${cls}" href="${href}"${args.active === slug ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
+    const ariaCurrent = args.active === slug ? ' aria-current="page"' : "";
+    const ico = TAB_ICONS[slug] ?? "";
+    return `<a class="${cls}" href="${href}"${ariaCurrent}>${ico}<span class="tab-label">${escapeHtml(label)}</span></a>`;
   };
   const accountBlock = args.email
     ? `<span class="acct-email" title="${escapeHtml(args.email)}">${escapeHtml(args.email)}</span>
@@ -69,6 +85,10 @@ function layout(args: {
 <meta name="color-scheme" content="light dark" />
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="pane" />
 <title>${escapeHtml(args.title)} · pane</title>
 <style>
   :root {
@@ -134,6 +154,13 @@ function layout(args: {
   .acct-signout:hover { border-color: var(--accent); color: var(--accent); }
   .acct-signin { color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: none; }
 
+  /* Tab bar — two presentations driven by viewport width:
+       Desktop (>=640px): a top tab strip inside the sticky header.
+       Mobile  (<640px): a fixed bottom tab bar (iOS / Android pattern)
+                          with stacked icon + label. The top tab strip
+                          hides on mobile via the @media block below.
+     The same .tabs container + .tab anchor markup feeds both — only the
+     wrapping element's position and the .tab's flex direction change. */
   header.pane-nav .tabs {
     max-width: 920px; margin: 0 auto;
     padding: 0 max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right));
@@ -146,11 +173,56 @@ function layout(args: {
     font-size: 14px; font-weight: 500; line-height: 1;
     padding: 11px 12px; border-bottom: 2px solid transparent;
     white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
   }
   .tab:hover { color: var(--fg); }
   .tab.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  /* The header's tab strip hides the icon (text-only) on desktop. The
+     bottom-bar mobile presentation flips this — icon shown, label small. */
+  header.pane-nav .tab .tab-ico { width: 0; height: 0; display: none; }
+
+  /* The dedicated bottom bar is rendered alongside the header strip and
+     promoted to display:flex on narrow viewports below. Keeping the markup
+     always present (rather than conditionally serving it) avoids a layout
+     flash if the viewport rotates between renders. */
+  nav.bottom-tabs {
+    display: none;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--rule);
+    padding: 6px max(8px, env(safe-area-inset-left)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right));
+  }
+  nav.bottom-tabs .tabs {
+    max-width: 720px; margin: 0 auto;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    gap: 0; overflow: visible;
+  }
+  nav.bottom-tabs .tab {
+    flex-direction: column; gap: 3px;
+    padding: 8px 4px 4px; border-bottom: none;
+    font-size: 11px; line-height: 1.1; min-height: 52px;
+    border-radius: 8px;
+    text-align: center; justify-content: center;
+  }
+  nav.bottom-tabs .tab .tab-ico { display: block; width: 22px; height: 22px; }
+  nav.bottom-tabs .tab.active { background: transparent; border-bottom: none; }
+  nav.bottom-tabs .tab .tab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+  /* Mobile-only: hide the header tab strip, show the bottom bar, reserve
+     space at the foot of main so content can't slide under the bar. */
+  @media (max-width: 639px) {
+    header.pane-nav nav.tabs { display: none; }
+    nav.bottom-tabs { display: block; }
+  }
 
   main { max-width: 920px; margin: 0 auto; padding: 24px 16px calc(80px + env(safe-area-inset-bottom)); }
+  @media (max-width: 639px) {
+    /* Add the bottom-bar's height (~64px including safe-area) so the last
+       row of cards isn't hidden behind it. */
+    main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  }
   @media (min-width: 640px) { main { padding: 36px 28px 96px; } }
 
   h1 { font-size: 22px; letter-spacing: -0.015em; margin: 0 0 8px; }
@@ -274,6 +346,15 @@ function layout(args: {
 <main>
   ${args.body}
 </main>
+<nav class="bottom-tabs" aria-label="Primary (mobile)">
+  <div class="tabs">
+    ${nav("home", "Home", "/home")}
+    ${nav("catalog", "Store", "/template-store")}
+    ${nav("panes", "Panes", "/my-panes")}
+    ${nav("templates", "Templates", "/my-templates")}
+    ${nav("settings", "Settings", "/settings")}
+  </div>
+</nav>
 <script>
   document.getElementById("pane-logout")?.addEventListener("click", async () => {
     try {
@@ -342,6 +423,63 @@ function loggedOutPrompt(): string {
     <p>This area of pane is only available to signed-in humans. <a href="/login" class="btn">Sign in</a></p>
   </div>`;
 }
+
+// ----------------------------------------------------------------------
+// GET /favicon.svg — the brand mark as a real asset, referenced from
+// /manifest.webmanifest (PWA install) and as a fallback for any client
+// that doesn't pick up the inlined data URI used in <link rel="icon">.
+// The SVG body is the same shape that's inlined in the bridge shell —
+// kept here as a literal so updating the brand is a one-line change.
+// ----------------------------------------------------------------------
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0f172a"/><circle cx="62" cy="58" r="17" fill="#22d3ee"/><rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/><rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/><circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/><circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/></svg>`;
+
+systemPages.get("/favicon.svg", (c) => {
+  c.header("Content-Type", "image/svg+xml");
+  c.header("Cache-Control", "public, max-age=86400");
+  return c.body(FAVICON_SVG);
+});
+
+// ----------------------------------------------------------------------
+// GET /manifest.webmanifest — PWA manifest.
+//
+// Served from the relay so an installed-to-homescreen pane (Add to Home
+// Screen on iOS, Install on Android/Chrome) launches into /home as a
+// standalone app — no browser chrome. Inlined: short, no asset pipeline,
+// and the file rarely changes.
+// ----------------------------------------------------------------------
+systemPages.get("/manifest.webmanifest", (c) => {
+  c.header("Content-Type", "application/manifest+json");
+  // Long cache — the manifest's contents change infrequently; the routes
+  // themselves are the source of truth. A bump in this string forces
+  // installed PWAs to re-fetch via the next session.
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.body(
+    JSON.stringify({
+      name: "pane",
+      short_name: "pane",
+      description: "Round-trip UI channel between agents and humans",
+      start_url: "/home",
+      scope: "/",
+      display: "standalone",
+      orientation: "any",
+      background_color: "#0b0e14",
+      theme_color: "#0b0e14",
+      categories: ["productivity", "developer"],
+      // Icons inlined as a single SVG. Real-world PWAs typically ship
+      // PNG variants too; iOS still respects the apple-touch-icon meta
+      // even when the manifest only declares SVG, so this is sufficient
+      // for the install flow without standing up an asset pipeline.
+      icons: [
+        {
+          src: "/favicon.svg",
+          sizes: "any",
+          type: "image/svg+xml",
+          purpose: "any",
+        },
+      ],
+    }),
+  );
+});
 
 // ----------------------------------------------------------------------
 // GET / — public landing for the relay
