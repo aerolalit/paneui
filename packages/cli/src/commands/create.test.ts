@@ -69,6 +69,8 @@ describe("create — inline template form", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--event-schema",
       '{"events":{}}',
       "--ttl",
@@ -77,6 +79,7 @@ describe("create — inline template form", () => {
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as { template: Record<string, unknown> };
     expect(req.template).toEqual({
+      name: "Inline",
       type: "html-inline",
       source: "<html></html>",
       event_schema: { events: {} },
@@ -84,10 +87,46 @@ describe("create — inline template form", () => {
     expect(JSON.parse(stdout).pane_id).toBe("pan_1");
   });
 
+  it("requires --name on the inline form", async () => {
+    await run([
+      "--template",
+      "<html></html>",
+      "--event-schema",
+      '{"events":{}}',
+    ]);
+    expect(calls).toHaveLength(0);
+    expect(exitCode).toBe(1);
+    expect(stderr).toMatch(/--name is required with --template/);
+  });
+
+  it("carries --name and --slug into the inline template body", async () => {
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Approval form",
+      "--slug",
+      "approval-form",
+    ]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template["name"]).toBe("Approval form");
+    expect(req.template["slug"]).toBe("approval-form");
+  });
+
+  it("omits slug from the inline body when --slug is not given", async () => {
+    await run(["--template", "<html></html>", "--name", "No slug"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect("slug" in req.template).toBe(false);
+  });
+
   it("accepts --input-data on the inline path", async () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--event-schema",
       '{"events":{}}',
       "--input-data",
@@ -98,11 +137,12 @@ describe("create — inline template form", () => {
   });
 
   it("omits event_schema entirely for a view-only template (no --event-schema)", async () => {
-    await run(["--template", "<html></html>"]);
+    await run(["--template", "<html></html>", "--name", "Inline"]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as { template: Record<string, unknown> };
     // event_schema must be ABSENT, not set to undefined.
     expect(req.template).toEqual({
+      name: "Inline",
       type: "html-inline",
       source: "<html></html>",
     });
@@ -114,6 +154,8 @@ describe("create — inline template form", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--input-schema",
       '{"type":"object","properties":{"x":{"type":"string"}}}',
     ]);
@@ -125,13 +167,20 @@ describe("create — inline template form", () => {
   });
 
   it("rejects a non-object --input-schema (array/primitive)", async () => {
-    await run(["--template", "<html></html>", "--input-schema", "[]"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--input-schema",
+      "[]",
+    ]);
     expect(calls).toHaveLength(0);
     expect(stderr).toMatch(/--input-schema must be a JSON object/);
   });
 
   it("omits input_schema entirely when --input-schema isn't passed (no input contract)", async () => {
-    await run(["--template", "<html></html>"]);
+    await run(["--template", "<html></html>", "--name", "Inline"]);
     const req = calls[0]!.args[0] as { template: Record<string, unknown> };
     expect("input_schema" in req.template).toBe(false);
   });
@@ -189,6 +238,20 @@ describe("create — reference template form", () => {
     );
     expect(calls).toHaveLength(0);
   });
+
+  it("rejects --name combined with --template-id (reference form has no name to set)", async () => {
+    await run(["--template-id", "pr-review", "--name", "Nope"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--name is incompatible with --template-id");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects --slug combined with --template-id", async () => {
+    await run(["--template-id", "pr-review", "--slug", "nope"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--slug is incompatible with --template-id");
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("create — exactly-one-of enforcement", () => {
@@ -220,7 +283,14 @@ describe("create — exactly-one-of enforcement", () => {
 // internal field path".
 describe("create — schema-rejection messages use --flag names, not wire paths", () => {
   it("rejects --participants 0 with the --participants flag in the message", async () => {
-    await run(["--template", "<html></html>", "--participants", "0"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--participants",
+      "0",
+    ]);
     expect(exitCode).toBe(1);
     // The flag the user CAN fix; not the internal path "participants.humans".
     expect(stderr).toContain("--participants");
@@ -231,7 +301,14 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
   it("rejects --ttl 0 with the --ttl flag in the message", async () => {
     // ttl is a top-level field; the mapping table translates the bare
     // path so the public name is consistent across flag families.
-    await run(["--template", "<html></html>", "--ttl", "0"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--ttl",
+      "0",
+    ]);
     expect(exitCode).toBe(1);
     expect(stderr).toMatch(/invalid create request: --ttl:/);
     expect(calls).toHaveLength(0);
@@ -245,6 +322,8 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--input-data",
       JSON.stringify({ ok: 1 }),
     ]);
@@ -254,7 +333,14 @@ describe("create — schema-rejection messages use --flag names, not wire paths"
 
 describe("create — --title flag", () => {
   it("passes --title through to the request body", async () => {
-    await run(["--template", "<html></html>", "--title", "Quarterly Review"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--title",
+      "Quarterly Review",
+    ]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as { title?: string };
     expect(req.title).toBe("Quarterly Review");
@@ -275,6 +361,8 @@ describe("create — --preamble flag", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--title",
       "Approve",
       "--preamble",
@@ -286,7 +374,14 @@ describe("create — --preamble flag", () => {
   });
 
   it("omits preamble from the body when --preamble is not given", async () => {
-    await run(["--template", "<html></html>", "--title", "no preamble"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--title",
+      "no preamble",
+    ]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as Record<string, unknown>;
     expect(req).not.toHaveProperty("preamble");
@@ -300,6 +395,8 @@ describe("create — --context-key flag (#262)", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--title",
       "PR review",
       "--context-key",
@@ -313,7 +410,14 @@ describe("create — --context-key flag (#262)", () => {
   it("omits context_key from the body when --context-key is not given", async () => {
     // Without the flag, no dedup — the relay treats absent context_key as
     // the legacy "every create is a fresh pane" behaviour.
-    await run(["--template", "<html></html>", "--title", "ad-hoc"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--title",
+      "ad-hoc",
+    ]);
     expect(calls).toHaveLength(1);
     const req = calls[0]!.args[0] as Record<string, unknown>;
     expect(req).not.toHaveProperty("context_key");
@@ -327,6 +431,8 @@ describe("create — --context-key flag (#262)", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--title",
       "bad key",
       "--context-key",
@@ -378,7 +484,14 @@ describe("create — output mode (TTY vs --json)", () => {
 
   it("emits human-readable output on a TTY by default", async () => {
     setTty(true);
-    await run(["--template", "<html></html>", "--title", "PR review"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--title",
+      "PR review",
+    ]);
     expect(stdout).toContain("PR review");
     expect(stdout).toContain("https://relay.test/s/tok_h_one");
     // The human form doesn't start with `{` — that's the JSON tell.
@@ -390,6 +503,8 @@ describe("create — output mode (TTY vs --json)", () => {
     await run([
       "--template",
       "<html></html>",
+      "--name",
+      "Inline",
       "--title",
       "PR review",
       "--json",
@@ -400,7 +515,14 @@ describe("create — output mode (TTY vs --json)", () => {
 
   it("emits JSON when stdout is not a TTY (piped)", async () => {
     setTty(false);
-    await run(["--template", "<html></html>", "--title", "PR review"]);
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--title",
+      "PR review",
+    ]);
     const parsed = JSON.parse(stdout);
     expect(parsed.pane_id).toBe("pan_tty");
   });

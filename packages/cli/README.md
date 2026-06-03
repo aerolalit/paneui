@@ -56,7 +56,7 @@ stdout is machine-readable JSON. Errors go to stderr as
 `{"error":{"code","message"}}` with a non-zero exit.
 
 ```sh
-SESSION=$(pane create --template form --schema ./q.json | jq -r .pane_id)
+SESSION=$(pane create --template ./form.html --name "Quick poll" --event-schema ./q.json | jq -r .pane_id)
 pane watch "$SESSION" | jq 'select(.type == "human_response")'
 ```
 

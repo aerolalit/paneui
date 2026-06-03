@@ -389,9 +389,11 @@ panes.post("/", requireAgent, async (c) => {
   // The pinned version's input_schema, if it declares one. Null = the version
   // has no input contract, so `input_data` (if any) is accepted unvalidated.
   let inputSchema: unknown = null;
-  // The template head's `name`, if any. Used as the title fallback for the
-  // reference form below. Null for inline (anonymous) templates.
-  let artifactName: string | null = null;
+  // The template's `name`, used as the title fallback below. Both branches
+  // set it: the reference form from the existing head (still null for a
+  // legacy anonymous template), the inline form from the caller-supplied
+  // `name` (now required).
+  let artifactName: string | null;
 
   if ("id" in template && template.id !== undefined) {
     // Reference form — instance an existing named template owned by this agent.
@@ -416,8 +418,11 @@ panes.post("/", requireAgent, async (c) => {
     artifactName = head.name;
   } else {
     // Inline form — a one-off UI. Validate the inline content, then
-    // transparently create an anonymous template (name/slug null) + v1.
+    // transparently create the template (carrying the caller-supplied
+    // `name`/`slug` so the owner-shell UI has a readable label) + v1.
     const inline = template as {
+      name: string;
+      slug?: string;
       source: string;
       type: "html-inline" | "html-ref";
       event_schema?: unknown;
@@ -476,41 +481,71 @@ panes.post("/", requireAgent, async (c) => {
       validateRecordSchemaShape(inline.record_schema);
     }
 
-    const created = await prisma.$transaction(async (tx) => {
-      const head = await tx.template.create({
-        data: { ownerId: agent.id, name: null, slug: null, latestVersion: 1 },
+    let created;
+    try {
+      created = await prisma.$transaction(async (tx) => {
+        const head = await tx.template.create({
+          data: {
+            ownerId: agent.id,
+            name: inline.name,
+            slug: inline.slug ?? null,
+            latestVersion: 1,
+          },
+        });
+        const version = await tx.templateVersion.create({
+          data: {
+            templateId: head.id,
+            version: 1,
+            templateType: inline.type,
+            templateSource: inline.source,
+            eventSchema:
+              eventSchema !== null
+                ? (eventSchema as unknown as Prisma.InputJsonValue)
+                : Prisma.JsonNull,
+            inputSchema:
+              inline.input_schema !== undefined
+                ? (inline.input_schema as Prisma.InputJsonValue)
+                : Prisma.JsonNull,
+            recordSchema:
+              inline.record_schema !== undefined
+                ? (inline.record_schema as Prisma.InputJsonValue)
+                : Prisma.JsonNull,
+          },
+        });
+        return { headId: head.id, versionId: version.id };
       });
-      const version = await tx.templateVersion.create({
-        data: {
-          templateId: head.id,
-          version: 1,
-          templateType: inline.type,
-          templateSource: inline.source,
-          eventSchema:
-            eventSchema !== null
-              ? (eventSchema as unknown as Prisma.InputJsonValue)
-              : Prisma.JsonNull,
-          inputSchema:
-            inline.input_schema !== undefined
-              ? (inline.input_schema as Prisma.InputJsonValue)
-              : Prisma.JsonNull,
-          recordSchema:
-            inline.record_schema !== undefined
-              ? (inline.record_schema as Prisma.InputJsonValue)
-              : Prisma.JsonNull,
-        },
-      });
-      return { headId: head.id, versionId: version.id };
-    });
+    } catch (err) {
+      // Slug uniqueness — Template has @@unique([ownerId, slug]). When the
+      // caller supplied a slug that collides with one of their existing
+      // templates, Prisma throws P2002. Convert to a 409 conflict (matching
+      // the `pane template create` path in templates.ts) rather than letting
+      // it bubble as a 500. Only the supplied-slug case can hit this (a null
+      // slug never participates in the unique index).
+      if (
+        inline.slug !== undefined &&
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        throw errors.conflict(
+          `slug '${inline.slug}' is already used by another of your templates`,
+        );
+      }
+      throw err;
+    }
     templateVersionId = created.versionId;
     templateId = created.headId;
+    // The inline form now carries its own `name`; surface it as the title
+    // fallback below so `title` can be omitted on inline create just like
+    // the reference form falls back to the existing Template.name.
+    artifactName = inline.name;
   }
 
   // Resolve the per-pane tab title. The relay treats title as required at
   // the storage layer (Pane.title is NOT NULL), but offers one ergonomic
-  // fallback: a reference-form pane against a named template picks up the
-  // template's `name`. Inline form has no name to fall back to and must carry
-  // `title` explicitly. Both paths funnel through validateSessionTitle so an
+  // fallback: a pane picks up its template's `name` when `title` is omitted.
+  // Both forms supply one now — the reference form from the existing named
+  // template, the inline form from the caller-supplied `name` — so either
+  // can omit `title`. Both paths funnel through validateSessionTitle so an
   // over-long Template.name still panes a clear error rather than truncating
   // silently.
   let resolvedTitle: string;

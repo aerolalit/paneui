@@ -528,7 +528,11 @@ function appTile(
     menu?: "owned" | "installed";
   },
 ): string {
-  const name = t.name ?? t.slug ?? t.id;
+  // Human-visible label. Legacy inline templates have name+slug null; never
+  // fall back to the raw cuid id here (it reads as random characters in the
+  // UI). The id is still used for hue/data-* attributes below where it's
+  // meaningful, not as a label.
+  const name = t.name ?? t.slug ?? "Untitled template";
   const hue = paneHue(t.id);
   const initials = paneInitials(name);
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
@@ -571,7 +575,9 @@ function appTile(
 }
 
 function recentCard(p: PaneRef): string {
-  const tplName = p.templateName ?? p.title ?? p.id;
+  // templateName is null for legacy inline templates; fall back to the pane's
+  // own title (always present), never to the raw cuid id.
+  const tplName = p.templateName ?? p.title ?? "Untitled template";
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
   const rel = relativeDate(p.createdAt);
@@ -586,7 +592,9 @@ function recentCard(p: PaneRef): string {
 }
 
 function paneRow(p: PaneRef): string {
-  const tplName = p.templateName ?? p.title ?? p.id;
+  // templateName is null for legacy inline templates; fall back to the pane's
+  // own title (always present), never to the raw cuid id.
+  const tplName = p.templateName ?? p.title ?? "Untitled template";
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
   const rel = relativeDate(p.createdAt);

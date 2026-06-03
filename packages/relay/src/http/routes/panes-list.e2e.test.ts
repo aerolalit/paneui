@@ -75,6 +75,7 @@ async function createPane(
       headers: bearer(apiKey),
       body: JSON.stringify({
         template: {
+          name: "Test template",
           type: "html-inline",
           source: "<html></html>",
           event_schema: eventSchema,
@@ -289,7 +290,8 @@ describe("GET /v1/panes — list", () => {
 
   it("filters by template_id", async () => {
     const a = await seedAgent();
-    // First pane uses an inline template — its head id is anonymous.
+    // First pane uses an inline template — now named, so it has a head id
+    // that the list response surfaces (no longer anonymous).
     const inlinePane = await createPane(a.apiKey, { title: "Inline" });
     // Look up the inline template id so the filter probe is concrete.
     const inlineRow = await prisma.pane.findUnique({
@@ -304,9 +306,9 @@ describe("GET /v1/panes — list", () => {
       .body;
     expect(filtered.items).toHaveLength(1);
     expect(filtered.items[0]!.pane_id).toBe(inlinePane.pane_id);
-    // For inline (anonymous) templates the response's template_id is null,
-    // even though the filter matched.
-    expect(filtered.items[0]!.template_id).toBeNull();
+    // The inline template now carries a name, so the response's template_id
+    // is the real head id rather than null.
+    expect(filtered.items[0]!.template_id).toBe(inlineArtifactId);
 
     // Filter to a non-matching template id — empty page.
     const empty = (await list(a.apiKey, { template_id: "art_doesnotexist" }))

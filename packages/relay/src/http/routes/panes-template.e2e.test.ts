@@ -86,10 +86,11 @@ describe("POST /v1/panes — inline form", () => {
     await testDb.truncateAll(prisma);
   });
 
-  it("creates a pane and a transparent anonymous template", async () => {
+  it("creates a pane and a transparent named template", async () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "Inline one-off",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -99,17 +100,84 @@ describe("POST /v1/panes — inline form", () => {
     const body = (await res.json()) as { pane_id: string };
     expect(body.pane_id).toBeTruthy();
 
-    // An anonymous template (name null) was created behind it.
+    // The inline form now names its auto-created template (slug stays null
+    // unless one was supplied) so the owner-shell UI has a readable label.
     const templates = await prisma.template.findMany();
     expect(templates).toHaveLength(1);
-    expect(templates[0]!.name).toBeNull();
+    expect(templates[0]!.name).toBe("Inline one-off");
     expect(templates[0]!.slug).toBeNull();
+  });
+
+  it("rejects the inline form with 400 when name is missing", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/panes", apiKey, {
+      template: {
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_request");
+    // No template was created when validation failed.
+    expect(await prisma.template.count()).toBe(0);
+  });
+
+  it("persists the supplied slug on the auto-created template", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/panes", apiKey, {
+      template: {
+        name: "Slugged inline",
+        slug: "slugged-inline",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(res.status).toBe(201);
+    const templates = await prisma.template.findMany();
+    expect(templates).toHaveLength(1);
+    expect(templates[0]!.slug).toBe("slugged-inline");
+  });
+
+  it("rejects a colliding slug with 409 (not 500)", async () => {
+    const apiKey = await seedAgent();
+    const first = await post("/v1/panes", apiKey, {
+      template: {
+        name: "First",
+        slug: "dup-slug",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(first.status).toBe(201);
+
+    const second = await post("/v1/panes", apiKey, {
+      template: {
+        name: "Second",
+        slug: "dup-slug",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("conflict");
+    expect(body.error.message).toMatch(/slug 'dup-slug' is already used/i);
+    // The losing create rolled back — still just the one template.
+    expect(await prisma.template.count()).toBe(1);
   });
 
   it("stores input_data on the pane", async () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "stores input_data on the pane",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -135,6 +203,7 @@ describe("POST /v1/panes — inline form", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects html-ref with 400",
         type: "html-ref",
         source: "https://example.com/x",
         event_schema: eventSchema,
@@ -345,6 +414,7 @@ describe("POST /v1/panes — input_schema validation", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "accepts a pane with no input_data when the version has no in",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -357,6 +427,7 @@ describe("POST /v1/panes — input_schema validation", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "accepts arbitrary input_data unvalidated when the version ha",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -407,6 +478,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "persists input_schema on the auto-created template version",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -427,6 +499,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "accepts inline pane whose input_data satisfies the schema",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -441,6 +514,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects inline pane whose input_data violates the schema",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -459,6 +533,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects a missing required field in input_data",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -474,6 +549,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects a malformed inline input_schema at pane-create time",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -490,6 +566,7 @@ describe("POST /v1/panes — inline form with input_schema (#208)", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "input_schema is absent => no input contract (regression guar",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -517,7 +594,11 @@ describe("POST /v1/panes — view-only template (no event_schema)", () => {
     extra: Record<string, unknown> = {},
   ): Promise<{ paneId: string; agentToken: string }> {
     const res = await post("/v1/panes", apiKey, {
-      template: { type: "html-inline", source: "<html>report</html>" },
+      template: {
+        name: "input_schema is absent => no input contract (regression guar",
+        type: "html-inline",
+        source: "<html>report</html>",
+      },
       ...extra,
     });
     expect(res.status).toBe(201);
@@ -641,22 +722,25 @@ describe("POST /v1/panes — title", () => {
     name: string | null,
   ): Promise<string> {
     if (name === null) {
-      // Anonymous template: name + slug null. The only way to create one is
-      // via the inline-pane path that transparently spins one up. Re-use
-      // that flow to get an template_id we can reference.
-      const res = await post("/v1/panes", apiKey, {
-        template: {
-          type: "html-inline",
-          source: "<html>x</html>",
-          event_schema: eventSchema,
+      // Anonymous template: name + slug null. The inline-pane path can no
+      // longer create one (it now requires a name), so seed a legacy-shaped
+      // anonymous row directly via Prisma to exercise the no-name code path.
+      const agent = await prisma.agent.findFirstOrThrow({
+        where: { keyHash: hashKey(apiKey) },
+      });
+      const head = await prisma.template.create({
+        data: { ownerId: agent.id, name: null, slug: null, latestVersion: 1 },
+      });
+      await prisma.templateVersion.create({
+        data: {
+          templateId: head.id,
+          version: 1,
+          templateType: "html-inline",
+          templateSource: "<html>x</html>",
+          eventSchema: eventSchema as object,
         },
       });
-      const { pane_id } = (await res.json()) as { pane_id: string };
-      const sess = await prisma.pane.findUnique({
-        where: { id: pane_id },
-        include: { templateVersion: true },
-      });
-      return sess!.templateVersion.templateId;
+      return head.id;
     }
     const res = await postRaw("/v1/templates", apiKey, {
       name,
@@ -667,7 +751,7 @@ describe("POST /v1/panes — title", () => {
     return ((await res.json()) as { template_id: string }).template_id;
   }
 
-  it("rejects the inline form with 400 when title is missing", async () => {
+  it("rejects the inline form with 400 when name is missing", async () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
@@ -675,19 +759,33 @@ describe("POST /v1/panes — title", () => {
         source: "<html></html>",
         event_schema: eventSchema,
       },
+      title: "My pane",
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: { code: string; hint?: string };
-    };
+    const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_request");
-    expect(body.error.hint).toMatch(/title/i);
+  });
+
+  it("falls back to the inline name when inline-form title is omitted", async () => {
+    const apiKey = await seedAgent();
+    const res = await postRaw("/v1/panes", apiKey, {
+      template: {
+        name: "Inline fallback title",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { title: string };
+    expect(body.title).toBe("Inline fallback title");
   });
 
   it("accepts the inline form when title is provided and echoes it back", async () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
+        name: "accepts the inline form when title is provided and echoes it",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -765,6 +863,7 @@ describe("POST /v1/panes — title", () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
+        name: "rejects a title with control characters (400)",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -781,6 +880,7 @@ describe("POST /v1/panes — title", () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
+        name: "rejects a title longer than 80 chars (400)",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -794,6 +894,7 @@ describe("POST /v1/panes — title", () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
+        name: "rejects a whitespace-only title that trims to empty (400)",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -807,6 +908,7 @@ describe("POST /v1/panes — title", () => {
     const apiKey = await seedAgent();
     const res = await postRaw("/v1/panes", apiKey, {
       template: {
+        name: "trims surrounding whitespace before storing",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -836,6 +938,7 @@ describe("POST /v1/panes — preamble", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "persists a valid preamble onto the pane row",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -855,6 +958,7 @@ describe("POST /v1/panes — preamble", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "treats an empty / whitespace-only preamble as omitted",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -874,6 +978,7 @@ describe("POST /v1/panes — preamble", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects a preamble longer than 280 chars with 400",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,
@@ -890,6 +995,7 @@ describe("POST /v1/panes — preamble", () => {
     const apiKey = await seedAgent();
     const res = await post("/v1/panes", apiKey, {
       template: {
+        name: "rejects a preamble containing non-newline control chars with",
         type: "html-inline",
         source: "<html></html>",
         event_schema: eventSchema,

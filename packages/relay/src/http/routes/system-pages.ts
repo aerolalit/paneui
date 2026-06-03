@@ -741,7 +741,9 @@ systemPages.get("/my-templates/:id/content", async (c) => {
     unknown
   > | null;
   const collections: string[] = xpc ? Object.keys(xpc) : [];
-  const name = template.name ?? template.slug ?? template.id;
+  // Human-visible page heading; legacy inline templates have name+slug null,
+  // so fall back to a readable label rather than the raw cuid id.
+  const name = template.name ?? template.slug ?? "Untitled template";
   const subtitle = `v${version?.version ?? template.latestVersion} · ${collections.length === 0 ? "no template-level collections declared" : `${collections.length} collection${collections.length === 1 ? "" : "s"}`}`;
 
   // Render shell HTML; the row lists hydrate client-side from

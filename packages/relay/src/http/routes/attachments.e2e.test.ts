@@ -840,6 +840,7 @@ describe("/v1/attachments — pane-scope upload", () => {
         headers: { authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           template: {
+            name: "soft-deletes pane-scope attachments via the HTTP pane delete",
             type: "html-inline",
             source: "<html></html>",
             event_schema: {

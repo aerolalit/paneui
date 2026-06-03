@@ -102,6 +102,7 @@ describe("record_schema persistence (#350)", () => {
     const createRes = await req("POST", "/v1/panes", apiKey, {
       title: "records-persist e2e",
       template: {
+        name: "POST /v1/panes (inline form) persists record_schema and acce",
         type: "html-inline",
         source: "<html></html>",
         record_schema: recordSchema,

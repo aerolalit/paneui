@@ -25,6 +25,13 @@ export const callbackSchema = z.object({
 // INSIDE the template object (one-off, no registered template). The relay
 // transparently creates an anonymous template behind it.
 const inlineArtifactSchema = z.object({
+  // Inline panes now name their auto-created template so the owner-shell UI
+  // has a readable label instead of falling back to the template's cuid id.
+  // Keeps the reference and inline forms symmetric: both yield a named
+  // template (name required min(1), slug optional — same as
+  // createArtifactSchema below).
+  name: z.string().min(1),
+  slug: z.string().min(1).optional(),
   source: z.string().min(1),
   type: artifactTypeSchema,
   // Optional: omit for a view-only one-off (a report/dashboard the human only
@@ -78,9 +85,11 @@ export const createPaneSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   callback: callbackSchema.optional(),
   // Tab title for the human's browser. Optional on the wire because the relay
-  // also accepts the implicit fallback (an Template.name on the reference
-  // form). The relay enforces "required-or-fallback" + length/control-char
-  // rules — Zod only confirms it's a string here.
+  // also accepts the implicit fallback: the reference form falls back to the
+  // existing Template.name, and the inline form now carries its own `name`
+  // (see inlineArtifactSchema above) so it can fall back to that too. The
+  // relay enforces "required-or-fallback" + length/control-char rules — Zod
+  // only confirms it's a string here.
   title: z.string().optional(),
   // Optional context preamble shown in the shell band above the iframe so the
   // human reads "who is asking, why" before the artifact. Wire cap is 300 to
