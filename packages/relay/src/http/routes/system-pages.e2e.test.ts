@@ -181,7 +181,7 @@ describe("logged-out access to gated pages", () => {
     "/my-panes",
     "/my-templates",
     "/my-agents",
-    "/public-templates",
+    "/template-store",
     "/settings",
   ])("%s shows the sign-in prompt to logged-out callers", async (path) => {
     const res = await app.fetch(new Request(`http://t${path}`));
@@ -191,11 +191,84 @@ describe("logged-out access to gated pages", () => {
   });
 });
 
-describe("/apps redirects to /public-templates (legacy alias)", () => {
-  it("returns 301 to /public-templates regardless of auth state", async () => {
+describe("legacy /apps + /public-templates redirect to /template-store", () => {
+  it("returns 301 from /apps", async () => {
     const res = await app.fetch(new Request("http://t/apps"));
     expect(res.status).toBe(301);
-    expect(res.headers.get("location")).toBe("/public-templates");
+    expect(res.headers.get("location")).toBe("/template-store");
+  });
+
+  it("returns 301 from /public-templates", async () => {
+    const res = await app.fetch(new Request("http://t/public-templates"));
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/template-store");
+  });
+});
+
+describe("PWA assets", () => {
+  it("serves a valid /manifest.webmanifest", async () => {
+    const res = await app.fetch(new Request("http://t/manifest.webmanifest"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain(
+      "application/manifest+json",
+    );
+    const body = (await res.json()) as {
+      name: string;
+      start_url: string;
+      display: string;
+      icons: Array<{ src: string; type: string }>;
+    };
+    expect(body.name).toBe("pane");
+    expect(body.start_url).toBe("/home");
+    expect(body.display).toBe("standalone");
+    expect(body.icons[0]!.src).toBe("/favicon.svg");
+    expect(body.icons[0]!.type).toBe("image/svg+xml");
+  });
+
+  it("serves /favicon.svg as image/svg+xml", async () => {
+    const res = await app.fetch(new Request("http://t/favicon.svg"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+    const body = await res.text();
+    expect(body.startsWith("<svg")).toBe(true);
+  });
+
+  it("every layout-served page links the manifest", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain('rel="manifest"');
+    expect(html).toContain('href="/manifest.webmanifest"');
+    expect(html).toContain('name="apple-mobile-web-app-capable"');
+  });
+});
+
+describe("mobile bottom-tab navigation", () => {
+  it("renders the bottom-tabs nav alongside the header strip", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Both nav variants present on every page — CSS shows/hides via viewport.
+    expect(html).toContain('class="bottom-tabs"');
+    expect(html).toContain('aria-label="Primary (mobile)"');
+    // Bottom-bar uses shorter labels ("Store", "Panes", "Templates") so the
+    // tap targets fit on iPhone-SE width.
+    expect(html).toContain(">Store<");
+    expect(html).toContain(">Panes<");
+    expect(html).toContain(">Templates<");
+  });
+
+  it("each tab item carries its inline SVG icon", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain('class="tab-ico"');
   });
 });
 
@@ -224,11 +297,11 @@ describe("GET /my-panes (signed in)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     // First-touch empty state — headline, explanation, and two CTAs
-    // (Claim an agent / Browse public templates) point a new human at the next step.
+    // (Claim an agent / Browse the template store) point a new human at the next step.
     expect(html).toContain('class="empty-state"');
     expect(html).toContain("No panes yet");
     expect(html).toContain("Claim an agent");
-    expect(html).toContain("Browse public templates");
+    expect(html).toContain("Browse the template store");
   });
 
   it("renders a pane card with title, template, agent, and id", async () => {
@@ -488,8 +561,8 @@ describe("GET /my-templates (signed in)", () => {
     expect(html).toContain('class="empty-state"');
     expect(html).toContain("haven't authored any templates");
     expect(html).toContain("pane template create");
-    // Cross-links to /public-templates so a new human can browse before authoring.
-    expect(html).toContain('href="/public-templates"');
+    // Cross-links to /template-store so a new human can browse before authoring.
+    expect(html).toContain('href="/template-store"');
   });
 
   it("lists templates owned by the human's claimed agents", async () => {
@@ -546,27 +619,27 @@ describe("GET /my-templates (signed in)", () => {
   });
 });
 
-describe("GET /public-templates (signed in)", () => {
-  it("renders the Public templates catalog shell + search input", async () => {
+describe("GET /template-store (signed in)", () => {
+  it("renders the Template store catalog shell + search input", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/public-templates", withCookie(cookie)),
+      new Request("http://t/template-store", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Public templates");
+    expect(html).toContain("Template store");
     expect(html).toContain('id="catalog-search"');
     expect(html).toContain('id="catalog-results"');
     expect(html).toContain("/v1/templates/public");
   });
 
   it("ships two distinct empty-state copies in the client (catalog empty vs. search miss)", async () => {
-    // The /public-templates results list is rendered client-side, so the
+    // The /template-store results list is rendered client-side, so the
     // e2e check is that the inline JS carries both copies — a regression
     // that collapses them back into the original single string is caught here.
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/public-templates", withCookie(cookie)),
+      new Request("http://t/template-store", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain("The public catalog is empty");

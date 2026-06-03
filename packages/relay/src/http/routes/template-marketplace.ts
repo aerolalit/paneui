@@ -22,6 +22,13 @@ import { agentScope } from "../agent-scope.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
+import {
+  deleteTemplateRecord,
+  listTemplateRecords,
+  updateTemplateRecord,
+  writeTemplateRecord,
+  type TemplateWithSchema,
+} from "../../core/template-records.js";
 import type { EventSchema } from "../../types.js";
 import {
   generatePaneId,
@@ -731,3 +738,196 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
     201,
   );
 });
+
+// ----------------------------------------------------------------------
+// Cookie-authed template-records read + write — drives the
+// /my-templates/:id/content management UI.
+//
+// Parallels the agent-authed routes in routes/template-records.ts but
+// authenticates via the human's pane_login cookie. Authorization mirrors
+// publish/unpublish above: the calling human must own the template's
+// owner-agent. The 404 shape on miss/not-owned defeats the enumeration
+// oracle.
+//
+// Author kind for writes is "human" — the owner directly is the author,
+// not one of their agents. (An agent-side CLI write still uses the
+// agent-authed surface and stamps "agent".)
+// ----------------------------------------------------------------------
+
+// Helper — looks up the template head + latest version, runs the
+// owner-only authz check, and returns a TemplateWithSchema ready for the
+// core writer. Centralises the auth + 404 across the four verbs.
+async function loadOwnedTemplate(
+  c: import("hono").Context<HumanAuthEnv>,
+): Promise<TemplateWithSchema> {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    throw errors.notFound();
+  }
+  if (template.deletedAt !== null) throw errors.softDeleted("template");
+  const latestVersionRow = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: template.id,
+        version: template.latestVersion,
+      },
+    },
+  });
+  if (!latestVersionRow) throw errors.notFound();
+  return Object.assign(template, { latestVersionRow });
+}
+
+const trecPostBody = z.object({
+  record_key: z.string().min(1).max(256).optional(),
+  data: z.unknown(),
+});
+const trecPatchBody = z.object({
+  if_match: z.number().int().nonnegative().optional(),
+  data: z.unknown(),
+});
+const trecDeleteBody = z
+  .object({ if_match: z.number().int().nonnegative().optional() })
+  .optional();
+
+// GET /v1/my-templates/:id/template-records/:collection
+myTemplates.get(
+  "/:id/template-records/:collection",
+  requireHuman,
+  async (c) => {
+    const prisma = c.get("prisma");
+    const template = await loadOwnedTemplate(c);
+    const collection = c.req.param("collection");
+    if (!collection) throw errors.invalidRequest("missing collection name");
+    const sinceRaw = c.req.query("since");
+    let since = 0;
+    if (sinceRaw !== undefined) {
+      const n = Number(sinceRaw);
+      if (!Number.isInteger(n) || n < 0) {
+        throw errors.invalidRequest(
+          "?since must be a non-negative integer string",
+        );
+      }
+      since = n;
+    }
+    const limit = 200;
+    const out = await listTemplateRecords(prisma, template, collection, {
+      since,
+      limit,
+    });
+    return c.json(out);
+  },
+);
+
+// POST /v1/my-templates/:id/template-records/:collection
+myTemplates.post(
+  "/:id/template-records/:collection",
+  requireHuman,
+  async (c) => {
+    const prisma = c.get("prisma");
+    const human = c.get("human");
+    const template = await loadOwnedTemplate(c);
+    const collection = c.req.param("collection");
+    if (!collection) throw errors.invalidRequest("missing collection name");
+    const body = await c.req.json().catch(() => null);
+    const parsed = trecPostBody.safeParse(body);
+    if (!parsed.success) {
+      throw errors.invalidRequest(
+        "invalid body",
+        parsed.error.flatten(),
+        "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+      );
+    }
+    const { record, deduped } = await writeTemplateRecord(
+      { prisma, config: c.get("config") as Config },
+      template,
+      { kind: "human", id: human.id },
+      {
+        collectionName: collection,
+        recordKey: parsed.data.record_key,
+        data: parsed.data.data,
+      },
+    );
+    if (deduped) return c.json({ record, deduped: true }, 200);
+    return c.json({ record }, 201);
+  },
+);
+
+// PATCH /v1/my-templates/:id/template-records/:collection/:recordKey
+myTemplates.patch(
+  "/:id/template-records/:collection/:recordKey",
+  requireHuman,
+  async (c) => {
+    const prisma = c.get("prisma");
+    const human = c.get("human");
+    const template = await loadOwnedTemplate(c);
+    const collection = c.req.param("collection");
+    const recordKey = c.req.param("recordKey");
+    if (!collection || !recordKey)
+      throw errors.invalidRequest("missing collection or record key");
+    const body = await c.req.json().catch(() => null);
+    const parsed = trecPatchBody.safeParse(body);
+    if (!parsed.success) {
+      throw errors.invalidRequest(
+        "invalid body",
+        parsed.error.flatten(),
+        "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+      );
+    }
+    const { record } = await updateTemplateRecord(
+      { prisma, config: c.get("config") as Config },
+      template,
+      { kind: "human", id: human.id },
+      {
+        collectionName: collection,
+        recordKey,
+        data: parsed.data.data,
+        ifMatch: parsed.data.if_match,
+      },
+    );
+    return c.json({ record });
+  },
+);
+
+// DELETE /v1/my-templates/:id/template-records/:collection/:recordKey
+myTemplates.delete(
+  "/:id/template-records/:collection/:recordKey",
+  requireHuman,
+  async (c) => {
+    const prisma = c.get("prisma");
+    const human = c.get("human");
+    const template = await loadOwnedTemplate(c);
+    const collection = c.req.param("collection");
+    const recordKey = c.req.param("recordKey");
+    if (!collection || !recordKey)
+      throw errors.invalidRequest("missing collection or record key");
+    let ifMatch: number | undefined;
+    if (c.req.header("content-length") !== "0") {
+      const body = await c.req.json().catch(() => null);
+      if (body !== null) {
+        const parsed = trecDeleteBody.safeParse(body);
+        if (!parsed.success) {
+          throw errors.invalidRequest(
+            "invalid body",
+            parsed.error.flatten(),
+            "DELETE body is optional; when present it must match { if_match?: number }",
+          );
+        }
+        ifMatch = parsed.data?.if_match;
+      }
+    }
+    await deleteTemplateRecord(
+      { prisma },
+      template,
+      { kind: "human", id: human.id },
+      { collectionName: collection, recordKey, ifMatch },
+    );
+    return c.body(null, 204);
+  },
+);

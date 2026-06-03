@@ -46,6 +46,20 @@ const BRAND_LOGO = `<svg width="22" height="22" viewBox="0 0 100 100" aria-hidde
 // bar and a horizontally scrollable tab strip — so the nav never overflows or
 // wraps awkwardly on a phone. A `prefers-color-scheme: dark` block maps the
 // palette onto the same navy the pane shell uses.
+// Tab icons used by both the top tab bar (desktop) and the bottom tab bar
+// (mobile). Tiny inline SVGs — no network round-trip, no font dependency,
+// no FOUC. Each is sized via CSS (currentColor, 22px) so it inherits the
+// active/inactive tab color uniformly.
+const TAB_ICONS: Record<string, string> = {
+  home: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg>`,
+  catalog: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`,
+  panes: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>`,
+  templates: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>`,
+  agents: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/></svg>`,
+  trash: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1.2 13a1 1 0 0 0 1 .9h7.6a1 1 0 0 0 1-.9L18 7"/></svg>`,
+  settings: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.5-2.4.9a7.5 7.5 0 0 0-1.7-1L14.5 3h-5l-.8 2.4a7.5 7.5 0 0 0-1.7 1L4.6 5.5l-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2L2.6 14.5l2 3.5 2.4-.9a7.5 7.5 0 0 0 1.7 1L9.5 21h5l.8-2.4a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.5L19.4 13z"/></svg>`,
+};
+
 function layout(args: {
   title: string;
   email: string | null;
@@ -55,7 +69,9 @@ function layout(args: {
 }): string {
   const nav = (slug: string, label: string, href: string) => {
     const cls = args.active === slug ? "tab active" : "tab";
-    return `<a class="${cls}" href="${href}"${args.active === slug ? ' aria-current="page"' : ""}>${escapeHtml(label)}</a>`;
+    const ariaCurrent = args.active === slug ? ' aria-current="page"' : "";
+    const ico = TAB_ICONS[slug] ?? "";
+    return `<a class="${cls}" href="${href}"${ariaCurrent}>${ico}<span class="tab-label">${escapeHtml(label)}</span></a>`;
   };
   const accountBlock = args.email
     ? `<span class="acct-email" title="${escapeHtml(args.email)}">${escapeHtml(args.email)}</span>
@@ -69,6 +85,10 @@ function layout(args: {
 <meta name="color-scheme" content="light dark" />
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="pane" />
 <title>${escapeHtml(args.title)} · pane</title>
 <style>
   :root {
@@ -134,6 +154,13 @@ function layout(args: {
   .acct-signout:hover { border-color: var(--accent); color: var(--accent); }
   .acct-signin { color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: none; }
 
+  /* Tab bar — two presentations driven by viewport width:
+       Desktop (>=640px): a top tab strip inside the sticky header.
+       Mobile  (<640px): a fixed bottom tab bar (iOS / Android pattern)
+                          with stacked icon + label. The top tab strip
+                          hides on mobile via the @media block below.
+     The same .tabs container + .tab anchor markup feeds both — only the
+     wrapping element's position and the .tab's flex direction change. */
   header.pane-nav .tabs {
     max-width: 920px; margin: 0 auto;
     padding: 0 max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right));
@@ -146,11 +173,56 @@ function layout(args: {
     font-size: 14px; font-weight: 500; line-height: 1;
     padding: 11px 12px; border-bottom: 2px solid transparent;
     white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
   }
   .tab:hover { color: var(--fg); }
   .tab.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  /* The header's tab strip hides the icon (text-only) on desktop. The
+     bottom-bar mobile presentation flips this — icon shown, label small. */
+  header.pane-nav .tab .tab-ico { width: 0; height: 0; display: none; }
+
+  /* The dedicated bottom bar is rendered alongside the header strip and
+     promoted to display:flex on narrow viewports below. Keeping the markup
+     always present (rather than conditionally serving it) avoids a layout
+     flash if the viewport rotates between renders. */
+  nav.bottom-tabs {
+    display: none;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--rule);
+    padding: 6px max(8px, env(safe-area-inset-left)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right));
+  }
+  nav.bottom-tabs .tabs {
+    max-width: 720px; margin: 0 auto;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    gap: 0; overflow: visible;
+  }
+  nav.bottom-tabs .tab {
+    flex-direction: column; gap: 3px;
+    padding: 8px 4px 4px; border-bottom: none;
+    font-size: 11px; line-height: 1.1; min-height: 52px;
+    border-radius: 8px;
+    text-align: center; justify-content: center;
+  }
+  nav.bottom-tabs .tab .tab-ico { display: block; width: 22px; height: 22px; }
+  nav.bottom-tabs .tab.active { background: transparent; border-bottom: none; }
+  nav.bottom-tabs .tab .tab-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+  /* Mobile-only: hide the header tab strip, show the bottom bar, reserve
+     space at the foot of main so content can't slide under the bar. */
+  @media (max-width: 639px) {
+    header.pane-nav nav.tabs { display: none; }
+    nav.bottom-tabs { display: block; }
+  }
 
   main { max-width: 920px; margin: 0 auto; padding: 24px 16px calc(80px + env(safe-area-inset-bottom)); }
+  @media (max-width: 639px) {
+    /* Add the bottom-bar's height (~64px including safe-area) so the last
+       row of cards isn't hidden behind it. */
+    main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  }
   @media (min-width: 640px) { main { padding: 36px 28px 96px; } }
 
   h1 { font-size: 22px; letter-spacing: -0.015em; margin: 0 0 8px; }
@@ -263,7 +335,7 @@ function layout(args: {
   </div>
   <nav class="tabs" aria-label="Primary">
     ${nav("home", "Home", "/home")}
-    ${nav("catalog", "Public templates", "/public-templates")}
+    ${nav("catalog", "Template store", "/template-store")}
     ${nav("panes", "My panes", "/my-panes")}
     ${nav("templates", "My templates", "/my-templates")}
     ${nav("agents", "My agents", "/my-agents")}
@@ -274,6 +346,15 @@ function layout(args: {
 <main>
   ${args.body}
 </main>
+<nav class="bottom-tabs" aria-label="Primary (mobile)">
+  <div class="tabs">
+    ${nav("home", "Home", "/home")}
+    ${nav("catalog", "Store", "/template-store")}
+    ${nav("panes", "Panes", "/my-panes")}
+    ${nav("templates", "Templates", "/my-templates")}
+    ${nav("settings", "Settings", "/settings")}
+  </div>
+</nav>
 <script>
   document.getElementById("pane-logout")?.addEventListener("click", async () => {
     try {
@@ -342,6 +423,63 @@ function loggedOutPrompt(): string {
     <p>This area of pane is only available to signed-in humans. <a href="/login" class="btn">Sign in</a></p>
   </div>`;
 }
+
+// ----------------------------------------------------------------------
+// GET /favicon.svg — the brand mark as a real asset, referenced from
+// /manifest.webmanifest (PWA install) and as a fallback for any client
+// that doesn't pick up the inlined data URI used in <link rel="icon">.
+// The SVG body is the same shape that's inlined in the bridge shell —
+// kept here as a literal so updating the brand is a one-line change.
+// ----------------------------------------------------------------------
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#0f172a"/><circle cx="62" cy="58" r="17" fill="#22d3ee"/><rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/><rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/><circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/><circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/></svg>`;
+
+systemPages.get("/favicon.svg", (c) => {
+  c.header("Content-Type", "image/svg+xml");
+  c.header("Cache-Control", "public, max-age=86400");
+  return c.body(FAVICON_SVG);
+});
+
+// ----------------------------------------------------------------------
+// GET /manifest.webmanifest — PWA manifest.
+//
+// Served from the relay so an installed-to-homescreen pane (Add to Home
+// Screen on iOS, Install on Android/Chrome) launches into /home as a
+// standalone app — no browser chrome. Inlined: short, no asset pipeline,
+// and the file rarely changes.
+// ----------------------------------------------------------------------
+systemPages.get("/manifest.webmanifest", (c) => {
+  c.header("Content-Type", "application/manifest+json");
+  // Long cache — the manifest's contents change infrequently; the routes
+  // themselves are the source of truth. A bump in this string forces
+  // installed PWAs to re-fetch via the next session.
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.body(
+    JSON.stringify({
+      name: "pane",
+      short_name: "pane",
+      description: "Round-trip UI channel between agents and humans",
+      start_url: "/home",
+      scope: "/",
+      display: "standalone",
+      orientation: "any",
+      background_color: "#0b0e14",
+      theme_color: "#0b0e14",
+      categories: ["productivity", "developer"],
+      // Icons inlined as a single SVG. Real-world PWAs typically ship
+      // PNG variants too; iOS still respects the apple-touch-icon meta
+      // even when the manifest only declares SVG, so this is sufficient
+      // for the install flow without standing up an asset pipeline.
+      icons: [
+        {
+          src: "/favicon.svg",
+          sizes: "any",
+          type: "image/svg+xml",
+          purpose: "any",
+        },
+      ],
+    }),
+  );
+});
 
 // ----------------------------------------------------------------------
 // GET / — public landing for the relay
@@ -582,7 +720,7 @@ systemPages.get("/my-panes", async (c) => {
             <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/><circle cx="7" cy="6" r=".7" fill="currentColor"/><circle cx="10" cy="6" r=".7" fill="currentColor"/></svg>
             <h3 class="empty-state-headline">No panes yet</h3>
             <p class="empty-state-body">A pane is one UI an agent renders for you. As soon as one of your claimed agents creates one, it shows up here.</p>
-            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/public-templates">Browse public templates</a></div>
+            <div class="empty-state-cta"><a class="btn ghost" href="/my-agents">Claim an agent</a><a class="btn" href="/template-store">Browse the template store</a></div>
           </div>`
         : `<ul class="pane-cards">${panes
             .map((s) => {
@@ -781,7 +919,7 @@ systemPages.get("/my-templates", async (c) => {
           <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h7v7H4z"/><path d="M13 4h7v4h-7z"/><path d="M13 10h7v10h-7z"/><path d="M4 13h7v7H4z"/></svg>
           <h3 class="empty-state-headline">You haven't authored any templates</h3>
           <p class="empty-state-body">Templates are reusable mini-apps your agents create with <code>pane template create</code>. Once an agent saves one, it lives here — installs from the public catalog appear below.</p>
-          <div class="empty-state-cta"><a class="btn ghost" href="/public-templates">Browse public templates</a></div>
+          <div class="empty-state-cta"><a class="btn ghost" href="/template-store">Browse the template store</a></div>
         </div>`
       : `<ul class="list">${templates
           .map((t) => {
@@ -802,6 +940,7 @@ systemPages.get("/my-templates", async (c) => {
               <div style="min-width:0;flex:1;">
                 <div class="title">${title}</div>
                 <div class="meta">${desc} · ${escapeHtml(t.shape)}</div>
+                <div class="meta" style="margin-top:6px;"><a href="/my-templates/${encodeURIComponent(t.id)}/content" style="font-size:13px;">Manage content →</a></div>
                 <details class="pub-form" style="margin-top:6px;">
                   <summary style="cursor:pointer;font-size:13px;color:var(--accent);">${btnLabel}</summary>
                   <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
@@ -918,24 +1057,258 @@ systemPages.get("/my-templates", async (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /public-templates — public catalog browse page (#279).
-// Human-facing wrapper over GET /v1/templates/public + install/uninstall.
-// /apps is kept as a 301 redirect so legacy links don't break.
+// GET /my-templates/:id/content — template-records management view.
+//
+// Owner-only (the calling human must own the template's agent). Lists
+// every collection declared in the template's latest version's
+// templateRecordSchema, with the existing rows + an "Add row" form per
+// collection. Writes go through /v1/my-templates/:id/template-records/:c
+// (cookie-authed, defined in template-marketplace.ts) and the page
+// refreshes its row list inline on success.
+//
+// This is the publisher-side surface for curating shared content that
+// every pane derived from the template sees in real time. The data path
+// is: write here → relay broadcasts template-record.* on every derived
+// pane's WS → page-side bridge fires pane.template.records.on handlers
+// in each iframe.
 // ----------------------------------------------------------------------
-systemPages.get("/apps", (c) => c.redirect("/public-templates", 301));
-
-systemPages.get("/public-templates", (c) => {
+systemPages.get("/my-templates/:id/content", async (c) => {
   const human = c.get("human");
   if (!human) {
     return c.html(
       layout({
-        title: "Public templates",
+        title: "Template content",
         email: null,
         body: loggedOutPrompt(),
       }),
     );
   }
-  const body = `<h1>Public templates</h1>
+  const prisma = c.get("prisma");
+  const id = c.req.param("id");
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  // 404 (not 401/403) on miss or not-owned — same shape as the existing
+  // owner-only routes; never confirms the existence of someone else's
+  // template to the caller.
+  if (!template || template.owner.ownerHumanId !== human.id) {
+    return c.html(
+      layout({
+        title: "Template content",
+        email: human.email,
+        body: `<div class="card"><h1>Template not found</h1><p>This template does not exist or is not yours. <a href="/my-templates">Back to My templates</a>.</p></div>`,
+        active: "templates",
+      }),
+      404,
+    );
+  }
+  const version = await prisma.templateVersion.findUnique({
+    where: {
+      templateId_version: {
+        templateId: template.id,
+        version: template.latestVersion,
+      },
+    },
+    select: { templateRecordSchema: true, version: true },
+  });
+  const tplSchema = (version?.templateRecordSchema ?? null) as Record<
+    string,
+    unknown
+  > | null;
+  const xpc = (tplSchema?.["x-pane-collections"] ?? null) as Record<
+    string,
+    unknown
+  > | null;
+  const collections: string[] = xpc ? Object.keys(xpc) : [];
+  const name = template.name ?? template.slug ?? template.id;
+  const subtitle = `v${version?.version ?? template.latestVersion} · ${collections.length === 0 ? "no template-level collections declared" : `${collections.length} collection${collections.length === 1 ? "" : "s"}`}`;
+
+  // Render shell HTML; the row lists hydrate client-side from
+  // /v1/my-templates/:id/template-records/:collection so a fresh write
+  // (or a delete) can refresh without a full reload.
+  let body = `<p style="margin:0 0 4px;"><a href="/my-templates" style="font-size:13px;">← My templates</a></p>
+  <h1>${escapeHtml(name)} · content</h1>
+  <p style="color:var(--muted);font-size:14px;margin:0 0 18px;">${escapeHtml(subtitle)}</p>`;
+
+  if (collections.length === 0) {
+    body += `<div class="card empty-state">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>
+      <h3 class="empty-state-headline">No template-level collections declared</h3>
+      <p class="empty-state-body">This template doesn't carry a <code>template_record_schema</code>. Add one when publishing a new version to make shared content available — derived panes will see updates live through <code>pane.template.records</code>.</p>
+    </div>`;
+  } else {
+    for (const collection of collections) {
+      // Each collection block: heading + add-form + an empty &lt;ul&gt;
+      // that the client populates on load. Keys are CSS-escaped via
+      // [data-collection="..."] selectors so collection names with hyphens
+      // stay safe.
+      body += `<section class="card" data-collection="${escapeHtml(collection)}">
+        <h2 style="margin:0 0 12px;font-size:16px;letter-spacing:-0.005em;">${escapeHtml(collection)}</h2>
+        <form class="trec-add" data-collection="${escapeHtml(collection)}" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <input class="trec-key" type="text" placeholder="record key (optional)" style="flex:0 1 180px;min-width:140px;" />
+          <input class="trec-data" type="text" placeholder='data JSON, e.g. {"text":"Hello"}' required style="flex:1 1 240px;min-width:200px;font-family:&quot;SF Mono&quot;,Menlo,Consolas,monospace;font-size:13px;" />
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <ul class="list trec-rows" data-collection="${escapeHtml(collection)}"><li class="empty">Loading…</li></ul>
+      </section>`;
+    }
+
+    body += `<script>
+      // Client-side hydration. Each collection block has a UL the script
+      // populates via GET /v1/my-templates/:id/template-records/:collection.
+      // Mutations (add / delete) hit the matching POST / DELETE under the
+      // same prefix and re-render the affected list on success.
+      const TEMPLATE_ID = ${JSON.stringify(template.id)};
+
+      function escape(s) {
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      async function loadCollection(name) {
+        const ul = document.querySelector(\`ul.trec-rows[data-collection="\${CSS.escape(name)}"]\`);
+        if (!ul) return;
+        ul.innerHTML = '<li class="empty">Loading…</li>';
+        try {
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}?since=0\`,
+            { credentials: 'same-origin' },
+          );
+          if (!res.ok) {
+            ul.innerHTML = '<li class="empty">Failed to load (' + res.status + ')</li>';
+            return;
+          }
+          const body = await res.json();
+          const live = (body.records || []).filter((r) => r.deleted_at === null);
+          if (!live.length) {
+            ul.innerHTML = '<li class="empty">No rows yet — add one above.</li>';
+            return;
+          }
+          ul.innerHTML = live.map((r) => {
+            const dataStr = JSON.stringify(r.data);
+            return '<li data-key="' + escape(r.key) + '">'
+              + '<div><div class="title">' + escape(r.key) + '</div>'
+              + '<div class="meta"><code>' + escape(dataStr) + '</code></div>'
+              + '<div class="meta meta-dim" style="color:var(--muted);">v' + escape(r.version) + ' · ' + escape(r.author.kind) + '</div></div>'
+              + '<div><button class="btn ghost trec-delete" data-key="' + escape(r.key) + '" data-version="' + escape(r.version) + '">Delete</button></div>'
+              + '</li>';
+          }).join('');
+        } catch (e) {
+          ul.innerHTML = '<li class="empty">Network error</li>';
+        }
+      }
+
+      // Initial load for every declared collection.
+      for (const sec of document.querySelectorAll('section[data-collection]')) {
+        loadCollection(sec.getAttribute('data-collection'));
+      }
+
+      // Add-row form submit → POST.
+      document.body.addEventListener('submit', async (ev) => {
+        const form = ev.target;
+        if (!(form instanceof HTMLElement) || !form.classList.contains('trec-add')) return;
+        ev.preventDefault();
+        const name = form.getAttribute('data-collection');
+        const keyEl = form.querySelector('.trec-key');
+        const dataEl = form.querySelector('.trec-data');
+        const key = (keyEl && keyEl.value || '').trim();
+        const raw = (dataEl && dataEl.value || '').trim();
+        let data;
+        try { data = JSON.parse(raw); }
+        catch { alert('Data must be valid JSON.'); return; }
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        btn.textContent = 'Adding…';
+        try {
+          const body = { data };
+          if (key.length > 0) body.record_key = key;
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}\`,
+            { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) },
+          );
+          if (!res.ok && res.status !== 200 && res.status !== 201) {
+            const err = await res.json().catch(() => ({}));
+            alert('Add failed: ' + (err.error && err.error.message || ('HTTP ' + res.status)));
+            btn.disabled = false; btn.textContent = 'Add';
+            return;
+          }
+          dataEl.value = ''; if (keyEl) keyEl.value = '';
+          btn.disabled = false; btn.textContent = 'Add';
+          loadCollection(name);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Add';
+          alert('Network error');
+        }
+      });
+
+      // Delete-button click → DELETE.
+      document.body.addEventListener('click', async (ev) => {
+        const target = ev.target;
+        if (!(target instanceof HTMLElement)) return;
+        const btn = target.closest('button.trec-delete');
+        if (!btn) return;
+        const li = btn.closest('li[data-key]');
+        const section = btn.closest('section[data-collection]');
+        if (!li || !section) return;
+        const name = section.getAttribute('data-collection');
+        const key = li.getAttribute('data-key');
+        if (!confirm('Delete row "' + key + '"?')) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            \`/v1/my-templates/\${encodeURIComponent(TEMPLATE_ID)}/template-records/\${encodeURIComponent(name)}/\${encodeURIComponent(key)}\`,
+            { method: 'DELETE', credentials: 'same-origin' },
+          );
+          if (!res.ok && res.status !== 204) {
+            const err = await res.json().catch(() => ({}));
+            alert('Delete failed: ' + (err.error && err.error.message || ('HTTP ' + res.status)));
+            btn.disabled = false;
+            return;
+          }
+          loadCollection(name);
+        } catch (e) {
+          btn.disabled = false;
+          alert('Network error');
+        }
+      });
+    </script>`;
+  }
+
+  return c.html(
+    layout({
+      title: name + " · content",
+      email: human.email,
+      body,
+      active: "templates",
+    }),
+  );
+});
+
+// ----------------------------------------------------------------------
+// GET /template-store — public catalog browse page (#279).
+// Human-facing wrapper over GET /v1/templates/public + install/uninstall.
+//
+// URL history: page started at `/apps`, renamed to `/public-templates`,
+// now `/template-store` — leans into the install-from-a-catalog metaphor
+// (parallel to App Store / Play Store). Both legacy paths 301 here so
+// old links + bookmarks still resolve.
+// ----------------------------------------------------------------------
+systemPages.get("/apps", (c) => c.redirect("/template-store", 301));
+systemPages.get("/public-templates", (c) => c.redirect("/template-store", 301));
+
+systemPages.get("/template-store", (c) => {
+  const human = c.get("human");
+  if (!human) {
+    return c.html(
+      layout({
+        title: "Template store",
+        email: null,
+        body: loggedOutPrompt(),
+      }),
+    );
+  }
+  const body = `<h1>Template store</h1>
   <p style="color:var(--muted);font-size:14.5px;">Templates published by other agents. Install one to add it to your library — then hit Launch on <a href="/my-templates">My templates</a> to open a pane.</p>
   <div class="card">
     <input id="catalog-search" type="text" placeholder="Search templates by name, description, or tag" autocomplete="off" />
@@ -1043,7 +1416,7 @@ systemPages.get("/public-templates", (c) => {
   </script>`;
   return c.html(
     layout({
-      title: "Public templates",
+      title: "Template store",
       email: human.email,
       body,
       active: "catalog",
