@@ -287,7 +287,7 @@ describe("GET /home (signed in)", () => {
     expect(html).toContain("Settings");
   });
 
-  it("renders gradient greeting + stats + search bar", async () => {
+  it("renders gradient greeting + stats + wired search bar", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
@@ -297,14 +297,40 @@ describe("GET /home (signed in)", () => {
     // Greeting line with gradient name span.
     expect(html).toContain('class="home-greet"');
     expect(html).toContain('class="home-greet-name"');
-    // Local-part heuristic: alice@example.com → "Alice"
+    // Local-part heuristic: alice@example.com → "Alice" (no human.name set).
     expect(html).toContain(">Alice<");
     // Stats subline appears with humanised counts.
     expect(html).toContain('class="home-stats"');
     expect(html).toContain("templates in your library");
-    // Search bar present (full search wiring is a follow-up).
+    // Search bar present + the client-side filter is wired (function
+    // definition is inlined in the page's script).
     expect(html).toContain('id="home-search"');
     expect(html).toContain("Search templates, panes, anything");
+    expect(html).toContain("matchableText");
+  });
+
+  it("prefers human.name over the email-local heuristic in the greeting", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.human.update({
+      where: { id: humanId },
+      data: { name: "Lalit" },
+    });
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // The gradient name span carries the persisted name, not the
+    // email-local "Alice" heuristic.
+    expect(html).toContain(">Lalit<");
+    expect(html).not.toMatch(/home-greet-name">Alice</);
+  });
+
+  it("login form carries the optional Name input", async () => {
+    const res = await app.fetch(new Request("http://t/login"));
+    const html = await res.text();
+    expect(html).toContain('id="name"');
+    expect(html).toContain("Your name");
+    expect(html).toContain('autocomplete="name"');
   });
 
   it("renders Favourites + Open panes + All templates sections", async () => {

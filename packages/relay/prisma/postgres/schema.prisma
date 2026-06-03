@@ -60,6 +60,9 @@ model Agent {
 model Human {
   id             String    @id @default(cuid())
   email          String    @unique
+  // Optional display name. NULL until the human sets one. UI falls back
+  // to the email's local part. See sqlite schema for full notes.
+  name           String?
   // Non-null once first magic-link login succeeds (proof the human controls
   // the email). Until then the row exists but the email isn't proven.
   verifiedAt     DateTime? @map("verified_at")
@@ -151,6 +154,8 @@ model MagicLink {
   // Optional return URL captured at /login. The relay redirects here on
   // successful verify so "log in to see this pane" deep links work.
   returnUrl   String?   @map("return_url")
+  // Optional display name. See sqlite schema for semantics.
+  name        String?
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([email])
