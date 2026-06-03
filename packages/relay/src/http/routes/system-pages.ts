@@ -601,23 +601,37 @@ systemPages.get("/login", (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /home — iOS-style launcher.
+// GET /home — Launchpad-style home view (close-to-prototype rewrite).
 //
-// Three sections on a logged-in home:
-//   1. Apps grid — 6 tiles linking to the major destinations. Each is a
-//      large rounded square with a gradient + icon, like a phone home
-//      screen. The same tile sizes drive desktop + mobile.
-//   2. Favourites — the human's installed templates, surfaced as small
-//      square tiles with the template initials. Lets the human launch a
-//      pane from the home page without navigating to /my-templates.
-//      Empty → CTA to /template-store.
-//   3. Recents — the three most recent owned/joined panes as visual
-//      cards (same pane-card pattern as /my-panes).
+// Faithful to /tmp/owner-shell-v2.html's "home" view:
 //
-// The visual language matches the prototype at /tmp/owner-shell-v2.html:
-// chunky rounded tiles, vivid gradients, generous whitespace. Looks at
-// home in standalone PWA mode after Add-to-Home-Screen.
+//   1. Gradient greeting "Hey, <name>" + stats subline. The name has the
+//      brand-gradient text treatment so the eye catches it first.
+//   2. Search bar (placeholder only this iteration — full search is a
+//      separate piece of work; the bar anchors the visual layout).
+//   3. Favourites — a horizontal-scroll strip of 76×76 gradient tiles,
+//      one per installed template. Tap = one-tap pane launch via the
+//      existing /v1/my-templates/:id/launch route.
+//   4. Open panes — a horizontal-scroll card strip with a colored thumb
+//      + tag, title, and relative date. Mirrors the prototype's
+//      .recent-card.
+//   5. All templates — a Launchpad-style grid of 64×64 gradient tiles
+//      drawn from every install + every template owned by one of the
+//      human's claimed agents.
+//
+// Keeps the existing top-tab/bottom-tab nav chrome. Replacing the chrome
+// with the prototype's persistent sidebar is a larger follow-up refactor.
 // ----------------------------------------------------------------------
+function homeGreetingName(email: string): string {
+  // Friendly first-name fallback from the email's local part. "alice.smith@x"
+  // → "Alice". A name from the human profile would be preferred, but we
+  // don't currently store one, so the local-part heuristic is the next-best
+  // thing — and stable for the gradient greeting.
+  const local = (email.split("@")[0] ?? "").split(/[._-]/)[0] ?? "";
+  if (local.length === 0) return "there";
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
 systemPages.get("/home", async (c) => {
   const human = c.get("human");
   if (!human) {
@@ -627,8 +641,16 @@ systemPages.get("/home", async (c) => {
   }
   const prisma = c.get("prisma");
 
-  // Pull recent panes + installed templates in parallel.
-  const [recent, installs] = await Promise.all([
+  // Pull recent panes + installed templates + every template owned by one
+  // of the human's claimed agents in parallel. Three datasets, one round
+  // trip's worth of latency.
+  const claimedAgents = await prisma.agent.findMany({
+    where: { ownerHumanId: human.id, deletedAt: null },
+    select: { id: true },
+  });
+  const ownedAgentIds = claimedAgents.map((a) => a.id);
+
+  const [recent, installs, ownedTemplates] = await Promise.all([
     prisma.pane.findMany({
       where: {
         deletedAt: null,
@@ -638,272 +660,406 @@ systemPages.get("/home", async (c) => {
         ],
       },
       orderBy: { createdAt: "desc" },
-      take: 4,
+      take: 8,
       select: {
         id: true,
         title: true,
         createdAt: true,
         templateVersion: {
-          select: { template: { select: { name: true, slug: true } } },
+          select: {
+            template: { select: { id: true, name: true, slug: true } },
+            version: true,
+          },
         },
       },
     }),
     prisma.humanTemplateInstall.findMany({
       where: { humanId: human.id, uninstalledAt: null },
       orderBy: { installedAt: "desc" },
-      take: 8,
+      take: 12,
       select: {
         templateId: true,
         template: {
-          select: { name: true, slug: true, id: true, deletedAt: true },
+          select: { id: true, name: true, slug: true, deletedAt: true },
         },
       },
     }),
+    ownedAgentIds.length === 0
+      ? Promise.resolve([])
+      : prisma.template.findMany({
+          where: {
+            ownerId: { in: ownedAgentIds },
+            deletedAt: null,
+            name: { not: null },
+          },
+          orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
+          take: 18,
+          select: { id: true, name: true, slug: true },
+        }),
   ]);
   const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
 
-  // 1) Apps grid — six destinations. Each tile is a link with an SVG icon
-  //    and a label. Gradient colors are hand-picked so the row reads as a
-  //    palette, not a random assortment.
-  const APP_TILES: Array<{
-    href: string;
-    label: string;
-    grad: [string, string];
-    icon: string;
-  }> = [
-    {
-      href: "/my-panes",
-      label: "Panes",
-      grad: ["#7c3aed", "#a78bfa"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>`,
-    },
-    {
-      href: "/my-templates",
-      label: "Templates",
-      grad: ["#0ea5e9", "#38bdf8"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>`,
-    },
-    {
-      href: "/template-store",
-      label: "Store",
-      grad: ["#10b981", "#34d399"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`,
-    },
-    {
-      href: "/my-agents",
-      label: "Agents",
-      grad: ["#ec4899", "#f472b6"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/></svg>`,
-    },
-    {
-      href: "/trash",
-      label: "Trash",
-      grad: ["#64748b", "#94a3b8"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1.2 13a1 1 0 0 0 1 .9h7.6a1 1 0 0 0 1-.9L18 7"/></svg>`,
-    },
-    {
-      href: "/settings",
-      label: "Settings",
-      grad: ["#f59e0b", "#fbbf24"],
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.5-2.4.9a7.5 7.5 0 0 0-1.7-1L14.5 3h-5l-.8 2.4a7.5 7.5 0 0 0-1.7 1L4.6 5.5l-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2L2.6 14.5l2 3.5 2.4-.9a7.5 7.5 0 0 0 1.7 1L9.5 21h5l.8-2.4a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.5L19.4 13z"/></svg>`,
-    },
-  ];
-  const appsGrid = APP_TILES.map(
-    (
-      t,
-    ) => `<a class="launcher-tile" href="${t.href}" style="background:linear-gradient(135deg,${t.grad[0]} 0%,${t.grad[1]} 100%);">
-      <span class="launcher-icon">${t.icon}</span>
-      <span class="launcher-label">${escapeHtml(t.label)}</span>
-    </a>`,
-  ).join("");
+  // Dedup the All-Templates grid: prefer the owned-template row when an
+  // install + an owned template both point at the same id.
+  type TileTpl = { id: string; name: string | null; slug: string | null };
+  const allTemplatesMap = new Map<string, TileTpl>();
+  for (const t of ownedTemplates) allTemplatesMap.set(t.id, t);
+  for (const i of liveInstalls) {
+    if (!allTemplatesMap.has(i.template.id))
+      allTemplatesMap.set(i.template.id, i.template);
+  }
+  const allTemplates = Array.from(allTemplatesMap.values());
 
-  // 2) Favourites — installed templates. Each launches a pane via the
-  //    cookie-authed POST /v1/my-templates/:id/launch endpoint, mirroring
-  //    the Launch button on /my-templates. Smaller tile, template initials
-  //    on a hash-coloured background so visually distinct from the apps
-  //    grid above. Tap → mint + redirect to the new pane URL.
-  const favouritesGrid =
+  // Stats line — counts visible to the human's eye, all stable across
+  // soft-deletes (i.e. only live rows).
+  const liveRecentCount = recent.length;
+  const statsParts = [
+    liveRecentCount === 0
+      ? "no open panes"
+      : `${liveRecentCount} ${liveRecentCount === 1 ? "open pane" : "open panes"}`,
+    `${allTemplates.length} ${allTemplates.length === 1 ? "template" : "templates"} in your library`,
+  ];
+  if (liveInstalls.length > 0) {
+    statsParts.push(
+      `${liveInstalls.length} install${liveInstalls.length === 1 ? "" : "s"}`,
+    );
+  }
+  const statsLine = statsParts.join(" · ");
+  const greetName = homeGreetingName(human.email);
+
+  // Favourites — horizontal-scroll strip of 76×76 colored gradient tiles.
+  // Initials sit centred in the tile; label below. Tap → one-tap launch
+  // via /v1/my-templates/:id/launch.
+  const favouritesStrip =
     liveInstalls.length === 0
       ? `<div class="empty-state" style="padding:24px 16px 18px;">
           <h3 class="empty-state-headline" style="margin:0 0 4px;font-size:15px;">No favourites yet</h3>
           <p class="empty-state-body" style="font-size:13.5px;margin:0;">Install a template from the <a href="/template-store">store</a> — it'll appear here for one-tap launch.</p>
         </div>`
-      : `<div class="fav-grid">${liveInstalls
+      : `<div class="favs">${liveInstalls
           .map((i) => {
             const t = i.template;
             const name = t.name ?? t.slug ?? t.id;
             const initials = paneInitials(name);
             const hue = paneHue(t.id);
             return `<button class="fav-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" style="--tile-h:${hue};">
-              <span class="fav-tile-initials">${escapeHtml(initials)}</span>
+              <span class="fav-tile-icon">${escapeHtml(initials)}</span>
               <span class="fav-tile-label">${escapeHtml(name)}</span>
             </button>`;
           })
           .join("")}</div>`;
 
-  // 3) Recents — visual cards. Reuses .pane-card styling from /my-panes.
+  // Open panes — horizontal-scroll cards with hue thumb + glyph.
   const now = new Date();
-  const recentsBlock =
+  const recentsStrip =
     recent.length === 0
       ? `<div class="empty-state" style="padding:20px 16px 10px;">
-          <p class="empty-state-body" style="font-size:13.5px;margin:0;">No recent panes — launch one from a favourite above.</p>
+          <p class="empty-state-body" style="font-size:13.5px;margin:0;">No open panes — launch one from a favourite above.</p>
         </div>`
-      : `<ul class="pane-cards">${recent
+      : `<div class="recents">${recent
           .map((s) => {
             const tplName =
               s.templateVersion?.template?.name ??
               s.templateVersion?.template?.slug ??
               s.title;
-            const initials = paneInitials(tplName);
+            const glyph = paneInitials(tplName);
             const hue = paneHue(s.id);
             const rel = formatRelativeDate(s.createdAt, now);
-            return `<li class="pane-card" style="--tile-h:${hue};">
-              <div class="pane-card-tile">${escapeHtml(initials)}</div>
-              <div class="pane-card-main">
-                <div class="pane-card-title">${escapeHtml(s.title)}</div>
-                <div class="pane-card-meta"><span class="pane-card-meta-dim">${escapeHtml(tplName)} · ${escapeHtml(rel)}</span></div>
+            const verTag = s.templateVersion?.version
+              ? `v${s.templateVersion.version}`
+              : "";
+            return `<a class="recent-card" href="/panes/${encodeURIComponent(s.id)}" style="--tile-h:${hue};">
+              <div class="recent-thumb">
+                <span class="recent-glyph">${escapeHtml(glyph)}</span>
+                ${verTag ? `<span class="recent-tag">${escapeHtml(verTag)}</span>` : ""}
               </div>
-              <div class="pane-card-actions"><a class="btn ghost" href="/panes/${encodeURIComponent(s.id)}">Open</a></div>
-            </li>`;
+              <div class="recent-title">${escapeHtml(s.title)}</div>
+              <div class="recent-meta"><span>${escapeHtml(tplName)}</span><span>${escapeHtml(rel)}</span></div>
+            </a>`;
           })
-          .join("")}</ul>`;
+          .join("")}</div>`;
+
+  // All templates — Launchpad-style grid of 64×64 gradient tiles.
+  const allTemplatesGrid =
+    allTemplates.length === 0
+      ? `<div class="empty-state" style="padding:24px 16px 18px;">
+          <h3 class="empty-state-headline" style="margin:0 0 4px;font-size:15px;">Your template library is empty</h3>
+          <p class="empty-state-body" style="font-size:13.5px;margin:0;">Browse the <a href="/template-store">store</a> to install one, or run <code>pane template create</code> to author your own.</p>
+        </div>`
+      : `<div class="apps-grid">${allTemplates
+          .map((t) => {
+            const name = t.name ?? t.slug ?? t.id;
+            const initials = paneInitials(name);
+            const hue = paneHue(t.id);
+            return `<button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" style="--tile-h:${hue};">
+              <span class="app-tile-icon">${escapeHtml(initials)}</span>
+              <span class="app-tile-label">${escapeHtml(name)}</span>
+            </button>`;
+          })
+          .join("")}</div>`;
 
   const body = `<style>
-    /* Launcher home — the iOS-style chunky-tile layout. Local-only styles
-       (not pushed to layout.ts) so the visual treatment can iterate
-       without churning every other page. */
-    .home-hero { margin: 4px 0 22px; }
-    .home-hero h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
-    @media (min-width: 640px) { .home-hero h1 { font-size: 30px; } }
-    .home-hero .home-hello { color: var(--muted); font-size: 14.5px; margin: 0; }
+    /* /home — Launchpad-style. CSS local to this page (not pushed to
+       the shared layout) so the look can iterate without churning every
+       page. Mirrors the prototype at /tmp/owner-shell-v2.html. */
 
-    .launcher-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin: 18px 0 28px;
+    /* === Greeting === */
+    .home-greet {
+      margin: 4px 0 4px;
+      font-size: 26px; font-weight: 700; letter-spacing: -0.015em;
+      line-height: 1.2;
     }
-    @media (min-width: 480px) { .launcher-grid { grid-template-columns: repeat(6, 1fr); gap: 14px; } }
-    .launcher-tile {
-      aspect-ratio: 1 / 1;
-      border-radius: 18px;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 4px;
-      color: #fff; text-decoration: none;
-      box-shadow: 0 6px 14px rgba(16,21,34,.18), 0 1px 2px rgba(16,21,34,.12);
-      transition: transform .14s ease, box-shadow .14s ease;
+    @media (min-width: 640px) { .home-greet { font-size: 32px; } }
+    .home-greet-name {
+      background: linear-gradient(135deg, #93c5fd 0%, #c4b5fd 60%, #5eead4 110%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
     }
-    .launcher-tile:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(16,21,34,.22), 0 2px 4px rgba(16,21,34,.14); }
-    .launcher-tile:active { transform: translateY(0); }
-    .launcher-icon { width: 32px; height: 32px; }
-    .launcher-icon svg { width: 100%; height: 100%; display: block; }
-    .launcher-label {
-      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
-      text-transform: uppercase;
-      opacity: 0.95;
+    .home-stats {
+      color: var(--muted); font-size: 13.5px;
+      margin: 0 0 18px;
     }
-    @media (min-width: 480px) { .launcher-icon { width: 36px; height: 36px; } .launcher-label { font-size: 12px; } }
 
-    .home-section { margin: 26px 0 16px; }
-    .home-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
-    .home-section-head h2 { margin: 0; font-size: 16px; letter-spacing: -0.005em; }
-    .home-section-head a { font-size: 13px; }
-
-    /* Favourites — smaller tiles, two rows on mobile, more per row on
-       desktop. Hash-coloured tile + initials so the same visual key as
-       /my-panes cards. */
-    .fav-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-      gap: 12px;
+    /* === Search === */
+    .home-search {
+      position: relative;
+      max-width: 480px;
+      margin-bottom: 28px;
     }
+    .home-search input {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      padding: 10px 14px 10px 38px;
+      color: var(--fg); font: inherit; font-size: 14.5px;
+      outline: none;
+      transition: border-color .12s ease, box-shadow .12s ease;
+    }
+    .home-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .home-search-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); pointer-events: none; line-height: 0;
+    }
+
+    /* === Section heads (small caps, brand-accent link) === */
+    .home-section { margin: 26px 0 18px; }
+    .home-section-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .home-section-head h2 {
+      margin: 0;
+      font-size: 12.5px; color: var(--muted);
+      font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .home-section-head a { font-size: 12.5px; color: var(--accent); }
+
+    /* === Favourites — horizontal scroll strip of 76×76 tiles === */
+    .favs {
+      display: flex; gap: 14px;
+      overflow-x: auto;
+      padding: 6px 2px 14px;
+      margin: 0 -2px;
+      scrollbar-width: thin;
+      scroll-snap-type: x proximity;
+    }
+    .favs::-webkit-scrollbar { height: 8px; }
+    .favs::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 999px; }
     .fav-tile {
+      flex: 0 0 96px;
       display: flex; flex-direction: column; align-items: center; gap: 8px;
-      padding: 14px 8px; background: var(--panel); border: 1px solid var(--rule);
-      border-radius: 14px; cursor: pointer; font: inherit; text-align: center;
-      transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+      background: transparent; border: none; padding: 0; cursor: pointer;
+      font: inherit; user-select: none;
+      scroll-snap-align: start;
     }
-    .fav-tile:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: 0 4px 14px rgba(16,21,34,.08); }
-    .fav-tile:disabled { opacity: 0.65; cursor: default; }
-    .fav-tile-initials {
-      width: 44px; height: 44px; border-radius: 12px;
-      display: inline-flex; align-items: center; justify-content: center;
-      font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
-      color: #fff;
-      background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%);
+    .fav-tile-icon {
+      width: 76px; height: 76px;
+      border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      color: #07090f;
+      font-size: 28px; font-weight: 800; letter-spacing: 0.02em;
+      background: linear-gradient(135deg, hsl(var(--tile-h,260), 80%, 70%) 0%, hsl(calc(var(--tile-h,260) + 30), 75%, 60%) 100%);
+      box-shadow: 0 8px 22px rgba(0,0,0,.32), 0 1px 2px rgba(0,0,0,.16);
+      transition: transform 0.18s cubic-bezier(.22,.61,.36,1);
     }
+    .fav-tile:hover .fav-tile-icon { transform: translateY(-3px) scale(1.04); }
+    .fav-tile:active .fav-tile-icon { transform: translateY(-1px) scale(0.97); }
+    .fav-tile:disabled { opacity: 0.6; cursor: default; }
     .fav-tile-label {
-      font-size: 12.5px; color: var(--fg);
+      font-size: 12px; color: var(--fg);
+      text-align: center;
+      max-width: 96px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* === Open panes — horizontal scroll cards with hue thumb === */
+    .recents {
+      display: flex; gap: 14px;
+      overflow-x: auto;
+      padding: 6px 2px 14px;
+      margin: 0 -2px;
+      scrollbar-width: thin;
+      scroll-snap-type: x proximity;
+    }
+    .recents::-webkit-scrollbar { height: 8px; }
+    .recents::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 999px; }
+    .recent-card {
+      flex: 0 0 280px;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 16px;
+      padding: 12px;
+      text-decoration: none; color: var(--fg);
+      display: flex; flex-direction: column; gap: 10px;
+      scroll-snap-align: start;
+      transition: border-color .14s ease, transform .14s ease, box-shadow .14s ease;
+    }
+    .recent-card:hover {
+      border-color: hsl(var(--tile-h,260), 60%, 60%);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 22px rgba(0,0,0,.18);
+    }
+    .recent-thumb {
+      height: 110px; border-radius: 12px;
+      position: relative; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, hsl(var(--tile-h,260), 80%, 70%) 0%, hsl(calc(var(--tile-h,260) + 30), 75%, 60%) 100%);
+    }
+    .recent-glyph {
+      font-size: 34px; font-weight: 800; color: #07090f; letter-spacing: 0.02em;
+    }
+    .recent-tag {
+      position: absolute; bottom: 7px; left: 9px;
+      font-family: "SF Mono",Menlo,Consolas,monospace;
+      font-size: 10.5px; color: #f5f7fb;
+      background: rgba(0,0,0,.45);
+      padding: 2px 7px; border-radius: 5px;
+    }
+    .recent-title {
+      font-weight: 600; font-size: 14px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .recent-meta {
+      display: flex; justify-content: space-between;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-family: "SF Mono",Menlo,Consolas,monospace;
+    }
+    .recent-meta > span:first-child {
+      max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* === All templates — Launchpad-style grid of 64×64 tiles === */
+    .apps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 18px 12px;
+      margin-top: 4px;
+      padding: 4px 0 8px;
+    }
+    .app-tile {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      background: transparent; border: none; padding: 6px 4px;
+      border-radius: 12px; cursor: pointer; font: inherit;
+      transition: background .12s ease;
+    }
+    .app-tile:hover { background: rgba(255,255,255,.04); }
+    .app-tile:disabled { opacity: 0.6; cursor: default; }
+    .app-tile-icon {
+      width: 64px; height: 64px;
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      color: #07090f; font-size: 22px; font-weight: 800; letter-spacing: 0.02em;
+      background: linear-gradient(135deg, hsl(var(--tile-h,260), 80%, 70%) 0%, hsl(calc(var(--tile-h,260) + 30), 75%, 60%) 100%);
+      box-shadow: 0 6px 18px rgba(0,0,0,.28), 0 1px 2px rgba(0,0,0,.14);
+      transition: transform .18s ease;
+    }
+    .app-tile:hover .app-tile-icon { transform: scale(1.05); }
+    .app-tile-label {
+      font-size: 11.5px; color: var(--fg);
+      text-align: center;
       max-width: 100%;
-      overflow: hidden; text-overflow: ellipsis;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-      line-height: 1.25;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
   </style>
-  <div class="home-hero">
-    <h1>Hello</h1>
-    <p class="home-hello">Signed in as ${escapeHtml(human.email)}.</p>
-  </div>
 
-  <div class="launcher-grid">
-    ${appsGrid}
+  <h1 class="home-greet">Hey, <span class="home-greet-name">${escapeHtml(greetName)}</span> 👋</h1>
+  <p class="home-stats">${escapeHtml(statsLine)}</p>
+
+  <div class="home-search">
+    <span class="home-search-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg>
+    </span>
+    <input id="home-search" placeholder="Search templates, panes, anything…" autocomplete="off" />
   </div>
 
   <section class="home-section">
     <div class="home-section-head">
       <h2>Favourites</h2>
-      <a href="/my-templates">My templates →</a>
+      <a href="/my-templates">Manage →</a>
     </div>
-    ${favouritesGrid}
+    ${favouritesStrip}
   </section>
 
   <section class="home-section">
     <div class="home-section-head">
-      <h2>Recent panes</h2>
-      <a href="/my-panes">All panes →</a>
+      <h2>Open panes</h2>
+      <a href="/my-panes">View all →</a>
     </div>
-    ${recentsBlock}
+    ${recentsStrip}
+  </section>
+
+  <section class="home-section">
+    <div class="home-section-head">
+      <h2>All templates</h2>
+      <a href="/template-store">Template store →</a>
+    </div>
+    ${allTemplatesGrid}
   </section>
 
   <script>
-    // Favourite tile → one-tap pane launch via the cookie-authed launch
-    // endpoint. Same flow as the Launch button on /my-templates: server
-    // mints the pane + human token, returns the URL, we navigate.
-    document.querySelectorAll('.fav-tile').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-template-id');
-        if (!id) return;
-        const original = btn.querySelector('.fav-tile-label').textContent;
-        btn.disabled = true;
-        btn.querySelector('.fav-tile-label').textContent = 'Launching…';
-        try {
-          const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            credentials: 'same-origin',
-          });
-          if (!res.ok) {
+    // Favourite / All-template tile → one-tap pane launch via
+    // /v1/my-templates/:id/launch. Same flow as /my-templates's Launch button.
+    function bindLaunch(selector) {
+      document.querySelectorAll(selector).forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-template-id');
+          if (!id) return;
+          const labelEl = btn.querySelector('.fav-tile-label') || btn.querySelector('.app-tile-label');
+          const original = labelEl ? labelEl.textContent : '';
+          btn.disabled = true;
+          if (labelEl) labelEl.textContent = 'Launching…';
+          try {
+            const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+            });
+            if (!res.ok) {
+              btn.disabled = false;
+              if (labelEl) labelEl.textContent = original;
+              alert('Launch failed (HTTP ' + res.status + ')');
+              return;
+            }
+            const body = await res.json();
+            const url = body.urls && body.urls.humans && body.urls.humans[0];
+            if (!url) {
+              btn.disabled = false;
+              if (labelEl) labelEl.textContent = original;
+              alert('Launch failed — no pane URL returned.');
+              return;
+            }
+            window.location.href = url;
+          } catch (e) {
             btn.disabled = false;
-            btn.querySelector('.fav-tile-label').textContent = original;
-            alert('Launch failed (HTTP ' + res.status + ')');
-            return;
+            if (labelEl) labelEl.textContent = original;
+            alert('Network error — try again.');
           }
-          const body = await res.json();
-          const url = body.urls && body.urls.humans && body.urls.humans[0];
-          if (!url) {
-            btn.disabled = false;
-            btn.querySelector('.fav-tile-label').textContent = original;
-            alert('Launch failed — no pane URL returned.');
-            return;
-          }
-          window.location.href = url;
-        } catch (e) {
-          btn.disabled = false;
-          btn.querySelector('.fav-tile-label').textContent = original;
-          alert('Network error — try again.');
-        }
+        });
       });
-    });
+    }
+    bindLaunch('.fav-tile');
+    bindLaunch('.app-tile');
   </script>`;
   return c.html(
     layout({
