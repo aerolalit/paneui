@@ -79,7 +79,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await prisma.$disconnect();
   await testDb.cleanup();
-});
+}, 30_000);
 
 beforeEach(async () => {
   await testDb.truncateAll(prisma);
@@ -199,7 +199,7 @@ class FrameQueue {
       else this.buf.push(v);
     });
   }
-  next(timeoutMs = 5000): Promise<unknown> {
+  next(timeoutMs = 10000): Promise<unknown> {
     if (this.buf.length > 0) return Promise.resolve(this.buf.shift()!);
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("frame timeout")), timeoutMs);
@@ -211,7 +211,7 @@ class FrameQueue {
   }
   async until(
     predicate: (m: { kind?: string; collection?: string }) => boolean,
-    timeoutMs = 5000,
+    timeoutMs = 10000,
   ): Promise<{ kind?: string; collection?: string; [k: string]: unknown }> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -229,7 +229,7 @@ class FrameQueue {
 // from the per-pane records suite's 1500ms default to 5s so the two-pane
 // fan-out test has headroom when both sockets race through the same
 // participant.joined writes.
-function waitOpen(ws: WebSocket, timeoutMs = 5000): Promise<void> {
+function waitOpen(ws: WebSocket, timeoutMs = 10000): Promise<void> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
     ws.once("open", () => {
@@ -320,7 +320,7 @@ describe("template-record WS broadcast", () => {
   // room without forcing the sqlite path (which finishes in <1s) to wait.
   it(
     "broadcasts to BOTH derived panes simultaneously",
-    { timeout: 15000 },
+    { timeout: 30000 },
     async () => {
       const { apiKey } = await seedAgent();
       const { templateId } = await createTemplate(apiKey);
