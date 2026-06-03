@@ -601,7 +601,22 @@ systemPages.get("/login", (c) => {
 });
 
 // ----------------------------------------------------------------------
-// GET /home — favourites + links to other system pages
+// GET /home — iOS-style launcher.
+//
+// Three sections on a logged-in home:
+//   1. Apps grid — 6 tiles linking to the major destinations. Each is a
+//      large rounded square with a gradient + icon, like a phone home
+//      screen. The same tile sizes drive desktop + mobile.
+//   2. Favourites — the human's installed templates, surfaced as small
+//      square tiles with the template initials. Lets the human launch a
+//      pane from the home page without navigating to /my-templates.
+//      Empty → CTA to /template-store.
+//   3. Recents — the three most recent owned/joined panes as visual
+//      cards (same pane-card pattern as /my-panes).
+//
+// The visual language matches the prototype at /tmp/owner-shell-v2.html:
+// chunky rounded tiles, vivid gradients, generous whitespace. Looks at
+// home in standalone PWA mode after Add-to-Home-Screen.
 // ----------------------------------------------------------------------
 systemPages.get("/home", async (c) => {
   const human = c.get("human");
@@ -611,37 +626,285 @@ systemPages.get("/home", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  // Show a few recent panes the human owns, as quick links.
-  const recent = await prisma.pane.findMany({
-    where: { ownerHumanId: human.id },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-    select: { id: true, title: true, createdAt: true },
-  });
-  const recentBlock =
+
+  // Pull recent panes + installed templates in parallel.
+  const [recent, installs] = await Promise.all([
+    prisma.pane.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { ownerHumanId: human.id },
+          { participants: { some: { humanId: human.id, revokedAt: null } } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 4,
+      select: {
+        id: true,
+        title: true,
+        createdAt: true,
+        templateVersion: {
+          select: { template: { select: { name: true, slug: true } } },
+        },
+      },
+    }),
+    prisma.humanTemplateInstall.findMany({
+      where: { humanId: human.id, uninstalledAt: null },
+      orderBy: { installedAt: "desc" },
+      take: 8,
+      select: {
+        templateId: true,
+        template: {
+          select: { name: true, slug: true, id: true, deletedAt: true },
+        },
+      },
+    }),
+  ]);
+  const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
+
+  // 1) Apps grid — six destinations. Each tile is a link with an SVG icon
+  //    and a label. Gradient colors are hand-picked so the row reads as a
+  //    palette, not a random assortment.
+  const APP_TILES: Array<{
+    href: string;
+    label: string;
+    grad: [string, string];
+    icon: string;
+  }> = [
+    {
+      href: "/my-panes",
+      label: "Panes",
+      grad: ["#7c3aed", "#a78bfa"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>`,
+    },
+    {
+      href: "/my-templates",
+      label: "Templates",
+      grad: ["#0ea5e9", "#38bdf8"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>`,
+    },
+    {
+      href: "/template-store",
+      label: "Store",
+      grad: ["#10b981", "#34d399"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`,
+    },
+    {
+      href: "/my-agents",
+      label: "Agents",
+      grad: ["#ec4899", "#f472b6"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/></svg>`,
+    },
+    {
+      href: "/trash",
+      label: "Trash",
+      grad: ["#64748b", "#94a3b8"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1.2 13a1 1 0 0 0 1 .9h7.6a1 1 0 0 0 1-.9L18 7"/></svg>`,
+    },
+    {
+      href: "/settings",
+      label: "Settings",
+      grad: ["#f59e0b", "#fbbf24"],
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.5-2.4.9a7.5 7.5 0 0 0-1.7-1L14.5 3h-5l-.8 2.4a7.5 7.5 0 0 0-1.7 1L4.6 5.5l-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2L2.6 14.5l2 3.5 2.4-.9a7.5 7.5 0 0 0 1.7 1L9.5 21h5l.8-2.4a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.5L19.4 13z"/></svg>`,
+    },
+  ];
+  const appsGrid = APP_TILES.map(
+    (
+      t,
+    ) => `<a class="launcher-tile" href="${t.href}" style="background:linear-gradient(135deg,${t.grad[0]} 0%,${t.grad[1]} 100%);">
+      <span class="launcher-icon">${t.icon}</span>
+      <span class="launcher-label">${escapeHtml(t.label)}</span>
+    </a>`,
+  ).join("");
+
+  // 2) Favourites — installed templates. Each launches a pane via the
+  //    cookie-authed POST /v1/my-templates/:id/launch endpoint, mirroring
+  //    the Launch button on /my-templates. Smaller tile, template initials
+  //    on a hash-coloured background so visually distinct from the apps
+  //    grid above. Tap → mint + redirect to the new pane URL.
+  const favouritesGrid =
+    liveInstalls.length === 0
+      ? `<div class="empty-state" style="padding:24px 16px 18px;">
+          <h3 class="empty-state-headline" style="margin:0 0 4px;font-size:15px;">No favourites yet</h3>
+          <p class="empty-state-body" style="font-size:13.5px;margin:0;">Install a template from the <a href="/template-store">store</a> — it'll appear here for one-tap launch.</p>
+        </div>`
+      : `<div class="fav-grid">${liveInstalls
+          .map((i) => {
+            const t = i.template;
+            const name = t.name ?? t.slug ?? t.id;
+            const initials = paneInitials(name);
+            const hue = paneHue(t.id);
+            return `<button class="fav-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" style="--tile-h:${hue};">
+              <span class="fav-tile-initials">${escapeHtml(initials)}</span>
+              <span class="fav-tile-label">${escapeHtml(name)}</span>
+            </button>`;
+          })
+          .join("")}</div>`;
+
+  // 3) Recents — visual cards. Reuses .pane-card styling from /my-panes.
+  const now = new Date();
+  const recentsBlock =
     recent.length === 0
-      ? `<p class="empty">No panes yet.</p>`
-      : `<ul class="list">${recent
-          .map(
-            (s) =>
-              `<li><div><div class="title">${escapeHtml(s.title)}</div><div class="meta"><code>${escapeHtml(s.id)}</code></div></div></li>`,
-          )
+      ? `<div class="empty-state" style="padding:20px 16px 10px;">
+          <p class="empty-state-body" style="font-size:13.5px;margin:0;">No recent panes — launch one from a favourite above.</p>
+        </div>`
+      : `<ul class="pane-cards">${recent
+          .map((s) => {
+            const tplName =
+              s.templateVersion?.template?.name ??
+              s.templateVersion?.template?.slug ??
+              s.title;
+            const initials = paneInitials(tplName);
+            const hue = paneHue(s.id);
+            const rel = formatRelativeDate(s.createdAt, now);
+            return `<li class="pane-card" style="--tile-h:${hue};">
+              <div class="pane-card-tile">${escapeHtml(initials)}</div>
+              <div class="pane-card-main">
+                <div class="pane-card-title">${escapeHtml(s.title)}</div>
+                <div class="pane-card-meta"><span class="pane-card-meta-dim">${escapeHtml(tplName)} · ${escapeHtml(rel)}</span></div>
+              </div>
+              <div class="pane-card-actions"><a class="btn ghost" href="/panes/${encodeURIComponent(s.id)}">Open</a></div>
+            </li>`;
+          })
           .join("")}</ul>`;
-  const body = `<h1>Welcome back</h1>
-  <p style="color:var(--muted);">Signed in as ${escapeHtml(human.email)}.</p>
-  <div class="card">
-    <h2>Jump in</h2>
-    <ul class="list">
-      <li><div><div class="title">My panes</div><div class="meta">Panes you own or are a participant on</div></div><a class="btn ghost" href="/my-panes">Open</a></li>
-      <li><div><div class="title">My templates</div><div class="meta">Templates owned by your agents</div></div><a class="btn ghost" href="/my-templates">Open</a></li>
-      <li><div><div class="title">My agents</div><div class="meta">Agents you've claimed</div></div><a class="btn ghost" href="/my-agents">Open</a></li>
-      <li><div><div class="title">Settings</div><div class="meta">Email, claim codes</div></div><a class="btn ghost" href="/settings">Open</a></li>
-    </ul>
+
+  const body = `<style>
+    /* Launcher home — the iOS-style chunky-tile layout. Local-only styles
+       (not pushed to layout.ts) so the visual treatment can iterate
+       without churning every other page. */
+    .home-hero { margin: 4px 0 22px; }
+    .home-hero h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
+    @media (min-width: 640px) { .home-hero h1 { font-size: 30px; } }
+    .home-hero .home-hello { color: var(--muted); font-size: 14.5px; margin: 0; }
+
+    .launcher-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 18px 0 28px;
+    }
+    @media (min-width: 480px) { .launcher-grid { grid-template-columns: repeat(6, 1fr); gap: 14px; } }
+    .launcher-tile {
+      aspect-ratio: 1 / 1;
+      border-radius: 18px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 4px;
+      color: #fff; text-decoration: none;
+      box-shadow: 0 6px 14px rgba(16,21,34,.18), 0 1px 2px rgba(16,21,34,.12);
+      transition: transform .14s ease, box-shadow .14s ease;
+    }
+    .launcher-tile:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(16,21,34,.22), 0 2px 4px rgba(16,21,34,.14); }
+    .launcher-tile:active { transform: translateY(0); }
+    .launcher-icon { width: 32px; height: 32px; }
+    .launcher-icon svg { width: 100%; height: 100%; display: block; }
+    .launcher-label {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      text-transform: uppercase;
+      opacity: 0.95;
+    }
+    @media (min-width: 480px) { .launcher-icon { width: 36px; height: 36px; } .launcher-label { font-size: 12px; } }
+
+    .home-section { margin: 26px 0 16px; }
+    .home-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    .home-section-head h2 { margin: 0; font-size: 16px; letter-spacing: -0.005em; }
+    .home-section-head a { font-size: 13px; }
+
+    /* Favourites — smaller tiles, two rows on mobile, more per row on
+       desktop. Hash-coloured tile + initials so the same visual key as
+       /my-panes cards. */
+    .fav-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 12px;
+    }
+    .fav-tile {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      padding: 14px 8px; background: var(--panel); border: 1px solid var(--rule);
+      border-radius: 14px; cursor: pointer; font: inherit; text-align: center;
+      transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+    }
+    .fav-tile:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: 0 4px 14px rgba(16,21,34,.08); }
+    .fav-tile:disabled { opacity: 0.65; cursor: default; }
+    .fav-tile-initials {
+      width: 44px; height: 44px; border-radius: 12px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+      color: #fff;
+      background: linear-gradient(135deg, hsl(var(--tile-h,260), 70%, 55%) 0%, hsl(calc(var(--tile-h,260) + 30), 65%, 45%) 100%);
+    }
+    .fav-tile-label {
+      font-size: 12.5px; color: var(--fg);
+      max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      line-height: 1.25;
+    }
+  </style>
+  <div class="home-hero">
+    <h1>Hello</h1>
+    <p class="home-hello">Signed in as ${escapeHtml(human.email)}.</p>
   </div>
-  <div class="card">
-    <h2>Recent panes</h2>
-    ${recentBlock}
-  </div>`;
+
+  <div class="launcher-grid">
+    ${appsGrid}
+  </div>
+
+  <section class="home-section">
+    <div class="home-section-head">
+      <h2>Favourites</h2>
+      <a href="/my-templates">My templates →</a>
+    </div>
+    ${favouritesGrid}
+  </section>
+
+  <section class="home-section">
+    <div class="home-section-head">
+      <h2>Recent panes</h2>
+      <a href="/my-panes">All panes →</a>
+    </div>
+    ${recentsBlock}
+  </section>
+
+  <script>
+    // Favourite tile → one-tap pane launch via the cookie-authed launch
+    // endpoint. Same flow as the Launch button on /my-templates: server
+    // mints the pane + human token, returns the URL, we navigate.
+    document.querySelectorAll('.fav-tile').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-template-id');
+        if (!id) return;
+        const original = btn.querySelector('.fav-tile-label').textContent;
+        btn.disabled = true;
+        btn.querySelector('.fav-tile-label').textContent = 'Launching…';
+        try {
+          const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+          });
+          if (!res.ok) {
+            btn.disabled = false;
+            btn.querySelector('.fav-tile-label').textContent = original;
+            alert('Launch failed (HTTP ' + res.status + ')');
+            return;
+          }
+          const body = await res.json();
+          const url = body.urls && body.urls.humans && body.urls.humans[0];
+          if (!url) {
+            btn.disabled = false;
+            btn.querySelector('.fav-tile-label').textContent = original;
+            alert('Launch failed — no pane URL returned.');
+            return;
+          }
+          window.location.href = url;
+        } catch (e) {
+          btn.disabled = false;
+          btn.querySelector('.fav-tile-label').textContent = original;
+          alert('Network error — try again.');
+        }
+      });
+    });
+  </script>`;
   return c.html(
     layout({
       title: "Home",
