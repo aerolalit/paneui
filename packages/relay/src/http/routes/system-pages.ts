@@ -564,7 +564,9 @@ systemPages.get("/login", (c) => {
           <h2 style="margin-top:0;">Sign in</h2>
           <p style="color:var(--muted);font-size:14.5px;">We'll email you a one-time sign-in link. No password.</p>
           <form id="login-form" autocomplete="on">
-            <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;">Email</label>
+            <label for="name" style="font-size:13px;color:var(--muted);margin-bottom:6px;display:block;margin-top:0;">Your name <span style="color:var(--muted);font-weight:400;">— optional, shown on /home</span></label>
+            <input id="name" name="name" type="text" autocomplete="name" placeholder="e.g. Alice" maxlength="80" style="margin-bottom:12px;" />
+            <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;display:block;">Email</label>
             <input id="email" name="email" type="email" required autofocus autocomplete="email" />
             <button class="btn" type="submit" style="width:100%;margin-top:14px;">Email me a link</button>
           </form>
@@ -578,13 +580,16 @@ systemPages.get("/login", (c) => {
          form?.addEventListener("submit", async (e) => {
            e.preventDefault();
            const email = (document.getElementById("email")).value.trim();
+           const name = (document.getElementById("name")).value.trim();
            if (!email) return;
            status.textContent = "Sending…";
            try {
+             const body = { email };
+             if (name.length > 0) body.name = name;
              const res = await fetch("/v1/auth/request-link", {
                method: "POST",
                headers: { "content-type": "application/json" },
-               body: JSON.stringify({ email }),
+               body: JSON.stringify(body),
              });
              if (res.ok) {
                status.textContent = "Check " + email + " for your sign-in link. It expires in ${ttlLabel}.";
@@ -622,11 +627,13 @@ systemPages.get("/login", (c) => {
 // Keeps the existing top-tab/bottom-tab nav chrome. Replacing the chrome
 // with the prototype's persistent sidebar is a larger follow-up refactor.
 // ----------------------------------------------------------------------
-function homeGreetingName(email: string): string {
-  // Friendly first-name fallback from the email's local part. "alice.smith@x"
-  // → "Alice". A name from the human profile would be preferred, but we
-  // don't currently store one, so the local-part heuristic is the next-best
-  // thing — and stable for the gradient greeting.
+function homeGreetingName(
+  email: string,
+  name: string | null | undefined,
+): string {
+  // Prefer the human-set name from the sign-up form. Falls back to the
+  // email local-part with simple capitalisation when no name is set.
+  if (name && name.trim().length > 0) return name.trim();
   const local = (email.split("@")[0] ?? "").split(/[._-]/)[0] ?? "";
   if (local.length === 0) return "there";
   return local.charAt(0).toUpperCase() + local.slice(1);
@@ -725,7 +732,7 @@ systemPages.get("/home", async (c) => {
     );
   }
   const statsLine = statsParts.join(" · ");
-  const greetName = homeGreetingName(human.email);
+  const greetName = homeGreetingName(human.email, human.name);
 
   // Favourites — horizontal-scroll strip of 76×76 colored gradient tiles.
   // Initials sit centred in the tile; label below. Tap → one-tap launch
@@ -1060,6 +1067,77 @@ systemPages.get("/home", async (c) => {
     }
     bindLaunch('.fav-tile');
     bindLaunch('.app-tile');
+
+    // Client-side incremental search — filters Favourites, Open panes,
+    // and All-templates by template/pane title. Pure DOM hide/show; no
+    // server round trip. Matches against everything rendered on the
+    // page already, so the result set is exactly what the eye sees.
+    (function () {
+      const input = document.getElementById('home-search');
+      if (!input) return;
+
+      function matchableText(el) {
+        // Concatenate the visible label/title spans into one searchable
+        // string. Falls back to textContent for unknown shapes.
+        const parts = [];
+        const cls = [
+          '.fav-tile-label',
+          '.recent-title',
+          '.recent-meta',
+          '.app-tile-label',
+        ];
+        for (const sel of cls) {
+          el.querySelectorAll(sel).forEach((n) => parts.push(n.textContent || ''));
+        }
+        if (parts.length === 0) parts.push(el.textContent || '');
+        return parts.join(' ').toLowerCase();
+      }
+
+      // Cache the searchable items + their containing strip so we can
+      // also toggle a "no match" message per section when the filter
+      // empties it.
+      const groups = [
+        { strip: document.querySelector('.favs'), items: '.fav-tile' },
+        { strip: document.querySelector('.recents'), items: '.recent-card' },
+        { strip: document.querySelector('.apps-grid'), items: '.app-tile' },
+      ].filter((g) => g.strip);
+
+      for (const g of groups) {
+        const noMatch = document.createElement('div');
+        noMatch.className = 'empty';
+        noMatch.style.cssText = 'padding:14px 6px;font-size:13px;width:100%;';
+        noMatch.textContent = 'No matches';
+        noMatch.hidden = true;
+        g.strip.parentElement.appendChild(noMatch);
+        g.noMatch = noMatch;
+      }
+
+      function apply() {
+        const q = input.value.trim().toLowerCase();
+        for (const g of groups) {
+          const items = g.strip.querySelectorAll(g.items);
+          let visible = 0;
+          items.forEach((el) => {
+            const match = q.length === 0 || matchableText(el).includes(q);
+            el.style.display = match ? '' : 'none';
+            if (match) visible++;
+          });
+          // Hide the strip altogether when nothing matches AND the query
+          // is non-empty; show our "No matches" inline. Empty query
+          // restores everything.
+          g.noMatch.hidden = !(q.length > 0 && visible === 0 && items.length > 0);
+        }
+      }
+
+      input.addEventListener('input', apply);
+      // Escape clears the field.
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') {
+          input.value = '';
+          apply();
+        }
+      });
+    })();
   </script>`;
   return c.html(
     layout({

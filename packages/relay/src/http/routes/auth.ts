@@ -55,6 +55,16 @@ const requestLinkBody = z.object({
     z.string().email().max(320),
   ),
   returnUrl: z.string().url().max(2048).optional(),
+  // Optional display name. Carried via MagicLink.name to the verify
+  // step; transferred to Human.name only when the verify creates a
+  // fresh row. Trimmed; empty strings normalised to null.
+  name: z
+    .preprocess((v) => {
+      if (typeof v !== "string") return v;
+      const t = v.trim();
+      return t.length === 0 ? undefined : t;
+    }, z.string().min(1).max(80).optional())
+    .optional(),
 });
 
 auth.post("/auth/request-link", async (c) => {
@@ -95,6 +105,7 @@ auth.post("/auth/request-link", async (c) => {
       tokenHash,
       expiresAt,
       returnUrl: body.returnUrl,
+      name: body.name ?? null,
     },
   });
 
@@ -198,15 +209,29 @@ auth.get("/auth/verify", async (c) => {
   const existing = await prisma.human.findUnique({
     where: { email: link.email },
   });
+  // First-verify special case: persist link.name if the row is freshly
+  // created OR if an unverified row is being verified for the first time
+  // AND has no name yet. We deliberately DO NOT overwrite an existing
+  // name on returning logins — only the signup form captures the name,
+  // and the column is purely display.
   const human = existing
     ? existing.verifiedAt
       ? existing
       : await prisma.human.update({
           where: { id: existing.id },
-          data: { verifiedAt: now },
+          data: {
+            verifiedAt: now,
+            ...(existing.name === null && link.name !== null
+              ? { name: link.name }
+              : {}),
+          },
         })
     : await prisma.human.create({
-        data: { email: link.email, verifiedAt: now },
+        data: {
+          email: link.email,
+          verifiedAt: now,
+          name: link.name ?? null,
+        },
       });
 
   // Mint the Login.

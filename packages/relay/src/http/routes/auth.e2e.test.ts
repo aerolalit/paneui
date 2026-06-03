@@ -135,11 +135,45 @@ describe("POST /v1/auth/request-link", () => {
     const link = await prisma.magicLink.findFirst({});
     expect(link?.email).toBe("alice@example.com");
   });
+
+  it("persists the optional name on the MagicLink row", async () => {
+    await appWithDev.fetch(
+      new Request("http://t/v1/auth/request-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "alice2@example.com",
+          name: "Alice Wonderland",
+        }),
+      }),
+    );
+    const link = await prisma.magicLink.findFirst({
+      where: { email: "alice2@example.com" },
+    });
+    expect(link?.name).toBe("Alice Wonderland");
+  });
+
+  it("normalises an empty name to null", async () => {
+    await appWithDev.fetch(
+      new Request("http://t/v1/auth/request-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "alice3@example.com",
+          name: "   ",
+        }),
+      }),
+    );
+    const link = await prisma.magicLink.findFirst({
+      where: { email: "alice3@example.com" },
+    });
+    expect(link?.name).toBeNull();
+  });
 });
 
 async function mintLink(
   email: string,
-  opts: { returnUrl?: string; ttlMs?: number } = {},
+  opts: { returnUrl?: string; ttlMs?: number; name?: string } = {},
 ): Promise<{ raw: string; tokenHash: string }> {
   const { generateMagicLinkToken } = await import("../../auth/magic-link.js");
   const raw = generateMagicLinkToken();
@@ -150,6 +184,7 @@ async function mintLink(
       tokenHash,
       expiresAt: new Date(Date.now() + (opts.ttlMs ?? 60_000)),
       returnUrl: opts.returnUrl,
+      name: opts.name ?? null,
     },
   });
   return { raw, tokenHash };
@@ -207,6 +242,42 @@ describe("GET /v1/auth/verify", () => {
       where: { cookieHash: hashLoginCookie(cookieValue!) },
     });
     expect(login?.humanId).toBe(human?.id);
+  });
+
+  it("persists the link's name onto a freshly created Human", async () => {
+    const { raw } = await mintLink("bob@example.com", { name: "Bob Smith" });
+    await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+      }),
+    );
+    const human = await prisma.human.findUnique({
+      where: { email: "bob@example.com" },
+    });
+    expect(human?.name).toBe("Bob Smith");
+  });
+
+  it("does NOT overwrite an existing name on a subsequent login", async () => {
+    const first = await mintLink("carla@example.com", { name: "Carla" });
+    await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${first.raw}`, {
+        redirect: "manual",
+      }),
+    );
+    // Second login attempt carries a different name in the link — must
+    // not clobber the persisted name.
+    const second = await mintLink("carla@example.com", {
+      name: "Imposter Carla",
+    });
+    await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${second.raw}`, {
+        redirect: "manual",
+      }),
+    );
+    const human = await prisma.human.findUnique({
+      where: { email: "carla@example.com" },
+    });
+    expect(human?.name).toBe("Carla");
   });
 
   it("does not bump verifiedAt on subsequent logins for the same human", async () => {

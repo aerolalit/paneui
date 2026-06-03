@@ -67,6 +67,11 @@ model Agent {
 model Human {
   id             String    @id @default(cuid())
   email          String    @unique
+  // Optional display name. NULL until the human sets one (or until a
+  // future signup flow captures it up-front). When NULL, the UI falls
+  // back to the email's local part. Used only for greetings + display;
+  // not load-bearing for any access decision.
+  name           String?
   // Non-null once first magic-link login succeeds (proof the human controls
   // the email). Until then the row exists but the email isn't proven.
   verifiedAt     DateTime? @map("verified_at")
@@ -170,6 +175,12 @@ model MagicLink {
   // Optional return URL captured at /login. The relay redirects here on
   // successful verify so "log in to see this pane" deep links work.
   returnUrl   String?   @map("return_url")
+  // Optional display name captured at /login. Transferred to the Human
+  // row on first verify (the moment a fresh row is created). Ignored for
+  // existing humans — once `human.name` is set, the value sticks; if a
+  // returning human re-types a name in the login form it's stored here
+  // but never overwrites the persisted Human.name.
+  name        String?
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([email])
