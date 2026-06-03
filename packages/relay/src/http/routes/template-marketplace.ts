@@ -624,6 +624,67 @@ myTemplates.post("/:id/unpublish", requireHuman, async (c) => {
   return c.json({ id, published_at: null });
 });
 
+// POST /v1/my-templates/:id/favorite — star a template for the calling human.
+//
+// Independent of install — a publisher can favorite their own authored template
+// without installing it, and an installed template doesn't appear in Favorites
+// until explicitly starred. Idempotent: a second POST is a no-op.
+//
+// 404 if the template doesn't exist or the human can't see it. Visibility =
+// owned-by-this-human OR published OR already-installed-by-this-human (same
+// rules the SPA's loadShellData applies).
+myTemplates.post("/:id/favorite", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  const template = await prisma.template.findUnique({
+    where: { id },
+    include: { owner: { select: { ownerHumanId: true } } },
+  });
+  if (!template) throw errors.notFound();
+
+  const ownedByHuman = template.owner.ownerHumanId === human.id;
+  const published = template.publishedAt !== null;
+  let visible = ownedByHuman || published;
+  if (!visible) {
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: {
+        humanId_templateId: { humanId: human.id, templateId: id },
+      },
+      select: { uninstalledAt: true },
+    });
+    visible = !!install && install.uninstalledAt === null;
+  }
+  if (!visible) throw errors.notFound();
+
+  await prisma.humanTemplateFavorite.upsert({
+    where: {
+      humanId_templateId: { humanId: human.id, templateId: id },
+    },
+    create: { humanId: human.id, templateId: id },
+    update: {},
+  });
+
+  return c.json({ id, favorited: true });
+});
+
+// DELETE /v1/my-templates/:id/favorite — unstar. Idempotent: a row that's
+// already absent returns 204 with no error.
+myTemplates.delete("/:id/favorite", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  await prisma.humanTemplateFavorite.deleteMany({
+    where: { humanId: human.id, templateId: id },
+  });
+
+  return c.body(null, 204);
+});
+
 // POST /v1/my-templates/:id/launch — create a pane from an installed template.
 //
 // Closes the dead-end-UX gap where Install added the template to the human's
@@ -648,35 +709,89 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
   const id = c.req.param("id");
   if (!id) throw errors.invalidRequest("missing template id");
 
-  // Find the active install row. The install carries the pinned version.
-  // 404 (not 401/403) for any failure — same no-enumeration shape as the
-  // publish/unpublish handlers above.
-  const install = await prisma.humanTemplateInstall.findUnique({
-    where: { humanId_templateId: { humanId: human.id, templateId: id } },
-    include: {
-      template: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          ownerId: true,
-          owner: { select: { ownerHumanId: true } },
+  // Two paths to launch:
+  //   (a) The human installed this template from the public catalog. The
+  //       install row pins the version they accepted scopes for.
+  //   (b) The human owns the template directly (it's authored by one of
+  //       their claimed agents). They don't need to install their own
+  //       work — they can launch the latest version.
+  //
+  // Either path resolves to a (template, versionNumber) pair we use below.
+  // 404 for any failure mode (not-found, soft-deleted, not-yours) — same
+  // no-enumeration shape as publish/unpublish.
+  const [install, ownedTemplate] = await Promise.all([
+    prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId: human.id, templateId: id } },
+      include: {
+        template: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            ownerId: true,
+            deletedAt: true,
+            owner: { select: { ownerHumanId: true } },
+          },
         },
       },
-    },
-  });
-  if (!install || install.uninstalledAt !== null) {
+    }),
+    prisma.template.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        ownerId: true,
+        latestVersion: true,
+        deletedAt: true,
+        owner: { select: { ownerHumanId: true } },
+      },
+    }),
+  ]);
+
+  let templateForPane: {
+    id: string;
+    name: string | null;
+    slug: string | null;
+    ownerId: string;
+  } | null = null;
+  let versionNumber = 0;
+
+  if (
+    install &&
+    install.uninstalledAt === null &&
+    install.template.deletedAt === null
+  ) {
+    templateForPane = {
+      id: install.template.id,
+      name: install.template.name,
+      slug: install.template.slug,
+      ownerId: install.template.ownerId,
+    };
+    versionNumber = install.installedVersion;
+  } else if (
+    ownedTemplate &&
+    ownedTemplate.deletedAt === null &&
+    ownedTemplate.owner.ownerHumanId === human.id
+  ) {
+    templateForPane = {
+      id: ownedTemplate.id,
+      name: ownedTemplate.name,
+      slug: ownedTemplate.slug,
+      ownerId: ownedTemplate.ownerId,
+    };
+    versionNumber = ownedTemplate.latestVersion;
+  }
+
+  if (!templateForPane || versionNumber === 0) {
     throw errors.notFound();
   }
 
-  // Load the pinned templateVersion. If the install row references a version
-  // that no longer exists (shouldn't happen — versions are immutable — but
-  // defends against a future rename), fail closed.
   const version = await prisma.templateVersion.findUnique({
     where: {
       templateId_version: {
-        templateId: install.templateId,
-        version: install.installedVersion,
+        templateId: templateForPane.id,
+        version: versionNumber,
       },
     },
   });
@@ -689,12 +804,12 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
   const agentToken = generateAgentParticipantToken();
   const expiresAt = new Date(Date.now() + LAUNCH_TTL_MS);
   const title =
-    install.template.name ?? install.template.slug ?? install.template.id;
+    templateForPane.name ?? templateForPane.slug ?? templateForPane.id;
 
   await prisma.pane.create({
     data: {
       id: paneId,
-      agentId: install.template.ownerId,
+      agentId: templateForPane.ownerId,
       ownerHumanId: human.id,
       creatorKind: "human",
       creatorId: human.id,
@@ -705,7 +820,7 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
         create: [
           {
             kind: "agent",
-            identityId: install.template.ownerId,
+            identityId: templateForPane.ownerId,
             tokenHash: hashKey(agentToken),
             tokenPrefix: keyPrefix(agentToken),
           },
@@ -722,7 +837,7 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
 
   // Bump the template's last-used timestamp — search ranks by it.
   await prisma.template.update({
-    where: { id: install.templateId },
+    where: { id: templateForPane.id },
     data: { lastUsedAt: new Date() },
   });
 

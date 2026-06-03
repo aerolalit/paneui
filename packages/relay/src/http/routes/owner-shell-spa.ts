@@ -35,24 +35,30 @@ export async function renderOwnerShell(
 
 // ----- Data shapes (all post-Prisma, ready to render) -----
 
+interface TemplateRef {
+  id: string;
+  name: string | null;
+  slug: string | null;
+  /** True when the template's latest version declares a non-empty
+   *  input_schema with required fields — i.e. it needs an agent (or
+   *  some out-of-band caller) to seed input_data before it's useful. */
+  isAgentInit: boolean;
+  /** True when this template is currently starred by the human. */
+  isFavorite: boolean;
+}
+
 interface ShellData {
   /** Templates owned by one of the human's claimed agents (live only). */
-  ownedTemplates: Array<{
-    id: string;
-    name: string | null;
-    slug: string | null;
-  }>;
+  ownedTemplates: TemplateRef[];
   /** HumanTemplateInstall rows joined with their Template. */
   installs: Array<{
-    template: { id: string; name: string | null; slug: string | null };
+    template: TemplateRef;
     installedVersion: number;
   }>;
   /** Public catalog rows (excluding things already installed). */
-  publicCatalog: Array<{
-    id: string;
-    name: string | null;
-    slug: string | null;
-  }>;
+  publicCatalog: TemplateRef[];
+  /** Templates the human has starred — independent of install. */
+  favorites: TemplateRef[];
   /** Panes the human owns or has joined as participant, ordered newest first. */
   panes: Array<{
     id: string;
@@ -85,13 +91,25 @@ async function loadShellData(
   });
   const claimedAgentIds = claimedAgents.map((a) => a.id);
 
+  // Latest-version input_schema include — used to compute isAgentInit
+  // for every template returned below. One sub-query per template; cheap
+  // enough at shell-render scale (handful of rows).
+  const latestVersionInclude = {
+    versions: {
+      orderBy: { version: "desc" as const },
+      take: 1,
+      select: { inputSchema: true },
+    },
+  };
+
   const [
-    ownedTemplates,
+    ownedTemplatesRaw,
     installs,
     publicCatalogRaw,
     panes,
     trashedTemplates,
     trashedPanes,
+    favoriteRows,
   ] = await Promise.all([
     claimedAgentIds.length === 0
       ? Promise.resolve([])
@@ -102,7 +120,12 @@ async function loadShellData(
             name: { not: null },
           },
           orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
-          select: { id: true, name: true, slug: true },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            ...latestVersionInclude,
+          },
         }),
     prisma.humanTemplateInstall.findMany({
       where: { humanId: human.id, uninstalledAt: null },
@@ -110,7 +133,13 @@ async function loadShellData(
       select: {
         installedVersion: true,
         template: {
-          select: { id: true, name: true, slug: true, deletedAt: true },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            deletedAt: true,
+            ...latestVersionInclude,
+          },
         },
       },
     }),
@@ -118,7 +147,12 @@ async function loadShellData(
       where: { publishedAt: { not: null }, deletedAt: null },
       orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
       take: 40,
-      select: { id: true, name: true, slug: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        ...latestVersionInclude,
+      },
     }),
     prisma.pane.findMany({
       where: {
@@ -177,11 +211,48 @@ async function loadShellData(
         deletedAt: true,
       },
     }),
+    prisma.humanTemplateFavorite.findMany({
+      where: { humanId: human.id },
+      orderBy: { addedAt: "desc" },
+      select: {
+        template: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            deletedAt: true,
+            ...latestVersionInclude,
+          },
+        },
+      },
+    }),
   ]);
+
+  const favoriteIds = new Set(favoriteRows.map((f) => f.template.id));
+  function toRef(t: {
+    id: string;
+    name: string | null;
+    slug: string | null;
+    versions: Array<{ inputSchema: unknown }>;
+  }): TemplateRef {
+    return {
+      id: t.id,
+      name: t.name,
+      slug: t.slug,
+      isAgentInit: hasRequiredInputs(t.versions[0]?.inputSchema),
+      isFavorite: favoriteIds.has(t.id),
+    };
+  }
+  const ownedTemplates = ownedTemplatesRaw.map(toRef);
 
   const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
   const installedIds = new Set(liveInstalls.map((i) => i.template.id));
-  const publicCatalog = publicCatalogRaw.filter((t) => !installedIds.has(t.id));
+  const publicCatalog = publicCatalogRaw
+    .filter((t) => !installedIds.has(t.id))
+    .map(toRef);
+  const favorites = favoriteRows
+    .filter((f) => f.template.deletedAt === null)
+    .map((f) => toRef(f.template));
 
   const trash: ShellData["trash"] = [
     ...trashedTemplates.map((t) => ({
@@ -201,14 +272,11 @@ async function loadShellData(
   return {
     ownedTemplates,
     installs: liveInstalls.map((i) => ({
-      template: {
-        id: i.template.id,
-        name: i.template.name,
-        slug: i.template.slug,
-      },
+      template: toRef(i.template),
       installedVersion: i.installedVersion,
     })),
     publicCatalog,
+    favorites,
     panes: panes.map((p) => ({
       id: p.id,
       title: p.title,
@@ -238,7 +306,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
     panesCount === 0
       ? "no open panes"
       : `${panesCount} ${panesCount === 1 ? "open pane" : "open panes"}`,
-    `${tplLibraryCount} ${tplLibraryCount === 1 ? "app" : "apps"} in your library`,
+    `${tplLibraryCount} ${tplLibraryCount === 1 ? "template" : "templates"} in your library`,
   ];
   if (data.installs.length > 0) {
     statsBits.push(
@@ -247,35 +315,36 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   }
   const stats = statsBits.join(" · ");
 
-  // Build the favorites strip from installs.
+  // Build the favorites strip from the favorites table (independent of installs).
   const favsHtml =
-    data.installs.length === 0
-      ? `<div class="empty-strip">No favorites yet. Install an app from the catalog to add one.</div>`
-      : data.installs
+    data.favorites.length === 0
+      ? `<div class="empty-strip">No favorites yet. Tap the star on a template to pin it here.</div>`
+      : data.favorites
           .slice(0, 12)
-          .map((i) => favTile(i.template))
+          .map((t) => favTile(t))
           .join("");
 
   // Recents strip from panes.
   const recentsHtml =
     data.panes.length === 0
-      ? `<div class="empty-strip">No open panes. Launch one from the Apps view.</div>`
+      ? `<div class="empty-strip">No open panes. Launch one from the Templates view.</div>`
       : data.panes
           .slice(0, 8)
           .map((p) => recentCard(p))
           .join("");
 
-  // Home "All apps" grid — owned + installed deduped.
-  const homeAllApps = dedupTemplates([
+  // Home "All templates" grid — owned + installed deduped (by id, preserving
+  // the merged isFavorite flag from whichever copy appeared first).
+  const homeAllTemplates = dedupTemplates([
     ...data.ownedTemplates,
     ...data.installs.map((i) => i.template),
   ]);
   const homeAppsHtml =
-    homeAllApps.length === 0
+    homeAllTemplates.length === 0
       ? `<div class="empty-strip" style="grid-column:1/-1;">Your library is empty. Install one from the catalog or run <code>pane template create</code>.</div>`
-      : homeAllApps.map((t) => appTile(t, { launchable: true })).join("");
+      : homeAllTemplates.map((t) => appTile(t, { launchable: true })).join("");
 
-  // Apps view grids.
+  // Templates view grids.
   const minesHtml =
     data.ownedTemplates.length === 0
       ? `<div class="empty-strip" style="grid-column:1/-1;">No templates yet. Run <code>pane template create</code> from a claimed agent.</div>`
@@ -298,7 +367,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   // Panes list.
   const panesHtml =
     data.panes.length === 0
-      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="apps" style="color:var(--brand-1);cursor:pointer;">Apps</a>.</li>`
+      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="templates" style="color:var(--brand-1);cursor:pointer;">Templates</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
   // Trash list.
@@ -335,9 +404,9 @@ function renderHtml(human: HumanRow, data: ShellData): string {
         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L12 3l9 9"/><path d="M5 10v10h14V10"/></svg></span>
         <span class="label">Home</span>
       </button></li>
-      <li><button data-view="apps">
+      <li><button data-view="templates">
         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
-        <span class="label">Apps</span>
+        <span class="label">Templates</span>
         <span class="count">${tplLibraryCount}</span>
       </button></li>
       <li><button data-view="panes">
@@ -369,13 +438,13 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <div class="greet-sub">${escapeHtml(stats)}</div>
       <div class="search" style="margin-top: 12px;">
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="home-search" placeholder="Search apps, panes, anything…" autocomplete="off" />
+        <input id="home-search" placeholder="Search templates, panes, anything…" autocomplete="off" />
       </div>
 
       <div class="section">
         <div class="section-head">
           <h2>Favorites</h2>
-          <a data-go="apps">Edit</a>
+          <a data-go="templates">Edit</a>
         </div>
         <div class="favs" id="favs">${favsHtml}</div>
       </div>
@@ -390,23 +459,23 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 
       <div class="section">
         <div class="section-head">
-          <h2>All apps</h2>
-          <a data-go="apps">Browse catalog →</a>
+          <h2>All templates</h2>
+          <a data-go="templates">Browse catalog →</a>
         </div>
         <div class="apps-grid" id="home-apps">${homeAppsHtml}</div>
       </div>
     </section>
 
-    <section class="view" data-view="apps">
+    <section class="view" data-view="templates">
       <div class="view-head">
         <div>
-          <h1>Apps</h1>
-          <div class="sub">Templates you can launch.</div>
+          <h1>Templates</h1>
+          <div class="sub">Apps you can launch into a pane.</div>
         </div>
       </div>
       <div class="search">
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="apps-search" placeholder="Search apps…" autocomplete="off" />
+        <input id="apps-search" placeholder="Search templates…" autocomplete="off" />
       </div>
 
       <div class="cat-row"><h3>Yours</h3><span class="count">${data.ownedTemplates.length}</span></div>
@@ -449,11 +518,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 
 // ----- Tile / row HTML helpers -----
 
-function favTile(t: {
-  id: string;
-  name: string | null;
-  slug: string | null;
-}): string {
+function favTile(t: TemplateRef): string {
   const name = t.name ?? t.slug ?? t.id;
   const hue = paneHue(t.id);
   const initials = paneInitials(name);
@@ -464,17 +529,31 @@ function favTile(t: {
 }
 
 function appTile(
-  t: { id: string; name: string | null; slug: string | null },
+  t: TemplateRef,
   opts: { launchable: boolean; install?: boolean },
 ): string {
   const name = t.name ?? t.slug ?? t.id;
   const hue = paneHue(t.id);
   const initials = paneInitials(name);
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
-  return `<button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}"${dataAttr}>
-    <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
-    <div class="label">${escapeHtml(name)}</div>
-  </button>`;
+  const badge = t.isAgentInit
+    ? `<span class="tile-badge agent-init" title="Needs an agent to set input data before launch">agent-init</span>`
+    : `<span class="tile-badge ready" title="Ready to launch — no setup needed">ready</span>`;
+  const starCls = t.isFavorite ? "star active" : "star";
+  const starLabel = t.isFavorite ? "Unfavorite" : "Favorite";
+  const starPath = t.isFavorite
+    ? `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>`
+    : `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`;
+  return `<div class="app-tile-wrap" data-template-id="${escapeHtml(t.id)}">
+    <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}"${dataAttr}>
+      <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
+      <div class="label">${escapeHtml(name)}</div>
+      ${badge}
+    </button>
+    <button class="${starCls}" data-fav-toggle="${escapeHtml(t.id)}" data-fav-on="${t.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
+    </button>
+  </div>`;
 }
 
 function recentCard(p: ShellData["panes"][number]): string {
@@ -507,7 +586,7 @@ function paneRow(p: ShellData["panes"][number]): string {
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
     <div class="status ${statusCls}">${statusText}</div>
-    <button class="menu-btn" title="More" aria-label="More" data-noopen="1" disabled style="opacity:0.4;">
+    <button class="menu-btn" title="More" aria-label="More" data-noopen="1" data-pane-menu="${escapeHtml(p.id)}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
     </button>
   </li>`;
@@ -553,6 +632,16 @@ function friendlyName(email: string): string {
   return local.charAt(0).toUpperCase() + local.slice(1);
 }
 
+// A template is "agent-init" when its latest version's input_schema declares
+// a non-empty `required` array. This matches the convention the relay already
+// uses (input_data is validated against the version's input_schema): if the
+// schema has required fields, the template can't be launched cold by a human.
+function hasRequiredInputs(schema: unknown): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const required = (schema as { required?: unknown }).required;
+  return Array.isArray(required) && required.length > 0;
+}
+
 function paneHue(seed: string): number {
   let h = 5381;
   for (let i = 0; i < seed.length; i++) {
@@ -590,13 +679,50 @@ function relativeDate(when: Date): string {
 const EXTRA_CSS = `
   .empty-strip { color: var(--ink-mute); font-size: 13px; padding: 12px 4px; }
   .pane-row { cursor: pointer; }
-  .pane-row .menu-btn:disabled { cursor: default; }
+  .pane-row .menu-btn { cursor: pointer; }
   .pane-row:focus-within { outline: 2px solid var(--brand-1); outline-offset: 2px; }
   .recent-card { text-decoration: none; color: inherit; }
   .app-tile, .fav-tile { font: inherit; }
   .fav-tile, .app-tile { background: transparent; border: none; }
   .btn.danger { color: var(--pink); border-color: rgba(251,113,133,0.3); }
   .btn.danger:hover { color: var(--pink); border-color: var(--pink); }
+
+  /* Tile wrap holds the tile + the floating star toggle. */
+  .app-tile-wrap { position: relative; }
+  .app-tile-wrap .star {
+    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(10,13,20,0.55); border: 1px solid rgba(255,255,255,0.08);
+    color: var(--ink-mute); border-radius: 6px; cursor: pointer; padding: 0;
+    backdrop-filter: blur(4px); transition: color 120ms, transform 120ms;
+  }
+  .app-tile-wrap .star:hover { color: var(--brand-1); transform: scale(1.06); }
+  .app-tile-wrap .star.active { color: #fbbf24; }
+  .app-tile-wrap .star.active:hover { color: #fbbf24; }
+
+  /* "agent-init" / "ready" pill on every template tile. */
+  .tile-badge {
+    display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px;
+    border-radius: 4px; margin-top: 6px; letter-spacing: 0.02em;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  }
+  .tile-badge.agent-init { color: #c4b5fd; background: rgba(196,181,253,0.12); border: 1px solid rgba(196,181,253,0.25); }
+  .tile-badge.ready { color: #5eead4; background: rgba(94,234,212,0.10); border: 1px solid rgba(94,234,212,0.22); }
+
+  /* Lightweight floating popover for pane-row triple-dots menu. */
+  .pane-menu-pop {
+    position: fixed; z-index: 1000; min-width: 180px; padding: 4px;
+    background: #0f1320; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+    display: flex; flex-direction: column;
+  }
+  .pane-menu-pop button {
+    background: transparent; border: none; color: var(--ink, #e5e7eb);
+    text-align: left; padding: 8px 10px; font: inherit; cursor: pointer;
+    border-radius: 5px; font-size: 13px;
+  }
+  .pane-menu-pop button:hover { background: rgba(255,255,255,0.04); }
+  .pane-menu-pop button.danger { color: var(--pink, #fb7185); }
 `;
 
 // ----- Client-side runtime -----
@@ -615,8 +741,12 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'apps', 'panes', 'trash'];
+  const VIEWS = ['home', 'templates', 'panes', 'trash'];
   function activate(view) {
+    // Back-compat: the previous build used the hash "#apps" — silently
+    // remap so existing bookmarks / browser-back state still land somewhere
+    // sensible.
+    if (view === 'apps') view = 'templates';
     if (!VIEWS.includes(view)) view = 'home';
     document.querySelectorAll('.view').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-view') === view);
@@ -655,10 +785,57 @@ const SHELL_JS = `
     location.href = '/login';
   });
 
+  // Star toggle on a tile — POST/DELETE the favorite, then update the icon
+  // in place. Avoids a full reload so the user stays in flow.
+  document.body.addEventListener('click', async (ev) => {
+    const star = ev.target instanceof HTMLElement && ev.target.closest('button[data-fav-toggle]');
+    if (!star) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const id = star.getAttribute('data-fav-toggle');
+    if (!id) return;
+    const on = star.getAttribute('data-fav-on') === '1';
+    const method = on ? 'DELETE' : 'POST';
+    star.disabled = true;
+    try {
+      const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/favorite', {
+        method, credentials: 'same-origin',
+      });
+      if (!res.ok && res.status !== 204) {
+        const body = await res.json().catch(() => ({}));
+        alert('Favorite failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+        return;
+      }
+      const newOn = !on;
+      // Update every tile referencing this template (same id can appear
+      // in multiple grids — Yours, Installed, Home All-templates).
+      document.querySelectorAll('button[data-fav-toggle="' + CSS.escape(id) + '"]').forEach((el) => {
+        const wantOn = newOn;
+        el.setAttribute('data-fav-on', wantOn ? '1' : '0');
+        el.setAttribute('title', wantOn ? 'Unfavorite' : 'Favorite');
+        el.setAttribute('aria-label', wantOn ? 'Unfavorite' : 'Favorite');
+        el.classList.toggle('active', wantOn);
+        const svg = el.querySelector('svg');
+        if (svg) {
+          svg.innerHTML = wantOn
+            ? '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>'
+            : '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+        }
+      });
+    } catch (e) {
+      alert('Network error — try again.');
+    } finally {
+      star.disabled = false;
+    }
+  });
+
   // Tile click → launch (for installed/owned) or 404 (discover; would
   // need an install first). We route through the existing cookie-authed
   // launch endpoint; on failure we surface the relay's error message.
   document.body.addEventListener('click', async (ev) => {
+    // Star toggle is handled by its own listener above; bail early so we
+    // don't trigger launch when the user clicks the star.
+    if (ev.target instanceof HTMLElement && ev.target.closest('button[data-fav-toggle]')) return;
     const tile = ev.target instanceof HTMLElement &&
       (ev.target.closest('.fav-tile') || ev.target.closest('.app-tile'));
     if (!tile) return;
@@ -707,6 +884,90 @@ const SHELL_JS = `
     if (href) location.href = href;
   });
 
+  // Pane-row triple-dots menu — Open / Copy URL / Delete. Floats next to the
+  // clicked button; closes on outside click or Escape. Delete hits the new
+  // cookie-authed DELETE /v1/my-panes/:id endpoint.
+  let openMenu = null;
+  function closeMenu() {
+    if (openMenu) { openMenu.remove(); openMenu = null; }
+  }
+  document.addEventListener('click', (ev) => {
+    if (openMenu && ev.target instanceof Node && !openMenu.contains(ev.target)) closeMenu();
+  });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeMenu(); });
+  document.body.addEventListener('click', (ev) => {
+    const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-pane-menu]');
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const paneId = btn.getAttribute('data-pane-menu');
+    if (!paneId) return;
+    closeMenu();
+    const pop = document.createElement('div');
+    pop.className = 'pane-menu-pop';
+    pop.innerHTML =
+      '<button data-act="open">Open</button>' +
+      '<button data-act="copy">Copy URL</button>' +
+      '<button data-act="delete" class="danger">Delete</button>';
+    document.body.appendChild(pop);
+    // Position the pop-up below the trigger, flipping above if it'd run
+    // off the bottom of the viewport.
+    const rect = btn.getBoundingClientRect();
+    pop.style.top = rect.bottom + 4 + 'px';
+    pop.style.left = Math.max(8, rect.right - pop.offsetWidth) + 'px';
+    if (rect.bottom + pop.offsetHeight > window.innerHeight - 8) {
+      pop.style.top = (rect.top - pop.offsetHeight - 4) + 'px';
+    }
+    openMenu = pop;
+
+    pop.addEventListener('click', async (mev) => {
+      const target = mev.target instanceof HTMLElement && mev.target.closest('button[data-act]');
+      if (!target) return;
+      mev.stopPropagation();
+      const act = target.getAttribute('data-act');
+      const url = location.origin + '/panes/' + encodeURIComponent(paneId);
+      if (act === 'open') {
+        location.href = '/panes/' + encodeURIComponent(paneId);
+      } else if (act === 'copy') {
+        try {
+          await navigator.clipboard.writeText(url);
+          target.textContent = 'Copied!';
+          setTimeout(closeMenu, 600);
+        } catch {
+          prompt('Copy this URL:', url);
+          closeMenu();
+        }
+      } else if (act === 'delete') {
+        if (!confirm('Move this pane to trash?')) return;
+        target.disabled = true;
+        try {
+          const res = await fetch('/v1/my-panes/' + encodeURIComponent(paneId), {
+            method: 'DELETE', credentials: 'same-origin',
+          });
+          if (!res.ok && res.status !== 204) {
+            const body = await res.json().catch(() => ({}));
+            alert('Delete failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+            target.disabled = false;
+            return;
+          }
+          closeMenu();
+          // Soft-remove the row so the list reflects reality without a
+          // full reload — and refresh the panes count chip in the nav.
+          const row = document.querySelector('.pane-row[data-pane-id="' + CSS.escape(paneId) + '"]');
+          if (row) row.remove();
+          const navCount = document.querySelector('#nav-items button[data-view="panes"] .count');
+          if (navCount) {
+            const n = parseInt(navCount.textContent || '0', 10);
+            if (!isNaN(n) && n > 0) navCount.textContent = String(n - 1);
+          }
+        } catch {
+          alert('Network error — try again.');
+          target.disabled = false;
+        }
+      }
+    });
+  });
+
   // Search boxes filter visible tiles by label text.
   function bindSearch(inputId, selectors) {
     const input = document.getElementById(inputId);
@@ -723,8 +984,8 @@ const SHELL_JS = `
     input.addEventListener('input', apply);
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { input.value = ''; apply(); } });
   }
-  bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile']);
-  bindSearch('apps-search', ['#apps-mine .app-tile', '#apps-installed .app-tile', '#apps-discover .app-tile']);
+  bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
+  bindSearch('apps-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
 
   // Trash actions
   document.body.addEventListener('click', async (ev) => {

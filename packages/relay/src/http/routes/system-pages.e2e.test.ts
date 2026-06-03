@@ -240,7 +240,7 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('class="brand"');
     expect(html).toContain('class="logo"');
     expect(html).toContain('data-view="home"');
-    expect(html).toContain('data-view="apps"');
+    expect(html).toContain('data-view="templates"');
     expect(html).toContain('data-view="panes"');
     expect(html).toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
@@ -256,13 +256,13 @@ describe("Owner-shell SPA at /home", () => {
     const html = await res.text();
     expect(html).toContain(">Favorites<");
     expect(html).toContain(">Open panes<");
-    expect(html).toContain(">All apps<");
+    expect(html).toContain(">All templates<");
     expect(html).toContain("No favorites yet");
     expect(html).toContain("No open panes");
     expect(html).toContain("Your library is empty");
   });
 
-  it("Apps view server-renders three categories: Yours / Installed / Discover", async () => {
+  it("Templates view server-renders three categories: Yours / Installed / Discover", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
