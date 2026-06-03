@@ -283,95 +283,45 @@ describe("DELETE /v1/my-trash/templates/:id", () => {
   });
 });
 
-describe("GET /trash (HTML page)", () => {
-  it("redirects unauthenticated visitors to a login prompt (200 with login HTML)", async () => {
+describe("Trash UI is now /home#trash in the SPA", () => {
+  it("/trash redirects to /home#trash (301) — legacy URL stays alive", async () => {
     const res = await app.fetch(new Request("http://t/trash"));
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    // Logged-out body uses the shared loggedOutPrompt — content varies but
-    // must NOT include trash management UI.
-    expect(html).not.toContain('data-act="restore-pane"');
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/home#trash");
   });
 
-  it("renders the trash UI for a logged-in human with trashed rows", async () => {
+  it("Trash view in the SPA lists trashed rows", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const agentId = await seedClaimedAgent(humanId);
-    const paneId = await seedTrashedPane({ agentId });
+    const paneId = await seedTrashedPane({ agentId, ownerHumanId: humanId });
     const templateId = await seedTrashedTemplate(agentId);
 
     const res = await app.fetch(
-      new Request("http://t/trash", { headers: { ...withCookie(cookie) } }),
+      new Request("http://t/home", { headers: { ...withCookie(cookie) } }),
     );
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain(paneId);
     expect(html).toContain(templateId);
-    expect(html).toContain('data-act="restore-pane"');
-    expect(html).toContain('data-act="purge-pane"');
-    expect(html).toContain('data-act="restore-template"');
-    expect(html).toContain('data-act="purge-template"');
+    // Inline action buttons on each trashed row.
+    expect(html).toContain('data-trash-act="restore"');
+    expect(html).toContain('data-trash-act="purge"');
   });
 
-  it("renders the empty-state when nothing is in trash", async () => {
+  it("Trash view shows the empty-state when nothing is trashed", async () => {
     const { cookie } = await seedLoggedInHuman();
-
     const res = await app.fetch(
-      new Request("http://t/trash", { headers: { ...withCookie(cookie) } }),
+      new Request("http://t/home", { headers: { ...withCookie(cookie) } }),
     );
-    expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Nothing in trash");
+    expect(html).toContain("Trash is empty");
   });
 });
 
-describe("/my-* show_deleted toggle (#310)", () => {
-  it("/my-panes hides trashed panes by default, shows them with ?show_deleted=true", async () => {
-    const { humanId, cookie } = await seedLoggedInHuman();
-    const agentId = await seedClaimedAgent(humanId);
-    const trashedId = await seedTrashedPane({
-      agentId,
-      ownerHumanId: humanId,
-    });
-
-    const hideRes = await app.fetch(
-      new Request("http://t/my-panes", { headers: { ...withCookie(cookie) } }),
-    );
-    const hideHtml = await hideRes.text();
-    expect(hideHtml).not.toContain(trashedId);
-    expect(hideHtml).toContain("Show trashed");
-
-    const showRes = await app.fetch(
-      new Request("http://t/my-panes?show_deleted=true", {
-        headers: { ...withCookie(cookie) },
-      }),
-    );
-    const showHtml = await showRes.text();
-    expect(showHtml).toContain(trashedId);
-    expect(showHtml).toContain("Hide trashed");
-    // Trashed pill is rendered.
-    expect(showHtml).toContain(">Trashed<");
-  });
-
-  it("/my-templates honours ?show_deleted=true", async () => {
-    const { humanId, cookie } = await seedLoggedInHuman();
-    const agentId = await seedClaimedAgent(humanId);
-    const trashedId = await seedTrashedTemplate(agentId);
-
-    const hideRes = await app.fetch(
-      new Request("http://t/my-templates", {
-        headers: { ...withCookie(cookie) },
-      }),
-    );
-    expect(await hideRes.text()).not.toContain(trashedId);
-
-    const showRes = await app.fetch(
-      new Request("http://t/my-templates?show_deleted=true", {
-        headers: { ...withCookie(cookie) },
-      }),
-    );
-    expect(await showRes.text()).toContain(trashedId);
-  });
-
+describe("/my-agents show_deleted toggle (#310)", () => {
+  // The /my-agents page is still a standalone route in the SPA migration
+  // — only /home, /my-panes, /my-templates, /template-store, /trash moved
+  // into the SPA. The agents-level toggle stays.
   it("/my-agents honours ?show_deleted=true", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     // Seed a trashed agent for this human.
