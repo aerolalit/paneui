@@ -80,36 +80,36 @@ Event schema (the contract `pane demo` registers for the session):
 
 | Event type | Emitted by | Payload | Purpose |
 |---|---|---|---|
-| `demo:hello` | human | `{}` | First click — the round-trip proof |
-| `demo:form` | human | `{ name: string, choice: "build"\|"explore"\|"watch" }` | Structured-data lesson |
-| `demo:advance` | agent | `{ scene: number, note?: string }` | Agent drives the next scene into view |
-| `demo:echo` | agent | `{ received: object }` | Agent reflects the user's payload back into the pane |
-| `demo:done` | agent | `{}` | Tutorial complete; render the CTA |
+| `demo.hello` | human | `{}` | First click — the round-trip proof |
+| `demo.form` | human | `{ name: string, choice: "build"\|"explore"\|"watch" }` | Structured-data lesson |
+| `demo.advance` | agent | `{ scene: number, note?: string }` | Agent drives the next scene into view |
+| `demo.echo` | agent | `{ received: object }` | Agent reflects the user's payload back into the pane |
+| `demo.done` | agent | `{}` | Tutorial complete; render the CTA |
 
 **Scene 1 — Hook.** The pane animates in: *"You're looking at a pane."* Self-referential. One
 line establishing that this rich UI was handed over by an agent, by URL. CTA: a single primary
-button, *"Show me how →"* → emits `demo:hello`.
+button, *"Show me how →"* → emits `demo.hello`.
 
-**Scene 2 — The model.** On the agent's `demo:advance{scene:2}`, an animated diagram draws the
+**Scene 2 — The model.** On the agent's `demo.advance{scene:2}`, an animated diagram draws the
 round-trip: `your terminal (agent)  ⇄  relay  ⇄  this page`. Callout: *"You ran `pane demo` —
 that command is acting as your agent right now. It's watching this session."*
 
-**Scene 3 — First emit (the proof beat).** A single button: *"Click me."* → emits `demo:hello`
-(reused; or a `demo:click` if we want Scene 1's button to be navigation-only — see OPEN-2). The
-demo-agent loop receives it, prints it to the terminal, and replies `demo:advance{scene:3,
+**Scene 3 — First emit (the proof beat).** A single button: *"Click me."* → emits `demo.hello`
+(reused; or a `demo.click` if we want Scene 1's button to be navigation-only — see OPEN-2). The
+demo-agent loop receives it, prints it to the terminal, and replies `demo.advance{scene:3,
 note}` → the pane shows *"✅ Your agent just received your click."* and points: *"Look at your
 terminal — it printed the same event."* This is the highest-value moment in the whole flow.
 
 **Scene 4 — Structured data.** A tiny form: a name field + a 3-way choice. On submit → emits
-`demo:form{name, choice}`. The agent replies `demo:echo{received}` and the pane renders the
+`demo.form{name, choice}`. The agent replies `demo.echo{received}` and the pane renders the
 **exact structured payload** it sent back: *"Your agent received: `{ name: …, choice: … }`."*
 Lesson: interactions aren't clicks, they're typed, validated data.
 
 **Scene 5 — State / the log.** The agent advances to a view of `pane.state` as an append-only
-event log — the user's own `demo:hello` and `demo:form` are listed. *"Everything you did is a
+event log — the user's own `demo.hello` and `demo.form` are listed. *"Everything you did is a
 log your agent can read."* Show the CLI equivalent inline: `pane session show <id>`.
 
-**Scene 6 — Now you.** On `demo:done`, render the CTA: the ~3 lines to create your own pane,
+**Scene 6 — Now you.** On `demo.done`, render the CTA: the ~3 lines to create your own pane,
 the skill pointer (`pane skill show`), and a docs link. *"That's it — now go hand one to a
 human."* The terminal loop prints the same snippet and exits cleanly (see §5).
 
@@ -119,7 +119,7 @@ human."* The terminal loop prints the same snippet and exits cleanly (see §5).
 
 - **New top-level command** `pane demo` (sits alongside the existing `pane session
   create/watch/show/send` verbs; reuses the same config/profile resolution).
-- **Run-to-completion.** The loop reacts through Scenes 1–6, sends `demo:done`, prints the
+- **Run-to-completion.** The loop reacts through Scenes 1–6, sends `demo.done`, prints the
   "build your own" snippet, and exits 0. No lingering daemon. **DECIDED** (OPEN-2 resolved).
 - **No browser?** Print the URL and a one-liner: *"Open this to start the tour."* The loop
   still runs and still echoes events, so it works over SSH / headless too.
@@ -154,8 +154,8 @@ human."* The terminal loop prints the same snippet and exits cleanly (see §5).
   shipped as a string constant, (b) `packages/relay` static asset reused by both the CLI demo
   and the landing page, (c) a tiny `packages/demo` workspace. *Lean: (b)* — the relay already
   serves static assets and the landing page can import the same file, avoiding a second copy.
-- **OPEN-2 — One human event or two in Scenes 1/3.** Reuse `demo:hello` for both the Scene-1
-  "Show me how" and the Scene-3 "Click me", or split into `demo:start` + `demo:hello`. *Lean:
+- **OPEN-2 — One human event or two in Scenes 1/3.** Reuse `demo.hello` for both the Scene-1
+  "Show me how" and the Scene-3 "Click me", or split into `demo.start` + `demo.hello`. *Lean:
   split* — cleaner schema, and Scene 1 reads as navigation while Scene 3 reads as the proof.
 - **OPEN-3 — Landing-page simulated mode: inline JS or a recorded event trace.** *Lean: a small
   recorded trace* the artifact replays, so live and simulated share one render path.
