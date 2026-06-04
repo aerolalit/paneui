@@ -128,6 +128,94 @@ describe("POST /v1/self/claim-codes", () => {
   });
 });
 
+describe("PATCH /v1/self/profile", () => {
+  function patchProfile(body: unknown, cookie?: string): Promise<Response> {
+    return app.fetch(
+      new Request("http://t/v1/self/profile", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          ...(cookie ? { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` } : {}),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("requires a login cookie (401 without one)", async () => {
+    const res = await patchProfile({ name: "Alice" });
+    expect(res.status).toBe(401);
+  });
+
+  it("sets the name and returns it as display_name", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const res = await patchProfile({ name: "Alice Liddell" }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name: string; display_name: string };
+    expect(body.name).toBe("Alice Liddell");
+    expect(body.display_name).toBe("Alice Liddell");
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.name).toBe("Alice Liddell");
+  });
+
+  it("trims surrounding whitespace before storing", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const res = await patchProfile({ name: "   Bob   " }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name: string; display_name: string };
+    expect(body.name).toBe("Bob");
+    expect(body.display_name).toBe("Bob");
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.name).toBe("Bob");
+  });
+
+  it("clears the name on an empty string → falls back to the email-derived display", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    // Seed an existing name first so we can prove the clear took effect.
+    await patchProfile({ name: "Temporary" }, cookie);
+
+    const res = await patchProfile({ name: "   " }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      name: string | null;
+      display_name: string;
+    };
+    expect(body.name).toBeNull();
+    // email is alice@example.com → local part "alice" → "Alice".
+    expect(body.display_name).toBe("Alice");
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.name).toBeNull();
+  });
+
+  it("accepts an explicit null clear", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await patchProfile({ name: "Temporary" }, cookie);
+
+    const res = await patchProfile({ name: null }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      name: string | null;
+      display_name: string;
+    };
+    expect(body.name).toBeNull();
+    expect(body.display_name).toBe("Alice");
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.name).toBeNull();
+  });
+
+  it("rejects a name longer than 80 chars (400)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await patchProfile({ name: "x".repeat(81) }, cookie);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_request");
+  });
+});
+
 import { hashKey, keyPrefix } from "../../keys.js";
 
 describe("POST /v1/self/agents/:id/rotate-key", () => {

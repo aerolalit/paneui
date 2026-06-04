@@ -575,7 +575,18 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       </div>
       <div class="settings-card">
         <h2>Account</h2>
-        <div class="settings-row"><span class="k">Email</span><span class="v">${escapeHtml(human.email)}</span></div>
+        <div class="settings-row" id="name-row">
+          <span class="k">Name</span>
+          <span class="name-field">
+            <span class="v" id="name-value">${escapeHtml(displayName)}</span>
+            <button id="name-edit" type="button" class="btn small" aria-label="Edit name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+            <span class="name-edit-form" id="name-edit-form" hidden>
+              <input id="name-input" type="text" maxlength="80" autocomplete="name" />
+              <button id="name-save" type="button" class="btn primary small">Save</button>
+              <button id="name-cancel" type="button" class="btn small">Cancel</button>
+            </span>
+          </span>
+        </div>
         <div class="settings-row"><span class="k">Status</span>${
           human.verifiedAt
             ? `<span class="pill good">Verified</span>`
@@ -992,6 +1003,30 @@ const EXTRA_CSS = `
   }
   .pane-menu-pop button:hover { background: var(--surface-2); }
   .pane-menu-pop button.danger { color: var(--pink, #fb7185); }
+
+  /* Editable display name (Settings → Account). The value, pencil, and the
+     inline edit form share one inline-flex container so the row stays on a
+     single line and the form sits where the value was. */
+  .name-field { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .name-field .btn.small {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 7px; line-height: 0;
+  }
+  .name-edit-form { display: inline-flex; align-items: center; gap: 6px; }
+  #name-input {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 5px 9px;
+    color: var(--ink);
+    font-size: 13px;
+    font-family: inherit;
+    min-width: 160px;
+  }
+  #name-input:focus { outline: none; border-color: var(--accent); }
+  /* Ensure [hidden] always wins — some flex rules above set display, which
+     would otherwise re-show a hidden element. */
+  [hidden] { display: none !important; }
 `;
 
 // ----- Client-side runtime -----
@@ -1057,6 +1092,81 @@ const SHELL_JS = `
   }
   document.getElementById('signout')?.addEventListener('click', signOut);
   document.getElementById('settings-signout')?.addEventListener('click', signOut);
+
+  // Editable display name (Settings → Account). Opening the pen swaps the
+  // value for an inline input and hides the Settings sign-out button — per
+  // the UX requirement there's no sign-out while you're mid-edit. We hide
+  // the button rather than the whole Session card so the explanatory note
+  // stays put and the layout doesn't jump.
+  (function () {
+    const editBtn = document.getElementById('name-edit');
+    const form = document.getElementById('name-edit-form');
+    const valueEl = document.getElementById('name-value');
+    const input = document.getElementById('name-input');
+    const saveBtn = document.getElementById('name-save');
+    const cancelBtn = document.getElementById('name-cancel');
+    const signoutBtn = document.getElementById('settings-signout');
+    if (!editBtn || !form || !valueEl || !input || !saveBtn || !cancelBtn) return;
+
+    function open() {
+      input.value = valueEl.textContent || '';
+      valueEl.hidden = true;
+      editBtn.hidden = true;
+      form.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = true;
+      input.focus();
+      input.select();
+    }
+    function close() {
+      form.hidden = true;
+      valueEl.hidden = false;
+      editBtn.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = false;
+    }
+
+    async function save() {
+      const raw = input.value.trim();
+      const name = raw.length === 0 ? null : raw;
+      saveBtn.disabled = true;
+      try {
+        const res = await fetch('/v1/self/profile', {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: name }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          alert('Save failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+          return; // keep the form open so the human can retry / fix
+        }
+        const body = await res.json().catch(() => ({}));
+        const display = body.display_name || raw;
+        valueEl.textContent = display;
+        // Mirror the new name everywhere it's shown: sidebar, home greeting,
+        // and the avatar initial.
+        const sideName = document.querySelector('.me .who .name');
+        if (sideName) sideName.textContent = display;
+        const greetName = document.querySelector('.greet .name');
+        if (greetName) greetName.textContent = display;
+        const avatar = document.querySelector('.me .avatar');
+        if (avatar) avatar.textContent = (display.charAt(0) || '?').toUpperCase();
+        close();
+      } catch (err) {
+        alert('Save failed: network error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+
+    editBtn.addEventListener('click', open);
+    cancelBtn.addEventListener('click', close);
+    saveBtn.addEventListener('click', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+    });
+  })();
 
   // Account menu (mobile) — the "Account" bottom-bar tab toggles the
   // .acct-links popover (My agents / Settings / Sign out). On desktop the
