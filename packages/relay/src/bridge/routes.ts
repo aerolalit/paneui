@@ -564,20 +564,64 @@ export function renderShell(args: ShellArgs): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style nonce="${args.nonce}">
+  /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
+     values (kept byte-identical); the light override at the bottom adapts the
+     chrome to the device. Prefixed --pv-* so they can't collide with the
+     iframe'd agent content (a separate document anyway). The brand-logo SVG
+     fills (#0f172a etc.) are artwork and are intentionally NOT tokenized. */
+  :root {
+    color-scheme: light dark;
+    --pv-bg:         #0b0e14;
+    --pv-bg-elev:    #141a26;
+    --pv-hairline:   #1f2633;
+    --pv-ink:        #d7dee9;
+    --pv-ink-strong: #e7ecf3;
+    --pv-muted:      #8a93a6;
+    --pv-accent:       #a78bfa;
+    --pv-accent-hover: #cdbcff;
+    --pv-green: #7CE3B1;
+    --pv-amber: #f7c66a;
+    --pv-red:   #f07178;
+    --pv-dim:   #5b6477;
+    /* gradient endpoints for the header / preamble bands */
+    --pv-grad-1: #10141d;
+    --pv-grad-pre-1: #0e1320;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --pv-bg:         #ffffff;
+      --pv-bg-elev:    #f6f7f9;
+      --pv-hairline:   #e4e7ee;
+      --pv-ink:        #1a2030;
+      --pv-ink-strong: #1a2030;
+      --pv-muted:      #56607a;
+      --pv-accent:       #6d5ef0;
+      --pv-accent-hover: #5b4bd8;
+      --pv-green: #059669;
+      --pv-amber: #b45309;
+      --pv-red:   #e11d48;
+      --pv-dim:   #b6bdcc;
+      --pv-grad-1:     #f6f7f9;
+      --pv-grad-pre-1: #eef1f6;
+    }
+  }
   html, body { height: 100%; margin: 0; }
   body {
     font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: #0b0e14; color: #d7dee9;
+    background: var(--pv-bg); color: var(--pv-ink);
     display: flex; flex-direction: column;
   }
   header {
     padding: 9px 14px; font-size: 13px;
     display: flex; align-items: center; gap: 10px;
-    background: linear-gradient(180deg, #10141d 0%, #0b0e14 100%);
-    border-bottom: 1px solid #1f2633;
+    background: linear-gradient(180deg, var(--pv-grad-1) 0%, var(--pv-bg) 100%);
+    border-bottom: 1px solid var(--pv-hairline);
   }
   .brand {
     display: inline-flex; align-items: center; gap: 7px;
@@ -586,40 +630,40 @@ export function renderShell(args: ShellArgs): string {
   .brand-logo { display: block; flex: none; }
   .brand-name {
     font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
-    color: #e7ecf3;
+    color: var(--pv-ink-strong);
   }
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 3px 9px 3px 8px; border-radius: 999px;
-    background: #141a26; border: 1px solid #1f2633;
+    background: var(--pv-bg-elev); border: 1px solid var(--pv-hairline);
   }
-  .pill-icon { display: block; flex: none; color: #8a93a6; }
+  .pill-icon { display: block; flex: none; color: var(--pv-muted); }
   .dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: #5b6477; flex: none;
+    background: var(--pv-dim); flex: none;
   }
   .dot.up {
-    background: #7CE3B1;
+    background: var(--pv-green);
     animation: pulse 2s ease-in-out infinite;
   }
-  .dot.dn { background: #f07178; }
-  .dot.amber { background: #f7c66a; }
+  .dot.dn { background: var(--pv-red); }
+  .dot.amber { background: var(--pv-amber); }
   @keyframes pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(124, 227, 177, 0.45); }
     50%      { box-shadow: 0 0 0 4px rgba(124, 227, 177, 0); }
   }
-  .info { color: #8a93a6; }
+  .info { color: var(--pv-muted); }
   .spacer { flex: 1; }
   iframe { border: 0; flex: 1; width: 100%; background: white; display: block; }
   .closed {
     flex: 1; display: flex; align-items: center; justify-content: center;
-    color: #8a93a6; font-size: 14px;
+    color: var(--pv-muted); font-size: 14px;
   }
-  /* Optional top-nav block — same dark palette as the rest of the shell, so
+  /* Optional top-nav block — same palette as the rest of the shell, so
      the system-pages tabs sit naturally above the presence header instead
-     of injecting a light-on-dark visual break. */
+     of injecting a contrasting visual break. */
   .top-nav {
-    background: #0b0e14; border-bottom: 1px solid #1f2633;
+    background: var(--pv-bg); border-bottom: 1px solid var(--pv-hairline);
     padding-top: env(safe-area-inset-top);
   }
   .top-nav-bar {
@@ -628,7 +672,7 @@ export function renderShell(args: ShellArgs): string {
   }
   .top-nav-brand {
     display: inline-flex; align-items: center; gap: 7px;
-    text-decoration: none; color: #e7ecf3; flex: none;
+    text-decoration: none; color: var(--pv-ink-strong); flex: none;
   }
   .top-nav-brand .wordmark { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
   /* Presence pills inside the top nav. Pushed to the right via margin-left:auto
@@ -645,29 +689,29 @@ export function renderShell(args: ShellArgs): string {
     .top-nav-email { max-width: 22vw; }
   }
   .top-nav-email {
-    color: #8a93a6; font-size: 12px; max-width: 28vw;
+    color: var(--pv-muted); font-size: 12px; max-width: 28vw;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .top-nav-signout {
-    background: transparent; border: 1px solid #1f2633; color: #8a93a6;
+    background: transparent; border: 1px solid var(--pv-hairline); color: var(--pv-muted);
     font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px;
     cursor: pointer; flex: none;
   }
-  .top-nav-signout:hover { border-color: #a78bfa; color: #cdbcff; }
+  .top-nav-signout:hover { border-color: var(--pv-accent); color: var(--pv-accent-hover); }
   /* Agent-supplied context band — sits between any header / top-nav and the
      iframe. The accent stripe + speech-bubble glyph telegraphs "this is the
      agent talking to you" so the message reads as context, not chrome. */
   .preamble {
     display: flex; gap: 10px; align-items: flex-start;
     padding: 10px 14px 11px;
-    background: linear-gradient(180deg, #0e1320 0%, #0b0e14 100%);
-    border-bottom: 1px solid #1f2633;
-    border-left: 3px solid #a78bfa;
-    color: #d7dee9; font-size: 13px; line-height: 1.45;
+    background: linear-gradient(180deg, var(--pv-grad-pre-1) 0%, var(--pv-bg) 100%);
+    border-bottom: 1px solid var(--pv-hairline);
+    border-left: 3px solid var(--pv-accent);
+    color: var(--pv-ink); font-size: 13px; line-height: 1.45;
     white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere;
   }
   .preamble-icon {
-    flex: none; color: #a78bfa; margin-top: 1px;
+    flex: none; color: var(--pv-accent); margin-top: 1px;
   }
   .preamble-text { flex: 1; min-width: 0; }
 </style>
@@ -846,20 +890,46 @@ function renderHumanError(copy: ErrorPageCopy): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>Pane — ${tabTitle}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style>
+  /* Standalone error/closed page. Same --pv-* token model as the viewer shell
+     so dark stays byte-identical and light follows the device. */
+  :root {
+    color-scheme: light dark;
+    --pv-bg:         #0b0e14;
+    --pv-hairline:   #1f2633;
+    --pv-ink:        #d7dee9;
+    --pv-ink-strong: #e7ecf3;
+    --pv-muted:      #8a93a6;
+    --pv-green:      #7CE3B1;
+    --pv-grad-1:     #10141d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --pv-bg:         #ffffff;
+      --pv-hairline:   #e4e7ee;
+      --pv-ink:        #1a2030;
+      --pv-ink-strong: #1a2030;
+      --pv-muted:      #56607a;
+      --pv-green:      #059669;
+      --pv-grad-1:     #f6f7f9;
+    }
+  }
   html, body { height: 100%; margin: 0; }
   body {
     font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: #0b0e14; color: #d7dee9;
+    background: var(--pv-bg); color: var(--pv-ink);
     display: flex; flex-direction: column;
   }
   header {
     padding: 9px 14px; font-size: 13px;
     display: flex; align-items: center; gap: 10px;
-    background: linear-gradient(180deg, #10141d 0%, #0b0e14 100%);
-    border-bottom: 1px solid #1f2633;
+    background: linear-gradient(180deg, var(--pv-grad-1) 0%, var(--pv-bg) 100%);
+    border-bottom: 1px solid var(--pv-hairline);
   }
   .brand {
     display: inline-flex; align-items: center; gap: 7px;
@@ -868,7 +938,7 @@ function renderHumanError(copy: ErrorPageCopy): string {
   .brand-logo { display: block; flex: none; }
   .brand-name {
     font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
-    color: #e7ecf3;
+    color: var(--pv-ink-strong);
   }
   main {
     flex: 1; display: flex; align-items: center; justify-content: center;
@@ -879,14 +949,14 @@ function renderHumanError(copy: ErrorPageCopy): string {
   }
   h1 {
     margin: 0 0 12px; font-size: 20px; font-weight: 600;
-    color: #e7ecf3; letter-spacing: 0.2px;
+    color: var(--pv-ink-strong); letter-spacing: 0.2px;
   }
-  p { margin: 0 0 18px; color: #8a93a6; }
+  p { margin: 0 0 18px; color: var(--pv-muted); }
   a {
-    color: #7CE3B1; text-decoration: none;
+    color: var(--pv-green); text-decoration: none;
     border-bottom: 1px solid rgba(124, 227, 177, 0.3);
   }
-  a:hover { border-bottom-color: #7CE3B1; }
+  a:hover { border-bottom-color: var(--pv-green); }
 </style>
 </head>
 <body>

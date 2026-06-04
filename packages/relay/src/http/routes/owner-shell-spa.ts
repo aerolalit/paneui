@@ -399,7 +399,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   // Panes list.
   const panesHtml =
     data.panes.length === 0
-      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--brand-1);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--brand-1);cursor:pointer;">Template store</a>.</li>`
+      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--accent);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--accent);cursor:pointer;">Template store</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
   return `<!doctype html>
@@ -407,8 +407,9 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="color-scheme" content="dark" />
-<meta name="theme-color" content="#0a0d14" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -862,7 +863,7 @@ const EXTRA_CSS = `
   .empty-strip { color: var(--ink-mute); font-size: 13px; padding: 12px 4px; }
   .pane-row { cursor: pointer; }
   .pane-row .menu-btn { cursor: pointer; }
-  .pane-row:focus-within { outline: 2px solid var(--brand-1); outline-offset: 2px; }
+  .pane-row:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .recent-card { text-decoration: none; color: inherit; }
   .app-tile, .fav-tile { font: inherit; }
   .fav-tile, .app-tile { background: transparent; border: none; }
@@ -879,7 +880,7 @@ const EXTRA_CSS = `
     font: inherit; line-height: 1.2;
   }
   .app-tile-wrap .pane-count-chip:hover {
-    color: var(--brand-1); border-color: rgba(147, 197, 253, 0.4);
+    color: var(--accent); border-color: rgba(147, 197, 253, 0.4);
   }
 
   /* Star toggle on each pane row — sits before the triple-dots menu. */
@@ -889,7 +890,7 @@ const EXTRA_CSS = `
     display: inline-flex; align-items: center; justify-content: center;
     transition: color 120ms, transform 120ms;
   }
-  .pane-row .row-star:hover { color: var(--brand-1); transform: scale(1.08); }
+  .pane-row .row-star:hover { color: var(--accent); transform: scale(1.08); }
   .pane-row .row-star.active { color: #fbbf24; }
   .pane-row .row-star.active:hover { color: #fbbf24; }
 
@@ -901,7 +902,7 @@ const EXTRA_CSS = `
     border: 1px solid rgba(147, 197, 253, 0.20);
     border-radius: 8px; color: var(--ink); font-size: 13px;
   }
-  .filter-banner strong { color: var(--brand-1); font-weight: 600; }
+  .filter-banner strong { color: var(--accent); font-weight: 600; }
   .filter-banner button {
     background: transparent; border: 1px solid rgba(255,255,255,0.10);
     color: var(--ink-mute); padding: 4px 10px; border-radius: 4px;
