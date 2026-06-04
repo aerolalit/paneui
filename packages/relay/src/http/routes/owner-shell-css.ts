@@ -11,6 +11,7 @@
 
 export const OWNER_SHELL_CSS = `
   :root {
+    color-scheme: light dark;
     /* core surface */
     --bg:        #0a0d14;
     --bg-2:      #0e1320;
@@ -30,6 +31,12 @@ export const OWNER_SHELL_CSS = `
     --brand-2:   #c4b5fd; /* lilac */
     --brand-3:   #5eead4; /* mint */
     --brand-grad: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 60%, var(--brand-3) 110%);
+
+    /* accent — brand-1 used directly as text/border/link on the page
+       background. Same as --brand-1 in dark; the light override darkens it
+       so it keeps contrast on the light surface (the gradient stops above
+       stay pastel for dark text on the decorative fills). */
+    --accent: #93c5fd;
 
     /* status */
     --green:  #6ee7b7;
@@ -51,6 +58,32 @@ export const OWNER_SHELL_CSS = `
     /* safe areas (PWA) */
     --safe-top:    env(safe-area-inset-top, 0);
     --safe-bottom: env(safe-area-inset-bottom, 0);
+  }
+  /* Light mode — additive override of the structural tokens only. Dark stays
+     byte-identical (it is the default :root above). The brand gradient stops
+     (--brand-1/2/3, --brand-grad) are intentionally NOT darkened: they are
+     decorative fills behind dark (#07090f) text, so they must stay pastel. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:        #f6f7f9;
+      --bg-2:      #ffffff;
+      --surface:   #ffffff;
+      --surface-2: #eef1f6;
+      --surface-3: #e2e7ef;
+      --hairline:  #e4e7ee;
+      --hairline-2:#d2d8e3;
+      --ink:       #1a2030;
+      --ink-dim:   #56607a;
+      --ink-mute:  #79839a;
+      --green:  #059669;
+      --amber:  #b45309;
+      --pink:   #e11d48;
+      --orange: #ea580c;
+      --blue:   #2563eb;
+      --accent: #2f6bed;
+      --shadow-soft: 0 8px 30px rgba(17,24,39,0.10);
+      --shadow-pop:  0 14px 40px rgba(17,24,39,0.18);
+    }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
@@ -215,7 +248,7 @@ export const OWNER_SHELL_CSS = `
       width: 22px; height: 22px;
       display: flex; align-items: center; justify-content: center;
     }
-    .nav .me.open .acct-tab { color: var(--brand-1); }
+    .nav .me.open .acct-tab { color: var(--accent); }
     /* The desktop inline link row becomes a popover sheet above the bar. */
     .nav .me .acct-links {
       display: none;
@@ -263,7 +296,7 @@ export const OWNER_SHELL_CSS = `
       border-radius: 8px;
     }
     .nav .items li button.active::before { display: none; }
-    .nav .items li button.active { background: transparent; color: var(--brand-1); }
+    .nav .items li button.active { background: transparent; color: var(--accent); }
     .nav .items li button .count { display: none; }
   }
 
@@ -322,7 +355,7 @@ export const OWNER_SHELL_CSS = `
     font-size: 14px;
     font-family: inherit;
   }
-  .search input:focus { outline: none; border-color: var(--brand-1); }
+  .search input:focus { outline: none; border-color: var(--accent); }
   .search .icon {
     position: absolute; left: 10px; top: 50%;
     transform: translateY(-50%);
@@ -359,7 +392,7 @@ export const OWNER_SHELL_CSS = `
   }
   .section-head a {
     font-size: 12px;
-    color: var(--brand-1);
+    color: var(--accent);
     cursor: pointer;
   }
   .section-head a:hover { text-decoration: underline; }
@@ -740,7 +773,7 @@ export const OWNER_SHELL_CSS = `
     font-family: inherit;
     font-size: 13px;
   }
-  .sheet input:focus, .sheet select:focus, .sheet textarea:focus { outline: none; border-color: var(--brand-1); }
+  .sheet input:focus, .sheet select:focus, .sheet textarea:focus { outline: none; border-color: var(--accent); }
 
   .sheet .panes-mini { list-style: none; padding: 0; margin: 0; }
   .sheet .panes-mini li {
@@ -765,7 +798,7 @@ export const OWNER_SHELL_CSS = `
   .sheet .versions .v-badge {
     background: var(--surface-3);
     padding: 1px 6px; border-radius: 4px;
-    color: var(--brand-1);
+    color: var(--accent);
   }
   .sheet section {
     margin-top: 18px;
@@ -805,7 +838,7 @@ export const OWNER_SHELL_CSS = `
     animation: toastIn 220ms cubic-bezier(.22,.61,.36,1), toastOut 220ms 3.5s cubic-bezier(.22,.61,.36,1) forwards;
     display: flex; align-items: center; gap: 8px;
   }
-  .toast .ic { color: var(--brand-1); font-weight: 700; }
+  .toast .ic { color: var(--accent); font-weight: 700; }
   @keyframes toastIn {
     from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -935,7 +968,7 @@ export const OWNER_SHELL_CSS = `
   /* feedback banner */
   .banner {
     background: var(--surface);
-    border: 1px solid var(--brand-1);
+    border: 1px solid var(--accent);
     border-radius: 12px;
     padding: 12px 16px;
     margin-top: 14px;
@@ -956,7 +989,7 @@ export const OWNER_SHELL_CSS = `
   .banner code {
     font-family: var(--mono); font-size: 12px;
     background: rgba(255,255,255,0.05);
-    padding: 1px 5px; border-radius: 3px; color: var(--brand-1);
+    padding: 1px 5px; border-radius: 3px; color: var(--accent);
   }
 
   /* ----- Template / pane icons -----
@@ -1023,7 +1056,7 @@ export const OWNER_SHELL_CSS = `
   }
   .ai-modal-head h2 { margin: 0; font-size: 17px; color: var(--ink); line-height: 1.3; }
   .ai-modal-lead { margin: 0 0 14px; color: var(--ink-dim); font-size: 13.5px; line-height: 1.5; }
-  .ai-modal-lead code { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; color: var(--brand-1); }
+  .ai-modal-lead code { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; color: var(--accent); }
   .ai-modal-instr { position: relative; }
   .ai-modal-instr pre {
     margin: 0; white-space: pre-wrap; word-break: break-word;
@@ -1038,6 +1071,6 @@ export const OWNER_SHELL_CSS = `
     padding: 5px 12px; border-radius: 7px; min-height: 30px;
   }
   .ai-modal-copy:hover { background: var(--surface); }
-  .ai-modal-copy.copied { color: var(--brand-1); border-color: var(--brand-1); }
+  .ai-modal-copy.copied { color: var(--accent); border-color: var(--accent); }
   .ai-modal-foot { margin: 12px 0 0; color: var(--ink-mute); font-size: 12.5px; }
 `;
