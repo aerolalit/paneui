@@ -60,6 +60,11 @@ interface TemplateRef {
    *  to the public catalog. Drives the Publish/Unpublish toggle in the
    *  tile menu. Always false for installed-only or discover tiles. */
   isPublished: boolean;
+  /** Required input_data fields (name + JSON type) of an agent-init
+   *  template's latest version, derived from its input_schema `required`
+   *  list. Powers the copy-paste agent instructions shown when a human taps
+   *  an agent-init tile. Empty for non-agent-init templates. */
+  agentInitFields: Array<{ name: string; type: string }>;
 }
 
 interface PaneRef {
@@ -225,6 +230,7 @@ async function loadShellData(
       name: t.name,
       slug: t.slug,
       isAgentInit: hasRequiredInputSchema(t.versions[0]?.inputSchema),
+      agentInitFields: requiredInputFields(t.versions[0]?.inputSchema),
       paneCount: paneCountByTemplate.get(t.id) ?? 0,
       isPublished: t.publishedAt !== null,
     };
@@ -521,9 +527,52 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   </main>
 </div>
 
+<!-- Agent-init instructions modal. Hidden until a human taps an agent-init
+     tile; populated client-side from the tile's slug + required-field data. -->
+<div class="ai-modal" id="ai-modal" hidden>
+  <div class="ai-modal-backdrop" data-ai-close></div>
+  <div class="ai-modal-card" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+    <button class="ai-modal-x" data-ai-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="ai-modal-head">
+      <span class="ai-modal-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg> agent-init</span>
+      <h2 id="ai-modal-title"></h2>
+    </div>
+    <p class="ai-modal-lead">This template can't be opened directly — an agent must create a pane seeded with <code>input_data</code> first. Paste these instructions to your agent:</p>
+    <div class="ai-modal-instr">
+      <button class="ai-modal-copy" id="ai-modal-copy" type="button">Copy</button>
+      <pre id="ai-modal-text"></pre>
+    </div>
+    <p class="ai-modal-foot">Already have a seeded pane? Open it from the <b>Panes</b> tab instead.</p>
+  </div>
+</div>
+
 <script>${SHELL_JS}</script>
 </body>
 </html>`;
+}
+
+// Derive the required input_data fields (name + JSON type) from a template
+// version's input_schema, for the copy-paste agent instructions on an
+// agent-init tile. Same notion of "required" as hasRequiredInputSchema; types
+// fall back to "string" when a property declares none.
+function requiredInputFields(
+  schema: unknown,
+): Array<{ name: string; type: string }> {
+  if (!schema || typeof schema !== "object") return [];
+  const s = schema as {
+    required?: unknown;
+    properties?: Record<string, { type?: unknown }>;
+  };
+  if (!Array.isArray(s.required)) return [];
+  const props = s.properties ?? {};
+  return s.required
+    .filter((n): n is string => typeof n === "string")
+    .map((name) => {
+      const t = props[name]?.type;
+      return { name, type: typeof t === "string" ? t : "string" };
+    });
 }
 
 // ----- Tile / row HTML helpers -----
@@ -558,6 +607,12 @@ function appTile(
   const hue = paneHue(t.id);
   const initials = paneInitials(name);
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
+  // Agent-init tiles carry the slug + required-field descriptor so the click
+  // handler can build copy-paste agent instructions client-side. Only emitted
+  // for agent-init tiles to keep the rest lean.
+  const agentInitData = t.isAgentInit
+    ? ` data-template-slug="${escapeHtml(t.slug ?? t.id)}" data-agent-init-fields="${escapeHtml(JSON.stringify(t.agentInitFields))}"`
+    : "";
   // The badge sits at the top-right of the tile, with a clear icon
   // alongside the word so the type registers at a glance. Earlier versions
   // tucked a 10px text pill at the bottom — too easy to miss.
@@ -588,7 +643,7 @@ function appTile(
     : "app-tile-wrap ready";
   return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
     ${badge}${menuBtn}
-    <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${dataAttr}>
+    <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${agentInitData}${dataAttr}>
       <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
       <div class="label">${escapeHtml(name)}</div>
     </button>
@@ -1012,6 +1067,79 @@ const SHELL_JS = `
     }
   }
 
+  // Agent-init instructions modal. A human can't cold-launch an agent-init
+  // template (it needs input_data only an agent can seed), so instead of
+  // launching we show copy-paste instructions to hand to an agent. Built
+  // client-side from the tile's slug + required-field descriptor.
+  (function () {
+    const modal = document.getElementById('ai-modal');
+    const titleEl = document.getElementById('ai-modal-title');
+    const textEl = document.getElementById('ai-modal-text');
+    const copyBtn = document.getElementById('ai-modal-copy');
+    if (!modal || !titleEl || !textEl || !copyBtn) return;
+
+    function placeholderFor(type) {
+      switch (type) {
+        case 'integer': case 'number': return 0;
+        case 'boolean': return false;
+        case 'array': return [];
+        case 'object': return {};
+        default: return '';
+      }
+    }
+    function buildInstructions(name, slug, fields) {
+      const skeleton = {};
+      for (const f of fields) skeleton[f.name] = placeholderFor(f.type);
+      const json = JSON.stringify(skeleton);
+      const fieldList = fields.length
+        ? fields.map((f) => f.name + ' (' + f.type + ')').join(', ')
+        : '(see the template input_schema)';
+      return (
+        'Create a Pane from the "' + name + '" template (slug: ' + slug + '), ' +
+        'seed its input_data, and send me the human URL.\\n\\n' +
+        'Required input_data fields: ' + fieldList + '\\n\\n' +
+        'pane create --template-id ' + slug +
+        " --ttl 86400 --input-data '" + json + "'"
+      );
+    }
+    function close() { modal.hidden = true; }
+
+    window.showAgentInitModal = function (tile) {
+      const name = tile.getAttribute('data-template-name') || 'This template';
+      const slug = tile.getAttribute('data-template-slug') || tile.getAttribute('data-template-id') || '';
+      let fields = [];
+      try { fields = JSON.parse(tile.getAttribute('data-agent-init-fields') || '[]'); } catch (e) { fields = []; }
+      titleEl.textContent = name + ' needs agent initialization';
+      textEl.textContent = buildInstructions(name, slug, fields);
+      copyBtn.textContent = 'Copy';
+      copyBtn.classList.remove('copied');
+      modal.hidden = false;
+    };
+
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(textEl.textContent || '');
+        copyBtn.textContent = 'Copied';
+        copyBtn.classList.add('copied');
+      } catch (e) {
+        // Clipboard blocked (insecure context / permissions) — select the
+        // text so the human can copy manually.
+        const r = document.createRange();
+        r.selectNodeContents(textEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        copyBtn.textContent = 'Select+copy';
+      }
+    });
+    modal.querySelectorAll('[data-ai-close]').forEach((el) =>
+      el.addEventListener('click', close),
+    );
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !modal.hidden) close();
+    });
+  })();
+
   // Tile click → launch. Discover tiles (data-needs-install) auto-install
   // first and then launch in the same click — no detour through the old
   // /my-templates page.
@@ -1032,11 +1160,10 @@ const SHELL_JS = `
     // input_schema has required fields only an agent can seed (via POST
     // /v1/panes input_data). Launching would mint a pane with no input_data
     // and strand the human in the template's empty state. The launch route
-    // refuses this too (defense-in-depth); intercept here so the human gets an
-    // explanation instead of a failed-launch alert.
+    // refuses this too (defense-in-depth); intercept here and show copy-paste
+    // instructions the human can hand to an agent instead.
     if (tile.getAttribute('data-agent-init') === '1') {
-      const nm = tile.getAttribute('data-template-name') || 'This template';
-      alert(nm + ' is an agent-init template — an agent must create a pane from it (seeding its input data via the API) before it can be opened. It can\\'t be launched directly here.');
+      window.showAgentInitModal(tile);
       return;
     }
     const needsInstall = tile.getAttribute('data-needs-install') === '1';
