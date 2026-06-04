@@ -176,7 +176,7 @@ describe("GET /login", () => {
 });
 
 describe("logged-out access to gated pages", () => {
-  it.each(["/home", "/my-agents", "/settings"])(
+  it.each(["/home", "/my-agents"])(
     "%s shows the sign-in prompt to logged-out callers",
     async (path) => {
       const res = await app.fetch(new Request(`http://t${path}`));
@@ -251,7 +251,8 @@ describe("Owner-shell SPA at /home", () => {
     // account menu (inline on desktop, a popover behind the "Account" tab on
     // mobile); assert both the links and the menu scaffolding are present.
     expect(html).toContain('href="/my-agents"');
-    expect(html).toContain('href="/settings"');
+    // Settings is now an in-app SPA view (#settings), not a full-page nav.
+    expect(html).toContain('href="#settings"');
     expect(html).toContain('id="acct-tab"');
     expect(html).toContain('id="acct-links"');
     // Agent-init instructions modal is always rendered (hidden); tapping an
@@ -501,13 +502,22 @@ describe("GET /my-agents (signed in)", () => {
 });
 
 describe("GET /settings (signed in)", () => {
-  it("renders the settings page with email + sign-out", async () => {
+  it("redirects into the SPA settings view (#settings)", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/settings", withCookie(cookie)),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/home#settings");
+  });
+
+  it("renders the settings content (email + sign-out) inside /home", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
     const html = await res.text();
+    expect(html).toContain('data-view="settings"');
     expect(html).toContain("alice@example.com");
     expect(html).toContain("Sign out of this device");
   });
@@ -520,8 +530,10 @@ describe("GET /settings (signed in)", () => {
 describe("owner nav consistency (system-pages chrome)", () => {
   it("renders the canonical sentence-case labels, no retired tabs", async () => {
     const { cookie } = await seedLoggedInHuman();
+    // /my-agents is still a standalone system page (renders the legacy chrome);
+    // /settings now redirects into the SPA, so assert the chrome on /my-agents.
     const res = await app.fetch(
-      new Request("http://t/settings", withCookie(cookie)),
+      new Request("http://t/my-agents", withCookie(cookie)),
     );
     const html = await res.text();
     // Canonical labels (match the SPA sidebar exactly).
@@ -545,7 +557,7 @@ describe("owner nav consistency (system-pages chrome)", () => {
   it("uses the shared canonical icons (storefront for store, grid for templates)", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
-      new Request("http://t/settings", withCookie(cookie)),
+      new Request("http://t/my-agents", withCookie(cookie)),
     );
     const html = await res.text();
     // Storefront awning path = Template store (NOT the 2x2 grid it used to

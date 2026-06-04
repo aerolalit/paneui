@@ -467,7 +467,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           <span class="ico">${spaIco("agents", 16)}</span>
           <span class="txt">${NAV_LABELS.agents}</span>
         </a>
-        <a class="acct-link" href="/settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
+        <a class="acct-link" href="#settings" data-go="settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
@@ -564,6 +564,32 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 
       <div class="cat-row"><h3>Installed from store</h3><span class="count">${data.installs.length}</span></div>
       <div class="apps-grid" id="apps-installed">${installedHtml}</div>
+    </section>
+
+    <section class="view" data-view="settings">
+      <div class="view-head">
+        <div>
+          <h1>Settings</h1>
+          <div class="sub">Your account and session.</div>
+        </div>
+      </div>
+      <div class="settings-card">
+        <h2>Account</h2>
+        <div class="settings-row"><span class="k">Email</span><span class="v">${escapeHtml(human.email)}</span></div>
+        <div class="settings-row"><span class="k">Status</span>${
+          human.verifiedAt
+            ? `<span class="pill good">Verified</span>`
+            : `<span class="pill muted">Unverified</span>`
+        }</div>
+        <div class="settings-row"><span class="k">Account created</span><span class="v">${escapeHtml(
+          human.createdAt.toISOString().slice(0, 10),
+        )}</span></div>
+      </div>
+      <div class="settings-card">
+        <h2>Session</h2>
+        <p class="settings-note">Signing out revokes this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
+        <button id="settings-signout" type="button" class="btn">Sign out of this device</button>
+      </div>
     </section>
 
   </main>
@@ -984,7 +1010,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'store', 'mine'];
+  const VIEWS = ['home', 'panes', 'store', 'mine', 'settings'];
   function activate(view) {
     // Back-compat: prior builds used the hashes "#apps" / "#templates" /
     // "#trash". Remap them so old links / browser-back state still land
@@ -1023,11 +1049,14 @@ const SHELL_JS = `
   });
   window.addEventListener('hashchange', () => activate(viewFromHash()));
 
-  // Sign out
-  document.getElementById('signout')?.addEventListener('click', async () => {
+  // Sign out — both the popover item (#signout) and the in-view Settings
+  // button (#settings-signout) revoke this device's login.
+  async function signOut() {
     try { await fetch('/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
     location.href = '/login';
-  });
+  }
+  document.getElementById('signout')?.addEventListener('click', signOut);
+  document.getElementById('settings-signout')?.addEventListener('click', signOut);
 
   // Account menu (mobile) — the "Account" bottom-bar tab toggles the
   // .acct-links popover (My agents / Settings / Sign out). On desktop the
@@ -1047,6 +1076,9 @@ const SHELL_JS = `
       if (me.classList.contains('open') && ev.target instanceof Node && !me.contains(ev.target)) close();
     });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+    // Tapping any popover item closes the sheet — including the in-app
+    // Settings view-switch (data-go), which doesn't navigate away.
+    me.querySelectorAll('.acct-link').forEach((l) => l.addEventListener('click', close));
   })();
 
   // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon
