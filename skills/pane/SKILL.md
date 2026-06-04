@@ -496,9 +496,12 @@ the pane _only_ through it:
 - `pane.state` — `.events` (the log so far), `.last(type?)`, `.subscribe(fn)`.
 - `pane.inputData` — this pane's per-instance seed data: the `input_data`
   passed to `POST /v1/panes`, validated by the relay against the template
-  version's `input_schema`. `null` when the pane was created without
-  `input_data`. Read it to render this instance — e.g. a PR-review template
-  does `window.pane.inputData.prTitle`.
+  version's `input_schema`. Read it to render this instance — e.g. a PR-review
+  template does `window.pane.inputData.prTitle`. **It is `null` until the shell
+  delivers the init frame, so `await window.pane.ready` before reading it on
+  first paint** — a synchronous read at top-of-script runs *before* init lands
+  and sees `null`, so an agent-init template would fall into its empty state
+  forever. It is also `null` when the pane was created without `input_data`.
 - `pane.uploadBlob(file, opts?)` / `pane.downloadBlob(attachment_id)` /
   `pane.saveBlob(attachment_id, filename?)` — attachment plumbing. Method
   names still carry the legacy "Blob" suffix from before the
@@ -608,8 +611,12 @@ Rules of thumb when authoring the template:
   the `--type` you later `pane watch` for. Above: `form.submitted`.
 - A handler's argument is the **envelope** — read the payload from `ev.data`,
   and render its individual fields with `.textContent` into real elements.
-- `pane` is ready by the time inline `<script>` runs — no need to wait for an
-  init event.
+- `window.pane` is published synchronously, so `pane.emit` and `pane.on`
+  work the moment your inline `<script>` runs, and `pane.on` handlers replay
+  prior events once the init frame lands. **But `pane.inputData` (and the
+  replayed history) are not available until that init frame arrives** — if your
+  first paint reads `inputData` synchronously, `await window.pane.ready` first
+  or it races to `null`.
 - No external assets that need the network (CDN scripts, remote fonts/images):
   the sandbox CSP blocks them. Inline everything, or use data URIs.
 - Keep the template self-contained — it's one HTML document.
