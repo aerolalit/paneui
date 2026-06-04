@@ -348,6 +348,29 @@ export const OWNER_SHELL_CSS = `
   }
   .view-head .actions { display: flex; gap: 8px; }
 
+  /* ============== Settings view ============== */
+  .settings-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    max-width: 640px;
+  }
+  .settings-card h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .settings-row .k { font-size: 13px; color: var(--ink); }
+  .settings-row .v { font-size: 13px; color: var(--ink-mute); font-family: var(--mono); }
+  .settings-note { color: var(--ink-mute); font-size: 13px; margin: 4px 0 14px; }
+  .settings-note a { color: var(--accent); }
+  .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .pill.good { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+  .pill.muted { background: var(--surface-2); color: var(--ink-mute); }
+
   /* ============== Top-level controls (search + profile) ============== */
   .search {
     position: relative;

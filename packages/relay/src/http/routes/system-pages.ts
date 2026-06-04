@@ -1200,47 +1200,10 @@ systemPages.get("/my-agents", async (c) => {
 systemPages.get("/trash", (c) => c.redirect("/home", 301));
 
 // ----------------------------------------------------------------------
-// GET /settings — email, sign-out
+// GET /settings — now a view inside the /home SPA (#settings). Redirect the
+// standalone URL in, the same way /my-panes, /my-templates, /template-store
+// already fold into the single-page app. One nav/layout/CSS everywhere.
 // ----------------------------------------------------------------------
-systemPages.get("/settings", (c) => {
-  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
-  c.header("Cache-Control", "private, no-store");
-  const human = c.get("human");
-  if (!human) {
-    return c.html(
-      layout({ title: "Settings", email: null, body: loggedOutPrompt() }),
-    );
-  }
-  const verified = human.verifiedAt
-    ? `<span class="pill good">Verified</span>`
-    : `<span class="pill muted">Unverified</span>`;
-  const body = `<h1>Settings</h1>
-  <div class="card">
-    <h2 style="margin-top:0;">Account</h2>
-    <ul class="list">
-      <li><div><div class="title">Email</div><div class="meta">${escapeHtml(human.email)}</div></div>${verified}</li>
-      <li><div><div class="title">Account created</div><div class="meta">${escapeHtml(human.createdAt.toISOString().slice(0, 10))}</div></div></li>
-    </ul>
-  </div>
-  <div class="card">
-    <h2 style="margin-top:0;">Session</h2>
-    <p style="color:var(--muted);font-size:14px;">Signing out will revoke this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
-    <button id="pane-logout-btn" class="btn ghost">Sign out of this device</button>
-  </div>
-  <script>
-    document.getElementById("pane-logout-btn")?.addEventListener("click", async () => {
-      try { await fetch("/v1/auth/logout", { method: "POST" }); } catch {}
-      location.href = "/login";
-    });
-  </script>`;
-  return c.html(
-    layout({
-      title: "Settings",
-      email: human.email,
-      body,
-      active: "settings",
-    }),
-  );
-});
+systemPages.get("/settings", (c) => c.redirect("/home#settings", 301));
 
 export default systemPages;
