@@ -20,6 +20,8 @@ import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
 import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
+import { filterByOpenPaneCount } from "./templates.js";
+import type { Config } from "../../config.js";
 
 // Wrap a shared nav glyph (nav-meta.ts) in the SPA's <svg> conventions so the
 // sidebar / account / mobile-bar icons stay byte-identical to the legacy
@@ -32,13 +34,14 @@ function spaIco(key: NavKey, size: number): string {
 
 export interface OwnerShellOptions {
   prisma: PrismaClient;
+  config: Config;
   human: HumanRow;
 }
 
 export async function renderOwnerShell(
   opts: OwnerShellOptions,
 ): Promise<string> {
-  const data = await loadShellData(opts.prisma, opts.human);
+  const data = await loadShellData(opts.prisma, opts.config, opts.human);
   return renderHtml(opts.human, data);
 }
 
@@ -111,6 +114,7 @@ interface ShellData {
 
 async function loadShellData(
   prisma: PrismaClient,
+  config: Config,
   human: HumanRow,
 ): Promise<ShellData> {
   // One human owns N claimed agents; their templates are the "Yours"
@@ -268,7 +272,21 @@ async function loadShellData(
       hasIconImage: t.iconAttachmentId !== null,
     };
   }
-  const ownedTemplates = ownedTemplatesRaw.map(toRef);
+  // Usage-maturity list gate — the "Yours" grid is the author's OWN authored
+  // templates (ownerId ∈ the human's claimed agents), so it gets the same
+  // ≥TEMPLATE_LIST_MIN_OPEN_PANES filter as GET /v1/templates. The `installs`
+  // list below is the human's installed-from-store set (HumanTemplateInstall),
+  // NOT authored work, so it is deliberately left unfiltered — a human keeps
+  // every template they chose to install regardless of its open-pane count.
+  const ownedTemplatesGated =
+    config.TEMPLATE_LIST_MIN_OPEN_PANES > 0
+      ? await filterByOpenPaneCount(
+          prisma,
+          ownedTemplatesRaw,
+          config.TEMPLATE_LIST_MIN_OPEN_PANES,
+        )
+      : ownedTemplatesRaw;
+  const ownedTemplates = ownedTemplatesGated.map(toRef);
 
   const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
   const installedIds = new Set(liveInstalls.map((i) => i.template.id));

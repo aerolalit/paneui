@@ -574,6 +574,7 @@ templates.patch("/:id", async (c) => {
 // GET /v1/templates?q= — lean search/list of the agent's named templates.
 templates.get("/", async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config");
   const agent = c.get("agent");
   const q = c.req.query("q")?.trim().toLowerCase();
 
@@ -610,8 +611,68 @@ templates.get("/", async (c) => {
     });
   }
 
+  // Usage-maturity list gate — hide templates with fewer than
+  // TEMPLATE_LIST_MIN_OPEN_PANES currently-open panes (status=open,
+  // deletedAt=null, expiresAt>now), counted across ALL of the template's
+  // versions. Skipped entirely for the trash view (?include_deleted=true):
+  // a soft-deleted template has no open panes by definition and must still
+  // be listable so the human can restore/purge it. Two queries, not one per
+  // template: version→template map, then a single grouped pane count.
+  if (config.TEMPLATE_LIST_MIN_OPEN_PANES > 0 && !includeDeleted) {
+    filtered = await filterByOpenPaneCount(
+      prisma,
+      filtered,
+      config.TEMPLATE_LIST_MIN_OPEN_PANES,
+    );
+  }
+
   return c.json({ templates: filtered.map(summarize) });
 });
+
+// Drop every template in `rows` whose count of currently-open panes (summed
+// across all its versions) is below `minOpenPanes`. "Currently-open" =
+// status=open AND deletedAt=null AND expiresAt>now. Two queries regardless of
+// how many templates are passed: (a) every version id for the candidate
+// templates, (b) one grouped pane count over those version ids. Exported so
+// the owner-shell can apply the same gate to its authored-templates grid.
+export async function filterByOpenPaneCount<T extends { id: string }>(
+  prisma: PrismaClient,
+  rows: T[],
+  minOpenPanes: number,
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const templateIds = rows.map((r) => r.id);
+  const versions = await prisma.templateVersion.findMany({
+    where: { templateId: { in: templateIds } },
+    select: { id: true, templateId: true },
+  });
+  if (versions.length === 0) return [];
+  const templateIdByVersionId = new Map(
+    versions.map((v) => [v.id, v.templateId]),
+  );
+  const grouped = await prisma.pane.groupBy({
+    by: ["templateVersionId"],
+    where: {
+      status: "open",
+      deletedAt: null,
+      expiresAt: { gt: new Date() },
+      templateVersionId: { in: versions.map((v) => v.id) },
+    },
+    _count: { _all: true },
+  });
+  const openCountByTemplate = new Map<string, number>();
+  for (const g of grouped) {
+    const templateId = templateIdByVersionId.get(g.templateVersionId);
+    if (!templateId) continue;
+    openCountByTemplate.set(
+      templateId,
+      (openCountByTemplate.get(templateId) ?? 0) + g._count._all,
+    );
+  }
+  return rows.filter(
+    (r) => (openCountByTemplate.get(r.id) ?? 0) >= minOpenPanes,
+  );
+}
 
 // GET /v1/templates/:id — accepts an template id OR slug. Returns the head plus
 // its version list.
