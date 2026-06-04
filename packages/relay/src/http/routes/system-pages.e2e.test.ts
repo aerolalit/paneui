@@ -254,6 +254,9 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('href="/settings"');
     expect(html).toContain('id="acct-tab"');
     expect(html).toContain('id="acct-links"');
+    // Agent-init instructions modal is always rendered (hidden); tapping an
+    // agent-init tile populates + reveals it instead of cold-launching.
+    expect(html).toContain('id="ai-modal"');
     expect(html).toContain('class="greet"');
     expect(html).toContain("Alice");
   });
