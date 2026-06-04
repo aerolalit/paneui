@@ -1,19 +1,32 @@
 // /v1/self/* — human-authenticated routes for the logged-in human's
 // own account. Requires the pane_login cookie via requireHuman.
 //
-//   POST /v1/self/claim-codes          mint a one-shot claim code; agent
+//   POST  /v1/self/claim-codes         mint a one-shot claim code; agent
 //                                      submits it to POST /v1/agents/claim
 //                                      to bind itself to this human (§6.1).
-//   POST /v1/self/agents/:id/rotate-key  rotate the API key on an agent
+//   POST  /v1/self/agents/:id/rotate-key  rotate the API key on an agent
 //                                      owned by this human. Old key is
 //                                      invalidated (key_hash overwritten);
 //                                      the new key is returned ONCE.
+//   PATCH /v1/self/profile             update the human's display name;
+//                                      `null`/empty clears it (display falls
+//                                      back to the email-local-part).
 
 import { Hono } from "hono";
+import { z } from "zod";
 import { generateClaimCode, hashClaimCode } from "../../auth/claim.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 import { errors } from "../errors.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
+
+// The friendly display name derived from the email when the human hasn't
+// set an explicit name. Kept byte-identical to owner-shell-spa.ts's
+// friendlyName so the API and the SPA agree on the fallback.
+function friendlyName(email: string): string {
+  const local = (email.split("@")[0] ?? "").split(/[._-]/)[0] ?? "";
+  if (local.length === 0) return "there";
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
 
 const self = new Hono<HumanAuthEnv>();
 
@@ -108,6 +121,75 @@ self.post("/agents/:id/rotate-key", async (c) => {
     },
     201,
   );
+});
+
+// True if the string contains any C0/C1 control character
+// (U+0000–U+001F, U+007F–U+009F). Implemented with charCodeAt rather than a
+// regex literal so no raw control bytes need to live in this source file.
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+// PATCH /v1/self/profile
+// Body: { name: string | null }
+// Response: { name, display_name }
+//   - `name` is the stored value after the update: the trimmed string, or
+//     `null` when cleared. An empty / whitespace-only string is normalised
+//     to `null` (an explicit clear), so the display name falls back to the
+//     email-local-part.
+//   - `display_name` is what the UI shows: the stored name if non-empty,
+//     else the friendlyName(email) fallback (shared with owner-shell-spa.ts).
+//
+// `null` is allowed (explicit clear). Names are capped at 80 chars and may
+// not contain control characters — anything else 400s as invalid_request.
+const profileBody = z.object({
+  // Trim first so a paste with surrounding whitespace normalises before
+  // validation; an empty result becomes `null` (clear the name). `null`
+  // is accepted as-is. Control characters are rejected.
+  name: z.preprocess(
+    (v) => {
+      if (v === null || v === undefined) return null;
+      if (typeof v !== "string") return v;
+      const t = v.trim();
+      return t.length === 0 ? null : t;
+    },
+    z
+      .string()
+      .max(80)
+      .refine((s) => !hasControlChar(s), {
+        message: "name must not contain control characters",
+      })
+      .nullable(),
+  ),
+});
+
+self.patch("/profile", async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+
+  const parsed = profileBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid profile update",
+      parsed.error.flatten(),
+      "send { name: string | null } — name is trimmed, max 80 chars, no control characters; an empty string clears it",
+    );
+  }
+  const name = parsed.data.name;
+
+  await prisma.human.update({
+    where: { id: human.id },
+    data: { name },
+  });
+
+  const displayName =
+    name && name.trim().length > 0 ? name : friendlyName(human.email);
+
+  return c.json({ name, display_name: displayName });
 });
 
 export default self;

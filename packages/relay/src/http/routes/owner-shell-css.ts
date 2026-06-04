@@ -634,6 +634,9 @@ export const OWNER_SHELL_CSS = `
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  /* Open panes render an empty status cell (no pill) — collapse it so the
+     title reclaims the width. Closed panes keep their pill. */
+  .pane-row .status:empty { padding: 0; }
   .pane-row .status.open    { background: rgba(110, 231, 183, 0.1); color: var(--green); }
   .pane-row .status.closed  { background: var(--surface-2); color: var(--ink-mute); }
   .pane-row .status.expiring { background: rgba(252, 211, 77, 0.1); color: var(--amber); }
