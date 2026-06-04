@@ -248,6 +248,15 @@ export const OWNER_SHELL_CSS = `
       width: 22px; height: 22px;
       display: flex; align-items: center; justify-content: center;
     }
+    /* The nav SVGs carry an 18px (account: 20px) width attribute sized for the
+       desktop sidebar. On the mobile bottom bar, force them to 22px so they
+       match the system-pages bottom-tabs icons (tab-ico, 22px). CSS beats the
+       SVG presentation attribute, so the desktop sidebar is unaffected. */
+    .nav .items li button .icon svg,
+    .nav .me .acct-tab .icon svg {
+      width: 22px;
+      height: 22px;
+    }
     .nav .me.open .acct-tab { color: var(--accent); }
     /* The desktop inline link row becomes a popover sheet above the bar. */
     .nav .me .acct-links {
