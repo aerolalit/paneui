@@ -412,6 +412,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />

@@ -16,12 +16,17 @@
 // routes; templatising them is a follow-up refactor that doesn't change
 // behaviour. See HUMAN-SIDE-PROPOSAL.md "Open decisions" tail.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   resolveHumanOptional,
   type OptionalHumanAuthEnv,
 } from "../../auth/human-auth.js";
 import { BRAND_LOGO, BRAND_FAVICON_SVG } from "../../brand.js";
+import {
+  APP_ICON_180_PNG,
+  APP_ICON_192_PNG,
+  APP_ICON_512_PNG,
+} from "../../app-icon.js";
 import { renderOwnerShell } from "./owner-shell-spa.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 
@@ -81,6 +86,7 @@ function layout(args: {
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
@@ -471,6 +477,39 @@ systemPages.get("/favicon.svg", (c) => {
 });
 
 // ----------------------------------------------------------------------
+// Home-screen / install icons — PNG raster of the marketing mark.
+//
+// iOS Safari's "Add to Home Screen" needs a real PNG apple-touch-icon; it
+// ignores the SVG-only manifest icon, which is why the shortcut used to fall
+// back to a screenshot. These are served as same-origin routes (not data:
+// URIs) so Safari fetches them via <link rel="apple-touch-icon"> and the OS
+// also finds /apple-touch-icon.png at the site root by convention. The
+// -precomposed alias covers older iOS that prefers the unglossed variant.
+// Source bytes live embedded in src/app-icon.ts (single-binary, no asset dir).
+// ----------------------------------------------------------------------
+const servePng = (png: Buffer) => {
+  // Hono's c.body type accepts ArrayBuffer (not Buffer) — hand it a clean,
+  // exact-length ArrayBuffer view. Buffer.from(base64) is unpooled, so the
+  // slice is a tight copy of just the icon bytes.
+  const ab = png.buffer.slice(
+    png.byteOffset,
+    png.byteOffset + png.byteLength,
+  ) as ArrayBuffer;
+  return (c: Context) => {
+    c.header("Content-Type", "image/png");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(ab);
+  };
+};
+systemPages.get("/apple-touch-icon.png", servePng(APP_ICON_180_PNG));
+systemPages.get(
+  "/apple-touch-icon-precomposed.png",
+  servePng(APP_ICON_180_PNG),
+);
+systemPages.get("/icon-192.png", servePng(APP_ICON_192_PNG));
+systemPages.get("/icon-512.png", servePng(APP_ICON_512_PNG));
+
+// ----------------------------------------------------------------------
 // GET /manifest.webmanifest — PWA manifest.
 //
 // Served from the relay so an installed-to-homescreen pane (Add to Home
@@ -496,11 +535,31 @@ systemPages.get("/manifest.webmanifest", (c) => {
       background_color: "#0b0e14",
       theme_color: "#0b0e14",
       categories: ["productivity", "developer"],
-      // Icons inlined as a single SVG. Real-world PWAs typically ship
-      // PNG variants too; iOS still respects the apple-touch-icon meta
-      // even when the manifest only declares SVG, so this is sufficient
-      // for the install flow without standing up an asset pipeline.
+      // Raster PNG icons for the install flow. iOS uses the apple-touch-icon
+      // <link>; Android/Chrome + desktop installs use these manifest entries
+      // (a manifest that declares only SVG gives Android no maskable icon and
+      // iOS nothing for the home screen). The scalable SVG is kept last as a
+      // progressive-enhancement "any" fallback. Bytes served from /icon-*.png
+      // and /apple-touch-icon.png above (source: src/app-icon.ts).
       icons: [
+        {
+          src: "/apple-touch-icon.png",
+          sizes: "180x180",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "/icon-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any maskable",
+        },
+        {
+          src: "/icon-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any maskable",
+        },
         {
           src: "/favicon.svg",
           sizes: "any",

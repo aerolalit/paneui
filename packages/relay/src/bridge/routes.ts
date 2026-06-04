@@ -569,6 +569,7 @@ export function renderShell(args: ShellArgs): string {
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <style nonce="${args.nonce}">
   /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
      values (kept byte-identical); the light override at the bottom adapts the
