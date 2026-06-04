@@ -23,6 +23,7 @@ import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import { log } from "../../log.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
+import { hasRequiredInputSchema } from "../../core/validation.js";
 import {
   deleteTemplateRecord,
   listTemplateRecords,
@@ -789,6 +790,22 @@ myTemplates.post("/:id/launch", requireHuman, async (c) => {
   });
   if (!version) {
     throw errors.notFound();
+  }
+
+  // Agent-init guard. A template whose pinned version's input_schema declares
+  // required fields can't be launched cold by a human: the launched pane would
+  // carry no input_data, fail nothing (launch doesn't validate), and render
+  // the template's "needs initialization" empty state — a dead end. Such a
+  // pane must be created by an agent via POST /v1/panes with input_data. The
+  // owner-shell tile classifies the same way (hasRequiredInputSchema → the
+  // "agent-init" badge) and blocks the click, but a direct API call has to be
+  // refused here too.
+  if (hasRequiredInputSchema(version.inputSchema)) {
+    throw errors.conflict(
+      "this template requires agent-supplied input_data and cannot be launched directly",
+      false,
+      "the template's input_schema declares required fields; an agent must create the pane via POST /v1/panes with input_data. Launch is only for templates that render with no setup.",
+    );
   }
 
   const paneId = generatePaneId();

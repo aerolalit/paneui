@@ -746,6 +746,19 @@ export function assertValidInputSchema(raw: unknown): void {
   }
 }
 
+// A template version is "agent-init" when its `input_schema` declares a
+// non-empty `required` array: a human can't launch it cold, because the
+// pane's `input_data` (which only an agent supplies via POST /v1/panes) would
+// fail validation. The owner-shell badge ("agent-init" vs "ready") and the
+// my-templates launch guard both classify off this single rule, so a tile
+// shown as agent-init is exactly one the launch route refuses — keep them in
+// lockstep by sharing this helper rather than re-deriving the check.
+export function hasRequiredInputSchema(schema: unknown): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const required = (schema as { required?: unknown }).required;
+  return Array.isArray(required) && required.length > 0;
+}
+
 // Validate a pane's `input_data` against the pinned template version's
 // `input_schema` (a JSON Schema object). Called at POST /v1/panes time so a
 // bad request fails fast — with a clear 422, exactly like a rejected event —
