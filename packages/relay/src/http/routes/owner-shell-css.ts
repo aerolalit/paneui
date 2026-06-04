@@ -504,7 +504,9 @@ export const OWNER_SHELL_CSS = `
     transition: background 100ms;
     position: relative;
   }
-  .app-tile:hover { background: rgba(255,255,255,0.02); }
+  /* Adaptive hover tint: derived from --ink so it lifts on dark (light ink)
+     and on light (dark ink) instead of an invisible white-on-white wash. */
+  .app-tile:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
   .app-tile .icon {
     width: 64px; height: 64px;
     border-radius: 16px;
@@ -988,7 +990,7 @@ export const OWNER_SHELL_CSS = `
   .banner b { color: var(--ink); font-weight: 600; }
   .banner code {
     font-family: var(--mono); font-size: 12px;
-    background: rgba(255,255,255,0.05);
+    background: color-mix(in srgb, var(--ink) 8%, transparent);
     padding: 1px 5px; border-radius: 3px; color: var(--accent);
   }
 
@@ -1056,7 +1058,7 @@ export const OWNER_SHELL_CSS = `
   }
   .ai-modal-head h2 { margin: 0; font-size: 17px; color: var(--ink); line-height: 1.3; }
   .ai-modal-lead { margin: 0 0 14px; color: var(--ink-dim); font-size: 13.5px; line-height: 1.5; }
-  .ai-modal-lead code { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; color: var(--accent); }
+  .ai-modal-lead code { font-family: var(--mono); font-size: 12px; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 5px; border-radius: 3px; color: var(--accent); }
   .ai-modal-instr { position: relative; }
   .ai-modal-instr pre {
     margin: 0; white-space: pre-wrap; word-break: break-word;

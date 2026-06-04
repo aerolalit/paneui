@@ -874,7 +874,7 @@ const EXTRA_CSS = `
   .app-tile-wrap { position: relative; display: flex; flex-direction: column; }
   .app-tile-wrap .pane-count-chip {
     margin-top: 4px; padding: 4px 8px; font-size: 11px;
-    background: transparent; border: 1px solid rgba(255,255,255,0.10);
+    background: transparent; border: 1px solid var(--hairline);
     color: var(--ink-mute); border-radius: 4px; cursor: pointer;
     align-self: flex-start; transition: color 120ms, border-color 120ms;
     font: inherit; line-height: 1.2;
@@ -904,11 +904,11 @@ const EXTRA_CSS = `
   }
   .filter-banner strong { color: var(--accent); font-weight: 600; }
   .filter-banner button {
-    background: transparent; border: 1px solid rgba(255,255,255,0.10);
+    background: transparent; border: 1px solid var(--hairline);
     color: var(--ink-mute); padding: 4px 10px; border-radius: 4px;
     cursor: pointer; font: inherit; font-size: 12px;
   }
-  .filter-banner button:hover { color: var(--ink); border-color: rgba(255,255,255,0.20); }
+  .filter-banner button:hover { color: var(--ink); border-color: var(--hairline-2); }
 
   /* "agent-init" / "ready" corner badge — top-left of every template
      tile. Bigger, brighter, and paired with an icon so the type
@@ -935,6 +935,20 @@ const EXTRA_CSS = `
     border: 1px solid rgba(94, 234, 212, 0.50);
     box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.10) inset;
   }
+  /* Light mode: the badge text was tuned light-on-translucent for the dark
+     tile; on a white tile it needs dark text + a slightly stronger tint. */
+  @media (prefers-color-scheme: light) {
+    .tile-corner.agent-init {
+      color: #6b21a8;
+      background: rgba(168, 85, 247, 0.14);
+      border-color: rgba(168, 85, 247, 0.40);
+    }
+    .tile-corner.ready {
+      color: #0f766e;
+      background: rgba(20, 184, 166, 0.14);
+      border-color: rgba(20, 184, 166, 0.40);
+    }
+  }
 
   /* Triple-dots menu trigger on owned + installed tiles. Top-right;
      mirrors the corner-badge position on the left. */
@@ -942,7 +956,7 @@ const EXTRA_CSS = `
     position: absolute; top: 6px; right: 6px; z-index: 2;
     width: 26px; height: 26px;
     display: inline-flex; align-items: center; justify-content: center;
-    background: rgba(10,13,20,0.55); border: 1px solid rgba(255,255,255,0.08);
+    background: var(--surface-2); border: 1px solid var(--hairline);
     color: var(--ink-mute); border-radius: 6px; cursor: pointer; padding: 0;
     backdrop-filter: blur(4px); transition: color 120ms, transform 120ms;
   }
@@ -956,8 +970,8 @@ const EXTRA_CSS = `
   /* Lightweight floating popover for pane-row triple-dots menu. */
   .pane-menu-pop {
     position: fixed; z-index: 1000; min-width: 180px; padding: 4px;
-    background: #0f1320; border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+    background: var(--bg-2); border: 1px solid var(--hairline);
+    border-radius: 8px; box-shadow: var(--shadow-pop);
     display: flex; flex-direction: column;
   }
   .pane-menu-pop button {
@@ -965,7 +979,7 @@ const EXTRA_CSS = `
     text-align: left; padding: 8px 10px; font: inherit; cursor: pointer;
     border-radius: 5px; font-size: 13px;
   }
-  .pane-menu-pop button:hover { background: rgba(255,255,255,0.04); }
+  .pane-menu-pop button:hover { background: var(--surface-2); }
   .pane-menu-pop button.danger { color: var(--pink, #fb7185); }
 `;
 
