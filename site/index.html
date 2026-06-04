@@ -838,6 +838,9 @@
     .features { padding: 84px 0; }
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
     @media (max-width: 860px) { .grid-3 { grid-template-columns: 1fr; } }
+    /* four personal-pane cards balance as 2x2 on wide/medium, 1-up on mobile */
+    .grid-personal { grid-template-columns: repeat(2, 1fr); }
+    @media (max-width: 560px) { .grid-personal { grid-template-columns: 1fr; } }
     .feat {
       background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px;
       transition: border-color .15s ease, transform .15s ease;
@@ -944,6 +947,187 @@
     footer a { color: var(--muted); }
     footer .brand { font-size: 16px; }
     footer .spacer { margin-left: auto; }
+
+    /* ---------- poll demo (tab 5): the data layer ---------- */
+    /* the poll artifact: a list of shared time slots the human votes on */
+    .poll-head { margin-bottom: 14px; }
+    .poll-shared {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      color: #6f50d6; background: #efeaff; border: 1px solid #ddd2ff;
+      border-radius: 999px; padding: 3px 9px; margin-top: 6px;
+    }
+    .poll-shared .lk { font-size: 11px; }
+    .poll-slots { display: flex; flex-direction: column; gap: 8px; }
+    .poll-slot {
+      display: flex; align-items: center; gap: 11px;
+      padding: 11px 13px; border-radius: 11px; cursor: pointer;
+      background: #f5f6fa; border: 1px solid #e3e6ef; transition: border-color .14s ease, background .14s ease;
+    }
+    .poll-slot:hover { border-color: var(--agent); }
+    .poll-slot:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
+    .poll-slot .pbox {
+      width: 19px; height: 19px; border-radius: 6px; flex: none;
+      border: 2px solid #c7ccdb; position: relative; transition: background .14s ease, border-color .14s ease;
+    }
+    .poll-slot.on .pbox { background: var(--agent); border-color: var(--agent); }
+    .poll-slot.on .pbox::after {
+      content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800; color: #fff; line-height: 1;
+    }
+    .poll-slot .pwhen { font-weight: 700; color: #1c2333; font-size: 14px; }
+    .poll-slot .pcount { margin-left: auto; font-size: 12px; color: #8b93a8; font-variant-numeric: tabular-nums; }
+    .poll-slot.won { background: #e9fbf1; border-color: #16a34a; }
+    .poll-slot.won .pcount { color: #16a34a; font-weight: 700; }
+    .poll-foot { margin-top: 13px; font-size: 12px; color: #8b93a8; }
+    .poll-foot b { color: #1c2333; }
+
+    /* the data inspector: three labelled, live-updating sections */
+    .dlayer { display: flex; flex-direction: column; gap: 12px; }
+    .dlayer-box {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 13px;
+    }
+    .dlayer-box.is-template { border-color: rgba(167,139,250,.4); }
+    .dlayer-box.is-pane { border-color: rgba(34,211,238,.4); }
+    .dlayer-hd { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
+    .dlayer-hd .dl-name {
+      font: 700 12px ui-monospace, Menlo, monospace; letter-spacing: .02em; color: var(--fg);
+    }
+    .dlayer-box.is-template .dl-name { color: var(--agent); }
+    .dlayer-box.is-pane .dl-name { color: var(--human); }
+    .dlayer-hd .dl-tag {
+      font-size: 10px; font-weight: 600; letter-spacing: .03em; color: var(--faint);
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px;
+    }
+    .dlayer-rows {
+      font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .dlayer-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 0; border-bottom: 1px dashed transparent;
+    }
+    .dlayer-row .dr-k { color: var(--faint); }
+    .dlayer-row .dr-v { color: var(--fg); }
+    .dlayer-row .dr-v.acc { color: var(--human); }
+    .dlayer-row .dr-grow { margin-left: auto; }
+    .dlayer-row.flash { animation: dlFlash .9s ease both; }
+    @keyframes dlFlash {
+      from { background: rgba(34,211,238,.16); }
+      to { background: transparent; }
+    }
+    @media (prefers-reduced-motion: reduce) { .dlayer-row.flash { animation: none; } }
+    .dlayer-empty { color: var(--faint); font-style: italic; }
+    .dlayer-evrow { color: var(--muted); }
+    .dlayer-evrow .ev-when { color: var(--faint); }
+    .dlayer-evrow .ev-actor { color: var(--human); font-weight: 600; }
+    .dlayer-evrow .ev-actor.agent { color: var(--agent); }
+
+    /* ---------- find your next read (tab 6) ---------- */
+    /* a single recommendation card the agent builds for one reader */
+    .read-card { animation: readCardIn .3s ease both; }
+    @keyframes readCardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .read-card { animation: none; } }
+    .read-cover {
+      display: flex; gap: 14px; align-items: stretch; margin-bottom: 14px;
+    }
+    .read-spine {
+      width: 78px; flex: 0 0 78px; height: 108px; border-radius: 7px;
+      display: flex; align-items: flex-end; justify-content: center; padding: 9px;
+      color: #fff; font-weight: 800; font-size: 30px; letter-spacing: -.02em;
+      box-shadow: 0 8px 18px -8px rgba(0,0,0,.45); position: relative; overflow: hidden;
+    }
+    .read-spine::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 7px;
+      background: rgba(0,0,0,.18);
+    }
+    .read-meta { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+    .read-title { font-size: 16.5px; font-weight: 800; color: #131a2c; line-height: 1.25; }
+    .read-author { font-size: 13px; color: #5b6479; margin-top: 3px; }
+    .read-blurb { font-size: 13px; color: #5b6479; line-height: 1.5; margin-top: 8px; }
+    .read-blurb { margin-bottom: 16px; }
+    .read-actions { display: flex; gap: 10px; }
+    .read-btn {
+      flex: 1; padding: 11px; border-radius: 10px; font-weight: 700; font-size: 13.5px;
+      cursor: pointer; border: 1px solid #e3e6ef; background: #f5f6fa; color: #5b6479;
+      transition: transform .12s ease, border-color .12s ease;
+    }
+    .read-btn:hover { border-color: #c9cee0; }
+    .read-btn:active { transform: translateY(1px); }
+    .read-btn.add {
+      border: none; color: #0a0f1f;
+      background: linear-gradient(135deg, var(--agent), var(--human));
+    }
+    .read-btn:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
+    /* the taste chips the agent fills in as it learns */
+    .read-taste { margin-top: 18px; border-top: 1px solid #eceef4; padding-top: 14px; }
+    .read-taste-hd {
+      font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      color: #8b93a8; margin-bottom: 9px;
+    }
+    .read-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+    .read-chip {
+      font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+      background: #f1edff; color: #5b4a9e; border: 1px solid #e4dcff;
+      animation: readChipIn .26s ease both;
+    }
+    .read-chip.skip { background: #fdeef0; color: #9e4a57; border-color: #f6d8de; }
+    @keyframes readChipIn { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .read-chip { animation: none; } }
+    .read-empty { font-size: 12.5px; color: #9aa1b4; font-style: italic; }
+    /* the wrapped-up confirmation once the shelf is re-ranked */
+    .read-done {
+      text-align: center; padding: 20px 8px 8px;
+    }
+    .read-done .read-title { margin-top: 4px; }
+
+    /* ---------- plan a trip (tab 7) ---------- */
+    /* a bespoke trip pane: weather strip, packing checklist, day-by-day plan */
+    .trip-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+    .trip-dest { font-size: 17px; font-weight: 800; color: #131a2c; letter-spacing: -.01em; }
+    .trip-dur { font-size: 13px; color: #5b6479; }
+    .trip-weather { display: flex; gap: 8px; margin-bottom: 18px; }
+    .trip-day-wx {
+      flex: 1; text-align: center; padding: 9px 6px; border-radius: 9px;
+      background: #f5f6fa; border: 1px solid #e3e6ef;
+      transition: background .2s ease, border-color .2s ease;
+    }
+    .trip-day-wx.changed { background: #eef4ff; border-color: #c7d8f6; }
+    .trip-day-wx .wx-d { font-size: 11px; font-weight: 700; color: #8b93a8; text-transform: uppercase; letter-spacing: .06em; }
+    .trip-day-wx .wx-i { font-size: 19px; line-height: 1.4; }
+    .trip-day-wx .wx-t { font-size: 12.5px; font-weight: 600; color: #5b6479; }
+    .trip-sec-hd {
+      font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      color: #8b93a8; margin: 0 0 9px;
+    }
+    .trip-itin { margin-top: 18px; border-top: 1px solid #eceef4; padding-top: 14px; }
+    .trip-day {
+      margin-bottom: 12px; padding-left: 12px; border-left: 2px solid #e4dcff;
+    }
+    .trip-day:last-child { margin-bottom: 0; }
+    .trip-day-name { font-size: 13px; font-weight: 800; color: #131a2c; margin-bottom: 4px; }
+    .trip-act {
+      font-size: 13px; color: #5b6479; line-height: 1.5;
+      animation: tripActIn .26s ease both;
+    }
+    .trip-act.indoor { color: #5b4a9e; font-weight: 600; }
+    @keyframes tripActIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .trip-act { animation: none; } }
+    /* the adapt trigger: a button that tells the agent the forecast changed */
+    .trip-adapt {
+      width: 100%; margin-top: 16px; padding: 11px; border-radius: 10px;
+      font-weight: 700; font-size: 13px; cursor: pointer;
+      border: 1px dashed #c7d8f6; background: #eef4ff; color: #2f5aa8;
+      transition: transform .12s ease, border-color .12s ease, background .12s ease;
+    }
+    .trip-adapt:hover { border-color: #9bbcf0; background: #e3eeff; }
+    .trip-adapt:active { transform: translateY(1px); }
+    .trip-adapt:focus-visible { outline: 2px solid var(--agent); outline-offset: 1px; }
+    .trip-adapt[disabled] { opacity: .55; cursor: default; }
+    .trip-adapt[disabled]:hover { border-color: #c7d8f6; background: #eef4ff; }
+    /* a freshly added packing item gets a brief highlight */
+    .mock .artifact .check.trip-new { border-color: #c7d8f6; background: #eef4ff; }
   </style>
 </head>
 <body>
@@ -1019,6 +1203,21 @@
           <span class="tdot"></span>
           <span class="tlabel"><span class="tpat">One-way handoff</span>
             <span class="tex">Generate a report</span></span>
+        </button>
+        <button class="demo-tab" id="tab-poll" role="tab" aria-selected="false" aria-controls="panel-poll" tabindex="-1">
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Collect &amp; decide</span>
+            <span class="tex">Find a time</span></span>
+        </button>
+        <button class="demo-tab" id="tab-read" role="tab" aria-selected="false" aria-controls="panel-read" tabindex="-1">
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Learns your taste</span>
+            <span class="tex">Find your next read</span></span>
+        </button>
+        <button class="demo-tab" id="tab-trip" role="tab" aria-selected="false" aria-controls="panel-trip" tabindex="-1">
+          <span class="tdot"></span>
+          <span class="tlabel"><span class="tpat">Adapts as you go</span>
+            <span class="tex">Plan a trip</span></span>
         </button>
       </div>
 
@@ -1360,6 +1559,249 @@
 
       <p class="stage-hint">↑ <b>Explore the report</b>: click a month to break down the revenue. A pane can be a view-only output pane, not just a form.</p>
       </div><!-- /panel-report -->
+
+      <!-- ===== TAB 5: find a time (the data layer) ===== -->
+      <div class="demo-panel" id="panel-poll" role="tabpanel" aria-labelledby="tab-poll" hidden>
+
+      <!-- three columns: the poll pane, the data inspector, the agent terminal -->
+      <div class="stage stage-3" id="poll-stage">
+
+      <!-- LEFT: what the human votes on -->
+      <div class="stage-col" id="poll-col-pane">
+        <div class="stage-cap"><span class="pip human"></span>The team votes on a time</div>
+        <div class="mock" role="img" aria-label="A browser window showing a Find a time poll where the human votes on shared candidate slots">
+          <div class="mock-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/8fa2c1</span>
+          </div>
+
+          <!-- pane shell header -->
+          <div class="shell-hdr">
+            <span class="shell-brand">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <rect width="100" height="100" rx="22" fill="#0f172a" />
+                <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+                <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+                <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+                <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+                <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+              </svg>
+              <span class="nm">Pane</span>
+            </span>
+            <span class="sp"></span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <span class="pdot up"></span><span class="ptx">connected</span>
+            </span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+              <span class="pdot up"></span><span class="ptx">agent active</span>
+            </span>
+          </div>
+
+          <!-- the poll artifact, rendered on white -->
+          <div class="artifact">
+            <div class="mock-body" id="poll-pane">
+              <!-- poll body rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /stage-col left -->
+
+      <!-- MIDDLE: the data inspector (the three first-class data shapes) -->
+      <div class="stage-col" id="poll-col-data">
+        <div class="stage-cap"><span class="pip human"></span>The three data shapes</div>
+        <div class="dlayer" id="poll-dlayer" role="img" aria-label="A data inspector showing template docs, pane docs and the event journal updating live">
+          <!-- inspector sections rendered by JS -->
+        </div>
+      </div><!-- /stage-col middle -->
+
+      <!-- RIGHT: what the agent does (a Claude Code terminal) -->
+      <div class="stage-col" id="poll-col-term">
+        <div class="stage-cap"><span class="pip agent"></span>The agent tallies and books</div>
+        <div class="term" role="img" aria-label="A Claude Code terminal where the agent reads every vote, picks the best time and books it">
+          <div class="term-bar">
+            <span class="dot r" style="background:#ff5f57"></span>
+            <span class="dot y" style="background:#febc2e"></span>
+            <span class="dot g" style="background:#28c840"></span>
+            <span class="ttl">claude — scheduling</span>
+          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="poll-term"></div>
+        </div>
+      </div><!-- /stage-col right -->
+
+      </div><!-- /stage -->
+
+      <p class="stage-hint">↑ <b>Vote on the slots that work</b>. The agent reads every vote, picks the time that fits the most people, and books it. Watch the three data shapes update as you click.</p>
+      </div><!-- /panel-poll -->
+
+      <!-- ===== TAB 6: find your next read (a personal taste picker) ===== -->
+      <div class="demo-panel" id="panel-read" role="tabpanel" aria-labelledby="tab-read" hidden>
+
+      <!-- two columns: the recommendation pane (left) and the agent terminal (right) -->
+      <div class="stage" id="read-stage">
+
+      <!-- LEFT: what the reader sees -->
+      <div class="stage-col" id="read-col-pane">
+        <div class="stage-cap"><span class="pip human"></span>You react to one pick at a time</div>
+        <div class="mock" role="img" aria-label="A browser window showing a personal book recommendation card the agent built for one reader">
+          <div class="mock-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/r3d4b2</span>
+          </div>
+
+          <!-- pane shell header -->
+          <div class="shell-hdr">
+            <span class="shell-brand">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <rect width="100" height="100" rx="22" fill="#0f172a" />
+                <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+                <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+                <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+                <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+                <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+              </svg>
+              <span class="nm">Pane</span>
+            </span>
+            <span class="sp"></span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <span class="pdot up"></span><span class="ptx">connected</span>
+            </span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+              <span class="pdot up"></span><span class="ptx">agent active</span>
+            </span>
+          </div>
+
+          <!-- the recommendation artifact, rendered on white -->
+          <div class="artifact">
+            <div class="mock-body" id="read-pane">
+              <!-- recommendation card rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /stage-col left -->
+
+      <!-- RIGHT: what the agent does (a Claude Code terminal) -->
+      <div class="stage-col" id="read-col-term">
+        <div class="stage-cap"><span class="pip agent"></span>Your agent learns and re-ranks</div>
+        <div class="term" role="img" aria-label="A Claude Code terminal where your agent reads your reactions and refines what it recommends next">
+          <div class="term-bar">
+            <span class="dot r" style="background:#ff5f57"></span>
+            <span class="dot y" style="background:#febc2e"></span>
+            <span class="dot g" style="background:#28c840"></span>
+            <span class="ttl">claude — reading</span>
+          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="read-term"></div>
+        </div>
+      </div><!-- /stage-col right -->
+
+      </div><!-- /stage -->
+
+      <p class="stage-hint">↑ <b>React to a few picks</b>. Your agent learns your taste and re-ranks what comes next. A pane built for one reader: you.</p>
+      </div><!-- /panel-read -->
+
+      <!-- ===== TAB 7: plan a trip ===== -->
+      <div class="demo-panel" id="panel-trip" role="tabpanel" aria-labelledby="tab-trip" hidden>
+
+      <!-- two columns: the trip pane (left) and the agent terminal (right) -->
+      <div class="stage" id="trip-stage">
+
+      <!-- LEFT: the trip pane the human ticks through -->
+      <div class="stage-col" id="trip-col-pane">
+        <div class="stage-cap"><span class="pip human"></span>You pack and follow the plan</div>
+        <div class="mock" role="img" aria-label="A browser window showing a personal trip pane the agent built: weather, a packing checklist and a day-by-day plan">
+          <div class="mock-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="mock-url"><span class="lock">🔒</span> relay.paneui.com/s/t7p1k9</span>
+          </div>
+
+          <!-- pane shell header -->
+          <div class="shell-hdr">
+            <span class="shell-brand">
+              <svg viewBox="0 0 100 100" aria-hidden="true">
+                <rect width="100" height="100" rx="22" fill="#0f172a" />
+                <circle cx="62" cy="58" r="17" fill="#22d3ee" />
+                <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a" />
+                <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa" />
+                <circle cx="33.5" cy="42" r="3.4" fill="#0f172a" />
+                <circle cx="46.5" cy="42" r="3.4" fill="#0f172a" />
+              </svg>
+              <span class="nm">Pane</span>
+            </span>
+            <span class="sp"></span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              <span class="pdot up"></span><span class="ptx">connected</span>
+            </span>
+            <span class="shell-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M12 9V5"/><circle cx="12" cy="3.5" r="1.6"/><line x1="9" y1="14" x2="9" y2="14.5"/><line x1="15" y1="14" x2="15" y2="14.5"/></svg>
+              <span class="pdot up"></span><span class="ptx">agent active</span>
+            </span>
+          </div>
+
+          <!-- the trip artifact, rendered on white -->
+          <div class="artifact">
+            <div class="mock-body" id="trip-pane">
+              <!-- trip header, weather, packing and itinerary rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /stage-col left -->
+
+      <!-- RIGHT: what the agent does (a Claude Code terminal) -->
+      <div class="stage-col" id="trip-col-term">
+        <div class="stage-cap"><span class="pip agent"></span>Your agent checks weather and re-plans</div>
+        <div class="term" role="img" aria-label="A Claude Code terminal where your agent checks the forecast, builds the trip pane, and re-plans when conditions change">
+          <div class="term-bar">
+            <span class="dot r" style="background:#ff5f57"></span>
+            <span class="dot y" style="background:#febc2e"></span>
+            <span class="dot g" style="background:#28c840"></span>
+            <span class="ttl">claude — trip</span>
+          </div>
+          <!-- starts empty: the staged intro streams these lines in. -->
+          <div class="term-body" id="trip-term"></div>
+        </div>
+      </div><!-- /stage-col right -->
+
+      </div><!-- /stage -->
+
+      <p class="stage-hint">↑ <b>Tick items off, or tell it the forecast changed</b>. The agent re-plans your days and updates your packing. A pane built for one trip.</p>
+      </div><!-- /panel-trip -->
+    </div>
+  </section>
+
+  <!-- ============ PERSONAL PANES (ideas gallery) ============ -->
+  <section class="features" id="personal">
+    <div class="wrap">
+      <p class="eyebrow">Personal panes</p>
+      <h2>Or build one just for yourself.</h2>
+      <p class="section-lede">These are not in any store. You ask, your agent builds, Pane hosts it by URL.</p>
+      <div class="grid-3 grid-personal">
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8.5 8l1.4 1.4L13 6.5"/><path d="M8.5 14l1.4 1.4L13 12.5"/><line x1="16" y1="8" x2="17" y2="8"/><line x1="16" y1="14" x2="17" y2="14"/></svg></div>
+          <h3>Daily check-in</h3>
+          <p>Ask for a one-tap log of the few things you actually track. Your agent reviews the week and nudges you.</p>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5l11 11"/><path d="M4 9l-1.5 1.5 11 11L15 20"/><path d="M9 4l-1.5 1.5"/><path d="M20 15l-1.5 1.5"/><path d="M2.5 21.5l1.5-1.5"/><path d="M20 4l-1.5 1.5"/></svg></div>
+          <h3>Workout of the day</h3>
+          <p>Today's session, built for you. Check off sets, log your reps. Your agent progresses you next time.</p>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v15"/><path d="M5 7l-2.5 5a3 3 0 0 0 5 0L5 7z"/><path d="M19 7l-2.5 5a3 3 0 0 0 5 0L19 7z"/><path d="M5 7l7-2 7 2"/><line x1="8" y1="21" x2="16" y2="21"/></svg></div>
+          <h3>Help me choose</h3>
+          <p>Torn between three laptops, flats, or job offers? Your agent builds a comparison weighted to what you care about, you rate, it recommends.</p>
+        </div>
+        <div class="feat">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10h12l-1 9a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2l-1-9z"/><path d="M6 10a6 6 0 0 1 12 0"/><line x1="12" y1="3" x2="12" y2="4.2"/><line x1="9" y1="14" x2="9" y2="17"/><line x1="12" y1="14" x2="12" y2="17"/><line x1="15" y1="14" x2="15" y2="17"/></svg></div>
+          <h3>Fridge to meals</h3>
+          <p>Tell it what you have, or send a photo. Your agent builds meal options and a checklist, then hands you the shopping list.</p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -2000,9 +2442,13 @@ npx skills add aerolalit/paneui
   <script>
   (function () {
     var tabs = [document.getElementById('tab-release'), document.getElementById('tab-quiz'),
-                document.getElementById('tab-monitor'), document.getElementById('tab-report')];
+                document.getElementById('tab-monitor'), document.getElementById('tab-report'),
+                document.getElementById('tab-poll'), document.getElementById('tab-read'),
+                document.getElementById('tab-trip')];
     var panels = [document.getElementById('panel-release'), document.getElementById('panel-quiz'),
-                  document.getElementById('panel-monitor'), document.getElementById('panel-report')];
+                  document.getElementById('panel-monitor'), document.getElementById('panel-report'),
+                  document.getElementById('panel-poll'), document.getElementById('panel-read'),
+                  document.getElementById('panel-trip')];
     if (tabs.some(function (t) { return !t; }) || panels.some(function (p) { return !p; })) return;
 
     var reduceMotion = window.matchMedia &&
@@ -2050,6 +2496,15 @@ npx skills add aerolalit/paneui
       }
       if (idx === 3 && typeof window.__paneReportIntro === 'function') {
         window.__paneReportIntro();
+      }
+      if (idx === 4 && typeof window.__panePollIntro === 'function') {
+        window.__panePollIntro();
+      }
+      if (idx === 5 && typeof window.__paneReadIntro === 'function') {
+        window.__paneReadIntro();
+      }
+      if (idx === 6 && typeof window.__paneTripIntro === 'function') {
+        window.__paneTripIntro();
       }
       if (userInitiated) scrollTabsIntoView();
     }
@@ -3070,6 +3525,976 @@ npx skills add aerolalit/paneui
 
     // expose the intro trigger so the tab-switch IIFE can auto-play it.
     window.__paneReportIntro = playReportIntro;
+  })();
+  </script>
+
+  <!-- ============ find-a-time demo (tab 5): the data layer ============ -->
+  <!-- shows the three first-class data shapes: template docs (the shared,
+       read-only catalog of slots), pane docs (this pane's votes, which
+       humans write), and events (the append-only journal). the human votes,
+       the inspector updates live, and the agent reads every vote and books. -->
+  <script>
+  (function () {
+    var pane = document.getElementById('poll-pane');
+    var term = document.getElementById('poll-term');
+    var dlayer = document.getElementById('poll-dlayer');
+    if (!pane || !term || !dlayer) return;
+    var stage = document.getElementById('poll-stage');
+    var colPane = document.getElementById('poll-col-pane');
+    var colData = document.getElementById('poll-col-data');
+    var colTerm = document.getElementById('poll-col-term');
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // TEMPLATE DOCS: the shared catalog of candidate slots. curated by the
+    // agent on the template head; every pane derived from "find-a-time" sees
+    // these, and humans cannot change them (read-only).
+    var SLOTS = [
+      { id: 'tue10', when: 'Tue 10:00' },
+      { id: 'wed14', when: 'Wed 14:00' },
+      { id: 'thu14', when: 'Thu 14:00' },
+      { id: 'fri09', when: 'Fri 09:00' }
+    ];
+
+    // PANE DOCS: this pane's mutable rows, one per participant, each holding
+    // the set of slots that person marked available. seeded with two
+    // teammates; "you" is the row the human edits by clicking.
+    var votes = {
+      Alice: ['wed14', 'thu14'],
+      Bob:   ['thu14', 'fri09'],
+      you:   []
+    };
+    var VOTERS = ['Alice', 'Bob', 'you'];
+    var TEAM_SIZE = 6;   // the headline total the agent reasons about
+
+    // EVENTS: the append-only journal of interactions in this pane.
+    var events = [
+      { t: '09:02', actor: 'Alice', agent: false, text: 'voted (Wed, Thu)' },
+      { t: '09:05', actor: 'Bob',   agent: false, text: 'voted (Thu, Fri)' }
+    ];
+
+    var booked = null;     // winning slot id once the agent decides
+    var decided = false;   // guards the close-poll sequence to one run
+
+    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+    // tally availability per slot across every pane doc (vote row).
+    function tally(id) {
+      var n = 0;
+      VOTERS.forEach(function (v) {
+        if (votes[v].indexOf(id) !== -1) n++;
+      });
+      return n;
+    }
+
+    // ---- the poll artifact (left pane) ----
+    function renderPoll() {
+      var slotHtml = SLOTS.map(function (s) {
+        var on = votes.you.indexOf(s.id) !== -1;
+        var count = tally(s.id);
+        var won = booked === s.id;
+        return '<div class="poll-slot' + (on ? ' on' : '') + (won ? ' won' : '') +
+                 '" data-slot="' + s.id + '" tabindex="0" role="checkbox" ' +
+                 'aria-checked="' + (on ? 'true' : 'false') + '">' +
+                 '<span class="pbox"></span>' +
+                 '<span class="pwhen">' + esc(s.when) + '</span>' +
+                 '<span class="pcount">' + (won ? 'booked · ' : '') + count + '/' + TEAM_SIZE + '</span>' +
+               '</div>';
+      }).join('');
+
+      pane.innerHTML =
+        '<div class="poll-head">' +
+          '<div class="label">Agent is asking</div>' +
+          '<div class="q">When can the team meet this week?</div>' +
+          '<span class="poll-shared"><span class="lk">🔗</span> shared slots · read-only</span>' +
+        '</div>' +
+        '<div class="poll-slots">' + slotHtml + '</div>' +
+        '<div class="poll-foot">Tap the slots that work for you. Your picks are ' +
+          '<b>this pane\'s</b> data; the slots above come from the template.</div>';
+
+      pane.querySelectorAll('.poll-slot').forEach(function (el) {
+        var id = el.getAttribute('data-slot');
+        function toggle() {
+          if (booked) return;        // poll closed, frozen
+          var i = votes.you.indexOf(id);
+          var slot = SLOTS.filter(function (s) { return s.id === id; })[0];
+          if (i === -1) {
+            votes.you.push(id);
+            pushEvent('you', false, 'voted ' + slot.when);
+          } else {
+            votes.you.splice(i, 1);
+            pushEvent('you', false, 'removed ' + slot.when);
+          }
+          renderPoll();
+          renderInspector(true);
+        }
+        el.addEventListener('click', toggle);
+        el.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+      });
+    }
+
+    function pushEvent(actor, isAgent, text) {
+      var d = new Date();
+      var t = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      events.push({ t: t, actor: actor, agent: isAgent, text: text });
+    }
+
+    // ---- the data inspector (middle column) ----
+    // three live sections, each labelled with its scope so the
+    // template-vs-pane distinction is legible at a glance.
+    function renderInspector(flash) {
+      var tplRows = SLOTS.map(function (s) {
+        return '<div class="dlayer-row">' +
+                 '<span class="dr-k">slot</span>' +
+                 '<span class="dr-v">' + esc(s.when) + '</span>' +
+               '</div>';
+      }).join('');
+
+      var paneRows = VOTERS.map(function (v) {
+        var picks = votes[v].map(function (id) {
+          var s = SLOTS.filter(function (x) { return x.id === id; })[0];
+          return s ? s.when : id;
+        });
+        var val = picks.length
+          ? '<span class="dr-v acc">' + esc(picks.join(', ')) + '</span>'
+          : '<span class="dlayer-empty">no picks yet</span>';
+        return '<div class="dlayer-row' + (v === 'you' && flash ? ' flash' : '') + '">' +
+                 '<span class="dr-k">' + esc(v) + '</span>' +
+                 '<span class="dr-grow">' + val + '</span>' +
+               '</div>';
+      }).join('');
+
+      // newest events first, capped so the box stays legible.
+      var evList = events.slice(-6).reverse();
+      var evRows = evList.map(function (e, i) {
+        return '<div class="dlayer-row dlayer-evrow' +
+                 (i === 0 && flash ? ' flash' : '') + '">' +
+                 '<span class="ev-when">' + esc(e.t) + '</span>' +
+                 '<span class="ev-actor' + (e.agent ? ' agent' : '') + '">' +
+                   esc(e.actor) + '</span>' +
+                 '<span class="dr-grow">' + esc(e.text) + '</span>' +
+               '</div>';
+      }).join('');
+
+      dlayer.innerHTML =
+        '<div class="dlayer-box is-template">' +
+          '<div class="dlayer-hd"><span class="dl-name">template-docs / slots</span>' +
+            '<span class="dl-tag">shared by every pane · read-only</span></div>' +
+          '<div class="dlayer-rows">' + tplRows + '</div>' +
+        '</div>' +
+        '<div class="dlayer-box is-pane">' +
+          '<div class="dlayer-hd"><span class="dl-name">pane-docs / votes</span>' +
+            '<span class="dl-tag">this pane only · participants write</span></div>' +
+          '<div class="dlayer-rows">' + paneRows + '</div>' +
+        '</div>' +
+        '<div class="dlayer-box">' +
+          '<div class="dlayer-hd"><span class="dl-name">events</span>' +
+            '<span class="dl-tag">append-only journal</span></div>' +
+          '<div class="dlayer-rows">' + (evRows || '<div class="dlayer-empty">no events yet</div>') + '</div>' +
+        '</div>';
+    }
+
+    // ---- the agent terminal (right column) ----
+    // the startup sequence: agent curates the template, then launches the
+    // poll pane and waits.
+    var POLL_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/scheduling</span>', cls: '' },
+      { gap: true },
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">find a time this week the team can meet</span></div>' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> The candidate slots live on the template, ' +
+              'so every team gets the same shortlist.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane template-records list find-a-time slots)  ' +
+              '<span class="cc-meta">4 slots · read-only</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Launching a poll pane from that template ' +
+              'and letting the team vote.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane session create --template find-a-time)  ' +
+              '<span class="cc-meta">pane-docs: votes</span>', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_8fa2c1</span>' +
+              ' created', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Poll is live. ' +
+              'Share this with the team:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="poll-url">' +
+              'https://relay.paneui.com/s/8fa2c1</span>', cls: '' },
+      { html: '     <span class="cc-meta">watching for votes<span class="term-cursor"></span></span>',
+        cls: 'dim', wait: true }
+    ];
+
+    function termLine(html, cls) {
+      var d = document.createElement('div');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      term.appendChild(d);
+      term.scrollTop = term.scrollHeight;
+      return d;
+    }
+    function termGap() {
+      var d = document.createElement('div');
+      d.className = 'gap';
+      term.appendChild(d);
+    }
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'poll-wait';
+      return d;
+    }
+
+    var introState = 'idle';   // idle | playing | done
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0, step: 0 }
+      : { termLine: 300, browserIn: 500, step: 640 };
+
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+
+    // the close-poll sequence: agent reads every vote, tallies, picks the
+    // winner and writes the booking back as a pane doc + an event. wired to
+    // a "Close poll & decide" button that the staged intro injects under the
+    // poll once it is live.
+    function closePoll() {
+      if (decided) return;
+      decided = true;
+
+      // drop the wait cursor line; the agent is acting now.
+      var wait = document.getElementById('poll-wait');
+      if (wait) wait.remove();
+
+      // compute the winner from the pane docs (highest tally; first slot
+      // wins ties to keep it deterministic).
+      var winner = SLOTS[0], best = -1;
+      SLOTS.forEach(function (s) {
+        var n = tally(s.id);
+        if (n > best) { best = n; winner = s; }
+      });
+
+      var btn = document.getElementById('poll-close-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Poll closed'; btn.classList.add('done'); }
+
+      var seq = [];
+      seq.push({ d: DELAYS.step, fn: function () {
+        termGap();
+        termLine('<span class="cc-dot">⏺</span> Poll closed. Reading every vote in the pane.');
+        termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(pane records list votes)  <span class="cc-meta">' + VOTERS.length + ' rows</span>');
+      }});
+      // echo the actual rows so the pane-docs read is concrete.
+      VOTERS.forEach(function (v) {
+        seq.push({ d: Math.round(DELAYS.step * 0.45), fn: function () {
+          var picks = votes[v].map(function (id) {
+            var s = SLOTS.filter(function (x) { return x.id === id; })[0];
+            return s ? s.when : id;
+          });
+          var shown = picks.length ? picks.join(', ') : '(none)';
+          termLine('     <span class="json">{ "person": "' + esc(v) +
+            '", "slots": [' + (picks.length ? '"' + esc(shown) + '"' : '') + '] }</span>', '');
+        }});
+      });
+      seq.push({ d: DELAYS.step, fn: function () {
+        termGap();
+        var counts = SLOTS.map(function (s) {
+          return esc(s.when) + ' ' + tally(s.id) + '/' + TEAM_SIZE;
+        }).join('  ');
+        termLine('<span class="cc-dot">⏺</span> Tally: <span class="cc-meta">' + counts + '</span>');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('<span class="cc-dot">⏺</span> <span class="ok">' + esc(winner.when) +
+          '</span> works for ' + best + '/' + TEAM_SIZE + '. Booking it.');
+        termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(pane records upsert bookings ' + esc(winner.id) + ')  ' +
+          '<span class="cc-meta">pane-doc written</span>');
+        // write the booking back: a pane doc + a journal event, then re-render.
+        booked = winner.id;
+        pushEvent('agent', true, 'closed poll · booked ' + winner.when);
+        renderPoll();
+        renderInspector(true);
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('     <span class="ok">✓</span> booked <span class="ev">' +
+          esc(winner.when) + '</span> · invited the team', '');
+        termLine('<span class="pr">$</span> <span class="term-cursor"></span>');
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= seq.length) return;
+        var step = seq[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // inject the "Close poll & decide" control under the poll once it is live.
+    function addCloseButton() {
+      if (document.getElementById('poll-close-btn')) return;
+      var btn = document.createElement('button');
+      btn.id = 'poll-close-btn';
+      btn.className = 'submit';
+      btn.style.marginTop = '14px';
+      btn.textContent = 'Close poll & decide';
+      btn.addEventListener('click', closePoll);
+      pane.appendChild(btn);
+    }
+
+    // staged intro: auto-plays when tab 5 ("Find a time") opens.
+    function playPollIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1: only the terminal, single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (colData) colData.classList.add('quiz-pending');
+      if (stage) { stage.classList.add('quiz-cols-1'); stage.classList.remove('quiz-cols-2'); }
+      term.innerHTML = '';
+
+      // STAGE 2 : stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = POLL_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3 : the human "clicks" the link; pane + inspector slide in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) { stage.classList.remove('quiz-cols-1'); }
+          renderPoll();
+          renderInspector(false);
+          addCloseButton();
+          enterCol(colData);
+          enterCol(colPane);
+          introState = 'done';
+        };
+        var link = document.getElementById('poll-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the pane + inspector hidden and the stage collapsed to one.
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (colData) colData.classList.add('quiz-pending');
+    if (stage) stage.classList.add('quiz-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__panePollIntro = playPollIntro;
+  })();
+  </script>
+
+  <!-- ============ find your next read demo (tab 6): a taste picker ============ -->
+  <!-- the personal example: a pane built for one reader. you react to picks,
+       each reaction lands as a pane-doc the watching agent reads, and it
+       re-ranks your shelf from those records. self-contained IIFE, null-guarded. -->
+  <script>
+  (function () {
+    var pane = document.getElementById('read-pane');
+    var term = document.getElementById('read-term');
+    if (!pane || !term) return;
+    var stage = document.getElementById('read-stage');
+    var colPane = document.getElementById('read-col-pane');
+    var colTerm = document.getElementById('read-col-term');
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+    // the shelf the agent re-ranks. each pick carries a couple of taste
+    // signals that the agent "learns" from your reactions. ~5 recommendations.
+    var BOOKS = [
+      { ttl: 'The Mountain in the Sea', au: 'Ray Nayler', init: 'M', c1: '#5b6db8', c2: '#3a4a93',
+        blurb: 'First-contact with an octopus mind. Cerebral, literary sci-fi.',
+        signals: ['literary sci-fi', 'ideas-first'] },
+      { ttl: 'A Half-Built Garden', au: 'Ruthanna Emrys', init: 'A', c1: '#3f9d8f', c2: '#2a7a6e',
+        blurb: 'Aliens arrive during a climate recovery. Hopeful, talky, warm.',
+        signals: ['hopeful sci-fi', 'no romance'] },
+      { ttl: 'The Love Hypothesis', au: 'Ali Hazelwood', init: 'L', c1: '#d2799a', c2: '#b85a7e',
+        blurb: 'A fake-dating campus romance. Sweet, light, low stakes.',
+        signals: ['romance', 'light'] },
+      { ttl: 'Tomorrow, and Tomorrow', au: 'Gabrielle Zevin', init: 'T', c1: '#c08a3e', c2: '#9c6c28',
+        blurb: 'Two friends build games over decades. Literary, character-driven.',
+        signals: ['literary', 'character-driven'] },
+      { ttl: 'Sea of Tranquility', au: 'Emily St. John Mandel', init: 'S', c1: '#4a6fa5', c2: '#345487',
+        blurb: 'A quiet time-travel puzzle box. Spare prose, big ideas.',
+        signals: ['literary sci-fi', 'ideas-first'] }
+    ];
+
+    var idx = 0;            // which book is on the card
+    var reactions = 0;      // how many picks you've reacted to
+    var taste = [];         // learned chips: { label, skip }
+    var refined = false;    // guards the one-time refined recommendation
+    var introState = 'idle';
+
+    // add a taste chip if it's new (de-dupe by label).
+    function learn(label, skip) {
+      if (taste.some(function (t) { return t.label === label; })) return;
+      taste.push({ label: label, skip: !!skip });
+    }
+
+    // ---- the recommendation card (left pane) ----
+    function renderCard() {
+      if (idx >= BOOKS.length) { renderDone(); return; }
+      var b = BOOKS[idx];
+      pane.innerHTML =
+        '<div class="read-card">' +
+          '<div class="label">Built for you</div>' +
+          '<div class="q">Your next read?</div>' +
+          '<div class="read-cover">' +
+            '<div class="read-spine" style="background:linear-gradient(160deg,' +
+              b.c1 + ',' + b.c2 + ')">' + esc(b.init) + '</div>' +
+            '<div class="read-meta">' +
+              '<div class="read-title">' + esc(b.ttl) + '</div>' +
+              '<div class="read-author">' + esc(b.au) + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="read-blurb">' + esc(b.blurb) + '</div>' +
+          '<div class="read-actions">' +
+            '<button class="read-btn skip-btn" type="button" id="read-skip">Not for me</button>' +
+            '<button class="read-btn add" type="button" id="read-add">Add to list</button>' +
+          '</div>' +
+          renderTaste() +
+        '</div>';
+      wireButtons();
+    }
+
+    function renderTaste() {
+      var chips = taste.length
+        ? taste.map(function (t) {
+            return '<span class="read-chip' + (t.skip ? ' skip' : '') + '">' +
+              (t.skip ? 'no ' : '') + esc(t.label.replace(/^no /, '')) + '</span>';
+          }).join('')
+        : '<span class="read-empty">React to a pick and your taste shows up here.</span>';
+      return '<div class="read-taste">' +
+        '<div class="read-taste-hd">Your taste, so far</div>' +
+        '<div class="read-chips">' + chips + '</div>' +
+        '</div>';
+    }
+
+    function renderDone() {
+      var next = refinedPick();
+      pane.innerHTML =
+        '<div class="read-card read-done">' +
+          '<div class="label">Re-ranked for you</div>' +
+          '<div class="q">That is your taste, dialed in.</div>' +
+          '<div class="read-blurb">Your agent re-ranked the shelf. Next up:</div>' +
+          '<div class="read-cover" style="justify-content:center">' +
+            '<div class="read-spine" style="background:linear-gradient(160deg,' +
+              next.c1 + ',' + next.c2 + ')">' + esc(next.init) + '</div>' +
+            '<div class="read-meta">' +
+              '<div class="read-title">' + esc(next.ttl) + '</div>' +
+              '<div class="read-author">' + esc(next.au) + '</div>' +
+            '</div>' +
+          '</div>' +
+          renderTaste() +
+        '</div>';
+    }
+
+    // pick a book whose signals match a kept taste and avoid a skipped one.
+    function refinedPick() {
+      var skipLabels = taste.filter(function (t) { return t.skip; })
+        .map(function (t) { return t.label; });
+      var keepLabels = taste.filter(function (t) { return !t.skip; })
+        .map(function (t) { return t.label; });
+      var best = null, bestScore = -1;
+      BOOKS.forEach(function (b) {
+        if (b._reacted) return;
+        var bad = b.signals.some(function (s) { return skipLabels.indexOf(s) !== -1; });
+        if (bad) return;
+        var score = b.signals.filter(function (s) { return keepLabels.indexOf(s) !== -1; }).length;
+        if (score > bestScore) { bestScore = score; best = b; }
+      });
+      // fall back to any not-yet-reacted book, else the first.
+      if (!best) best = BOOKS.filter(function (b) { return !b._reacted; })[0] || BOOKS[0];
+      return best;
+    }
+
+    // ---- the agent terminal (right column) ----
+    function termLine(html, cls) {
+      var d = document.createElement('div');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      term.appendChild(d);
+      term.scrollTop = term.scrollHeight;
+      return d;
+    }
+    function termGap() {
+      var d = document.createElement('div');
+      d.className = 'gap';
+      term.appendChild(d);
+    }
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'read-wait';
+      return d;
+    }
+
+    // the startup sequence: the agent loads your reading history and serves
+    // the first pick, then waits for a reaction.
+    var READ_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/reading</span>', cls: '' },
+      { gap: true },
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">find me my next read</span></div>' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Loading how you like panes shown.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane taste get)  <span class="cc-meta">cover-first, dense layout</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Built a one-card picker so you can ' +
+              'react one book at a time.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane session create --template taste-picker)  ' +
+              '<span class="cc-meta">pane-docs: reactions</span>', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_r3d4b2</span>' +
+              ' created', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Your picker ' +
+              'is live. This one is just for you:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="read-url">' +
+              'https://relay.paneui.com/s/r3d4b2</span>', cls: '' },
+      { html: '     <span class="cc-meta">watching for your reactions' +
+              '<span class="term-cursor"></span></span>', cls: 'dim', wait: true }
+    ];
+
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0, step: 0 }
+      : { termLine: 300, browserIn: 500, step: 360 };
+
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+
+    // a reaction: log it, learn from it, advance the card, and (after ~3)
+    // print the refined recommendation.
+    function react(kept) {
+      if (idx >= BOOKS.length) return;
+      var b = BOOKS[idx];
+      b._reacted = true;
+      reactions++;
+
+      // drop the wait cursor on the first reaction.
+      var wait = document.getElementById('read-wait');
+      if (wait) { wait.remove(); }
+
+      // learn the signals: kept -> positive chip; skipped -> "no <signal>".
+      b.signals.forEach(function (s) {
+        if (kept) { learn(s, false); }
+        else if (s === 'romance' || s.indexOf('light') !== -1) { learn(s, true); }
+      });
+
+      var verb = kept ? 'kept' : 'skipped';
+      termGap();
+      termLine('  <span class="cc-tree">⎿</span> <span class="ev">reactions</span>  ' +
+        verb + ' <span class="cc-meta">' + esc(b.ttl) + ' · ' + esc(b.signals.join(', ')) + '</span>');
+
+      // advance the card after a beat.
+      var advance = function () {
+        idx++;
+        renderCard();
+        maybeRefine();
+      };
+      setTimeout(advance, reduceMotion ? 0 : 260);
+    }
+
+    // after ~3 reactions, the agent prints a refined recommendation once.
+    function maybeRefine() {
+      if (refined || reactions < 3) return;
+      refined = true;
+      var next = refinedPick();
+      var kept = taste.filter(function (t) { return !t.skip; })
+        .map(function (t) { return t.label; });
+      var skipped = taste.filter(function (t) { return t.skip; })
+        .map(function (t) { return t.label.replace(/^no /, ''); });
+
+      var seq = [];
+      seq.push({ d: DELAYS.step, fn: function () {
+        termGap();
+        var keepTxt = kept.length ? kept.slice(0, 2).join(' and ') : 'what you keep';
+        var skipTxt = skipped.length ? skipped[0] : 'the rest';
+        termLine('<span class="cc-dot">⏺</span> Noted: you keep your ' + esc(keepTxt) +
+          ', you skip ' + esc(skipTxt) + '. Re-ranking your shelf.');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(pane records list reactions)  <span class="cc-meta">' + reactions +
+          ' reactions read</span>');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('<span class="cc-dot">⏺</span> Based on your taste, next up: ' +
+          '<span class="ok">' + esc(next.ttl) + '</span> by ' + esc(next.au) + '.');
+        termLine('<span class="pr">$</span> <span class="term-cursor"></span>');
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= seq.length) return;
+        var step = seq[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    function wireButtons() {
+      var skip = document.getElementById('read-skip');
+      var add = document.getElementById('read-add');
+      if (skip) skip.addEventListener('click', function () { react(false); });
+      if (add) add.addEventListener('click', function () { react(true); });
+    }
+
+    // staged intro: auto-plays when tab 6 ("Find your next read") opens.
+    function playReadIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1: only the terminal, single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (stage) stage.classList.add('release-cols-1');
+      term.innerHTML = '';
+
+      // STAGE 2: stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = READ_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3: the human "clicks" the link; the recommendation card slides in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) stage.classList.remove('release-cols-1');
+          renderCard();
+          enterCol(colPane);
+          introState = 'done';
+        };
+        var link = document.getElementById('read-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the pane hidden and the stage collapsed to one column.
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (stage) stage.classList.add('release-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneReadIntro = playReadIntro;
+  })();
+  </script>
+
+  <!-- ============ plan a trip demo (tab 7): a weather-aware trip pane ============ -->
+  <!-- the personal example: a pane built for one trip. the agent checks the
+       forecast, builds a packing checklist + day-by-day plan (each item a
+       pane-doc), and re-plans when conditions change. you tick items off and
+       can tell it the forecast moved. self-contained IIFE, null-guarded. -->
+  <script>
+  (function () {
+    var pane = document.getElementById('trip-pane');
+    var term = document.getElementById('trip-term');
+    if (!pane || !term) return;
+    var stage = document.getElementById('trip-stage');
+    var colPane = document.getElementById('trip-col-pane');
+
+    var reduceMotion = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+    // the trip the agent planned for you. weather drives packing + plan.
+    var WEATHER = [
+      { d: 'Tue', icon: '☀', t: '24°' },
+      { d: 'Wed', icon: '☀', t: '23°' },
+      { d: 'Thu', icon: '☀', t: '24°' }
+    ];
+
+    // packing list: each item is a mutable pane-doc in the `packing` collection.
+    var PACKING = [
+      { id: 'jacket', label: 'Light jacket' },
+      { id: 'sunscreen', label: 'Sunscreen' },
+      { id: 'shoes', label: 'Walking shoes' },
+      { id: 'adapter', label: 'Power adapter' }
+    ];
+
+    // day-by-day plan. Thursday's outdoor pick is the one we swap on rain.
+    var ITIN = [
+      { day: 'Tue', acts: ['Alfama walking tour', 'Sunset at Miradouro'] },
+      { day: 'Wed', acts: ['Belém + pastéis', 'Tram 28 ride'] },
+      { day: 'Thu', acts: ['Sintra day trip (outdoors)'], indoor: false }
+    ];
+
+    var adapted = false;     // guards the one-time re-plan
+    var introState = 'idle';
+
+    // ---- the trip pane (left) ----
+    function renderPane() {
+      var wx = WEATHER.map(function (w, i) {
+        return '<div class="trip-day-wx' + (w.changed ? ' changed' : '') + '">' +
+          '<div class="wx-d">' + esc(w.d) + '</div>' +
+          '<div class="wx-i">' + esc(w.icon) + '</div>' +
+          '<div class="wx-t">' + esc(w.t) + '</div>' +
+        '</div>';
+      }).join('');
+
+      var packing = PACKING.map(function (p) {
+        return '<div class="check' + (p.on ? ' on' : '') + (p.fresh ? ' trip-new' : '') +
+          '" role="checkbox" tabindex="0" aria-checked="' + (p.on ? 'true' : 'false') +
+          '" data-pack="' + esc(p.id) + '">' +
+          '<span class="box"></span><span class="ct">' + esc(p.label) + '</span>' +
+        '</div>';
+      }).join('');
+
+      var itin = ITIN.map(function (day) {
+        var acts = day.acts.map(function (a, i) {
+          var indoor = day.indoor && i === 0;
+          return '<div class="trip-act' + (indoor ? ' indoor' : '') + '">• ' + esc(a) + '</div>';
+        }).join('');
+        return '<div class="trip-day"><div class="trip-day-name">' + esc(day.day) +
+          '</div>' + acts + '</div>';
+      }).join('');
+
+      pane.innerHTML =
+        '<div class="trip-head">' +
+          '<span class="trip-dest">Lisbon</span>' +
+          '<span class="trip-dur">· 3 days</span>' +
+        '</div>' +
+        '<div class="trip-weather">' + wx + '</div>' +
+        '<div class="trip-sec-hd">Packing</div>' +
+        packing +
+        '<div class="trip-itin">' +
+          '<div class="trip-sec-hd">Itinerary</div>' +
+          itin +
+        '</div>' +
+        '<button class="trip-adapt" type="button" id="trip-adapt"' +
+          (adapted ? ' disabled' : '') + '>' +
+          (adapted ? 'Re-planned for Thursday rain' :
+            'Forecast changed: rain moved to Thursday') +
+        '</button>';
+      wire();
+    }
+
+    // ---- the agent terminal (right) ----
+    function termLine(html, cls) {
+      var d = document.createElement('div');
+      d.className = 'ln' + (reduceMotion ? '' : ' reveal') + (cls ? ' ' + cls : '');
+      d.innerHTML = html;
+      term.appendChild(d);
+      term.scrollTop = term.scrollHeight;
+      return d;
+    }
+    function termGap() {
+      var d = document.createElement('div');
+      d.className = 'gap';
+      term.appendChild(d);
+    }
+    function renderTermEntry(step) {
+      if (step.gap) { termGap(); return null; }
+      var d = termLine(step.html, step.cls);
+      if (step.wait) d.id = 'trip-wait';
+      return d;
+    }
+
+    // the startup sequence: check the forecast, build the pane, write the
+    // packing list and the plan, then wait.
+    var TRIP_TERM_INITIAL = [
+      { html: '<span class="cc-meta">✻ Claude Code · ~/trips/lisbon</span>', cls: '' },
+      { gap: true },
+      { html: '<div class="cc-input"><span class="caret">&gt;</span>' +
+              '<span class="txt">plan my 3 days in lisbon</span></div>' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Checking the forecast for your dates.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(weather lisbon --next 3d)  <span class="cc-meta">Tue ☀ Wed ☀ Thu ☀</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> Built a trip pane: packing list plus a ' +
+              'day-by-day plan.' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane session create --template trip-planner)  ' +
+              '<span class="cc-meta">pane-docs: packing</span>', cls: '' },
+      { html: '     <span class="ok">✓</span> session <span class="ev">pan_t7p1k9</span>' +
+              ' created', cls: '' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+              '(pane records upsert packing)  <span class="cc-meta">4 items written</span>', cls: '' },
+      { gap: true },
+      { html: '<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Your trip ' +
+              'pane is live. This one is just for you:' },
+      { html: '  <span class="cc-tree">⎿</span> <span class="url" id="trip-url">' +
+              'https://relay.paneui.com/s/t7p1k9</span>', cls: '' },
+      { html: '     <span class="cc-meta">watching your packing and the forecast' +
+              '<span class="term-cursor"></span></span>', cls: 'dim', wait: true }
+    ];
+
+    var DELAYS = reduceMotion
+      ? { termLine: 0, browserIn: 0, step: 0 }
+      : { termLine: 300, browserIn: 500, step: 360 };
+
+    function enterCol(col) {
+      if (!col) return;
+      col.classList.remove('quiz-pending');
+      if (reduceMotion) return;
+      col.classList.add('quiz-enter');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { col.classList.add('quiz-in'); });
+      });
+    }
+
+    function dropWait() {
+      var wait = document.getElementById('trip-wait');
+      if (wait) wait.remove();
+    }
+
+    // ticking a packing item: flip the doc, log a subtle line.
+    function togglePack(id) {
+      var item = PACKING.filter(function (p) { return p.id === id; })[0];
+      if (!item) return;
+      item.on = !item.on;
+      item.fresh = false;
+      dropWait();
+      renderPane();
+      termLine('  <span class="cc-tree">⎿</span> <span class="ev">packing</span>  ' +
+        (item.on ? 'packed' : 'unpacked') + ' <span class="cc-meta">' +
+        esc(item.label) + '</span>');
+    }
+
+    // the payoff: tell the agent the forecast moved. it re-plans Thursday
+    // (outdoor -> indoor) and adds rain gear via pane records upsert.
+    function adapt() {
+      if (adapted) return;
+      adapted = true;
+      dropWait();
+
+      // update the data the pane renders from.
+      WEATHER[2].icon = '🌧';
+      WEATHER[2].t = '18°';
+      WEATHER[2].changed = true;
+      ITIN[2].acts = ['Tile Museum (indoors)', 'Time Out Market lunch'];
+      ITIN[2].indoor = true;
+      PACKING.push({ id: 'umbrella', label: 'Umbrella', fresh: true });
+      renderPane();
+
+      var seq = [];
+      seq.push({ d: DELAYS.step, fn: function () {
+        termGap();
+        termLine('<span class="cc-dot">⏺</span> Forecast moved: rain on Thursday. ' +
+          'Re-planning that day.');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(pane records list packing)  <span class="cc-meta">' + (PACKING.length - 1) +
+          ' items read</span>');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('<span class="cc-dot">⏺</span> Swapped Sintra (outdoors) for the ' +
+          '<span class="ok">Tile Museum</span>, an indoor pick.');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('  <span class="cc-tree">⎿</span> <span class="cc-tool">Bash</span>' +
+          '(pane records upsert packing)  <span class="cc-meta">added Umbrella</span>');
+        termLine('     <span class="ok">✓</span> <span class="ev">packing</span> updated');
+      }});
+      seq.push({ d: DELAYS.step, fn: function () {
+        termLine('<span class="cc-dot">⏺</span> <span class="ok">Done.</span> Thursday ' +
+          'is dry-day proof. Your packing and plan are updated.');
+        termLine('<span class="pr">$</span> <span class="term-cursor"></span>');
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= seq.length) return;
+        var step = seq[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    function wire() {
+      var btn = document.getElementById('trip-adapt');
+      if (btn) btn.addEventListener('click', adapt);
+      var checks = pane.querySelectorAll('.check[data-pack]');
+      Array.prototype.forEach.call(checks, function (c) {
+        var id = c.getAttribute('data-pack');
+        c.addEventListener('click', function () { togglePack(id); });
+        c.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePack(id); }
+        });
+      });
+    }
+
+    // staged intro: auto-plays when tab 7 ("Plan a trip") opens.
+    function playTripIntro() {
+      if (introState !== 'idle') return;
+      introState = 'playing';
+
+      // STAGE 1: only the terminal, single centered column.
+      if (colPane) colPane.classList.add('quiz-pending');
+      if (stage) stage.classList.add('release-cols-1');
+      term.innerHTML = '';
+
+      // STAGE 2: stream the startup lines one at a time.
+      var L = DELAYS.termLine;
+      var script = TRIP_TERM_INITIAL.map(function (entry) {
+        return { d: L, fn: function () { renderTermEntry(entry); } };
+      });
+
+      // STAGE 3: the human "clicks" the link; the trip pane slides in.
+      script.push({ d: DELAYS.browserIn, fn: function () {
+        var open = function () {
+          if (stage) stage.classList.remove('release-cols-1');
+          renderPane();
+          enterCol(colPane);
+          introState = 'done';
+        };
+        var link = document.getElementById('trip-url');
+        if (link && window.__paneClickLink) window.__paneClickLink(link, open);
+        else open();
+      }});
+
+      var s = 0;
+      (function run() {
+        if (s >= script.length) return;
+        var step = script[s++];
+        setTimeout(function () { step.fn(); run(); }, step.d);
+      })();
+    }
+
+    // start with the pane hidden and the stage collapsed to one column.
+    if (colPane) colPane.classList.add('quiz-pending');
+    if (stage) stage.classList.add('release-cols-1');
+
+    // expose the intro trigger so the tab-switch IIFE can auto-play it.
+    window.__paneTripIntro = playTripIntro;
   })();
   </script>
 
