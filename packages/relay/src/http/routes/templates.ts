@@ -6,6 +6,7 @@ import {
   createArtifactSchema,
   createArtifactVersionSchema,
   patchArtifactMetadataSchema,
+  isRasterImageMime,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { requireAgent, type AuthEnv } from "../auth.js";
@@ -166,6 +167,7 @@ templates.post("/", async (c) => {
     input_schema,
     record_schema,
     template_record_schema,
+    icon_emoji,
   } = parsed.data;
 
   const eventSchema = validateVersionContent(config, {
@@ -201,6 +203,10 @@ templates.post("/", async (c) => {
           description: description ?? null,
           tags: tagsToJson(tags),
           latestVersion: 1,
+          // Icon emoji is validated by the Zod schema (single grapheme).
+          // Image icons are set post-create via PATCH once the attachment
+          // can reference this template's id.
+          iconEmoji: icon_emoji ?? null,
         },
       });
       await tx.templateVersion.create({
@@ -483,12 +489,66 @@ templates.patch("/:id", async (c) => {
       "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
     );
   }
-  const { name, slug, description, tags } = parsed.data;
+  const { name, slug, description, tags, icon_emoji, icon_attachment_id } =
+    parsed.data;
   const data: Prisma.TemplateUpdateInput = {};
   if (name !== undefined) data.name = name;
   if (slug !== undefined) data.slug = slug;
   if (description !== undefined) data.description = description;
   if (tags !== undefined) data.tags = tags as unknown as Prisma.InputJsonValue;
+
+  // Icon emoji: validated by the Zod schema (single grapheme). `null` clears.
+  if (icon_emoji !== undefined) data.iconEmoji = icon_emoji;
+
+  // Icon image attachment. `null` clears the pointer; a value must reference a
+  // ready, raster-image, template-scoped attachment that belongs to THIS
+  // template and is owned by one of the caller's same-human agents (#283
+  // scope). Any miss collapses to 400/403 — never reveal a foreign id exists.
+  if (icon_attachment_id !== undefined) {
+    if (icon_attachment_id === null) {
+      data.iconAttachment = { disconnect: true };
+    } else {
+      const att = await prisma.attachment.findUnique({
+        where: { id: icon_attachment_id },
+        select: {
+          ownerId: true,
+          scope: true,
+          templateId: true,
+          status: true,
+          mime: true,
+          deletedAt: true,
+        },
+      });
+      // Opaque: a foreign / missing id is "not accessible" (403), distinct from
+      // "exists and accessible but not a valid icon" (400).
+      if (
+        !att ||
+        att.deletedAt !== null ||
+        !scope.has(att.ownerId) ||
+        att.scope !== "template" ||
+        att.templateId !== template.id
+      ) {
+        throw errors.forbidden(
+          "forbidden",
+          "icon_attachment_id must reference a template-scoped attachment you uploaded against this template",
+          "upload the image with POST /v1/attachments (scope=template, template_id=<this template>), then PATCH with the returned id",
+        );
+      }
+      if (att.status !== "ready") {
+        throw errors.invalidRequest(
+          "icon_attachment_id must reference a ready (confirmed) attachment",
+        );
+      }
+      if (!isRasterImageMime(att.mime)) {
+        throw errors.invalidRequest(
+          `icon_attachment_id must be a raster image (png, jpeg, webp, gif); got ${att.mime}`,
+          undefined,
+          "SVG and non-image attachments are rejected as icons",
+        );
+      }
+      data.iconAttachment = { connect: { id: icon_attachment_id } };
+    }
+  }
 
   let updated;
   try {

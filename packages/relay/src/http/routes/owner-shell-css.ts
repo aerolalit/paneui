@@ -959,6 +959,43 @@ export const OWNER_SHELL_CSS = `
     padding: 1px 5px; border-radius: 3px; color: var(--brand-1);
   }
 
+  /* ----- Template / pane icons -----
+   * Each .icon box (fav-tile, app-tile, pane-row) is now a neutral square
+   * container; its inner element decides the look. Render order is
+   * image → emoji → gradient monogram (the always-works fallback). All three
+   * inner variants fill the box and inherit its border-radius so swapping the
+   * source never changes the tile's silhouette. */
+  .tile-img,
+  .tile-emoji,
+  .tile-monogram {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: inherit;
+    overflow: hidden;
+  }
+  /* Uploaded raster image — cover the square, rounded to match the box. */
+  .tile-img {
+    object-fit: cover;
+    display: block;
+  }
+  /* Emoji — centered glyph on a subtle neutral background so a transparent
+   * emoji still reads against the page. Slightly smaller than the box so the
+   * glyph isn't clipped by the rounded corners. */
+  .tile-emoji {
+    background: var(--surface-2);
+    line-height: 1;
+    /* Scale the emoji to the box; em is relative to the box's font-size,
+     * which each context sets on .icon (32 / 26 / 17px). */
+    font-size: 0.92em;
+  }
+  /* Gradient monogram — the inline background (per-seed hue) is set on the
+   * element itself; this just lays out the initials. */
+  .tile-monogram {
+    color: #07090f;
+    font-weight: 700;
+    line-height: 1;
+  }
+
   /* ============== Agent-init instructions modal ============== */
   .ai-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .ai-modal[hidden] { display: none; }

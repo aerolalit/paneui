@@ -3,6 +3,14 @@
 // or callback config — before it hits the relay, producing clear errors.
 
 import { z } from "zod";
+import { validateIconEmoji } from "./icons.js";
+
+// A validated icon emoji: exactly one emoji grapheme (see ./icons.ts). Used in
+// template/pane create + patch payloads. Rejects letters/digits/control chars
+// and multi-grapheme strings with a clear message.
+const iconEmojiSchema = z.string().refine((s) => validateIconEmoji(s).ok, {
+  message: "icon_emoji must be exactly one emoji (a single grapheme)",
+});
 
 // The template `type` discriminant. `html-inline` carries raw HTML in `source`;
 // `html-ref` carries a URL. The relay rejects `html-ref` in this release.
@@ -104,6 +112,12 @@ export const createPaneSchema = z.object({
     .max(256)
     .regex(/^[A-Za-z0-9_:.-]+$/, "context_key must be a short identifier")
     .optional(),
+  // Per-pane icon override. `icon_emoji` is a single emoji grapheme;
+  // `icon_attachment_id` references a ready, agent-accessible raster image
+  // attachment (validated server-side). NULL/absent = inherit the template's
+  // icon. NO external URLs.
+  icon_emoji: iconEmojiSchema.optional(),
+  icon_attachment_id: z.string().min(1).optional(),
 });
 
 // POST /v1/templates — create a named, reusable template plus its v1 content.
@@ -124,6 +138,10 @@ export const createArtifactSchema = z.object({
   // version so the publisher can curate shared content visible to every
   // derived pane.
   template_record_schema: z.unknown().optional(),
+  // Optional template icon emoji (a single emoji grapheme). Image icons are
+  // set post-create via PATCH /v1/templates/:id, since the uploaded
+  // attachment must reference this template's id first.
+  icon_emoji: iconEmojiSchema.optional(),
 });
 
 // POST /v1/templates/:id/versions — append a new version (content only).
@@ -145,6 +163,12 @@ export const patchArtifactMetadataSchema = z.object({
   slug: z.string().min(1).optional(),
   description: z.string().optional(),
   tags: z.array(z.string().min(1)).optional(),
+  // Template icon. Pass a single emoji grapheme (icon_emoji) or a ready,
+  // template-scoped raster image attachment id (icon_attachment_id). Pass
+  // `null` to CLEAR that side. Setting an image and an emoji are independent —
+  // the renderer prefers the image when both are present. NO external URLs.
+  icon_emoji: iconEmojiSchema.nullable().optional(),
+  icon_attachment_id: z.string().min(1).nullable().optional(),
 });
 
 // POST /v1/feedback — an agent submits a bug report, feature request, or note

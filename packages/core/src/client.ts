@@ -78,6 +78,9 @@ export interface CreateArtifactRequest {
   type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
+  /** Optional template icon emoji (a single emoji grapheme). Image icons are
+   *  set post-create via `updateArtifact({ icon_attachment_id })`. */
+  icon_emoji?: string;
 }
 
 /**
@@ -100,6 +103,11 @@ export interface PatchArtifactMetadataRequest {
   slug?: string;
   description?: string;
   tags?: string[];
+  /** Set a single-grapheme emoji icon, or `null` to clear it. */
+  icon_emoji?: string | null;
+  /** Set the icon to a ready, template-scoped raster image attachment, or
+   *  `null` to clear it. */
+  icon_attachment_id?: string | null;
 }
 
 /**
@@ -275,6 +283,9 @@ export class PaneClient {
       ttl: req.ttl,
       metadata: req.metadata,
       callback: req.callback,
+      context_key: req.context_key,
+      icon_emoji: req.icon_emoji,
+      icon_attachment_id: req.icon_attachment_id,
     });
     if (!r.ok) this.fail(r);
     return this.asObject<CreatePaneResponse>(r);
@@ -603,6 +614,7 @@ export class PaneClient {
       type: req.type,
       event_schema: req.event_schema,
       input_schema: req.input_schema,
+      icon_emoji: req.icon_emoji,
     });
     if (!r.ok) this.fail(r);
     return this.asObject<CreateArtifactResponse>(r);
@@ -647,6 +659,10 @@ export class PaneClient {
         slug: metadata.slug,
         description: metadata.description,
         tags: metadata.tags,
+        // Forward null explicitly (clears the icon); undefined is dropped by
+        // JSON.stringify so an omitted field is a no-op server-side.
+        icon_emoji: metadata.icon_emoji,
+        icon_attachment_id: metadata.icon_attachment_id,
       },
     );
     if (!r.ok) this.fail(r);

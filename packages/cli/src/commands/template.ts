@@ -8,10 +8,13 @@
 // once and instancing it via `pane create --template-id` removes the
 // per-use cost of regenerating the same HTML.
 
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import {
   createArtifactSchema,
   createArtifactVersionSchema,
   patchArtifactMetadataSchema,
+  validateIconEmoji,
   type CreateArtifactRequest,
   type CreateArtifactVersionRequest,
   type PatchArtifactMetadataRequest,
@@ -31,7 +34,10 @@ const CREATE_FLAGS = [
   "template-type",
   "event-schema",
   "input-schema",
+  "icon-emoji",
 ];
+const SET_ICON_FLAGS = ["template-id", "emoji", "image"];
+const SET_ICON_BOOLS = ["clear"];
 const VERSION_FLAGS = [
   "template",
   "template-type",
@@ -73,12 +79,17 @@ Subcommands:
   search-public Search the PUBLIC catalog of all published templates from
                 every agent. Use before creating a new template, to find
                 an existing one you can install/recommend instead.
+  set-icon      Set (or clear) a template's icon — a single emoji, or an
+                uploaded raster image (png/jpeg/webp/gif). No SVG, no URLs.
 
   pane template create --name <n> --template <path|inline>
                        [--event-schema <path|json>] [--slug <s>]
                        [--description <d>] [--tags <t1,t2>]
                        [--input-schema <path|json>] [--template-type <t>]
+                       [--icon-emoji <emoji>]
       Creates a named template. Prints { template_id, slug, version }.
+      --icon-emoji sets a single-emoji icon at create time; use 'set-icon'
+      with --image to attach an uploaded image icon afterwards.
 
   pane template version <id|slug> --template <path|inline>
                         [--event-schema <path|json>]
@@ -127,6 +138,16 @@ Subcommands:
       existing one you can install instead of building from scratch.
       Prints { items, total, offset, limit }.
 
+  pane template set-icon --template-id <id> (--emoji <e> | --image <path>)
+  pane template set-icon --template-id <id> --clear
+      Sets the template's icon. Pass exactly one of:
+        --emoji <e>    a single emoji grapheme (rendered inline as text)
+        --image <path> a local raster image (png/jpeg/webp/gif). Uploaded as
+                       a template-scoped attachment, then linked as the icon.
+        --clear        removes both the emoji and the image icon.
+      Image icons are served same-origin from the relay; external URLs and
+      SVG are never accepted. Prints the updated lean template summary.
+
 Options:
   --name <n>          Template display name (required for 'create').
   --slug <s>          Stable, agent-chosen handle (unique per agent). The
@@ -160,6 +181,7 @@ Options:
                       emit against it. See docs/SPEC.md for the full grammar.
   --input-schema <v>  JSON Schema for this template's per-pane input_data —
                       a file path, or inline JSON. Optional.
+  --icon-emoji <e>    Single-emoji icon for the template (create only).
   --template-type <t> "html-inline" (default) or "html-ref".
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
@@ -262,6 +284,8 @@ async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   if (description !== undefined) candidate["description"] = description;
   if (tags !== undefined) candidate["tags"] = tags;
   if (inputSchema !== undefined) candidate["input_schema"] = inputSchema;
+  const iconEmoji = args.flags.get("icon-emoji");
+  if (iconEmoji !== undefined) candidate["icon_emoji"] = iconEmoji;
 
   const parsed = createArtifactSchema.safeParse(candidate);
   if (!parsed.success) {
@@ -542,6 +566,97 @@ async function runTemplateSearchPublic(args: ParsedArgs): Promise<void> {
   }
 }
 
+// `pane template set-icon --template-id <id> (--emoji <e> | --image <path> |
+// --clear)` — set or clear a template's icon. --emoji PATCHes icon_emoji
+// directly; --image uploads the file as a template-scoped attachment then
+// PATCHes icon_attachment_id; --clear nulls both.
+async function runTemplateSetIcon(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(
+    args,
+    SET_ICON_FLAGS,
+    SET_ICON_BOOLS,
+    "pane template set-icon",
+  );
+
+  const templateId = args.flags.get("template-id");
+  if (!templateId) {
+    fail(
+      "missing --template-id <id> — usage: pane template set-icon --template-id <id> (--emoji <e> | --image <path> | --clear)",
+      "invalid_args",
+    );
+  }
+
+  const emoji = args.flags.get("emoji");
+  const imagePath = args.flags.get("image");
+  const clear = args.bools.has("clear");
+
+  // Exactly one of --emoji / --image / --clear.
+  const chosen = [emoji !== undefined, imagePath !== undefined, clear].filter(
+    Boolean,
+  ).length;
+  if (chosen !== 1) {
+    fail(
+      "pass exactly one of --emoji <e>, --image <path>, or --clear",
+      "invalid_args",
+    );
+  }
+
+  const client = makeClient(args);
+
+  if (clear) {
+    try {
+      const res = await client.updateArtifact(templateId!, {
+        icon_emoji: null,
+        icon_attachment_id: null,
+      });
+      printJson(res);
+    } catch (e) {
+      failFromError(e);
+    }
+    return;
+  }
+
+  if (emoji !== undefined) {
+    // Validate client-side for a clear error before the round trip; the relay
+    // re-validates regardless.
+    const v = validateIconEmoji(emoji);
+    if (!v.ok) fail(`invalid --emoji: ${v.error}`, "invalid_args");
+    try {
+      const res = await client.updateArtifact(templateId!, {
+        icon_emoji: emoji,
+      });
+      printJson(res);
+    } catch (e) {
+      failFromError(e);
+    }
+    return;
+  }
+
+  // --image: upload the file as a template-scoped attachment, then link it.
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(imagePath!);
+  } catch (e) {
+    fail(
+      `failed to read --image '${imagePath}': ${e instanceof Error ? e.message : String(e)}`,
+      "invalid_args",
+    );
+  }
+  try {
+    const ref = await client.uploadBlob(bytes!, {
+      scope: "template",
+      templateId: templateId!,
+      filename: basename(imagePath!),
+    });
+    const res = await client.updateArtifact(templateId!, {
+      icon_attachment_id: ref.attachment_id,
+    });
+    printJson(res);
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
 export async function runTemplate(args: ParsedArgs): Promise<void> {
   const sub = args.positionals[0];
   switch (sub) {
@@ -575,15 +690,18 @@ export async function runTemplate(args: ParsedArgs): Promise<void> {
     case "search-public":
       await runTemplateSearchPublic(args);
       break;
+    case "set-icon":
+      await runTemplateSetIcon(args);
+      break;
     case undefined:
       fail(
-        "missing subcommand — usage: pane template <create|version|update|search|list|show|delete|publish|unpublish|search-public> (run 'pane template --help')",
+        "missing subcommand — usage: pane template <create|version|update|search|list|show|delete|publish|unpublish|search-public|set-icon> (run 'pane template --help')",
         "invalid_args",
       );
       break;
     default:
       fail(
-        `unknown template subcommand '${sub}' — expected create|version|update|search|list|show|delete|publish|unpublish|search-public (run 'pane template --help')`,
+        `unknown template subcommand '${sub}' — expected create|version|update|search|list|show|delete|publish|unpublish|search-public|set-icon (run 'pane template --help')`,
         "invalid_args",
       );
   }

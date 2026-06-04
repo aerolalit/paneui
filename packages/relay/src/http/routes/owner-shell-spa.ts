@@ -60,6 +60,12 @@ interface TemplateRef {
    *  to the public catalog. Drives the Publish/Unpublish toggle in the
    *  tile menu. Always false for installed-only or discover tiles. */
   isPublished: boolean;
+  /** Single-grapheme emoji icon, or null. Rendered inline as text when the
+   *  template has no image icon. */
+  iconEmoji: string | null;
+  /** True when the template has an uploaded image icon — served at
+   *  /templates/:id/icon. Takes precedence over the emoji + monogram. */
+  hasIconImage: boolean;
   /** Required input_data fields (name + JSON type) of an agent-init
    *  template's latest version, derived from its input_schema `required`
    *  list. Powers the copy-paste agent instructions shown when a human taps
@@ -79,6 +85,11 @@ interface PaneRef {
   /** True when this pane is starred by the human. Drives the Home
    *  Favorites strip and the star toggle on each pane row. */
   isFavorite: boolean;
+  /** Effective emoji icon (pane override else the template's), or null. */
+  iconEmoji: string | null;
+  /** True when the pane has an EFFECTIVE image icon (pane override else the
+   *  template's) — served at /panes/:id/icon. */
+  hasIconImage: boolean;
 }
 
 interface ShellData {
@@ -141,6 +152,8 @@ async function loadShellData(
             name: true,
             slug: true,
             publishedAt: true,
+            iconEmoji: true,
+            iconAttachmentId: true,
             ...latestVersionInclude,
           },
         }),
@@ -156,6 +169,8 @@ async function loadShellData(
             slug: true,
             publishedAt: true,
             deletedAt: true,
+            iconEmoji: true,
+            iconAttachmentId: true,
             ...latestVersionInclude,
           },
         },
@@ -170,6 +185,8 @@ async function loadShellData(
         name: true,
         slug: true,
         publishedAt: true,
+        iconEmoji: true,
+        iconAttachmentId: true,
         ...latestVersionInclude,
       },
     }),
@@ -193,10 +210,22 @@ async function loadShellData(
         status: true,
         createdAt: true,
         expiresAt: true,
+        // Per-pane icon override (NULL = inherit the template's icon).
+        iconEmoji: true,
+        iconAttachmentId: true,
         templateVersion: {
           select: {
             version: true,
-            template: { select: { id: true, name: true, slug: true } },
+            template: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                // Template's icon — the fallback when the pane has no override.
+                iconEmoji: true,
+                iconAttachmentId: true,
+              },
+            },
           },
         },
       },
@@ -223,6 +252,8 @@ async function loadShellData(
     name: string;
     slug: string | null;
     publishedAt: Date | null;
+    iconEmoji: string | null;
+    iconAttachmentId: string | null;
     versions: Array<{ inputSchema: unknown }>;
   }): TemplateRef {
     return {
@@ -233,6 +264,8 @@ async function loadShellData(
       agentInitFields: requiredInputFields(t.versions[0]?.inputSchema),
       paneCount: paneCountByTemplate.get(t.id) ?? 0,
       isPublished: t.publishedAt !== null,
+      iconEmoji: t.iconEmoji,
+      hasIconImage: t.iconAttachmentId !== null,
     };
   }
   const ownedTemplates = ownedTemplatesRaw.map(toRef);
@@ -244,20 +277,28 @@ async function loadShellData(
     .map(toRef);
 
   const favoritePaneIds = new Set(favoriteRows.map((r) => r.paneId));
-  const panes: PaneRef[] = panesRaw.map((p) => ({
-    id: p.id,
-    title: p.title,
-    status: p.status,
-    createdAt: p.createdAt,
-    expiresAt: p.expiresAt,
-    templateId: p.templateVersion?.template?.id ?? null,
-    templateVersion: p.templateVersion?.version ?? 0,
-    templateName:
-      p.templateVersion?.template?.name ??
-      p.templateVersion?.template?.slug ??
-      null,
-    isFavorite: favoritePaneIds.has(p.id),
-  }));
+  const panes: PaneRef[] = panesRaw.map((p) => {
+    const tpl = p.templateVersion?.template ?? null;
+    // Effective icon = pane override else template's. Resolve image + emoji
+    // independently so a pane that overrides only the emoji still falls back
+    // to the template's image (and vice versa).
+    const hasIconImage =
+      p.iconAttachmentId !== null || (tpl?.iconAttachmentId ?? null) !== null;
+    const iconEmoji = p.iconEmoji ?? tpl?.iconEmoji ?? null;
+    return {
+      id: p.id,
+      title: p.title,
+      status: p.status,
+      createdAt: p.createdAt,
+      expiresAt: p.expiresAt,
+      templateId: tpl?.id ?? null,
+      templateVersion: p.templateVersion?.version ?? 0,
+      templateName: tpl?.name ?? tpl?.slug ?? null,
+      isFavorite: favoritePaneIds.has(p.id),
+      iconEmoji,
+      hasIconImage,
+    };
+  });
   const favoritePanes = panes.filter((p) => p.isFavorite);
 
   return {
@@ -577,14 +618,57 @@ function requiredInputFields(
 
 // ----- Tile / row HTML helpers -----
 
+// Shared inner markup for a square icon box. Render order: image → emoji →
+// gradient monogram (the always-works fallback). The caller wraps this in the
+// context-specific element (a `.icon` div, etc.) and supplies the class.
+//
+//   imageUrl — when set, an <img> filling the box (object-fit: cover). The
+//              server only emits a URL when it knows an image icon exists, so
+//              the <img> won't 404 in normal flow; we still add an onerror
+//              hook that swaps in the monogram as belt-and-braces.
+//   emoji    — a single emoji grapheme, rendered centered on a neutral
+//              background when there's no image.
+//   seedId   — stable seed for the monogram hue (pane/template id).
+//   label    — text the monogram initials are derived from.
+function iconTileInner(opts: {
+  imageUrl?: string;
+  emoji?: string | null;
+  seedId: string;
+  label: string;
+}): string {
+  const hue = paneHue(opts.seedId);
+  const initials = paneInitials(opts.label);
+  const monogramStyle = `background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);`;
+
+  if (opts.imageUrl) {
+    // onerror falls back to the monogram if the image fails to load. The
+    // handler is a static string (no interpolated user data) so it's CSP-safe
+    // even under the shell's strict policy — but note the shell uses a
+    // nonce'd inline-script CSP, so inline event handlers won't execute there.
+    // The fallback is therefore best-effort cosmetic; the access-gated route
+    // makes a 404 unlikely in the first place.
+    return `<img class="tile-img" src="${escapeHtml(opts.imageUrl)}" alt="" loading="lazy" />`;
+  }
+  if (opts.emoji) {
+    return `<span class="tile-emoji">${escapeHtml(opts.emoji)}</span>`;
+  }
+  return `<span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>`;
+}
+
 // Home Favorites strip — each tile is a pane (an instance), not a template.
 // Clicking opens the pane directly.
 function favPaneTile(p: PaneRef): string {
   const label = p.title || p.id;
-  const hue = paneHue(p.id);
-  const initials = paneInitials(label);
+  const inner = iconTileInner({
+    imageUrl: p.hasIconImage
+      ? `/panes/${encodeURIComponent(p.id)}/icon`
+      : undefined,
+    emoji: p.iconEmoji,
+    seedId: p.id,
+    label,
+  });
   return `<a class="fav-tile" href="/panes/${encodeURIComponent(p.id)}" data-pane-id="${escapeHtml(p.id)}">
-    <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
+    <div class="icon">${inner}</div>
     <div class="label">${escapeHtml(label)}</div>
   </a>`;
 }
@@ -601,11 +685,16 @@ function appTile(
 ): string {
   // Human-visible label. Legacy inline templates have name+slug null; never
   // fall back to the raw cuid id here (it reads as random characters in the
-  // UI). The id is still used for hue/data-* attributes below where it's
-  // meaningful, not as a label.
+  // UI). The id is still used for hue/data-* attributes via iconTileInner.
   const name = t.name ?? t.slug ?? "Untitled template";
-  const hue = paneHue(t.id);
-  const initials = paneInitials(name);
+  const inner = iconTileInner({
+    imageUrl: t.hasIconImage
+      ? `/templates/${encodeURIComponent(t.id)}/icon`
+      : undefined,
+    emoji: t.iconEmoji,
+    seedId: t.id,
+    label: name,
+  });
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
   // Agent-init tiles carry the slug + required-field descriptor so the click
   // handler can build copy-paste agent instructions client-side. Only emitted
@@ -644,7 +733,7 @@ function appTile(
   return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
     ${badge}${menuBtn}
     <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${agentInitData}${dataAttr}>
-      <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
+      <div class="icon">${inner}</div>
       <div class="label">${escapeHtml(name)}</div>
     </button>
     ${paneCountChip}
@@ -672,8 +761,14 @@ function paneRow(p: PaneRef): string {
   // templateName is null for legacy inline templates; fall back to the pane's
   // own title (always present), never to the raw cuid id.
   const tplName = p.templateName ?? p.title ?? "Untitled template";
-  const hue = paneHue(p.id);
-  const initials = paneInitials(tplName);
+  const inner = iconTileInner({
+    imageUrl: p.hasIconImage
+      ? `/panes/${encodeURIComponent(p.id)}/icon`
+      : undefined,
+    emoji: p.iconEmoji,
+    seedId: p.id,
+    label: tplName,
+  });
   const rel = relativeDate(p.createdAt);
   const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
   const statusCls = isOpen ? "open" : "closed";
@@ -687,7 +782,7 @@ function paneRow(p: PaneRef): string {
     ? `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>`
     : `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`;
   return `<li class="pane-row" data-pane-id="${escapeHtml(p.id)}" data-href="/panes/${encodeURIComponent(p.id)}"${tplAttr}>
-    <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
+    <div class="icon">${inner}</div>
     <div class="info">
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
