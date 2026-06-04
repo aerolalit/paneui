@@ -703,18 +703,16 @@ function appTile(
   const agentInitData = t.isAgentInit
     ? ` data-template-slug="${escapeHtml(t.slug ?? t.id)}" data-agent-init-fields="${escapeHtml(JSON.stringify(t.agentInitFields))}"`
     : "";
-  // The badge sits at the top-right of the tile, with a clear icon
-  // alongside the word so the type registers at a glance. Earlier versions
-  // tucked a 10px text pill at the bottom — too easy to miss.
+  // Only agent-init templates carry a badge — they can't be launched cold by a
+  // human (an agent must seed input_data first), and clicking one opens the
+  // copy-paste agent instructions. A template with NO badge is ready to use:
+  // "no tag = launchable" is the whole signal, so ready tiles stay unmarked.
   const badge = t.isAgentInit
     ? `<span class="tile-corner agent-init" title="Agent-init template — an agent must seed input_data before launch">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
         agent-init
       </span>`
-    : `<span class="tile-corner ready" title="Ready to launch — no setup needed">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-        ready
-      </span>`;
+    : "";
   // Triple-dots menu — Publish/Unpublish/Delete for owned, Uninstall for
   // installed. Discover tiles get no menu.
   const menuBtn = opts.menu
@@ -728,9 +726,7 @@ function appTile(
     t.paneCount > 0
       ? `<button class="pane-count-chip" data-template-filter="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" title="Show panes from this template">${t.paneCount} ${t.paneCount === 1 ? "pane" : "panes"} →</button>`
       : "";
-  const wrapCls = t.isAgentInit
-    ? "app-tile-wrap agent-init"
-    : "app-tile-wrap ready";
+  const wrapCls = t.isAgentInit ? "app-tile-wrap agent-init" : "app-tile-wrap";
   return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
     ${badge}${menuBtn}
     <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${agentInitData}${dataAttr}>
@@ -910,9 +906,9 @@ const EXTRA_CSS = `
   }
   .filter-banner button:hover { color: var(--ink); border-color: var(--hairline-2); }
 
-  /* "agent-init" / "ready" corner badge — top-left of every template
-     tile. Bigger, brighter, and paired with an icon so the type
-     registers at a glance (previous 10px text pill was missable). */
+  /* "agent-init" corner badge — top-left of agent-init template tiles only.
+     Paired with an icon so the "needs an agent to initialize" type registers
+     at a glance. Ready-to-use templates carry no badge. */
   .tile-corner {
     position: absolute; top: 6px; left: 6px; z-index: 2;
     display: inline-flex; align-items: center; gap: 4px;
@@ -929,12 +925,6 @@ const EXTRA_CSS = `
     border: 1px solid rgba(196, 181, 253, 0.55);
     box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.10) inset;
   }
-  .tile-corner.ready {
-    color: #ccfbf1;
-    background: rgba(20, 184, 166, 0.28);
-    border: 1px solid rgba(94, 234, 212, 0.50);
-    box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.10) inset;
-  }
   /* Light mode: the badge text was tuned light-on-translucent for the dark
      tile; on a white tile it needs dark text + a slightly stronger tint. */
   @media (prefers-color-scheme: light) {
@@ -942,11 +932,6 @@ const EXTRA_CSS = `
       color: #6b21a8;
       background: rgba(168, 85, 247, 0.14);
       border-color: rgba(168, 85, 247, 0.40);
-    }
-    .tile-corner.ready {
-      color: #0f766e;
-      background: rgba(20, 184, 166, 0.14);
-      border-color: rgba(20, 184, 166, 0.40);
     }
   }
 
@@ -962,10 +947,10 @@ const EXTRA_CSS = `
   }
   .app-tile-wrap .tile-menu-btn:hover { color: var(--ink); transform: scale(1.06); }
 
-  /* Subtle outer accent on the wrap so the type carries even without
-     a visible badge (e.g. when scrolling fast / dense grid). */
+  /* Subtle outer accent on agent-init wraps so the type carries even without
+     a visible badge (e.g. when scrolling fast / dense grid). Ready tiles get
+     no accent — no badge, no outline: their plainness IS the signal. */
   .app-tile-wrap.agent-init .app-tile { box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.18); }
-  .app-tile-wrap.ready .app-tile { box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18); }
 
   /* Lightweight floating popover for pane-row triple-dots menu. */
   .pane-menu-pop {
