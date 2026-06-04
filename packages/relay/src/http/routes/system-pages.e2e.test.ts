@@ -360,13 +360,27 @@ describe("Owner-shell SPA at /home", () => {
         expiresAt: new Date(Date.now() + 3600_000),
       },
     });
+    await prisma.pane.create({
+      data: {
+        id: `pan_${randomBytes(8).toString("hex")}`,
+        agentId: agent.id,
+        ownerHumanId: humanId,
+        templateVersionId: version.id,
+        title: "Closed pane",
+        status: "closed",
+        expiresAt: new Date(Date.now() + 3600_000),
+      },
+    });
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain('class="pane-row"');
     expect(html).toContain("Yesterday's pane");
-    expect(html).toContain(">open<");
+    // Open is the default state, so open rows render no status pill (just an
+    // empty cell) — only the exceptional "closed" state is flagged.
+    expect(html).not.toContain(">open<");
+    expect(html).toContain(">closed<");
   });
 });
 

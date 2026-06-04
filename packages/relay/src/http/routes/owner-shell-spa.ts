@@ -805,8 +805,12 @@ function paneRow(p: PaneRef): string {
   });
   const rel = relativeDate(p.createdAt);
   const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
-  const statusCls = isOpen ? "open" : "closed";
-  const statusText = isOpen ? "open" : "closed";
+  // Open is the default, expected state for every row in this list ("Live
+  // sessions … Click to open"), so a green OPEN pill on every line is just
+  // noise that eats the title's width. Only flag the exception — a closed
+  // pane — and leave the cell empty otherwise so the title reclaims the space.
+  const statusCls = isOpen ? "" : "closed";
+  const statusText = isOpen ? "" : "closed";
   const tplAttr = p.templateId
     ? ` data-template-id="${escapeHtml(p.templateId)}"`
     : "";
@@ -821,7 +825,7 @@ function paneRow(p: PaneRef): string {
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
-    <div class="status ${statusCls}">${statusText}</div>
+    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
     </button>
