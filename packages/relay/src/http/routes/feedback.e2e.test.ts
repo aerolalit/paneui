@@ -51,7 +51,7 @@ async function seedAgent(): Promise<{ id: string; apiKey: string }> {
 
 async function seedPane(agentId: string): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId },
+    data: { ownerId: agentId, name: "Feedback Test" },
   });
   const av = await prisma.templateVersion.create({
     data: {

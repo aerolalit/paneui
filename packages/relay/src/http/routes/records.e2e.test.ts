@@ -77,7 +77,7 @@ async function seedAgent(): Promise<{ apiKey: string; agentId: string }> {
 
 async function seedPaneWithRecords(agentId: string): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId, latestVersion: 1 },
+    data: { ownerId: agentId, name: "Records Test", latestVersion: 1 },
   });
   const version = await prisma.templateVersion.create({
     data: {

@@ -70,6 +70,7 @@ function createPane(apiKey: string): Promise<Response> {
       },
       body: JSON.stringify({
         template: {
+          name: "Test template",
           type: "html-inline",
           source: "<html></html>",
           event_schema: minimalSchema,

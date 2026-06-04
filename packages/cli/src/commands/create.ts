@@ -12,6 +12,8 @@ const KNOWN_FLAGS = [
   "template",
   "template-id",
   "template-type",
+  "name",
+  "slug",
   "version",
   "event-schema",
   "input-schema",
@@ -56,6 +58,8 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   "template.id": "--template-id",
   "template.version": "--version",
   "template.type": "--template-type",
+  "template.name": "--name",
+  "template.slug": "--slug",
   "template.source": "--template",
   "template.event_schema": "--event-schema",
   "template.input_schema": "--input-schema",
@@ -96,6 +100,14 @@ Template (choose one):
                       the template's latest version.
   --template <v>      Inline HTML template. Either a file path / URL, or inline
                       HTML. Combine with --template-type to control reading.
+  --name <text>       Inline-form template name. REQUIRED with --template so
+                      the auto-created template carries a readable label in the
+                      owner-shell UI (and so --title can fall back to it).
+                      Rejected with --template-id (the reference form inherits
+                      the existing template's name).
+  --slug <text>       Inline-form template slug (optional). Must be unique among
+                      your templates; a collision is rejected. Rejected with
+                      --template-id.
   --event-schema <v>  Inline-form event schema. A .json file, or inline JSON.
                       Optional with --template. Omit for a view-only template
                       (a report/dashboard the human only views — no page/agent
@@ -131,10 +143,10 @@ Template (choose one):
 
 Options:
   --title <text>      Tab title shown to the human (max 80 chars, single
-                      line). Required, with one ergonomic exception: when
-                      --template-id references a named template, the relay
-                      falls back to Template.name. Inline (--template …) form
-                      always needs --title.
+                      line). Optional: when omitted, the relay falls back to
+                      the template's name — the existing Template.name for the
+                      reference form, or the --name you pass for the inline
+                      form.
   --preamble <text>   Optional one- or two-line context message rendered in
                       the shell band above the iframe — "who is asking, why".
                       Max 280 chars after trim; a single \\n is allowed for a
@@ -220,6 +232,21 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
         "invalid_args",
       );
     }
+    // --name / --slug name the inline form's auto-created template. The
+    // reference form inherits the existing Template.name/slug, so they have
+    // no meaning here — reject rather than silently ignore.
+    if (args.flags.get("name") !== undefined) {
+      fail(
+        "--name is incompatible with --template-id — the reference form inherits the existing template's name. Use --name only with --template (inline form).",
+        "invalid_args",
+      );
+    }
+    if (args.flags.get("slug") !== undefined) {
+      fail(
+        "--slug is incompatible with --template-id — the reference form inherits the existing template's slug. Use --slug only with --template (inline form).",
+        "invalid_args",
+      );
+    }
     const ref: Record<string, unknown> = { id: artifactIdVal };
     const versionRaw = args.flags.get("version");
     if (versionRaw !== undefined) {
@@ -263,14 +290,32 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
       fail(e instanceof Error ? e.message : String(e), "invalid_args");
     }
 
+    // --name is REQUIRED for the inline form: the relay names the
+    // auto-created template with it so the owner-shell UI has a readable
+    // label (the reference form inherits the existing Template.name instead).
+    // --slug is optional. Both are inline-only — they are rejected with
+    // --template-id below.
+    const nameVal = args.flags.get("name");
+    if (nameVal === undefined || nameVal === "") {
+      fail(
+        "--name is required with --template (inline form); it names the auto-created template so the UI shows a readable label",
+        "invalid_args",
+      );
+    }
+    const slugVal = args.flags.get("slug");
+
     // Build the inline template object. event_schema / input_schema are
     // OMITTED entirely (not set to undefined) when their flags are absent —
     // omission is meaningful at the relay (view-only template / no input
     // contract).
     const inlineArtifact: Record<string, unknown> = {
+      name: nameVal,
       type: templateType,
       source,
     };
+    if (slugVal !== undefined) {
+      inlineArtifact["slug"] = slugVal;
+    }
     if (schemaVal !== undefined) {
       try {
         inlineArtifact["event_schema"] = resolveJson(

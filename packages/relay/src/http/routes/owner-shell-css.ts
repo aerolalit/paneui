@@ -982,4 +982,49 @@ export const OWNER_SHELL_CSS = `
     font-weight: 700;
     line-height: 1;
   }
+
+  /* ============== Agent-init instructions modal ============== */
+  .ai-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .ai-modal[hidden] { display: none; }
+  .ai-modal-backdrop { position: absolute; inset: 0; background: rgba(4, 6, 10, 0.66); backdrop-filter: blur(2px); }
+  .ai-modal-card {
+    position: relative; z-index: 1; width: 100%; max-width: 520px;
+    max-height: calc(100% - 32px); overflow-y: auto;
+    background: var(--bg-2); border: 1px solid var(--hairline);
+    border-radius: 16px; padding: 22px 22px 18px;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.5);
+  }
+  .ai-modal-x {
+    position: absolute; top: 12px; right: 12px;
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; padding: 6px; border-radius: 8px; line-height: 0;
+  }
+  .ai-modal-x:hover { background: var(--surface); color: var(--ink); }
+  .ai-modal-head { display: flex; align-items: center; gap: 10px; margin: 0 28px 10px 0; }
+  .ai-modal-badge {
+    display: inline-flex; align-items: center; gap: 5px; flex: none;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    color: #c9a8ff; background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.34);
+    padding: 3px 9px; border-radius: 999px;
+  }
+  .ai-modal-head h2 { margin: 0; font-size: 17px; color: var(--ink); line-height: 1.3; }
+  .ai-modal-lead { margin: 0 0 14px; color: var(--ink-dim); font-size: 13.5px; line-height: 1.5; }
+  .ai-modal-lead code { font-family: var(--mono); font-size: 12px; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; color: var(--brand-1); }
+  .ai-modal-instr { position: relative; }
+  .ai-modal-instr pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 14px 14px 14px; padding-right: 64px;
+  }
+  .ai-modal-copy {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    color: var(--ink); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+    padding: 5px 12px; border-radius: 7px; min-height: 30px;
+  }
+  .ai-modal-copy:hover { background: var(--surface); }
+  .ai-modal-copy.copied { color: var(--brand-1); border-color: var(--brand-1); }
+  .ai-modal-foot { margin: 12px 0 0; color: var(--ink-mute); font-size: 12.5px; }
 `;

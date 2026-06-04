@@ -283,22 +283,26 @@ pane create --template-id pr-review --input-data ./pr-42.json --ttl 600
 Or inline a one-off template:
 
 ```sh
-pane create --template ./form.html --event-schema ./schema.json \
-  --title "Quick poll" --ttl 600
+pane create --template ./form.html --name "Quick poll" \
+  --event-schema ./schema.json --title "Quick poll" --ttl 600
 ```
 
+- `--name <text>` — **required for the inline form** (`--template`). It names
+  the template the relay auto-creates behind the inline pane so it shows a
+  readable label in the owner UI instead of a random-looking id. Rejected with
+  `--template-id` (the reference form inherits the existing template's name).
+- `--slug <text>` — optional inline-form slug; must be unique among your
+  templates. Rejected with `--template-id`.
 - `--title <text>` — the human's browser tab title for this pane (max 80
   chars, single line). Set a descriptive, per-pane value so a human with
-  several panes open can tell tabs apart. **Required, with one exception:**
-  reference-form panes (`--template-id`) against a named template fall back
-  to the template's `name`. So `pane template create --name "PR Review"` +
-  `pane create --template-id pr-review` is fine; `pane create --template …`
-  (inline) always needs `--title`.
+  several panes open can tell tabs apart. **Optional:** when omitted the relay
+  falls back to the template's name — the existing `name` for the reference
+  form, or the `--name` you pass for the inline form.
 - `--template-id <v>` — reference an existing template by id or slug. Pair with
   `--version <n>` to pin a specific version (defaults to the latest).
-- `--template <v>` — inline HTML UI: a file path, or inline HTML. (A remote-URL
-  type, `html-ref`, exists in the schema but the relay does not serve it in
-  this release — pass the HTML inline.)
+- `--template <v>` — inline HTML UI: a file path, or inline HTML. Pair with
+  `--name` (required). (A remote-URL type, `html-ref`, exists in the schema
+  but the relay does not serve it in this release — pass the HTML inline.)
 - `--event-schema <v>` — the event vocabulary (see **The schema** below). A `.json`
   file or inline JSON. Used with `--template`; not needed with `--template-id`.
   **Optional** — omit it for a view-only template (see **View-only artifacts**
@@ -1382,7 +1386,7 @@ you with the result.
 
 ```sh
 # 1. create the pane
-OUT=$(pane create --template ./review.html --event-schema ./review-schema.json --ttl 900)
+OUT=$(pane create --template ./review.html --name "PR review" --event-schema ./review-schema.json --ttl 900)
 SID=$(echo "$OUT" | jq -r .pane_id)
 URL=$(echo "$OUT" | jq -r '.urls.humans[0]')
 

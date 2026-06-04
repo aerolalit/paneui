@@ -262,13 +262,15 @@ model Feedback {
 
 // A reusable, versioned template owned by an agent. The head row carries the
 // mutable identity (name, slug, description, tags); the per-version content
-// lives in TemplateVersion. An anonymous template (name/slug null) is created
-// transparently for an inline one-off pane.
+// lives in TemplateVersion. Every template is named — both the reference form
+// (`pane template create`) and the inline one-off form (`pane create
+// --template`) supply `name`, so the owner-shell UI always has a readable
+// label. `slug` stays optional (a stable handle one-offs rarely need).
 model Template {
   id            String            @id @default(cuid())
   ownerId       String            @map("owner_id")
   owner         Agent             @relation(fields: [ownerId], references: [id])
-  name          String?
+  name          String
   slug          String?
   description   String?
   tags          Json?

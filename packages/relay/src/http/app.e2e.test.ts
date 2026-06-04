@@ -82,6 +82,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "POST /v1/panes creates a pane, returns 201 + tokens + urls",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -113,6 +114,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "rejects template.type",
               type: "html-ref",
               source: "https://example.com/page",
               event_schema: minimalSchema,
@@ -143,6 +145,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "rejects ttl > MAX_TTL_SECONDS with 400 invalid_request (#137",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -172,6 +175,7 @@ describe("HTTP e2e", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             template: {
+              name: "rejects an unauthenticated request with 401",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -191,6 +195,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "rejects an SSRF-style callback URL with 400 before any DB wr",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -217,6 +222,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "encrypts the callback secret at rest",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -245,6 +251,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "DELETE /v1/panes/:id closes a pane and a follow-up event fai",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -291,6 +298,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "DELETE /v1/panes/:id closes a pane and a follow-up event fai",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -489,6 +497,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "wrong-pane participant token returns 404",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -512,6 +521,7 @@ describe("HTTP e2e", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             template: {
+              name: "401 is not retryable and carries a hint + docs_url",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -647,6 +657,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "rejects an oversized POST /v1/panes body with 413 payload_to",
               type: "html-inline",
               source: huge,
               event_schema: minimalSchema,
@@ -668,6 +679,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "rejects an oversized POST /events body with 413 payload_too_",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
@@ -706,6 +718,7 @@ describe("HTTP e2e", () => {
           headers: bearer(apiKey),
           body: JSON.stringify({
             template: {
+              name: "accepts a normal-sized body (limit does not reject legitimat",
               type: "html-inline",
               source: "<html></html>",
               event_schema: minimalSchema,
