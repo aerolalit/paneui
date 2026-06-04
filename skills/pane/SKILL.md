@@ -687,7 +687,7 @@ modes:
   latency per round-trip than `pane watch` but no long-lived connection.
 
 Choose `watch` (streaming) when you can hold a process; choose
-`state --wait` (polling) when you can't.
+`show --wait` (polling) when you can't.
 
 ### `pane send <id>` — emit your own event
 
@@ -733,8 +733,8 @@ URL, no metadata or input_data.
 **Load-bearing caveat — participant tokens are unrecoverable.** The relay
 stores only the hash of each participant token; the plaintext URL is returned
 exactly once in the `pane create` response and **cannot be retrieved
-later**. If you lost a URL, neither `pane list` nor `pane pane
-participant list` will return it; instead, use `pane participant new`
+later**. If you lost a URL, neither `pane list` nor `pane participant
+list` will return it; instead, use `pane participant new`
 to mint a fresh URL on the still-alive pane.
 
 ### `pane participant list|new|revoke` — manage URLs on a live pane
@@ -744,14 +744,14 @@ to mint a fresh URL on the still-alive pane.
 pane participant list pan_abc123
 
 # Lost the URL but the pane is still alive — mint a new entry door.
-pane participant new pan_abc123 | tee -a ~/.pane-sessions.jsonl
+pane participant new pan_abc123 | tee -a ~/.pane-urls.jsonl
 
 # Invalidate a URL you no longer want usable.
 pane participant revoke pan_abc123 p_xyz
 ```
 
-Three primitives that together replace `pane delete + pane pane
-create` for the lost-URL case (which would destroy the pane's event log,
+Three primitives that together replace `pane delete + pane create`
+for the lost-URL case (which would destroy the pane's event log,
 template pin, and created_at — `participant new` preserves all of that).
 
 - `pane participant list <pane-id>` — returns the full
@@ -777,7 +777,7 @@ pane list                                          # find pane_id
 pane participant list pan_abc123                   # find participant
                                                            #   ids on that
                                                            #   pane
-pane participant new pan_abc123 | tee -a ~/.pane-sessions.jsonl
+pane participant new pan_abc123 | tee -a ~/.pane-urls.jsonl
 # use the new url; the old one is still valid until you revoke
 pane participant revoke pan_abc123 p_xyz           # optional —
                                                            #   invalidate
@@ -1003,7 +1003,7 @@ can `pane attachment download` (or mint a `/b/<token>` URL) to read the bytes.
     try {
       // Hands the File to the shell over postMessage; the shell POSTs
       // to /s/<participantToken>/attachments and returns the AttachmentRef.
-      const blob = await window.pane.uploadBlob(picker.files[0]);
+      const attachment = await window.pane.uploadBlob(picker.files[0]);
       await window.pane.emit("photo.attached", { attachment });
       status.textContent = "uploaded.";
     } catch (e) {
