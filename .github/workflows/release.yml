@@ -121,7 +121,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # create the Release object
+      contents: write # create the Release object
     steps:
       - uses: actions/checkout@v6
         with:
