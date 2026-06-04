@@ -17,7 +17,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
-import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_LOGO } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
 
@@ -424,7 +424,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <div class="app">
   <aside class="nav">
     <div class="brand">
-      <div class="logo">P</div>
+      <div class="logo">${BRAND_LOGO}</div>
       <div class="name">Pane</div>
     </div>
     <ul class="items" id="nav-items">

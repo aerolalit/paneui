@@ -1,11 +1,11 @@
 // App / home-screen install icon assets. GENERATED — see scripts/gen-app-icon.cjs.
 //
-// DELIBERATE: these PNGs use the *marketing-site* mark (the navy tile with the
-// cyan circle + purple chat-bubble robot face, source: site/favicon.svg), NOT
-// the in-app gradient-"P" from brand.ts. The browser-tab favicon stays the
-// gradient-P (brand.ts); the installed / Add-to-Home-Screen icon is the robot
-// mark, by product decision. If you change one, decide consciously whether the
-// other should follow — this split is intentional, not drift.
+// These PNGs render the brand robot mark (the navy tile + cyan circle + purple
+// chat-bubble face). It is the SAME mark as the in-app favicon and header —
+// both derive from the same artwork (site/favicon.svg == brand.ts's
+// BRAND_MARK_SVG_BODY) — so the logo is consistent across every surface:
+// browser tab, in-app header/sidebar, the viewer shell, and this install icon.
+// Keep them in lockstep: if the mark changes, re-run this generator too.
 //
 // Why embedded base64 instead of files: the relay ships as a single binary with
 // no static-asset directory (same rationale as BRAND_FAVICON_DATA_HREF in

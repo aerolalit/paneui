@@ -422,30 +422,32 @@ describe("Legacy multi-route 301s to the SPA", () => {
 });
 
 describe("brand mark consistency", () => {
-  it("/favicon.svg uses the gradient-P shape", async () => {
+  it("/favicon.svg renders the robot brand mark (same as the install icons)", async () => {
     const fav = await app.fetch(new Request("http://t/favicon.svg"));
     expect(fav.status).toBe(200);
     expect(fav.headers.get("content-type")).toContain("image/svg+xml");
     const favBody = await fav.text();
-    expect(favBody).toContain("pane-brand-grad");
-    expect(favBody).toContain("linearGradient");
-    expect(favBody).toContain(">P</text>");
+    // Robot mark fills: navy tile, cyan circle, purple chat-bubble. The old
+    // gradient-"P" (linearGradient + <text>P</text>) must be gone — the favicon
+    // now matches the home-screen / install icons.
+    expect(favBody).toContain('fill="#22d3ee"'); // cyan circle
+    expect(favBody).toContain('fill="#a78bfa"'); // purple bubble
+    expect(favBody).not.toContain("linearGradient");
+    expect(favBody).not.toContain(">P</text>");
   });
 
-  it("/home's SPA shell renders the brand block with the P logo + wordmark", async () => {
+  it("/home's SPA shell renders the brand block with the robot logo + wordmark", async () => {
     const { cookie } = await seedLoggedInHuman();
     const home = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await home.text();
-    // The SPA renders the brand via the prototype's CSS-styled .logo
-    // div (background: brand-grad, letter "P"). The shell pulls the
-    // same gradient palette from owner-shell-css so the visual matches
-    // /favicon.svg.
-    expect(html).toContain('<div class="logo">P</div>');
+    // The SPA brand block renders the robot mark (inline SVG) inside the .logo
+    // tile — the same artwork as /favicon.svg and the install icons.
     expect(html).toContain('class="brand"');
-    // The CSS bundled with the SPA defines the brand gradient palette.
-    expect(html).toContain("--brand-grad:");
+    expect(html).toContain('<div class="logo"><svg');
+    expect(html).toContain('fill="#a78bfa"'); // purple bubble = the robot mark
+    expect(html).not.toContain('<div class="logo">P</div>');
   });
 
   it("/login (the small page outside the SPA) still ships the manifest + favicon link", async () => {

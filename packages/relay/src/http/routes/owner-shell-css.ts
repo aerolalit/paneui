@@ -124,11 +124,12 @@ export const OWNER_SHELL_CSS = `
   }
   .nav .brand .logo {
     width: 28px; height: 28px; border-radius: 7px;
-    background: var(--brand-grad);
-    display: flex; align-items: center; justify-content: center;
-    color: #07090f; font-weight: 800; font-size: 13px;
+    overflow: hidden;
     box-shadow: var(--shadow-soft);
   }
+  /* The mark is the self-contained robot SVG (its own navy tile); the tile
+     fills the box and the container's radius clips its corners. */
+  .nav .brand .logo svg { display: block; width: 100%; height: 100%; }
   .nav .brand .name {
     background: var(--brand-grad);
     -webkit-background-clip: text; background-clip: text; color: transparent;
