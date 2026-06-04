@@ -17,6 +17,8 @@ name: release
 #   5. On a successful publish it also dispatches paneui-ops to redeploy the
 #      landing page (paneui.com) from this tag, so the marketing site never
 #      drifts behind a release.
+#   6. It also cuts a GitHub Release for the tag (auto-generated notes) so the
+#      Releases page stays in lockstep — no more tags without a Release.
 #
 # (Steps 1-2 can also be done by hand — the script just removes the easy-to-
 # miss "@paneui/core dep in every package" bump that breaks the workspace
@@ -103,3 +105,37 @@ jobs:
             https://api.github.com/repos/aerolalit/paneui-ops/dispatches \
             -d '{"event_type":"deploy-site","client_payload":{"ref":"${{ github.ref_name }}"}}'
           echo "→ dispatched deploy-site for ${{ github.ref_name }}"
+
+  # Cut a GitHub Release for the tag so it shows on the Releases page — the
+  # human-facing changelog that npm/images/site don't provide. Previously the
+  # release flow only pushed a git tag, so v0.0.6–v0.0.10 shipped to npm + GHCR
+  # but never appeared as Releases (the page silently lagged at v0.0.5). This
+  # closes that gap: every tagged release gets a Release with auto-generated
+  # notes (the PR/commit list since the previous tag).
+  #
+  # `--generate-notes` resolves the previous tag itself; `--verify-tag` refuses
+  # to invent a release for a tag that isn't really pushed. Idempotent — a
+  # re-run (or a release created by hand first) is a no-op, not a failure.
+  github-release:
+    name: create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the Release object
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history + tags so --generate-notes can diff against the
+          # previous tag; a shallow clone has neither.
+          fetch-depth: 0
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — skipping"
+            exit 0
+          fi
+          gh release create "$TAG" --title "$TAG" --verify-tag --generate-notes
+          echo "→ created GitHub Release $TAG"
