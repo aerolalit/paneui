@@ -5,6 +5,7 @@ import {
   listPanesQuerySchema,
   mintParticipantSchema,
   upgradePaneSchema,
+  isRasterImageMime,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
 import { appendSystemEvent } from "../../core/events.js";
@@ -367,6 +368,8 @@ panes.post("/", requireAgent, async (c) => {
     title,
     preamble,
     context_key,
+    icon_emoji,
+    icon_attachment_id,
   } = parsed.data;
 
   const resolvedPreamble = validateSessionPreamble(preamble);
@@ -546,6 +549,31 @@ panes.post("/", requireAgent, async (c) => {
     }
   }
 
+  // Per-pane icon override. The emoji (when present) is already validated by
+  // the Zod schema (single grapheme). An image override must reference an
+  // attachment the agent can use (same access gate as input_data refs) and be
+  // a ready raster image (no SVG, no non-images). Validated BEFORE the pane
+  // row is created so a bad icon ref creates nothing.
+  if (icon_attachment_id !== undefined) {
+    await assertBlobsAccessibleByAgent(prisma, agent.id, [icon_attachment_id]);
+    const iconRow = await prisma.attachment.findUnique({
+      where: { id: icon_attachment_id },
+      select: { status: true, mime: true },
+    });
+    if (!iconRow || iconRow.status !== "ready") {
+      throw errors.invalidRequest(
+        "icon_attachment_id must reference a ready (confirmed) attachment",
+      );
+    }
+    if (!isRasterImageMime(iconRow.mime)) {
+      throw errors.invalidRequest(
+        `icon_attachment_id must be a raster image (png, jpeg, webp, gif); got ${iconRow.mime}`,
+        undefined,
+        "SVG and non-image attachments are rejected as icons",
+      );
+    }
+  }
+
   // TTL behaviour:
   //   ≤ 0           → already rejected by the Zod schema (positive int).
   //   > MAX_TTL_SECONDS → REJECTED with invalid_request. The relay used to
@@ -690,6 +718,9 @@ panes.post("/", requireAgent, async (c) => {
         inputData: input_data
           ? (input_data as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+        // Per-pane icon override (NULL = inherit the template's icon).
+        iconEmoji: icon_emoji ?? null,
+        iconAttachmentId: icon_attachment_id ?? null,
         expiresAt,
         metadata: metadata
           ? (metadata as Prisma.InputJsonValue)

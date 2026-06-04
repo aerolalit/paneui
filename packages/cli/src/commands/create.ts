@@ -23,6 +23,8 @@ const KNOWN_FLAGS = [
   "metadata",
   "callback",
   "context-key",
+  "icon-emoji",
+  "icon-attachment-id",
 ];
 // `--json` forces machine-readable output even on a TTY. Without it, an
 // interactive terminal gets the human-readable form (title + URLs + QR +
@@ -49,6 +51,8 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   title: "--title",
   preamble: "--preamble",
   context_key: "--context-key",
+  icon_emoji: "--icon-emoji",
+  icon_attachment_id: "--icon-attachment-id",
   "template.id": "--template-id",
   "template.version": "--version",
   "template.type": "--template-type",
@@ -161,6 +165,12 @@ Options:
                       meaningful when the calling agent is claimed by a
                       human; omit otherwise. Allowed chars: A-Za-z0-9_:.-,
                       max 256.
+  --icon-emoji <e>    Per-pane icon override — a single emoji grapheme. NULL/
+                      omitted = inherit the template's icon.
+  --icon-attachment-id <id>
+                      Per-pane icon override — a ready raster-image attachment
+                      (png/jpeg/webp/gif) accessible to this agent. No SVG, no
+                      URLs. Omitted = inherit the template's icon.
   --url <url>         Relay base URL (overrides PANE_URL).
   --api-key <key>     Agent API key (overrides PANE_API_KEY).
   --json              Force JSON output even on a TTY. Default: JSON when
@@ -354,6 +364,17 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const contextKey = args.flags.get("context-key");
   if (contextKey !== undefined) {
     candidate["context_key"] = contextKey;
+  }
+
+  // Per-pane icon override. Passthrough — the relay validates the emoji
+  // (single grapheme) and the attachment (ready raster image, accessible to
+  // the agent), so a bad value panes as a schema/route rejection rather than
+  // a duplicated client guard.
+  const iconEmoji = args.flags.get("icon-emoji");
+  if (iconEmoji !== undefined) candidate["icon_emoji"] = iconEmoji;
+  const iconAttachmentId = args.flags.get("icon-attachment-id");
+  if (iconAttachmentId !== undefined) {
+    candidate["icon_attachment_id"] = iconAttachmentId;
   }
 
   const parsed = createPaneSchema.safeParse(candidate);

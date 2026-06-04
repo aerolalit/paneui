@@ -52,6 +52,15 @@ export type {
 } from "./schemas.js";
 
 export {
+  validateIconEmoji,
+  isValidIconEmoji,
+  isRasterImageMime,
+  RASTER_ICON_MIME_ALLOWLIST,
+  MAX_ICON_EMOJI_BYTES,
+} from "./icons.js";
+export type { RasterIconMime } from "./icons.js";
+
+export {
   MAX_EVENT_TYPE_LENGTH,
   MAX_IDEMPOTENCY_KEY_LENGTH,
   MAX_RESPONSE_SNIPPET_LENGTH,

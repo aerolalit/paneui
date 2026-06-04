@@ -27,6 +27,7 @@ import {
 } from "./routes/template-marketplace.js";
 import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
+import icons from "./routes/icons.js";
 import events from "./routes/events.js";
 import records from "./routes/records.js";
 import templateRecords from "./routes/template-records.js";
@@ -287,6 +288,13 @@ export function buildApp(
   // /login) so an attacker hammering /panes/* hits the per-IP limiter
   // just like they would on /s/*.
   app.route("/panes", ownerShell);
+
+  // Human-facing icon images for templates + panes. Cookie-authed, cacheable
+  // GETs that <img src> from inside the owner shell. Mounted at root so it
+  // serves both `/templates/:id/icon` and `/panes/:id/icon`; the latter does
+  // NOT collide with the ownerShell `/panes/:id/*` mount above because
+  // ownerShell registers no `/:id/icon` route (Hono matches the exact path).
+  app.route("/", icons);
 
   // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
   // the route module: `closed` (default) returns 404; `secret` requires an

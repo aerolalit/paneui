@@ -252,6 +252,11 @@ model Template {
   // on install/uninstall. Lets the public catalog rank/sort cheaply.
   installCount  Int               @default(0) @map("install_count")
 
+  // Optional template icon. See sqlite schema for the full design notes.
+  iconEmoji        String?     @map("icon_emoji")
+  iconAttachmentId String?     @map("icon_attachment_id")
+  iconAttachment   Attachment? @relation("TemplateIcon", fields: [iconAttachmentId], references: [id], onDelete: SetNull)
+
   attachments   Attachment[]
   installs      HumanTemplateInstall[]
   humanHomes    Human[]           @relation("HumanHomeTemplate")
@@ -359,6 +364,11 @@ model Pane {
   callbackUrl       String?     @map("callback_url")
   callbackSecretEnc String?     @map("callback_secret_enc")
   callbackFilter    Json?       @map("callback_filter")
+
+  // Per-pane icon override. See sqlite schema for the full design notes.
+  iconEmoji        String?     @map("icon_emoji")
+  iconAttachmentId String?     @map("icon_attachment_id")
+  iconAttachment   Attachment? @relation("PaneIcon", fields: [iconAttachmentId], references: [id], onDelete: SetNull)
 
   participants    Participant[]
   events          Event[]
@@ -561,6 +571,10 @@ model Attachment {
   // Set when scope = "template". Cascades on template delete.
   templateId    String?   @map("template_id")
   template      Template? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  // Back-relations for icon usage. See sqlite schema for the design notes.
+  templateIconOf Template[] @relation("TemplateIcon")
+  paneIconOf     Pane[]     @relation("PaneIcon")
 
   // Content metadata. mime comes from server-side magic-byte sniff, NOT the
   // client's Content-Type. sha256 is hex-encoded; size is bytes (capped at
