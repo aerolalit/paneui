@@ -387,8 +387,8 @@ agents 1 ──< artifacts 1 ──< artifact_versions 1 ──< sessions 1 ─�
 |---|---|
 | `id`             | cuid. FK target. |
 | `owner_id`       | FK → `agents`. The owning agent. |
-| `name`          | nullable in the schema for legacy rows, but always set on create now: both the reference and inline forms require a `name`. `null` only appears on pre-existing anonymous (inline-created) rows; the UI labels those "Untitled template". |
-| `slug`          | nullable. Agent-chosen stable handle; unique per owner; `null` for anonymous. |
+| `name`          | required (NOT NULL). Both the reference and inline create forms supply it, so the owner-shell UI always has a readable label. The `require_template_name` migration backfilled any pre-existing anonymous (inline-created) rows to "Untitled template" before adding the constraint. |
+| `slug`          | nullable. Agent-chosen stable handle; unique per owner; `null` when the creator didn't supply one. |
 | `description`   | nullable. Prose: what the artifact is and does. |
 | `tags`          | nullable JSON string array. Keywords for search. |
 | `latest_version`| int. Newest version number. |

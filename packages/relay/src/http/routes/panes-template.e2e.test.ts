@@ -719,29 +719,8 @@ describe("POST /v1/panes — title", () => {
 
   async function createNamedArtifact(
     apiKey: string,
-    name: string | null,
+    name: string,
   ): Promise<string> {
-    if (name === null) {
-      // Anonymous template: name + slug null. The inline-pane path can no
-      // longer create one (it now requires a name), so seed a legacy-shaped
-      // anonymous row directly via Prisma to exercise the no-name code path.
-      const agent = await prisma.agent.findFirstOrThrow({
-        where: { keyHash: hashKey(apiKey) },
-      });
-      const head = await prisma.template.create({
-        data: { ownerId: agent.id, name: null, slug: null, latestVersion: 1 },
-      });
-      await prisma.templateVersion.create({
-        data: {
-          templateId: head.id,
-          version: 1,
-          templateType: "html-inline",
-          templateSource: "<html>x</html>",
-          eventSchema: eventSchema as object,
-        },
-      });
-      return head.id;
-    }
     const res = await postRaw("/v1/templates", apiKey, {
       name,
       source: "<html>x</html>",
@@ -829,19 +808,10 @@ describe("POST /v1/panes — title", () => {
     expect(body.title).toBe("PR Review");
   });
 
-  it("rejects reference form with 400 when template has no name AND no title given", async () => {
-    const apiKey = await seedAgent();
-    const anonId = await createNamedArtifact(apiKey, null);
-    const res = await postRaw("/v1/panes", apiKey, {
-      template: { id: anonId },
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: { code: string; hint?: string };
-    };
-    expect(body.error.code).toBe("invalid_request");
-    expect(body.error.hint).toMatch(/title/i);
-  });
+  // Note: there is no "reference form with no name AND no title" case anymore.
+  // `name` is required on every create path (and NOT NULL at the DB), so the
+  // reference form always has a Template.name to fall back to when title is
+  // omitted — the title-required error is unreachable.
 
   it("prefers explicit title over Template.name", async () => {
     const apiKey = await seedAgent();

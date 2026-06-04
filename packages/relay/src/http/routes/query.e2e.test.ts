@@ -95,7 +95,7 @@ async function seedPaneOwnedByHuman(
   title: string,
 ): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId, latestVersion: 1 },
+    data: { ownerId: agentId, name: "Query Test", latestVersion: 1 },
   });
   const version = await prisma.templateVersion.create({
     data: {
@@ -124,7 +124,7 @@ async function seedPaneOwnedByAgent(
   title: string,
 ): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId, latestVersion: 1 },
+    data: { ownerId: agentId, name: "Query Test", latestVersion: 1 },
   });
   const version = await prisma.templateVersion.create({
     data: {
@@ -570,7 +570,7 @@ async function seedPaneWithSchemas(
   eventSchema: unknown,
 ): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId, latestVersion: 1 },
+    data: { ownerId: agentId, name: "Query Test", latestVersion: 1 },
   });
   const version = await prisma.templateVersion.create({
     data: {

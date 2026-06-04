@@ -390,10 +390,10 @@ panes.post("/", requireAgent, async (c) => {
   // has no input contract, so `input_data` (if any) is accepted unvalidated.
   let inputSchema: unknown = null;
   // The template's `name`, used as the title fallback below. Both branches
-  // set it: the reference form from the existing head (still null for a
-  // legacy anonymous template), the inline form from the caller-supplied
-  // `name` (now required).
-  let artifactName: string | null;
+  // set it: the reference form from the existing head, the inline form from
+  // the caller-supplied `name`. Always a string — `name` is required on both
+  // create paths and NOT NULL at the DB.
+  let artifactName: string;
 
   if ("id" in template && template.id !== undefined) {
     // Reference form — instance an existing named template owned by this agent.
@@ -541,25 +541,13 @@ panes.post("/", requireAgent, async (c) => {
   }
 
   // Resolve the per-pane tab title. The relay treats title as required at
-  // the storage layer (Pane.title is NOT NULL), but offers one ergonomic
-  // fallback: a pane picks up its template's `name` when `title` is omitted.
-  // Both forms supply one now — the reference form from the existing named
-  // template, the inline form from the caller-supplied `name` — so either
-  // can omit `title`. Both paths funnel through validateSessionTitle so an
-  // over-long Template.name still panes a clear error rather than truncating
-  // silently.
-  let resolvedTitle: string;
-  if (title !== undefined) {
-    resolvedTitle = validateSessionTitle(title);
-  } else if (artifactName !== null) {
-    resolvedTitle = validateSessionTitle(artifactName);
-  } else {
-    throw errors.invalidRequest(
-      "title is required",
-      undefined,
-      "pass `title` on the request body (or `--title` on `pane pane create`); reference-form panes can omit it only when the template has a `name`",
-    );
-  }
+  // the storage layer (Pane.title is NOT NULL), but `title` is optional on
+  // the wire: when omitted it falls back to the template's `name`, which both
+  // create forms always supply (reference form from the existing named
+  // template, inline form from the caller-supplied `name`). validateSessionTitle
+  // applies the length/control-char rules so an over-long Template.name still
+  // surfaces a clear error rather than truncating silently.
+  const resolvedTitle = validateSessionTitle(title ?? artifactName);
 
   // Phase C — input contract enforcement. If the pinned version declares an
   // `input_schema`, the pane's `input_data` must satisfy it; validate now,

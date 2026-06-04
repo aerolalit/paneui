@@ -120,7 +120,6 @@ async function loadShellData(
           where: {
             ownerId: { in: claimedAgentIds },
             deletedAt: null,
-            name: { not: null },
           },
           orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
           select: {
@@ -207,7 +206,7 @@ async function loadShellData(
 
   function toRef(t: {
     id: string;
-    name: string | null;
+    name: string;
     slug: string | null;
     publishedAt: Date | null;
     versions: Array<{ inputSchema: unknown }>;
