@@ -70,8 +70,10 @@ export const OWNER_SHELL_CSS = `
     grid-template-columns: 220px 1fr;
     grid-template-rows: 1fr;
   }
-  @media (max-width: 720px) {
-    .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  @media (max-width: 639px) {
+    /* Single full-height content row; the nav becomes a fixed bottom bar
+       (out of flow), so it no longer needs a grid track. */
+    .app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   }
 
   /* ============== Sidebar (desktop) / bottom nav (mobile) ============== */
@@ -170,15 +172,22 @@ export const OWNER_SHELL_CSS = `
   .nav .me .acct-link .ico { display: inline-flex; }
   .nav .me .acct-link .txt { display: none; }
 
-  @media (max-width: 720px) {
+  @media (max-width: 639px) {
+    /* Fixed bottom bar — same model as the system-pages bottom-tabs nav, so
+       the tab strip sits flush above the home indicator and matches every
+       other page. (Previously a grid row inside the fixed inset:0 app shell,
+       which left a gap above the home indicator on devices with a tall bottom
+       safe area, e.g. iPhone 14 Pro Max.) */
     .nav {
-      grid-row: 2; grid-column: 1;
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
       border-right: none; border-top: 1px solid var(--hairline);
-      padding-top: 0;
+      background: color-mix(in srgb, var(--bg-2) 92%, transparent);
+      -webkit-backdrop-filter: saturate(180%) blur(14px);
+      backdrop-filter: saturate(180%) blur(14px);
       flex-direction: row;
-      align-items: center;
+      align-items: stretch;
       justify-content: space-around;
-      padding-bottom: var(--safe-bottom);
+      padding: 6px max(8px, env(safe-area-inset-left)) calc(6px + var(--safe-bottom)) max(8px, env(safe-area-inset-right));
     }
     .nav .brand { display: none; }
     /* The footer's full-page links (/my-agents, /settings) and sign-out have
@@ -197,10 +206,10 @@ export const OWNER_SHELL_CSS = `
     .nav .me .avatar, .nav .me .who { display: none; }
     .nav .me .acct-tab {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 2px; width: 100%;
+      gap: 3px; width: 100%; min-height: 52px;
       background: transparent; border: none; cursor: pointer;
-      color: var(--ink-dim); font-size: 10px;
-      padding: 6px 4px;
+      color: var(--ink-dim); font-size: 11px;
+      padding: 8px 4px 4px;
     }
     .nav .me .acct-tab .icon {
       width: 22px; height: 22px;
@@ -239,15 +248,17 @@ export const OWNER_SHELL_CSS = `
     .nav .items {
       flex-direction: row;
       flex: 4;
-      padding: 6px 4px;
+      padding: 0;
       gap: 0;
     }
     .nav .items li { flex: 1; }
     .nav .items li button {
       flex-direction: column;
-      gap: 2px;
-      padding: 6px 4px;
-      font-size: 10px;
+      justify-content: center;
+      gap: 3px;
+      padding: 8px 4px 4px;
+      min-height: 52px;
+      font-size: 11px;
       text-align: center;
       border-radius: 8px;
     }
@@ -268,8 +279,10 @@ export const OWNER_SHELL_CSS = `
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-  @media (max-width: 720px) {
-    .view { padding: 14px 16px 28px; }
+  @media (max-width: 639px) {
+    /* Reserve space for the fixed bottom nav (~52px tab + 12px padding) plus
+       the home-indicator safe area, so content can scroll clear of the bar. */
+    .view { padding: 14px 16px calc(28px + 64px + var(--safe-bottom)); }
   }
 
   .view-head {
@@ -778,7 +791,7 @@ export const OWNER_SHELL_CSS = `
     display: flex; flex-direction: column; gap: 8px;
     pointer-events: none;
   }
-  @media (max-width: 720px) {
+  @media (max-width: 639px) {
     .toast-wrap { bottom: calc(80px + var(--safe-bottom)); }
   }
   .toast {
