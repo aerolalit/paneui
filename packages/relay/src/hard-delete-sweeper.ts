@@ -84,14 +84,14 @@ export async function sweepHardDeletable(
   // pane_records / feedback / attachments-of-this-pane automatically.
   const panesSwept = await sweepPanes(prisma, freeCutoff, paidCutoff);
 
-  // ---- 2. ANONYMOUS TEMPLATE ORPHANS ------------------------------------
-  // After pane deletes, find anonymous templates (name AND slug both
-  // null) with zero remaining pane references and reclaim them. Skip
-  // named templates — those are reusable identities even with zero live
-  // instances.
-  await reclaimAnonymousTemplateOrphans(prisma);
+  // No template orphan reclamation: every template is named (name is NOT
+  // NULL — see the require_template_name migration), so a template is a
+  // reusable identity that outlives its instances. Inline one-off panes
+  // create named templates too, so they now persist after their pane
+  // expires rather than being garbage-collected as anonymous orphans (the
+  // prior behaviour, removed with the anonymous-template concept).
 
-  // ---- 3. ATTACHMENTS ---------------------------------------------------
+  // ---- 2. ATTACHMENTS ---------------------------------------------------
   // Attachment-scoped trash (soft-deleted attachments past retention).
   // attachment.owner is an Agent; retention resolves against that agent's
   // owner_human (which may be null = free default).
@@ -234,38 +234,6 @@ async function sweepPanes(
 
   const r = await prisma.pane.deleteMany({ where: { id: { in: ids } } });
   return r.count;
-}
-
-async function reclaimAnonymousTemplateOrphans(
-  prisma: PrismaClient,
-): Promise<void> {
-  // An anonymous template (name + slug both null) with zero remaining
-  // pane references is unreachable — no agent can re-instantiate it.
-  // `versions.none.panes.some` reads as "no version has any pane".
-  const orphans = await prisma.template.findMany({
-    where: {
-      name: null,
-      slug: null,
-      versions: { none: { panes: { some: {} } } },
-    },
-    select: { id: true, ownerId: true },
-    take: HARD_DELETE_BATCH,
-  });
-  if (orphans.length === 0) return;
-
-  await prisma.deletionLog.createMany({
-    data: orphans.map((t) => ({
-      entityType: "template",
-      entityId: t.id,
-      ownerHumanId: null,
-      ownerAgentId: t.ownerId,
-      phase: "hard_deleted",
-      reason: "anonymous_template_orphan",
-    })),
-  });
-  await prisma.template.deleteMany({
-    where: { id: { in: orphans.map((t) => t.id) } },
-  });
 }
 
 async function sweepAttachments(

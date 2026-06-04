@@ -147,6 +147,7 @@ async function createSessionWithBlobSchema(
       body: JSON.stringify({
         title: "attachment-ref-access test pane",
         template: {
+          name: "Test template",
           type: "html-inline",
           source: "<html></html>",
           event_schema: blobEventSchema,
@@ -426,6 +427,7 @@ describe("attachment-ref DB access check — inline pane create with input_schem
         headers: bearer(apiKey),
         body: JSON.stringify({
           template: {
+            name: "accepts an inline pane referencing the agent",
             type: "html-inline",
             source: "<html></html>",
             event_schema: blobEventSchema,
@@ -451,6 +453,7 @@ describe("attachment-ref DB access check — inline pane create with input_schem
         headers: bearer(bobKey),
         body: JSON.stringify({
           template: {
+            name: "rejects an inline pane referencing another agent",
             type: "html-inline",
             source: "<html></html>",
             event_schema: blobEventSchema,

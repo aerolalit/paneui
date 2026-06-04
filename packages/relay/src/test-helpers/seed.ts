@@ -18,7 +18,9 @@ export const minimalEventSchema = {
 
 export interface SeedArtifactOptions {
   ownerId: string;
-  name?: string | null;
+  // Optional in the helper; defaults to "Test Template" when omitted. The
+  // column is NOT NULL, so a null name is no longer valid.
+  name?: string;
   slug?: string | null;
   description?: string | null;
   tags?: string[] | null;
@@ -40,7 +42,7 @@ export async function seedArtifact(
   const template = await prisma.template.create({
     data: {
       ownerId: opts.ownerId,
-      name: opts.name ?? null,
+      name: opts.name ?? "Test Template",
       slug: opts.slug ?? null,
       description: opts.description ?? null,
       tags: opts.tags ?? undefined,

@@ -187,7 +187,7 @@ async function upload(
  */
 async function seedPaneFor(agentId: string): Promise<string> {
   const template = await prisma.template.create({
-    data: { ownerId: agentId, latestVersion: 1 },
+    data: { ownerId: agentId, name: "Attachments Test", latestVersion: 1 },
   });
   const version = await prisma.templateVersion.create({
     data: {
@@ -840,6 +840,7 @@ describe("/v1/attachments — pane-scope upload", () => {
         headers: { authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           template: {
+            name: "soft-deletes pane-scope attachments via the HTTP pane delete",
             type: "html-inline",
             source: "<html></html>",
             event_schema: {

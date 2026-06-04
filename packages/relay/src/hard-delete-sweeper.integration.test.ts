@@ -1,6 +1,6 @@
 // Integration test for the hard-delete sweeper (#304). Covers the tier-
-// aware retention resolution, cascade behaviour, anonymous-template orphan
-// cleanup, audit-log appending, and idempotency.
+// aware retention resolution, cascade behaviour, audit-log appending, and
+// idempotency.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
@@ -191,7 +191,7 @@ describe("sweepHardDeletable — tier-aware retention", () => {
   });
 });
 
-describe("sweepHardDeletable — cascade + orphan + audit", () => {
+describe("sweepHardDeletable — cascade + audit", () => {
   it("pane hard-delete cascades to events + record_collections + participants", async () => {
     const humanId = await seedHuman("c@example.com", "free");
     const agentId = await seedAgent({ humanId });
@@ -230,31 +230,9 @@ describe("sweepHardDeletable — cascade + orphan + audit", () => {
     expect(await prisma.participant.count({ where: { paneId } })).toBe(0);
   });
 
-  it("anonymous template with zero remaining panes is reclaimed", async () => {
-    const humanId = await seedHuman("anon@example.com", "free");
-    const agentId = await seedAgent({ humanId });
-    const paneId = await seedSoftDeletedPane({
-      agentId,
-      ownerHumanId: humanId,
-      deletedDaysAgo: 31,
-    });
-    const pane = await prisma.pane.findUniqueOrThrow({
-      where: { id: paneId },
-      select: { templateVersionId: true },
-    });
-    const v = await prisma.templateVersion.findUniqueOrThrow({
-      where: { id: pane.templateVersionId },
-      select: { templateId: true, template: { select: { name: true } } },
-    });
-    expect(v.template.name).toBeNull();
-    const templateId = v.templateId;
-
-    await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
-
-    expect(
-      await prisma.template.findUnique({ where: { id: templateId } }),
-    ).toBeNull();
-  });
+  // Note: there is no "anonymous template orphan reclamation" anymore — every
+  // template is named (name NOT NULL), so all templates are reusable
+  // identities that survive their panes (asserted below).
 
   it("named template survives even after its panes are reclaimed", async () => {
     const humanId = await seedHuman("named@example.com", "free");
@@ -308,34 +286,6 @@ describe("sweepHardDeletable — cascade + orphan + audit", () => {
     expect(logs[0]!.reason).toBe("retention_window_elapsed");
     expect(logs[0]!.ownerHumanId).toBe(humanId);
     expect(logs[0]!.ownerAgentId).toBe(agentId);
-  });
-
-  it("anonymous template orphan reclaim logs reason='anonymous_template_orphan'", async () => {
-    const humanId = await seedHuman("anonlog@example.com", "free");
-    const agentId = await seedAgent({ humanId });
-    const paneId = await seedSoftDeletedPane({
-      agentId,
-      ownerHumanId: humanId,
-      deletedDaysAgo: 31,
-    });
-    const pane = await prisma.pane.findUniqueOrThrow({
-      where: { id: paneId },
-      select: { templateVersionId: true },
-    });
-    const templateId = (
-      await prisma.templateVersion.findUniqueOrThrow({
-        where: { id: pane.templateVersionId },
-        select: { templateId: true },
-      })
-    ).templateId;
-
-    await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
-
-    const logs = await prisma.deletionLog.findMany({
-      where: { entityType: "template", entityId: templateId },
-    });
-    expect(logs).toHaveLength(1);
-    expect(logs[0]!.reason).toBe("anonymous_template_orphan");
   });
 
   it("is idempotent — second pass over already-reclaimed rows is no-op", async () => {

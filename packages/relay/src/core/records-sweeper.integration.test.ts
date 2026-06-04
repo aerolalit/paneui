@@ -65,7 +65,7 @@ async function seed(): Promise<{
     },
   });
   const tpl = await prisma.template.create({
-    data: { ownerId: agent.id, latestVersion: 1 },
+    data: { ownerId: agent.id, name: "Records Sweeper Test", latestVersion: 1 },
   });
   const ver = await prisma.templateVersion.create({
     data: {
