@@ -660,6 +660,9 @@ systemPages.get("/login", (c) => {
 // ----------------------------------------------------------------------
 
 systemPages.get("/home", async (c) => {
+  // Authenticated, per-human HTML that inlines the owner CSS/JS — never cache
+  // it, or a UI deploy stays invisible behind a stale browser/PWA copy.
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -698,6 +701,8 @@ systemPages.get("/my-templates", (c) => c.redirect("/home#mine", 301));
 // in each iframe.
 // ----------------------------------------------------------------------
 systemPages.get("/my-templates/:id/content", async (c) => {
+  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -930,6 +935,8 @@ systemPages.get("/template-store", (c) => c.redirect("/home#store", 301));
 // GET /my-agents — list of claimed agents
 // ----------------------------------------------------------------------
 systemPages.get("/my-agents", async (c) => {
+  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -1196,6 +1203,8 @@ systemPages.get("/trash", (c) => c.redirect("/home", 301));
 // GET /settings — email, sign-out
 // ----------------------------------------------------------------------
 systemPages.get("/settings", (c) => {
+  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
