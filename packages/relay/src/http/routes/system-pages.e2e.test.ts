@@ -37,6 +37,11 @@ beforeAll(async () => {
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
       EMAIL_PROVIDER: "dev",
+      // Disable the owner-shell open-pane list gate here — these shell tests
+      // assert that an owned template renders in the "Yours" grid without
+      // seeding open panes. The gate has dedicated coverage in
+      // template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
     }),
     prisma,
     undefined,

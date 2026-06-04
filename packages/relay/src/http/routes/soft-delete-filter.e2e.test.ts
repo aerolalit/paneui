@@ -38,6 +38,11 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
+      // Disable the open-pane list gate — this suite asserts soft-delete
+      // filtering on GET /v1/templates for live templates created without
+      // panes. The gate has dedicated coverage in
+      // template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
     }),
     prisma,
   );

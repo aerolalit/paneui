@@ -349,3 +349,36 @@ describe("records env vars (#293)", () => {
     expect(() => loadConfig({ MAX_RECORD_DATA_BYTES: "-1" })).toThrow();
   });
 });
+
+describe("template open-pane gates env vars", () => {
+  it("defaults the list + publish gates to 2 and 5", () => {
+    const c = loadConfig({});
+    expect(c.TEMPLATE_LIST_MIN_OPEN_PANES).toBe(2);
+    expect(c.TEMPLATE_PUBLISH_MIN_OPEN_PANES).toBe(5);
+  });
+
+  it("parses env overrides", () => {
+    const c = loadConfig({
+      TEMPLATE_LIST_MIN_OPEN_PANES: "3",
+      TEMPLATE_PUBLISH_MIN_OPEN_PANES: "10",
+    });
+    expect(c.TEMPLATE_LIST_MIN_OPEN_PANES).toBe(3);
+    expect(c.TEMPLATE_PUBLISH_MIN_OPEN_PANES).toBe(10);
+  });
+
+  it("allows 0 to disable each gate", () => {
+    const c = loadConfig({
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
+      TEMPLATE_PUBLISH_MIN_OPEN_PANES: "0",
+    });
+    expect(c.TEMPLATE_LIST_MIN_OPEN_PANES).toBe(0);
+    expect(c.TEMPLATE_PUBLISH_MIN_OPEN_PANES).toBe(0);
+  });
+
+  it("rejects a negative threshold", () => {
+    expect(() => loadConfig({ TEMPLATE_LIST_MIN_OPEN_PANES: "-1" })).toThrow();
+    expect(() =>
+      loadConfig({ TEMPLATE_PUBLISH_MIN_OPEN_PANES: "-1" }),
+    ).toThrow();
+  });
+});
