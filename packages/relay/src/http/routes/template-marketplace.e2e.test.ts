@@ -29,6 +29,11 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
+      // Disable the usage-maturity gates here — these publish/install/catalog
+      // tests publish templates without seeding open panes. The gates have
+      // their own dedicated coverage in template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
+      TEMPLATE_PUBLISH_MIN_OPEN_PANES: "0",
     }),
     prisma,
   );

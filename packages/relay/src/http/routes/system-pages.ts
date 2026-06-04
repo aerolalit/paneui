@@ -670,7 +670,8 @@ systemPages.get("/home", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  const html = await renderOwnerShell({ prisma, human });
+  const config = c.get("config");
+  const html = await renderOwnerShell({ prisma, config, human });
   return c.html(html);
 });
 

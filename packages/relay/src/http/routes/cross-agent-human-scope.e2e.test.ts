@@ -28,6 +28,12 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
+      // Disable the open-pane list + publish gates — this suite asserts
+      // cross-agent visibility on GET /v1/templates and cross-agent publish
+      // for templates created without panes. The gates have dedicated
+      // coverage in template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
+      TEMPLATE_PUBLISH_MIN_OPEN_PANES: "0",
     }),
     prisma,
   );
