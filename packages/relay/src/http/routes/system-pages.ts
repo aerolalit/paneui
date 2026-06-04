@@ -42,8 +42,10 @@ systemPages.use("*", resolveHumanOptional);
 // each glyph in the legacy `.tab-ico` <svg> (sized via CSS to currentColor).
 // The nav slugs map onto canonical NavKeys (catalog -> store). There is no
 // `trash` entry — that tab was retired (the /trash route now redirects home).
+// stroke-width 2 matches the SPA's spaIco wrapper (owner-shell-spa.ts) so the
+// nav icons render identically on the system pages and the /home SPA.
 const tabIco = (key: NavKey): string =>
-  `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_GLYPHS[key]}</svg>`;
+  `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_GLYPHS[key]}</svg>`;
 const TAB_ICONS: Record<string, string> = {
   home: tabIco("home"),
   catalog: tabIco("store"),
