@@ -23,6 +23,7 @@ import {
 } from "../../auth/human-auth.js";
 import { BRAND_LOGO, BRAND_FAVICON_SVG } from "../../brand.js";
 import { renderOwnerShell } from "./owner-shell-spa.js";
+import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 
 const systemPages = new Hono<OptionalHumanAuthEnv>();
 
@@ -36,17 +37,20 @@ systemPages.use("*", resolveHumanOptional);
 // wraps awkwardly on a phone. A `prefers-color-scheme: dark` block maps the
 // palette onto the same navy the pane shell uses.
 // Tab icons used by both the top tab bar (desktop) and the bottom tab bar
-// (mobile). Tiny inline SVGs — no network round-trip, no font dependency,
-// no FOUC. Each is sized via CSS (currentColor, 22px) so it inherits the
-// active/inactive tab color uniformly.
+// (mobile). The glyph geometry is the shared source of truth (NAV_GLYPHS in
+// nav-meta.ts) so these match the owner-shell SPA exactly; here we only wrap
+// each glyph in the legacy `.tab-ico` <svg> (sized via CSS to currentColor).
+// The nav slugs map onto canonical NavKeys (catalog -> store). There is no
+// `trash` entry — that tab was retired (the /trash route now redirects home).
+const tabIco = (key: NavKey): string =>
+  `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_GLYPHS[key]}</svg>`;
 const TAB_ICONS: Record<string, string> = {
-  home: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg>`,
-  catalog: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`,
-  panes: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>`,
-  templates: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h5"/></svg>`,
-  agents: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/></svg>`,
-  trash: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1.2 13a1 1 0 0 0 1 .9h7.6a1 1 0 0 0 1-.9L18 7"/></svg>`,
-  settings: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.5-2.4.9a7.5 7.5 0 0 0-1.7-1L14.5 3h-5l-.8 2.4a7.5 7.5 0 0 0-1.7 1L4.6 5.5l-2 3.5L4.6 11a7.5 7.5 0 0 0 0 2L2.6 14.5l2 3.5 2.4-.9a7.5 7.5 0 0 0 1.7 1L9.5 21h5l.8-2.4a7.5 7.5 0 0 0 1.7-1l2.4.9 2-3.5L19.4 13z"/></svg>`,
+  home: tabIco("home"),
+  catalog: tabIco("store"),
+  panes: tabIco("panes"),
+  templates: tabIco("templates"),
+  agents: tabIco("agents"),
+  settings: tabIco("settings"),
 };
 
 function layout(args: {
@@ -363,13 +367,12 @@ function layout(args: {
     <div class="account">${accountBlock}</div>
   </div>
   <nav class="tabs" aria-label="Primary">
-    ${nav("home", "Home", "/home")}
-    ${nav("catalog", "Template store", "/template-store")}
-    ${nav("panes", "My panes", "/my-panes")}
-    ${nav("templates", "My templates", "/my-templates")}
-    ${nav("agents", "My agents", "/my-agents")}
-    ${nav("trash", "Trash", "/trash")}
-    ${nav("settings", "Settings", "/settings")}
+    ${nav("home", NAV_LABELS.home, "/home")}
+    ${nav("panes", NAV_LABELS.panes, "/my-panes")}
+    ${nav("catalog", NAV_LABELS.store, "/template-store")}
+    ${nav("templates", NAV_LABELS.templates, "/my-templates")}
+    ${nav("agents", NAV_LABELS.agents, "/my-agents")}
+    ${nav("settings", NAV_LABELS.settings, "/settings")}
   </nav>
 </header>
 <main>
@@ -377,11 +380,11 @@ function layout(args: {
 </main>
 <nav class="bottom-tabs" aria-label="Primary (mobile)">
   <div class="tabs">
-    ${nav("home", "Home", "/home")}
-    ${nav("catalog", "Store", "/template-store")}
-    ${nav("panes", "Panes", "/my-panes")}
-    ${nav("templates", "Templates", "/my-templates")}
-    ${nav("settings", "Settings", "/settings")}
+    ${nav("home", NAV_LABELS.home, "/home")}
+    ${nav("panes", NAV_LABELS.panes, "/my-panes")}
+    ${nav("catalog", NAV_LABELS.store, "/template-store")}
+    ${nav("templates", NAV_LABELS.templates, "/my-templates")}
+    ${nav("settings", NAV_LABELS.settings, "/settings")}
   </div>
 </nav>
 <script>

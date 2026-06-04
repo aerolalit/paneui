@@ -321,10 +321,10 @@ ownerShell.get("/:id", async (c) => {
       agentLastUsedAt,
       title: pane.title,
       preamble: pane.preamble,
-      // Same dark top nav the system pages render on /home, /my-panes,
-      // etc. — the owner came here from one of those pages and needs a way
-      // back without using the browser back button.
-      topNav: { email: human.email, active: "panes" },
+      // Slim account bar (brand + presence + email + sign out). The brand
+      // logo links back to /home; system-page tabs are intentionally omitted
+      // here so the pane viewer stays a focused single-pane surface.
+      topNav: { email: human.email },
     }),
   );
 });

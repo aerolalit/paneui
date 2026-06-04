@@ -155,9 +155,20 @@ export const OWNER_SHELL_CSS = `
   .nav .me .who { font-size: 13px; line-height: 1.2; }
   .nav .me .who .name { color: var(--ink); font-weight: 500; }
   .nav .me .who .sub  { color: var(--ink-mute); font-size: 11px; }
-  /* Push the footer icon cluster (My agents, Settings, Sign out) to the
-     right edge, after the avatar + identity block. */
-  .nav .me > a:first-of-type { margin-left: auto; }
+  /* Account controls. Desktop: an inline icon row pushed to the right of the
+     footer, after the avatar + identity. The mobile "Account" trigger tab is
+     hidden here; labels are hidden (icon-only). */
+  .nav .me .acct-tab { display: none; }
+  .nav .me .acct-links { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .nav .me .acct-link {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--ink-mute); font: inherit; text-decoration: none;
+    padding: 6px; border-radius: 6px;
+    display: inline-flex; align-items: center; gap: 10px;
+  }
+  .nav .me .acct-link:hover { background: var(--surface); color: var(--ink); }
+  .nav .me .acct-link .ico { display: inline-flex; }
+  .nav .me .acct-link .txt { display: none; }
 
   @media (max-width: 720px) {
     .nav {
@@ -170,22 +181,64 @@ export const OWNER_SHELL_CSS = `
       padding-bottom: var(--safe-bottom);
     }
     .nav .brand { display: none; }
-    /* The footer holds the only links to the full-page /my-agents and
-       /settings routes (plus sign-out). Hiding it on mobile stranded those
-       pages — reachable only by typing the URL. Keep it visible as a compact
-       icon strip at the end of the bottom bar; drop the avatar + identity
-       text, which don't earn their space on a phone. */
+    /* The footer's full-page links (/my-agents, /settings) and sign-out have
+       no other entry point. On mobile, collapse them behind a single "Account"
+       tab in the bottom bar that toggles a popover sheet — rather than cramming
+       three bare icons next to the four labelled tabs. The bar then reads as
+       five even columns. */
     .nav .me {
-      flex: none;
+      flex: 1;
+      position: relative;
       border-top: none;
-      padding: 6px 6px calc(6px + var(--safe-bottom));
-      gap: 2px;
+      padding: 0;
+      gap: 0;
+      align-items: stretch;
     }
     .nav .me .avatar, .nav .me .who { display: none; }
-    .nav .me > a:first-of-type { margin-left: 0; }
+    .nav .me .acct-tab {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; width: 100%;
+      background: transparent; border: none; cursor: pointer;
+      color: var(--ink-dim); font-size: 10px;
+      padding: 6px 4px;
+    }
+    .nav .me .acct-tab .icon {
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .nav .me.open .acct-tab { color: var(--brand-1); }
+    /* The desktop inline link row becomes a popover sheet above the bar. */
+    .nav .me .acct-links {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 8px;
+      margin: 0;
+      min-width: 204px;
+      flex-direction: column;
+      gap: 2px;
+      padding: 6px;
+      background: var(--bg-2);
+      border: 1px solid var(--hairline);
+      border-radius: 12px;
+      box-shadow: var(--shadow-soft);
+      z-index: 50;
+    }
+    .nav .me.open .acct-links { display: flex; }
+    .nav .me .acct-link {
+      width: 100%;
+      gap: 12px;
+      padding: 11px 12px;
+      border-radius: 8px;
+      color: var(--ink-dim);
+      font-size: 14px;
+      text-align: left;
+    }
+    .nav .me .acct-link:hover, .nav .me .acct-link:active { background: var(--surface); color: var(--ink); }
+    .nav .me .acct-link .txt { display: inline; }
     .nav .items {
       flex-direction: row;
-      flex: 1;
+      flex: 4;
       padding: 6px 4px;
       gap: 0;
     }
@@ -469,7 +522,7 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    grid-template-columns: 44px 1fr auto auto;
+    grid-template-columns: 44px 1fr auto auto auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;

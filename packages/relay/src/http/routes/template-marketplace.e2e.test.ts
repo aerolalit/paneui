@@ -1280,6 +1280,63 @@ describe("POST /v1/my-templates/:id/launch (human)", () => {
     expect(pane!.templateVersionId).toBe(versionId);
   });
 
+  it("refuses to launch an agent-init template (required input_schema) — 409", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    // Claimed agent + owned template whose v1 input_schema declares a required
+    // field — i.e. an agent-init template. A cold human launch would mint a
+    // pane with no input_data and strand them in the template's empty state,
+    // so the route refuses it (the owner-shell tile blocks the click too).
+    const apiKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed-agent-init",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: agent.id,
+        name: "Agent-init",
+        slug: "agent-init",
+        latestVersion: 1,
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p>needs input</p>",
+        eventSchema: null,
+        inputSchema: {
+          type: "object",
+          required: ["prNumber"],
+          properties: { prNumber: { type: "integer" } },
+        },
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-templates/${tmpl.id}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("conflict");
+    expect(body.error.message).toMatch(/input_data/);
+    // No pane was minted — the launch was refused before pane.create.
+    const panes = await prisma.pane.findMany({ where: { agentId: agent.id } });
+    expect(panes).toHaveLength(0);
+  });
+
   it("creates a pane pinned to installedVersion and returns the human URL", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const { agentId, templateId, versionId } =
