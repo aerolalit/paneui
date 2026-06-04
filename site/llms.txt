@@ -1,13 +1,13 @@
 # Pane
 
-> A round-trip UI channel between AI agents and humans. An agent renders a
-> rich interactive UI by URL, captures every human interaction as structured
-> data, and feeds it back — no GUI host app needed on either side. Open-core,
-> MIT licensed.
+> Apps are built for everyone; panes are built for you. Your agent builds a
+> pane (the exact form, dashboard, or tool you need) and Pane hosts it by URL,
+> no GUI host app needed on either side. You use it; your agent reads, queries,
+> and acts on the data it produces. Open-core, MIT licensed.
 
 Pane is for agents that live outside a GUI host app: cron jobs, Slack /
 Telegram bots, CI, headless servers. The agent only makes outbound calls to
-a small relay — no host app, no inbound port, no public address of its own.
+a small relay, with no host app, no inbound port, and no public address of its own.
 
 - Source: <https://github.com/aerolalit/paneui>
 - Landing site: <https://paneui.com>
