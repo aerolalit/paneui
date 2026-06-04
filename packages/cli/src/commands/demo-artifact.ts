@@ -21,12 +21,12 @@
 //
 // Event schema (the contract `pane demo` registers — kept here so the artifact
 // and its schema stay in one file and cannot drift):
-//   demo:start   page  {}                          — Scene 1 "Show me how"
-//   demo:hello   page  {}                          — Scene 3 "Click me" (the proof)
-//   demo:form    page  { name, choice }            — Scene 4 structured data
-//   demo:advance agent { scene, note? }            — drive the next scene in
-//   demo:echo    agent { received }                — reflect the form payload back
-//   demo:done    agent {}                          — render the final CTA
+//   demo.start   page  {}                          — Scene 1 "Show me how"
+//   demo.hello   page  {}                          — Scene 3 "Click me" (the proof)
+//   demo.form    page  { name, choice }            — Scene 4 structured data
+//   demo.advance agent { scene, note? }            — drive the next scene in
+//   demo.echo    agent { received }                — reflect the form payload back
+//   demo.done    agent {}                          — render the final CTA
 
 /**
  * The tutorial event schema, in the legacy `{ events: { type: { payload,
@@ -35,15 +35,15 @@
  */
 export const DEMO_EVENT_SCHEMA = {
   events: {
-    "demo:start": {
+    "demo.start": {
       emittedBy: ["page"],
       payload: { type: "object", additionalProperties: false },
     },
-    "demo:hello": {
+    "demo.hello": {
       emittedBy: ["page"],
       payload: { type: "object", additionalProperties: false },
     },
-    "demo:form": {
+    "demo.form": {
       emittedBy: ["page"],
       payload: {
         type: "object",
@@ -55,7 +55,7 @@ export const DEMO_EVENT_SCHEMA = {
         additionalProperties: false,
       },
     },
-    "demo:advance": {
+    "demo.advance": {
       emittedBy: ["agent"],
       payload: {
         type: "object",
@@ -67,7 +67,7 @@ export const DEMO_EVENT_SCHEMA = {
         additionalProperties: false,
       },
     },
-    "demo:echo": {
+    "demo.echo": {
       emittedBy: ["agent"],
       payload: {
         type: "object",
@@ -76,7 +76,7 @@ export const DEMO_EVENT_SCHEMA = {
         additionalProperties: false,
       },
     },
-    "demo:done": {
+    "demo.done": {
       emittedBy: ["agent"],
       payload: { type: "object", additionalProperties: false },
     },
@@ -343,7 +343,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
         <h1>That landed in two places.</h1>
         <p class="point">Look at your terminal — it printed the same event.</p>
         <p>
-          The click became a <code>demo:hello</code> event, streamed to the
+          The click became a <code>demo.hello</code> event, streamed to the
           agent, which streamed a reply back to redraw this page. No polling, no
           refresh.
         </p>
@@ -440,8 +440,8 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
   }
 
   // Show a scene by number. Scenes are interaction-driven: scene 1 is shown
-  // immediately; every later scene is revealed by an agent reply (demo:advance
-  // / demo:echo / demo:done), never by the page on its own.
+  // immediately; every later scene is revealed by an agent reply (demo.advance
+  // / demo.echo / demo.done), never by the page on its own.
   function show(n) {
     if (n === current) return;
     var el = scenes[String(n)];
@@ -498,9 +498,9 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
 
   // Render the event log for scene 5 from pane.state — the user's own emits.
   var EVENT_LABEL = {
-    "demo:start": "opened the tour",
-    "demo:hello": "clicked the button",
-    "demo:form": "submitted the form",
+    "demo.start": "opened the tour",
+    "demo.hello": "clicked the button",
+    "demo.form": "submitted the form",
   };
   function renderLog() {
     var log = document.getElementById("log");
@@ -535,18 +535,18 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
 
   // --- wiring -----------------------------------------------------------
 
-  // Scene 1 -> demo:start. The agent replies demo:advance{scene:2}.
+  // Scene 1 -> demo.start. The agent replies demo.advance{scene:2}.
   document.getElementById("b-start").addEventListener("click", function () {
     var b = this;
     b.disabled = true;
-    pane.emit("demo:start", {})["catch"](function () { b.disabled = false; });
+    pane.emit("demo.start", {})["catch"](function () { b.disabled = false; });
   });
 
-  // Scene 2 -> demo:hello (the proof). The agent replies demo:advance{scene:3}.
+  // Scene 2 -> demo.hello (the proof). The agent replies demo.advance{scene:3}.
   document.getElementById("b-hello").addEventListener("click", function () {
     var b = this;
     b.disabled = true;
-    pane.emit("demo:hello", {})["catch"](function () { b.disabled = false; });
+    pane.emit("demo.hello", {})["catch"](function () { b.disabled = false; });
   });
 
   // Scene 3 -> reveal the form. This is a local navigation step (no round-trip
@@ -575,26 +575,26 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     var data = { choice: picked };
     if (name) data.name = name;
     formBtn.disabled = true;
-    // The agent replies demo:echo{received} (then walks scenes 5 + 6).
-    pane.emit("demo:form", data)["catch"](function () {
+    // The agent replies demo.echo{received} (then walks scenes 5 + 6).
+    pane.emit("demo.form", data)["catch"](function () {
       formBtn.disabled = false;
     });
   });
 
   // --- agent-driven scene changes --------------------------------------
 
-  pane.on("demo:advance", function (ev) {
+  pane.on("demo.advance", function (ev) {
     var scene = ev && ev.data && Number(ev.data.scene);
     if (scene === 5) renderLog();
     if (scene >= 1 && scene <= 6) show(scene);
   });
 
-  pane.on("demo:echo", function (ev) {
+  pane.on("demo.echo", function (ev) {
     var received = ev && ev.data ? ev.data.received : null;
     renderEcho(received);
   });
 
-  pane.on("demo:done", function () {
+  pane.on("demo.done", function () {
     show(6);
   });
 

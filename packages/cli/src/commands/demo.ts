@@ -9,7 +9,7 @@
 // successful demo doubles as an end-to-end smoke test of the install (auth,
 // relay reachability, WebSocket, a real event round-trip).
 //
-// Run-to-completion: the loop walks Scenes 1-6, sends demo:done, prints the
+// Run-to-completion: the loop walks Scenes 1-6, sends demo.done, prints the
 // "build your own" snippet, and exits 0. The pane is created with a short TTL
 // (the relay's sweeper reclaims it) and best-effort DELETEd on exit.
 
@@ -77,16 +77,16 @@ Run it right after 'pane agent register' to confirm everything works.`;
  * frames in the same tick.
  *
  * Mapping (see the scene spec in demo-artifact.ts):
- *   demo:start -> demo:advance{scene:2}            (show the model)
- *   demo:hello -> demo:advance{scene:3, note}      (the proof beat)
- *   demo:form  -> demo:echo{received},             (reflect the payload)
- *                 demo:advance{scene:5},           (the event log)
- *                 demo:done                        (the CTA)
+ *   demo.start -> demo.advance{scene:2}            (show the model)
+ *   demo.hello -> demo.advance{scene:3, note}      (the proof beat)
+ *   demo.form  -> demo.echo{received},             (reflect the payload)
+ *                 demo.advance{scene:5},           (the event log)
+ *                 demo.done                        (the CTA)
  *
  * Any other (or agent-authored) event yields no reaction.
  */
 export interface AgentReaction {
-  type: "demo:advance" | "demo:echo" | "demo:done";
+  type: "demo.advance" | "demo.echo" | "demo.done";
   data: Record<string, unknown>;
   /** Milliseconds to wait before emitting this reaction (default 0). */
   delayMs?: number;
@@ -97,27 +97,27 @@ export function demoReactions(
   humanData?: unknown,
 ): AgentReaction[] {
   switch (humanEventType) {
-    case "demo:start":
-      return [{ type: "demo:advance", data: { scene: 2 } }];
-    case "demo:hello":
+    case "demo.start":
+      return [{ type: "demo.advance", data: { scene: 2 } }];
+    case "demo.hello":
       return [
         {
-          type: "demo:advance",
+          type: "demo.advance",
           data: {
             scene: 3,
             note: "received your click — printed in your terminal",
           },
         },
       ];
-    case "demo:form": {
+    case "demo.form": {
       const received =
         humanData && typeof humanData === "object"
           ? (humanData as Record<string, unknown>)
           : {};
       return [
-        { type: "demo:echo", data: { received } },
-        { type: "demo:advance", data: { scene: 5 }, delayMs: 1200 },
-        { type: "demo:done", data: {}, delayMs: 2400 },
+        { type: "demo.echo", data: { received } },
+        { type: "demo.advance", data: { scene: 5 }, delayMs: 1200 },
+        { type: "demo.done", data: {}, delayMs: 2400 },
       ];
     }
     default:
@@ -125,8 +125,8 @@ export function demoReactions(
   }
 }
 
-/** The human event types the demo loop reacts to (its terminal one is demo:form). */
-const HUMAN_EVENT_TYPES = new Set(["demo:start", "demo:hello", "demo:form"]);
+/** The human event types the demo loop reacts to (its terminal one is demo.form). */
+const HUMAN_EVENT_TYPES = new Set(["demo.start", "demo.hello", "demo.form"]);
 
 /** The "build your own" snippet printed on completion. */
 function buildYourOwnSnippet(): string {
@@ -243,7 +243,7 @@ export async function runDemo(args: ParsedArgs): Promise<void> {
   );
 
   // 3. Run the agent loop: watch the stream, react to each human event,
-  //    echo every received event to the terminal, and finish on demo:done.
+  //    echo every received event to the terminal, and finish on demo.done.
   await runDemoLoop({
     wsBaseUrl: client.wsBaseUrl,
     paneId,
@@ -260,7 +260,7 @@ export async function runDemo(args: ParsedArgs): Promise<void> {
 /**
  * Drive the demo to completion over an open stream. Factored out of runDemo so
  * the wiring (stream open/close, reaction dispatch, terminal echo, cleanup) is
- * exercised independently of pane-create. Resolves once demo:done has been
+ * exercised independently of pane-create. Resolves once demo.done has been
  * emitted (or the stream closes / errors), after best-effort deleting the pane.
  */
 export interface DemoLoopDeps {
@@ -287,7 +287,7 @@ export function runDemoLoop(deps: DemoLoopDeps): Promise<void> {
     // it; `open()` returns synchronously below and every handler that calls
     // `finish` fires asynchronously, so the binding is always set by then.
     const ref: { handle?: StreamHandle } = {};
-    // Track whether demo:done was actually sent, so an early stream close
+    // Track whether demo.done was actually sent, so an early stream close
     // (TTL / human shut the tab) is reported as "before completion" rather
     // than a successful finish.
     let doneSent = false;
@@ -304,7 +304,7 @@ export function runDemoLoop(deps: DemoLoopDeps): Promise<void> {
       resolve();
     };
 
-    // Dispatch a single agent reaction, honouring its delay. demo:done is the
+    // Dispatch a single agent reaction, honouring its delay. demo.done is the
     // terminal event — once it's been emitted we wrap up.
     const dispatch = (r: ReturnType<typeof demoReactions>[number]): void => {
       const send = (): void => {
@@ -312,7 +312,7 @@ export function runDemoLoop(deps: DemoLoopDeps): Promise<void> {
         deps
           .sendEvent(r.type, r.data)
           .then(() => {
-            if (r.type === "demo:done") {
+            if (r.type === "demo.done") {
               doneSent = true;
               deps.write(buildYourOwnSnippet());
               void finish();
@@ -346,7 +346,7 @@ export function runDemoLoop(deps: DemoLoopDeps): Promise<void> {
           for (const r of demoReactions(event.type, event.data)) dispatch(r);
         },
         onClose: () => {
-          // If the pane closed before demo:done (e.g. TTL or the human shut the
+          // If the pane closed before demo.done (e.g. TTL or the human shut the
           // tab), still resolve cleanly — the loop is run-to-completion but a
           // dropped human is a valid end, not a crash.
           if (!doneSent) {

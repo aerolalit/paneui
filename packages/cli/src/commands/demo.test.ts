@@ -24,26 +24,26 @@ function ev(type: string, data: unknown = {}): PaneEvent {
 }
 
 describe("demoReactions — the agent reaction table", () => {
-  it("answers demo:start with advance to scene 2", () => {
-    expect(demoReactions("demo:start")).toEqual([
-      { type: "demo:advance", data: { scene: 2 } },
+  it("answers demo.start with advance to scene 2", () => {
+    expect(demoReactions("demo.start")).toEqual([
+      { type: "demo.advance", data: { scene: 2 } },
     ]);
   });
 
-  it("answers demo:hello with advance to scene 3 (the proof beat)", () => {
-    const out = demoReactions("demo:hello");
+  it("answers demo.hello with advance to scene 3 (the proof beat)", () => {
+    const out = demoReactions("demo.hello");
     expect(out).toHaveLength(1);
-    expect(out[0]!.type).toBe("demo:advance");
+    expect(out[0]!.type).toBe("demo.advance");
     expect(out[0]!.data.scene).toBe(3);
     expect(typeof out[0]!.data.note).toBe("string");
   });
 
-  it("answers demo:form by echoing the payload, then advancing, then done", () => {
-    const out = demoReactions("demo:form", { name: "Sam", choice: "build" });
+  it("answers demo.form by echoing the payload, then advancing, then done", () => {
+    const out = demoReactions("demo.form", { name: "Sam", choice: "build" });
     expect(out.map((r) => r.type)).toEqual([
-      "demo:echo",
-      "demo:advance",
-      "demo:done",
+      "demo.echo",
+      "demo.advance",
+      "demo.done",
     ]);
     // The echo reflects the EXACT payload the human submitted.
     expect(out[0]!.data).toEqual({
@@ -55,15 +55,15 @@ describe("demoReactions — the agent reaction table", () => {
     expect(out[2]!.delayMs).toBeGreaterThan(out[1]!.delayMs!);
   });
 
-  it("coerces a non-object demo:form payload to an empty received object", () => {
-    const out = demoReactions("demo:form", "oops");
+  it("coerces a non-object demo.form payload to an empty received object", () => {
+    const out = demoReactions("demo.form", "oops");
     expect(out[0]!.data).toEqual({ received: {} });
   });
 
   it("ignores agent-authored and unknown events", () => {
-    expect(demoReactions("demo:advance")).toEqual([]);
-    expect(demoReactions("demo:echo")).toEqual([]);
-    expect(demoReactions("demo:done")).toEqual([]);
+    expect(demoReactions("demo.advance")).toEqual([]);
+    expect(demoReactions("demo.echo")).toEqual([]);
+    expect(demoReactions("demo.done")).toEqual([]);
     expect(demoReactions("system.participant.joined")).toEqual([]);
     expect(demoReactions("anything.else")).toEqual([]);
   });
@@ -99,7 +99,7 @@ function fakeStream() {
 }
 
 describe("runDemoLoop — the watch/react loop", () => {
-  it("reacts to a full human sequence and finishes on demo:done", async () => {
+  it("reacts to a full human sequence and finishes on demo.done", async () => {
     const sent: Array<{ type: string; data: unknown }> = [];
     const written: string[] = [];
     const deletePane = vi.fn(() => Promise.resolve());
@@ -122,19 +122,19 @@ describe("runDemoLoop — the watch/react loop", () => {
     });
 
     // Walk the tour the way a human would.
-    stream.emit(ev("demo:start"));
-    stream.emit(ev("demo:hello"));
-    stream.emit(ev("demo:form", { name: "Sam", choice: "build" }));
+    stream.emit(ev("demo.start"));
+    stream.emit(ev("demo.hello"));
+    stream.emit(ev("demo.form", { name: "Sam", choice: "build" }));
 
     await done;
 
     // The agent reacted with the right sequence, in order.
     expect(sent.map((s) => s.type)).toEqual([
-      "demo:advance", // <- demo:start
-      "demo:advance", // <- demo:hello
-      "demo:echo", // <- demo:form
-      "demo:advance",
-      "demo:done",
+      "demo.advance", // <- demo.start
+      "demo.advance", // <- demo.hello
+      "demo.echo", // <- demo.form
+      "demo.advance",
+      "demo.done",
     ]);
     // The pane was best-effort deleted on exit.
     expect(deletePane).toHaveBeenCalledTimes(1);
@@ -158,13 +158,13 @@ describe("runDemoLoop — the watch/react loop", () => {
       schedule: (fn) => fn(),
       openStreamImpl: stream.openStreamImpl,
     });
-    stream.emit(ev("demo:hello"));
-    stream.emit(ev("demo:form", { choice: "watch" }));
+    stream.emit(ev("demo.hello"));
+    stream.emit(ev("demo.form", { choice: "watch" }));
     stream.close();
     await done;
     const all = written.join("");
-    expect(all).toContain("demo:hello");
-    expect(all).toContain("demo:form");
+    expect(all).toContain("demo.hello");
+    expect(all).toContain("demo.form");
     expect(all).toContain('"choice":"watch"');
   });
 
@@ -186,13 +186,13 @@ describe("runDemoLoop — the watch/react loop", () => {
       openStreamImpl: stream.openStreamImpl,
     });
     // The agent's own replies stream back too — they must be inert.
-    stream.emit(ev("demo:advance", { scene: 2 }));
-    stream.emit(ev("demo:echo", { received: {} }));
+    stream.emit(ev("demo.advance", { scene: 2 }));
+    stream.emit(ev("demo.echo", { received: {} }));
     stream.emit(ev("system.participant.joined", {}));
     stream.close();
     await done;
     expect(sent).toEqual([]);
-    expect(written.join("")).not.toContain("demo:advance");
+    expect(written.join("")).not.toContain("demo.advance");
   });
 
   it("resolves cleanly if the session closes before completion", async () => {
@@ -209,7 +209,7 @@ describe("runDemoLoop — the watch/react loop", () => {
       schedule: (fn) => fn(),
       openStreamImpl: stream.openStreamImpl,
     });
-    stream.emit(ev("demo:start"));
+    stream.emit(ev("demo.start"));
     stream.close(); // human shut the tab early
     await done;
     expect(deletePane).toHaveBeenCalledTimes(1);
@@ -274,7 +274,7 @@ describe("demo artifact — smoke checks", () => {
       )
       .map(([t]) => t);
     expect(new Set(pageTypes)).toEqual(
-      new Set(["demo:start", "demo:hello", "demo:form"]),
+      new Set(["demo.start", "demo.hello", "demo.form"]),
     );
     for (const t of pageTypes) {
       expect(DEMO_ARTIFACT_HTML).toContain(`pane.emit("${t}"`);
@@ -288,7 +288,20 @@ describe("demo artifact — smoke checks", () => {
       )
       .map(([t]) => t);
     expect(new Set(agentTypes)).toEqual(
-      new Set(["demo:advance", "demo:echo", "demo:done"]),
+      new Set(["demo.advance", "demo.echo", "demo.done"]),
     );
+  });
+
+  // Regression guard: the relay validates every event-type name against this
+  // pattern (POST /v1/panes → schema.events). Colons are NOT allowed — the demo
+  // originally used `demo:start` etc. and the relay rejected the create outright.
+  // Keep every declared type dotted, lowercase-led, alnum-terminated.
+  it("declares only event types the relay's name validator accepts", () => {
+    const RELAY_EVENT_NAME = /^[a-z][a-zA-Z0-9.]*[a-zA-Z0-9]$/;
+    for (const type of Object.keys(DEMO_EVENT_SCHEMA.events)) {
+      expect(type, `event type "${type}" must match the relay pattern`).toMatch(
+        RELAY_EVENT_NAME,
+      );
+    }
   });
 });
