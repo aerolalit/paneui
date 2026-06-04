@@ -203,13 +203,31 @@ describe("PWA assets", () => {
       name: string;
       start_url: string;
       display: string;
-      icons: Array<{ src: string; type: string }>;
+      icons: Array<{
+        src: string;
+        type: string;
+        sizes: string;
+        purpose: string;
+      }>;
     };
     expect(body.name).toBe("pane");
     expect(body.start_url).toBe("/home");
     expect(body.display).toBe("standalone");
-    expect(body.icons[0]!.src).toBe("/favicon.svg");
-    expect(body.icons[0]!.type).toBe("image/svg+xml");
+    // PNG raster icons drive the Android/desktop install (iOS uses the
+    // apple-touch-icon link). The 180 must lead; a maskable PNG must exist.
+    expect(body.icons[0]!.src).toBe("/apple-touch-icon.png");
+    expect(body.icons[0]!.type).toBe("image/png");
+    expect(
+      body.icons.some(
+        (i) => i.type === "image/png" && i.purpose.includes("maskable"),
+      ),
+    ).toBe(true);
+    // The scalable SVG is kept as a progressive-enhancement fallback.
+    expect(
+      body.icons.some(
+        (i) => i.src === "/favicon.svg" && i.type === "image/svg+xml",
+      ),
+    ).toBe(true);
   });
 
   it("serves /favicon.svg as image/svg+xml", async () => {
@@ -218,6 +236,21 @@ describe("PWA assets", () => {
     expect(res.headers.get("content-type")).toContain("image/svg+xml");
     const body = await res.text();
     expect(body.startsWith("<svg")).toBe(true);
+  });
+
+  it.each([
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/icon-192.png",
+    "/icon-512.png",
+  ])("serves %s as a PNG image", async (path) => {
+    const res = await app.fetch(new Request("http://t" + path));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // PNG magic number: 89 50 4E 47 — confirms real raster bytes, not an
+    // empty/HTML body.
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
   it("every layout-served page links the manifest", async () => {
@@ -229,6 +262,9 @@ describe("PWA assets", () => {
     expect(html).toContain('rel="manifest"');
     expect(html).toContain('href="/manifest.webmanifest"');
     expect(html).toContain('name="apple-mobile-web-app-capable"');
+    // Without this link, iOS "Add to Home Screen" falls back to a screenshot.
+    expect(html).toContain('rel="apple-touch-icon"');
+    expect(html).toContain('href="/apple-touch-icon.png"');
   });
 });
 
@@ -405,30 +441,32 @@ describe("Legacy multi-route 301s to the SPA", () => {
 });
 
 describe("brand mark consistency", () => {
-  it("/favicon.svg uses the gradient-P shape", async () => {
+  it("/favicon.svg renders the robot brand mark (same as the install icons)", async () => {
     const fav = await app.fetch(new Request("http://t/favicon.svg"));
     expect(fav.status).toBe(200);
     expect(fav.headers.get("content-type")).toContain("image/svg+xml");
     const favBody = await fav.text();
-    expect(favBody).toContain("pane-brand-grad");
-    expect(favBody).toContain("linearGradient");
-    expect(favBody).toContain(">P</text>");
+    // Robot mark fills: navy tile, cyan circle, purple chat-bubble. The old
+    // gradient-"P" (linearGradient + <text>P</text>) must be gone — the favicon
+    // now matches the home-screen / install icons.
+    expect(favBody).toContain('fill="#22d3ee"'); // cyan circle
+    expect(favBody).toContain('fill="#a78bfa"'); // purple bubble
+    expect(favBody).not.toContain("linearGradient");
+    expect(favBody).not.toContain(">P</text>");
   });
 
-  it("/home's SPA shell renders the brand block with the P logo + wordmark", async () => {
+  it("/home's SPA shell renders the brand block with the robot logo + wordmark", async () => {
     const { cookie } = await seedLoggedInHuman();
     const home = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await home.text();
-    // The SPA renders the brand via the prototype's CSS-styled .logo
-    // div (background: brand-grad, letter "P"). The shell pulls the
-    // same gradient palette from owner-shell-css so the visual matches
-    // /favicon.svg.
-    expect(html).toContain('<div class="logo">P</div>');
+    // The SPA brand block renders the robot mark (inline SVG) inside the .logo
+    // tile — the same artwork as /favicon.svg and the install icons.
     expect(html).toContain('class="brand"');
-    // The CSS bundled with the SPA defines the brand gradient palette.
-    expect(html).toContain("--brand-grad:");
+    expect(html).toContain('<div class="logo"><svg');
+    expect(html).toContain('fill="#a78bfa"'); // purple bubble = the robot mark
+    expect(html).not.toContain('<div class="logo">P</div>');
   });
 
   it("/login (the small page outside the SPA) still ships the manifest + favicon link", async () => {
