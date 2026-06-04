@@ -19,6 +19,7 @@ import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
 import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
+import { hasRequiredInputSchema } from "../../core/validation.js";
 
 // Wrap a shared nav glyph (nav-meta.ts) in the SPA's <svg> conventions so the
 // sidebar / account / mobile-bar icons stay byte-identical to the legacy
@@ -224,7 +225,7 @@ async function loadShellData(
       id: t.id,
       name: t.name,
       slug: t.slug,
-      isAgentInit: hasRequiredInputs(t.versions[0]?.inputSchema),
+      isAgentInit: hasRequiredInputSchema(t.versions[0]?.inputSchema),
       paneCount: paneCountByTemplate.get(t.id) ?? 0,
       isPublished: t.publishedAt !== null,
     };
@@ -584,7 +585,7 @@ function appTile(
     : "app-tile-wrap ready";
   return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
     ${badge}${menuBtn}
-    <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}"${dataAttr}>
+    <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${dataAttr}>
       <div class="icon" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">${escapeHtml(initials)}</div>
       <div class="label">${escapeHtml(name)}</div>
     </button>
@@ -664,16 +665,6 @@ function friendlyName(email: string): string {
   const local = (email.split("@")[0] ?? "").split(/[._-]/)[0] ?? "";
   if (local.length === 0) return "there";
   return local.charAt(0).toUpperCase() + local.slice(1);
-}
-
-// A template is "agent-init" when its latest version's input_schema declares
-// a non-empty `required` array. This matches the convention the relay already
-// uses (input_data is validated against the version's input_schema): if the
-// schema has required fields, the template can't be launched cold by a human.
-function hasRequiredInputs(schema: unknown): boolean {
-  if (!schema || typeof schema !== "object") return false;
-  const required = (schema as { required?: unknown }).required;
-  return Array.isArray(required) && required.length > 0;
 }
 
 function paneHue(seed: string): number {
@@ -1030,6 +1021,17 @@ const SHELL_JS = `
     if (tile.tagName === 'A') return;
     const id = tile.getAttribute('data-template-id');
     if (!id) return;
+    // Agent-init templates can't be cold-launched from a tile: their
+    // input_schema has required fields only an agent can seed (via POST
+    // /v1/panes input_data). Launching would mint a pane with no input_data
+    // and strand the human in the template's empty state. The launch route
+    // refuses this too (defense-in-depth); intercept here so the human gets an
+    // explanation instead of a failed-launch alert.
+    if (tile.getAttribute('data-agent-init') === '1') {
+      const nm = tile.getAttribute('data-template-name') || 'This template';
+      alert(nm + ' is an agent-init template — an agent must create a pane from it (seeding its input data via the API) before it can be opened. It can\\'t be launched directly here.');
+      return;
+    }
     const needsInstall = tile.getAttribute('data-needs-install') === '1';
     const labelEl = tile.querySelector('.label');
     const origLabel = labelEl ? labelEl.textContent : '';
