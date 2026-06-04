@@ -109,7 +109,7 @@ export async function createSession(base: string): Promise<CreatedSession> {
         authorization: "Bearer " + reg.api_key,
       },
       body: JSON.stringify({
-        template: { type: "html-inline", source: template },
+        template: { name: "ping", type: "html-inline", source: template },
         schema: {
           events: {
             ping: { payload: { type: "object" }, emittedBy: ["page"] },

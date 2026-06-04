@@ -87,6 +87,7 @@ async function createPane(
       headers: bearer(apiKey),
       body: JSON.stringify({
         template: {
+          name: "Test template",
           type: "html-inline",
           source: "<html></html>",
           event_schema: eventSchema,

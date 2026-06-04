@@ -517,8 +517,9 @@ templates.get("/", async (c) => {
   const agent = c.get("agent");
   const q = c.req.query("q")?.trim().toLowerCase();
 
-  // Only named templates are discoverable — anonymous (inline-created) ones
-  // have name = null and are an implementation detail, not browseable.
+  // Every template is named now (name is NOT NULL), so the list returns all
+  // of an agent's templates — including the ones auto-created by inline
+  // `pane create`, which are named, reusable identities like any other.
   // #283 — claimed agents see every same-human agent's templates.
   // #305 — soft-deleted templates hidden by default; ?include_deleted=true
   // exposes them for the trash UI.
@@ -527,7 +528,6 @@ templates.get("/", async (c) => {
   const rows = await prisma.template.findMany({
     where: {
       ownerId: { in: [...scope] },
-      name: { not: null },
       ...softDeleteWhere(includeDeleted),
     },
     orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }],
