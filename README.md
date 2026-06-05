@@ -1,6 +1,6 @@
 # Pane
 
-**A round-trip UI channel between agents and humans.** An agent hands a human a rich interactive UI by URL (no GUI host app needed on either side), captures the human's interactions as structured data, and feeds that data back to the agent (WS, poll, or webhook).
+**Apps are built for everyone. Panes are built for you.** Your agent builds a pane (the exact form, dashboard, or tool you need) and Pane hosts it by URL, no GUI host app needed on either side. You use it; your agent reads, queries, and acts on the data it produces (WS, poll, or webhook). Pane doesn't build apps. It hosts the panes your agent builds for you.
 
 ## The problem
 
@@ -56,7 +56,7 @@ No build step, no host app. Pick your audience — paste the agent block into yo
 Paste the block below into your AI agent's chat. It will install the CLI, register against the hosted relay, and install the Pane skill into its own skill directory.
 
 ````text
-Install Pane for me. Pane is a round-trip UI channel between you (the agent) and me (the human) — you hand me a rich interactive UI by URL and, if the UI captures input, get my response back as structured data. Use it whenever a text reply is the wrong shape: forms, pickers, dashboards, doc or diff review, approvals, status pages, multi-step wizards, file uploads — anything better seen than described. Input is optional; a read-only dashboard or status view is a valid Pane.
+Install Pane for me. Pane lets you (the agent) build me (the human) a pane: a rich interactive UI hosted by URL, built for the moment I need it. If it captures input, you get my response back as structured data. Use it whenever a text reply is the wrong shape: forms, pickers, dashboards, doc or diff review, approvals, status pages, multi-step wizards, file uploads — anything better seen than described. Input is optional; a read-only dashboard or status view is a valid Pane.
 
 Install everything at GLOBAL / USER scope, not in the current workspace. Pane is a personal capability I want available in every project, not a per-repo dependency. Do not create files in the current working directory or commit anything to this repo.
 
