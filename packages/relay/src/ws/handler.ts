@@ -400,7 +400,21 @@ async function handleUpgrade(
         });
       }
     } else {
-      const resolved = await resolveBearer(prisma, cred.value);
+      // F-02: thread the upgrade request's Cookie header into resolveBearer so
+      // an identity-bound participant token only resolves with the matching
+      // `pane_login` cookie. The browser sends cookies on the WS handshake
+      // (same-origin upgrade); a leaked token used from a context without the
+      // cookie collapses to "not resolvable" and is rejected below.
+      const cookieHeader =
+        typeof req.headers["cookie"] === "string"
+          ? req.headers["cookie"]
+          : null;
+      const resolved = await resolveBearer(
+        prisma,
+        cred.value,
+        "both",
+        cookieHeader,
+      );
       if (!resolved) {
         sendUpgradeError(socket, 404, "bearer not resolvable", { paneId });
         return;

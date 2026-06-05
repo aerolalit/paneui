@@ -36,6 +36,7 @@ import { errors } from "../http/errors.js";
 import type { AppEnv } from "../http/env.js";
 import { processBlobUpload } from "../attachments/index.js";
 import { makeQuotaEnforcer } from "../http/routes/attachments.js";
+import { participantBindingSatisfied } from "../auth/human-auth.js";
 
 // Participant tokens are minted in keys.ts with a type prefix ("tok_a_" for
 // agent participants, "tok_h_" for humans) + `randomBytes(32).toString("base64url")`.
@@ -84,9 +85,21 @@ blobUploadBridge.post("/:participantToken/attachments", async (c) => {
   // the pane matches the GET routes' "not_found-on-bad-token" behaviour.
   const participant = await prisma.participant.findUnique({
     where: { tokenHash: hashKey(token) },
-    select: { paneId: true, revokedAt: true },
+    select: { paneId: true, revokedAt: true, humanId: true },
   });
   if (!participant || participant.revokedAt) {
+    throw errors.participantTokenInvalid();
+  }
+  // F-02: an identity-bound token can only upload (authored as the bound
+  // human's identity) when the request carries the matching login cookie.
+  // A miss collapses to the same opaque participant_token_invalid.
+  if (
+    !(await participantBindingSatisfied(
+      prisma,
+      participant,
+      c.req.header("cookie") ?? null,
+    ))
+  ) {
     throw errors.participantTokenInvalid();
   }
   const pane = await prisma.pane.findUnique({

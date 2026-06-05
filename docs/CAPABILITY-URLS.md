@@ -106,9 +106,9 @@ as plausible:
 | Revocation endpoint + in-process cache | instant kill switch on leak | < 1s propagation; DB is source of truth |
 | `Referrer-Policy: no-referrer` on every blob response | block cross-origin leak | the next-page navigation can't leak the URL |
 | `X-Content-Type-Options: nosniff` | force declared MIME | browser won't reclassify image bytes as HTML |
-| `Content-Disposition: attachment` for non-image MIMEs | block inline render | PDF / etc. download instead of display |
+| `Content-Disposition: attachment` for non-raster MIMEs | block inline render | only known-safe raster images (png/jpeg/webp/gif) are served `inline`; SVG, PDF, and everything else download instead of rendering in the relay origin |
 | `Cross-Origin-Resource-Policy: same-origin` | block speculative cross-origin reads | only pane's own origin can fetch |
-| `Content-Security-Policy: frame-ancestors 'none'` + `X-Frame-Options: DENY` | block any page from framing the blob | closes the same-site framing gap CORP alone leaves (an inline image blob can otherwise be embedded by a same-site page even though CORP blocks cross-origin reads) |
+| `Content-Security-Policy: default-src 'none'; sandbox; frame-ancestors 'none'` + `X-Frame-Options: DENY` | block framing AND defang any rendered document | `frame-ancestors 'none'` closes the same-site framing gap CORP alone leaves (an inline image blob can otherwise be embedded by a same-site page even though CORP blocks cross-origin reads); `default-src 'none'; sandbox` neutralises scripts/forms/same-origin if the bytes are ever rendered as a document. Applied to all attachment + icon download responses. |
 | `Cache-Control: private, no-store` | block shared-cache caching | CDN / corporate proxy won't cache |
 | Access-log token redaction (`/b/***`) | logs don't leak the URL | tokens never reach an aggregator unredacted |
 | Per-token audit metadata (/24-truncated IPs, use_count) | spot anomalous use | the owner can see "this token started getting used from a different network" |
