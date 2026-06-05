@@ -36,13 +36,16 @@ export interface OwnerShellOptions {
   prisma: PrismaClient;
   config: Config;
   human: HumanRow;
+  /** Per-request CSP nonce — stamped on the SPA's inline <style>/<script> so
+   *  the /home response can drop `script-src 'unsafe-inline'`. */
+  nonce: string;
 }
 
 export async function renderOwnerShell(
   opts: OwnerShellOptions,
 ): Promise<string> {
   const data = await loadShellData(opts.prisma, opts.config, opts.human);
-  return renderHtml(opts.human, data);
+  return renderHtml(opts.human, data, opts.nonce);
 }
 
 // ----- Data shapes (all post-Prisma, ready to render) -----
@@ -333,7 +336,7 @@ async function loadShellData(
 
 // ----- HTML rendering -----
 
-function renderHtml(human: HumanRow, data: ShellData): string {
+function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   const displayName =
     (human.name && human.name.trim()) || friendlyName(human.email);
   const avatarLetter = displayName.charAt(0).toUpperCase() || "?";
@@ -435,7 +438,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
 <title>pane</title>
-<style>${OWNER_SHELL_CSS}${EXTRA_CSS}</style>
+<style nonce="${nonce}">${OWNER_SHELL_CSS}${EXTRA_CSS}</style>
 </head>
 <body>
 
@@ -646,7 +649,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   </div>
 </div>
 
-<script>${SHELL_JS}</script>
+<script nonce="${nonce}">${SHELL_JS}</script>
 </body>
 </html>`;
 }
