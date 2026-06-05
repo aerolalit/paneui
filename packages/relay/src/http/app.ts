@@ -28,6 +28,7 @@ import {
 import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
 import icons from "./routes/icons.js";
+import previews from "./routes/previews.js";
 import events from "./routes/events.js";
 import records from "./routes/records.js";
 import templateRecords from "./routes/template-records.js";
@@ -295,6 +296,14 @@ export function buildApp(
   // NOT collide with the ownerShell `/panes/:id/*` mount above because
   // ownerShell registers no `/:id/icon` route (Hono matches the exact path).
   app.route("/", icons);
+
+  // Artifact-preview thumbnails for the owner-shell home cards. Cookie-authed
+  // GETs that `<iframe src>` from inside the owner shell. Mounted at root
+  // (like icons) so it serves both `/templates/:id/preview` and
+  // `/panes/:id/preview`; the latter does NOT collide with the ownerShell
+  // `/panes/:id/*` mount above because ownerShell registers no `/:id/preview`
+  // route (Hono matches the exact path).
+  app.route("/", previews);
 
   // /v1/register is gated by REGISTRATION_MODE (config.ts), enforced inside
   // the route module: `closed` (default) returns 404; `secret` requires an
