@@ -29,10 +29,64 @@ import {
 } from "../../app-icon.js";
 import { renderOwnerShell } from "./owner-shell-spa.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
+import { PERMISSIONS_POLICY } from "../../bridge/routes.js";
 
 const systemPages = new Hono<OptionalHumanAuthEnv>();
 
+// Defence-in-depth Content-Security-Policy for every HTML page this router
+// emits (/, /login, /home, /my-templates/:id/content, /my-agents, plus the
+// logged-out / not-found variants). No XSS is currently reachable here — the
+// escapers are applied consistently — but unlike the owner-shell SPA and the
+// bridge routes these pages previously shipped with NO CSP, so a future
+// escaping regression had no second line of defence.
+//
+// This is the STATIC, 'unsafe-inline' variant rather than the nonce-based CSP
+// the bridge / owner-shell mounts use. The reason is pragmatic: these pages
+// (and the /home SPA rendered by renderOwnerShell) carry dozens of inline
+// `style="…"` attributes plus several inline <script>/<style> blocks. A nonce
+// only covers <script>/<style> *elements* — inline style *attributes* would be
+// blocked outright by a nonce-only style-src, breaking every page. Nonce-ing
+// every inline block AND migrating the inline style attributes to classes is a
+// larger follow-up; until then 'unsafe-inline' is the honest posture. The
+// non-script directives (object-src/base-uri/frame-ancestors 'none') still add
+// real hardening, and script-src is constrained to same-origin + inline (no
+// remote script origins are allowed).
+const SYSTEM_PAGE_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 systemPages.use("*", resolveHumanOptional);
+
+// Set the CSP + the sibling hardening headers the owner-shell / bridge HTML
+// mounts already set. Called by every HTML-emitting handler in this router.
+//
+// NOTE: this is deliberately a per-handler helper rather than a
+// `systemPages.use("*", …)` middleware. systemPages is mounted at "/" in
+// app.ts, so a router-level wildcard middleware here would run for EVERY app
+// route (including the bridge /s/:token shell and the owner-shell /panes/:id
+// mount, which set their own nonce-based CSPs) and clobber their headers.
+// Scoping to the handlers keeps the policy on exactly the pages this file owns.
+function setSystemPageSecurityHeaders(c: Context): void {
+  c.header("Content-Security-Policy", SYSTEM_PAGE_CSP);
+  c.header("X-Frame-Options", "DENY");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
+}
+
+// Render an HTML system page with the security headers applied. Thin wrapper
+// over c.html so no HTML route can forget the CSP.
+function htmlPage(c: Context, body: string, status?: 200 | 404): Response {
+  setSystemPageSecurityHeaders(c);
+  return status === undefined ? c.html(body) : c.html(body, status);
+}
 
 // Shared layout primitives — every system page wraps its body in this
 // shell so the visual identity is uniform.
@@ -599,7 +653,10 @@ systemPages.get("/", (c) => {
         <li><div><div class="title">Project home</div><div class="meta">Docs, releases, and source.</div></div><a class="btn ghost" href="https://paneui.com" rel="noreferrer">paneui.com</a></li>
       </ul>
     </div>`;
-  return c.html(layout({ title: "Pane relay", email: null, body, active: "" }));
+  return htmlPage(
+    c,
+    layout({ title: "Pane relay", email: null, body, active: "" }),
+  );
 });
 
 // ----------------------------------------------------------------------
@@ -692,7 +749,10 @@ systemPages.get("/login", (c) => {
            }
          });
        </script>`;
-  return c.html(layout({ title: "Sign in", email: null, body, active: "" }));
+  return htmlPage(
+    c,
+    layout({ title: "Sign in", email: null, body, active: "" }),
+  );
 });
 
 // ----------------------------------------------------------------------
@@ -724,14 +784,15 @@ systemPages.get("/home", async (c) => {
   c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({ title: "Home", email: null, body: loggedOutPrompt() }),
     );
   }
   const prisma = c.get("prisma");
   const config = c.get("config");
   const html = await renderOwnerShell({ prisma, config, human });
-  return c.html(html);
+  return htmlPage(c, html);
 });
 
 // ----------------------------------------------------------------------
@@ -765,7 +826,8 @@ systemPages.get("/my-templates/:id/content", async (c) => {
   c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({
         title: "Template content",
         email: null,
@@ -783,7 +845,8 @@ systemPages.get("/my-templates/:id/content", async (c) => {
   // owner-only routes; never confirms the existence of someone else's
   // template to the caller.
   if (!template || template.owner.ownerHumanId !== human.id) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({
         title: "Template content",
         email: human.email,
@@ -967,7 +1030,8 @@ systemPages.get("/my-templates/:id/content", async (c) => {
     </script>`;
   }
 
-  return c.html(
+  return htmlPage(
+    c,
     layout({
       title: name + " · content",
       email: human.email,
@@ -999,7 +1063,8 @@ systemPages.get("/my-agents", async (c) => {
   c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({ title: "My agents", email: null, body: loggedOutPrompt() }),
     );
   }
@@ -1294,7 +1359,8 @@ systemPages.get("/my-agents", async (c) => {
       setTimeout(() => { btn.textContent = original; }, 1500);
     });
   </script>`;
-  return c.html(
+  return htmlPage(
+    c,
     layout({
       title: "My agents",
       email: human.email,
