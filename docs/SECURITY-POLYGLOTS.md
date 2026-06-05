@@ -56,21 +56,31 @@ and minor / major bumps require manual review + a fresh corpus run.
 | MIME | Posture | Why |
 |------|---------|-----|
 | `image/jpeg`, `image/png`, `image/gif`, `image/webp` | Normalised | sharp re-encodes; polyglot tails dropped |
-| `image/svg+xml` | **Pass-through** | SVG carries `<script>` + event handlers as a feature; needs an XML sanitiser (out of scope for v0.1.0) |
-| `application/pdf` | Pass-through | Served with `Content-Disposition: attachment` to prevent inline render |
-| Anything else | Rejected by allowlist | Default `BLOB_MIME_ALLOWLIST=image/,application/pdf` |
+| `image/svg+xml` | **Rejected by default** | SVG carries `<script>` + event handlers as a feature and is NOT normalised; not in the default allowlist. If an operator re-enables it, it is served `Content-Disposition: attachment` (never `inline`). |
+| `application/pdf` | Pass-through | Served `Content-Disposition: attachment` (only raster images render inline); the response also carries `Content-Security-Policy: default-src 'none'; sandbox`. |
+| Anything else | Rejected by allowlist | Default `BLOB_MIME_ALLOWLIST=image/jpeg,image/png,image/gif,image/webp,application/pdf` |
 
-### Operator note: SVG
+### Default allowlist
 
-If your pane renders SVGs inline in untrusted UI (e.g. as `<img>` from
-a `/b/<token>` URL inside a participant page), **remove `image/svg+xml`
-from the allowlist** until v0.2's SVG sanitiser ships:
+The shipped default is an **explicit list of full MIME types**, deliberately
+NOT the bare `image/` prefix (which would also admit `image/svg+xml`):
 
 ```
 BLOB_MIME_ALLOWLIST=image/jpeg,image/png,image/gif,image/webp,application/pdf
 ```
 
-This is the right default for hosted Pane.
+An empty or unset `BLOB_MIME_ALLOWLIST=` **falls back to this default** — it
+does NOT disable the allowlist (an accidental empty value must never fail open
+and accept every type). To intentionally accept any sniffed MIME (only sensible
+for a closed self-host), set the single sentinel value `BLOB_MIME_ALLOWLIST=*`.
+
+### Operator note: SVG
+
+Re-enabling SVG (`image/svg+xml`) is **not recommended** until v0.2's SVG
+sanitiser ships — even though every attachment download now serves a
+non-raster MIME as `Content-Disposition: attachment` with a
+`default-src 'none'; sandbox` CSP, a downloaded SVG opened directly by the
+user is still a script-execution surface.
 
 ## Defence-in-depth
 

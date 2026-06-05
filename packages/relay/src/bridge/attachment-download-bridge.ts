@@ -52,6 +52,7 @@ import { hashKey } from "../keys.js";
 import { errors } from "../http/errors.js";
 import type { AppEnv } from "../http/env.js";
 import { collectBlobRefs } from "../attachments/ref-access.js";
+import { setAttachmentDownloadHeaders } from "../attachments/index.js";
 import { participantBindingSatisfied } from "../auth/human-auth.js";
 import type { EventSchema } from "../types.js";
 
@@ -250,18 +251,17 @@ blobDownloadBridge.get(
       outputStream = Readable.from(plaintext);
     }
 
-    // Response headers — see route doc comment above. Content-Length is
-    // PLAINTEXT size; row.size is the plaintext size regardless of
-    // encryption (the encrypt path stores size before encrypting).
-    c.header("Content-Type", row.mime);
-    c.header("Content-Length", String(row.size));
-    c.header("X-Content-Type-Options", "nosniff");
-    // Participant-token-authed bytes must never be cached by intermediaries
-    // — the URL contains the credential. `private` blocks shared caches,
-    // `no-store` blocks the browser cache too.
-    c.header("Cache-Control", "private, no-store");
-    c.header("Referrer-Policy", "no-referrer");
-    c.header("Cross-Origin-Resource-Policy", "same-origin");
+    // Response headers — see route doc comment above. Centralised in
+    // setAttachmentDownloadHeaders so this participant path shares the exact
+    // posture of the agent + capability-URL paths: nosniff, raster-only inline
+    // disposition (svg/everything-else → attachment, previously this route set
+    // no disposition at all and the browser was free to render inline),
+    // no-store (the participant token in the URL is the credential — never
+    // cache), same-origin CORP, no-referrer, and the framing defences (CSP
+    // `default-src 'none'; sandbox; frame-ancestors 'none'` + X-Frame-Options:
+    // DENY). Content-Length is the PLAINTEXT size; row.size is the plaintext
+    // size regardless of encryption.
+    setAttachmentDownloadHeaders(c, { mime: row.mime, size: row.size });
 
     // Hono accepts a Web ReadableStream as the body; convert.
     return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);

@@ -16,6 +16,13 @@ export { makeBlobStore } from "./factory.js";
 export { FilesystemBlobStore } from "./filesystem.js";
 export { sniffMime, isMimeAllowed } from "./mime-sniff.js";
 export {
+  BLOB_CSP,
+  isInlineDisposableMime,
+  dispositionFor,
+  setBlobFramingHeaders,
+  setAttachmentDownloadHeaders,
+} from "./download-headers.js";
+export {
   generateBlobToken,
   hashBlobToken,
   looksLikeBlobToken,

@@ -182,8 +182,32 @@ describe("isMimeAllowed", () => {
     expect(isMimeAllowed("video/mp4", allow)).toBe(false);
   });
 
-  it("accepts everything when the allowlist is empty (operator opt-out)", () => {
-    expect(isMimeAllowed("anything/at-all", [])).toBe(true);
-    expect(isMimeAllowed("application/octet-stream", [])).toBe(true);
+  it("fails CLOSED on an empty allowlist (must not accept-any)", () => {
+    // F-12: an empty allowlist must reject, never fail open. The
+    // accidental-empty `BLOB_MIME_ALLOWLIST=` case is normalised to the
+    // secure default in config.ts before it reaches here, but the function
+    // itself must not fail open even if called with [].
+    expect(isMimeAllowed("anything/at-all", [])).toBe(false);
+    expect(isMimeAllowed("application/octet-stream", [])).toBe(false);
+    expect(isMimeAllowed("image/png", [])).toBe(false);
+  });
+
+  it("accepts everything only via the explicit `*` sentinel", () => {
+    expect(isMimeAllowed("anything/at-all", ["*"])).toBe(true);
+    expect(isMimeAllowed("application/octet-stream", ["*"])).toBe(true);
+    expect(isMimeAllowed("image/svg+xml", ["*"])).toBe(true);
+  });
+
+  it("does not admit svg under the explicit raster+pdf default", () => {
+    const allow = [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "application/pdf",
+    ];
+    expect(isMimeAllowed("image/png", allow)).toBe(true);
+    expect(isMimeAllowed("application/pdf", allow)).toBe(true);
+    expect(isMimeAllowed("image/svg+xml", allow)).toBe(false);
   });
 });

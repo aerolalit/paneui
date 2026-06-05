@@ -1,4 +1,17 @@
 import { z } from "zod";
+import { RASTER_ICON_MIME_ALLOWLIST } from "@paneui/core";
+
+// Secure default for BLOB_MIME_ALLOWLIST. Derived from the shared raster-image
+// allowlist (png/jpeg/webp/gif) + application/pdf so it can never drift from
+// the icon allowlist or the download disposition logic. Deliberately an
+// EXPLICIT list of full MIME types — NOT the bare `image/` prefix, which would
+// also admit `image/svg+xml` (unnormalised, script-carrying → stored XSS).
+export const DEFAULT_BLOB_MIME_ALLOWLIST_PARTS: readonly string[] = [
+  ...RASTER_ICON_MIME_ALLOWLIST,
+  "application/pdf",
+];
+export const DEFAULT_BLOB_MIME_ALLOWLIST =
+  DEFAULT_BLOB_MIME_ALLOWLIST_PARTS.join(",");
 
 const schema = z.object({
   NODE_ENV: z
@@ -274,19 +287,31 @@ const schema = z.object({
     .default(true)
     .transform((v) => v === true || v === "true"),
 
-  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
-  // covers images and PDFs. Comma-separated for the env var; an empty string
-  // disables the allowlist (every sniffed MIME is accepted — only sensible
-  // for closed self-host).
+  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default is an
+  // EXPLICIT raster-image + PDF list — deliberately NOT the bare `image/`
+  // prefix, which would also match `image/svg+xml` (an XSS vector: SVG carries
+  // inline <script>/event handlers and is not normalised). See
+  // docs/SECURITY-POLYGLOTS.md.
+  //
+  // Comma-separated for the env var. An empty / unset value FALLS BACK to this
+  // secure default — it does NOT disable the allowlist (an accidental empty
+  // `BLOB_MIME_ALLOWLIST=` must never fail open and accept every type). To
+  // intentionally accept any sniffed MIME (only sensible for a closed
+  // self-host), set the single sentinel value `*`.
   BLOB_MIME_ALLOWLIST: z
     .string()
-    .default("image/,application/pdf")
-    .transform((s) =>
-      s
+    .default(DEFAULT_BLOB_MIME_ALLOWLIST)
+    .transform((s) => {
+      const parts = s
         .split(",")
         .map((p) => p.trim())
-        .filter(Boolean),
-    ),
+        .filter(Boolean);
+      // Accidental-empty (`BLOB_MIME_ALLOWLIST=`) → secure default, never
+      // accept-any. The explicit accept-any escape hatch is the `*` sentinel,
+      // preserved verbatim and interpreted by isMimeAllowed().
+      if (parts.length === 0) return [...DEFAULT_BLOB_MIME_ALLOWLIST_PARTS];
+      return parts;
+    }),
 
   // Default TTL for a /b/<token> capability URL minted against an
   // template-scope attachment. 30 days. Template-scope is the longest-lived; these

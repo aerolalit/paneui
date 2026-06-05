@@ -220,10 +220,18 @@ function looksLikeSvg(buf: Uint8Array): boolean {
 }
 
 /**
- * Return true if `mime` matches any prefix in the allowlist. An empty
- * allowlist (operator opt-out) accepts every sniffed MIME.
+ * Return true if `mime` matches any prefix in the allowlist.
+ *
+ * Fail-CLOSED on an empty allowlist: an empty list rejects every type rather
+ * than accepting every type. (The accidental-empty `BLOB_MIME_ALLOWLIST=`
+ * case is normalised to the secure default in config.ts before it reaches
+ * here, but this function must not fail open even if called with `[]`.)
+ *
+ * The explicit operator opt-out — accept EVERY sniffed MIME — is the single
+ * sentinel value `*` in the allowlist (only sensible for a closed self-host).
  */
 export function isMimeAllowed(mime: string, allowlist: string[]): boolean {
-  if (allowlist.length === 0) return true;
+  if (allowlist.length === 0) return false;
+  if (allowlist.includes("*")) return true;
   return allowlist.some((prefix) => mime.startsWith(prefix));
 }

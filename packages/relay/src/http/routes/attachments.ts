@@ -36,6 +36,7 @@ import {
   generateBlobToken,
   isMimeAllowed,
   processBlobUpload,
+  setAttachmentDownloadHeaders,
   storageKeyFor,
   type AttachmentStore,
   type QuotaEnforcer,
@@ -403,18 +404,14 @@ attachments.get("/:id", async (c) => {
     outputStream = Readable.from(plaintext);
   }
 
-  // Hardened headers — see route doc comment above. Content-Length is the
-  // PLAINTEXT size; the row already stores that regardless of encryption.
-  c.header("Content-Type", row.mime);
-  c.header("Content-Length", String(row.size));
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header(
-    "Content-Disposition",
-    row.mime.startsWith("image/") ? "inline" : "attachment",
-  );
-  c.header("Cache-Control", "private, no-store");
-  c.header("Cross-Origin-Resource-Policy", "same-origin");
-  c.header("Referrer-Policy", "no-referrer");
+  // Hardened headers — see route doc comment above. Centralised in
+  // setAttachmentDownloadHeaders so all attachment/icon paths share one
+  // posture: nosniff, raster-only inline disposition (svg/everything-else →
+  // attachment), no-store, same-origin CORP, no-referrer, and the framing
+  // defences (CSP `default-src 'none'; sandbox; frame-ancestors 'none'` +
+  // X-Frame-Options: DENY). Content-Length is the PLAINTEXT size; the row
+  // stores that regardless of encryption.
+  setAttachmentDownloadHeaders(c, { mime: row.mime, size: row.size });
 
   // Hono accepts a Web ReadableStream as the body; convert.
   return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);

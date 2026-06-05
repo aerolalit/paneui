@@ -26,21 +26,11 @@ import type { AppEnv } from "../http/env.js";
 import {
   hashBlobToken,
   looksLikeBlobToken,
+  setAttachmentDownloadHeaders,
   truncateIp,
 } from "../attachments/index.js";
 
 const blobBridge = new Hono<AppEnv>();
-
-// CSP for the /b/<token> response. Today it carries a single directive —
-// frame-ancestors 'none' — to close the same-site framing gap CORP
-// alone leaves open (#202). Built as an array so a future patch adding
-// e.g. default-src 'none' or sandbox can append a directive in one
-// place. A naive `c.header("Content-Security-Policy", "...")` call
-// later in the route would silently OVERWRITE Hono's existing header
-// (it does not append for CSP); centralising the value here prevents
-// that footgun. The shell + error pages use the same pattern via
-// ERROR_CSP in routes.ts.
-const BLOB_CSP = ["frame-ancestors 'none'"].join("; ");
 
 // GET /b/:token — fetch a attachment via its capability URL.
 //
@@ -170,31 +160,19 @@ blobBridge.get("/:token", async (c) => {
     outputStream = Readable.from(plaintext);
   }
 
-  // 6. Hardened headers — same set as GET /v1/attachments/:id. Capability-URL
-  // pane is the riskier of the two (the URL itself IS the credential)
-  // so the defences here are non-negotiable. Content-Length is the
-  // PLAINTEXT size (`tok.attachment.size`) regardless of encryption.
-  c.header("Content-Type", tok.attachment.mime);
-  c.header("Content-Length", String(tok.attachment.size));
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header(
-    "Content-Disposition",
-    tok.attachment.mime.startsWith("image/") ? "inline" : "attachment",
-  );
-  c.header("Cache-Control", "private, no-store");
-  c.header("Cross-Origin-Resource-Policy", "same-origin");
-  c.header("Referrer-Policy", "no-referrer");
-  // #202: a CSP with `frame-ancestors 'none'` blocks all framing,
-  // including same-site framing that CORP=same-origin permits (CORP
-  // only stops cross-origin embedders from READING the bytes — a
-  // same-site page can still frame an image-MIME attachment served with
-  // Content-Disposition: inline, since the response is reachable to
-  // them). Two headers because some older browsers still rely on
-  // X-Frame-Options; both have the same intent here. Aligns with the
-  // rest of the relay's pane (shell, error pages) which already
-  // CSP-gate their HTML — see ERROR_CSP in routes.ts.
-  c.header("Content-Security-Policy", BLOB_CSP);
-  c.header("X-Frame-Options", "DENY");
+  // 6. Hardened headers — same set as GET /v1/attachments/:id, centralised in
+  // setAttachmentDownloadHeaders. Capability-URL pane is the riskier of the
+  // two (the URL itself IS the credential) so the defences here are
+  // non-negotiable: nosniff, raster-only inline disposition (svg →
+  // attachment), no-store, same-origin CORP, no-referrer, plus the framing
+  // defences — CSP `default-src 'none'; sandbox; frame-ancestors 'none'` +
+  // X-Frame-Options: DENY. The CSP closes the same-site framing gap CORP
+  // alone leaves (#202) AND defangs any document that renders. Content-Length
+  // is the PLAINTEXT size (`tok.attachment.size`) regardless of encryption.
+  setAttachmentDownloadHeaders(c, {
+    mime: tok.attachment.mime,
+    size: tok.attachment.size,
+  });
 
   // 7. Audit metadata write. Runs AFTER the body is enqueued so a client
   // cancelling the download still gets credited a use (best-effort

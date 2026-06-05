@@ -30,6 +30,7 @@ import { Readable } from "node:stream";
 import type { PrismaClient } from "@prisma/client";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
+import { setBlobFramingHeaders } from "../../attachments/index.js";
 
 const icons = new Hono<HumanAuthEnv>();
 
@@ -86,6 +87,9 @@ async function streamIcon(
   if (ifNoneMatch && ifNoneMatch === etag) {
     c.header("ETag", etag);
     c.header("Cache-Control", "private, max-age=3600");
+    // Framing defences on the 304 too — a cached icon must not become
+    // frameable just because the bytes weren't re-sent.
+    setBlobFramingHeaders(c);
     return c.body(null, 304);
   }
 
@@ -120,9 +124,17 @@ async function streamIcon(
   // shared caches (the icon may belong to an unpublished template).
   c.header("Cache-Control", "private, max-age=3600");
   c.header("ETag", etag);
+  // Uploaded icons are validated raster-only at write time (isRasterImageMime
+  // in templates/panes routes), so inline is safe here. SVG never reaches an
+  // icon row.
   c.header("Content-Disposition", "inline");
   c.header("Cross-Origin-Resource-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
+  // Framing defences shared with the attachment download paths: CSP
+  // `default-src 'none'; sandbox; frame-ancestors 'none'` + X-Frame-Options:
+  // DENY. Icons sit in <img src> in the cookie-authed owner shell; deny
+  // framing + active content regardless.
+  setBlobFramingHeaders(c);
 
   return c.body(Readable.toWeb(outputStream) as unknown as ReadableStream);
 }

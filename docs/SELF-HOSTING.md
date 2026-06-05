@@ -122,7 +122,7 @@ You only need to tune env vars if you want different limits:
 | `MAX_BLOBS_PER_SESSION_BYTES` | `100_000_000` | Aggregate per session (100 MB). |
 | `MAX_BLOBS_PER_AGENT_BYTES` | `500_000_000` | Aggregate across all of one agent's blobs (500 MB). |
 | `BLOB_ENCRYPT_AT_REST` | `false` | Envelope-encrypt blobs on disk with `PANE_SECRET_KEY`. Adds latency; turn on if the host disk isn't already encrypted. |
-| `BLOB_MIME_ALLOWLIST` | `image/,application/pdf` | Comma-separated MIME prefixes. The pipeline also sniffs file content — the declared MIME is never trusted. |
+| `BLOB_MIME_ALLOWLIST` | `image/jpeg,image/png,image/gif,image/webp,application/pdf` | Comma-separated MIME prefixes. The pipeline also sniffs file content — the declared MIME is never trusted. SVG is excluded by default (XSS vector). Empty/unset falls back to this default (never accept-any); set `*` to accept any sniffed MIME. |
 
 The filesystem backend is **single-VM only**: replicas see different disks. If
 you outgrow one box, switch to the Azure Blob backend — see
