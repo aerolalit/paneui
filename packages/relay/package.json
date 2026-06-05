@@ -1,6 +1,6 @@
 {
   "name": "@paneui/relay",
-  "version": "0.0.9",
+  "version": "0.0.11",
   "description": "Pane relay: HTTP + WebSocket server brokering UI panes between agents and humans.",
   "private": true,
   "license": "MIT",
@@ -52,7 +52,7 @@
     "@opentelemetry/sdk-metrics": "^2.7.0",
     "@opentelemetry/sdk-trace-node": "^2.7.0",
     "@opentelemetry/semantic-conventions": "^1.41.0",
-    "@paneui/core": "^0.0.9",
+    "@paneui/core": "^0.0.11",
     "@prisma/adapter-better-sqlite3": "^7.8.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
@@ -71,8 +71,8 @@
     "@azure/identity": "^4.13.1",
     "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
     "@azure/storage-blob": "^12.31.0",
-    "ioredis": "^5.4.1",
-    "nodemailer": "^8.0.5"
+    "ioredis": "^5.11.1",
+    "nodemailer": "^8.0.10"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -80,8 +80,8 @@
     "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
     "jsdom": "^29.1.1",
-    "tsx": "^4.22.3",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.8"
   }
 }

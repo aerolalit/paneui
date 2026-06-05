@@ -4,14 +4,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import { BRAND_FAVICON_DATA_HREF } from "../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_MARK_SVG_BODY } from "../brand.js";
 import { hashKey } from "../keys.js";
 import type { AppEnv } from "../http/env.js";
 import { errors, ApiError } from "../http/errors.js";
 import { prefersHtml } from "../http/accept.js";
+import { participantBindingSatisfied } from "../auth/human-auth.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
+import { paneAppleTouchIcon } from "../http/routes/apple-touch-icon.js";
 
 const bridge = new Hono<AppEnv>();
 
@@ -106,12 +108,40 @@ const PERMISSIONS_POLICY = [
 // defence.
 const TOKEN_RX = /^tok_[ah]_[A-Za-z0-9_-]{43}$/;
 
-async function loadByToken(prisma: PrismaClient, token: string) {
+// loadByToken resolves a /s/:token participant + pane and — by default —
+// ENFORCES the identity binding (F-02): if the participant is bound to a
+// human (`humanId` set), the request must carry a matching `pane_login`
+// cookie, else it 404s opaquely (same shape as a bad/revoked token, so the
+// bridge isn't an "account exists" oracle).
+//
+// `opts.cookieHeader` MUST be threaded in by every caller (the raw `Cookie:`
+// header) so the binding can be checked. The one exception is the shell page
+// handler, which passes `enforceBinding: false` because it implements a
+// RICHER UX for the same condition (302 → /login when logged out, 403
+// wrong_account when logged in as someone else) and so does its own check.
+async function loadByToken(
+  prisma: PrismaClient,
+  token: string,
+  opts: { cookieHeader?: string | null; enforceBinding?: boolean } = {},
+) {
+  const { cookieHeader = null, enforceBinding = true } = opts;
   if (!TOKEN_RX.test(token)) throw errors.notFound();
   const participant = await prisma.participant.findUnique({
     where: { tokenHash: hashKey(token) },
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
+  if (enforceBinding) {
+    const ok = await participantBindingSatisfied(
+      prisma,
+      participant,
+      cookieHeader,
+    );
+    // Opaque 404 — identical to an unknown/revoked token so a holder of a
+    // leaked identity-bound token can't distinguish "needs the bound login"
+    // from "token is dead". The shell page (enforceBinding:false) is the
+    // human-facing surface that turns this into a login redirect / 403.
+    if (!ok) throw errors.notFound();
+  }
   const pane = await prisma.pane.findUnique({
     where: { id: participant.paneId },
     include: { templateVersion: true },
@@ -174,7 +204,10 @@ bridge.get("/:token", async (c) => {
   }
   let loaded: Awaited<ReturnType<typeof loadByToken>>;
   try {
-    loaded = await loadByToken(prisma, token);
+    // enforceBinding:false — this handler implements the richer human-facing
+    // UX for the identity binding below (302 → /login, 403 wrong_account)
+    // instead of the opaque 404 loadByToken would otherwise raise.
+    loaded = await loadByToken(prisma, token, { enforceBinding: false });
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
       return humanOrJsonError(c, err);
@@ -329,8 +362,67 @@ bridge.get("/:token", async (c) => {
       // hitting /s/<token> is already 302'd to /panes/<id> above this
       // point, so they never see the bare token shell.)
       topNav: null,
+      // This pane's own home-screen icon (effective image icon → robot).
+      appleTouchIconHref: `${tokenSeg}/icon.png`,
     }),
   );
+});
+
+// GET /s/:token/icon.png — this pane's iOS home-screen (apple-touch) icon. The
+// token in the URL is the auth: iOS fetches apple-touch-icon with no cookie, so
+// a cookie-gated route would 401 and leave the shortcut with a screenshot. The
+// resolver ALWAYS returns a 180×180 PNG (the pane's effective IMAGE icon
+// composited on the brand tile, else the robot default), so the shortcut always
+// gets a real icon.
+bridge.get("/:token/icon.png", async (c) => {
+  const prisma = c.get("prisma");
+  const token = c.req.param("token");
+  // loadByToken validates the token shape + resolves the pane (404 on a bad or
+  // revoked token — a non-pane URL shouldn't yield an icon).
+  //
+  // enforceBinding:false — iOS fetches apple-touch-icon with NO cookie, so an
+  // identity-bound token could never satisfy the cookie check here and the
+  // shortcut would fall back to a screenshot. The icon route deliberately
+  // returns only this pane's (or the default robot) 180×180 PNG — no event
+  // data, no template body, no presence — so leaving it token-only does not
+  // expose anything the binding is meant to protect.
+  const { pane } = await loadByToken(prisma, token, { enforceBinding: false });
+
+  // Effective IMAGE icon: pane override → template fallback. (loadByToken's pane
+  // row carries the pane's own iconAttachmentId; the template's lives one join
+  // away, fetched only when the pane has no override.)
+  let effective = pane.iconAttachmentId;
+  if (!effective) {
+    const withTpl = await prisma.pane.findUnique({
+      where: { id: pane.id },
+      select: {
+        templateVersion: {
+          select: { template: { select: { iconAttachmentId: true } } },
+        },
+      },
+    });
+    effective = withTpl?.templateVersion?.template?.iconAttachmentId ?? null;
+  }
+
+  const { png, etag } = await paneAppleTouchIcon(
+    c.get("blobStore"),
+    prisma,
+    effective,
+  );
+
+  c.header("ETag", etag);
+  c.header("Content-Type", "image/png");
+  c.header("Cache-Control", "public, max-age=3600");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cross-Origin-Resource-Policy", "same-origin");
+  if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+
+  // Hono's c.body wants an ArrayBuffer, not a Buffer — hand it a tight slice.
+  const ab = png.buffer.slice(
+    png.byteOffset,
+    png.byteOffset + png.byteLength,
+  ) as ArrayBuffer;
+  return c.body(ab);
 });
 
 bridge.get("/:token/content", async (c) => {
@@ -341,7 +433,12 @@ bridge.get("/:token/content", async (c) => {
   }
   let loaded: Awaited<ReturnType<typeof loadByToken>>;
   try {
-    loaded = await loadByToken(prisma, token);
+    // Enforce the identity binding here (default): a leaked identity-bound
+    // token must NOT be able to fetch the template body without the bound
+    // login cookie. The iframe carries the cookie on this same-origin fetch.
+    loaded = await loadByToken(prisma, token, {
+      cookieHeader: c.req.header("cookie") ?? null,
+    });
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
       return humanOrJsonError(c, err);
@@ -430,7 +527,11 @@ bridge.get("/:token/presence", async (c) => {
   const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { pane } = await loadByToken(prisma, token);
+  // Enforce the identity binding (default) — the shell polls this with the
+  // bound login cookie; a leaked token without it 404s like a dead token.
+  const { pane } = await loadByToken(prisma, token, {
+    cookieHeader: c.req.header("cookie") ?? null,
+  });
 
   const presence = await computeAgentPresence(prisma, pane);
 
@@ -484,6 +585,12 @@ export interface ShellArgs {
   // The capability-token mount (/s/<token>) leaves this null — anonymous
   // callers get no account bar at all.
   topNav: { email: string } | null;
+  // Href for the iOS home-screen icon (apple-touch-icon). The /s/<token> mount
+  // points at this pane's own icon route (`/s/<token>/icon.png` — the pane's
+  // effective image icon, else the robot default); the owner mount keeps the
+  // static `/apple-touch-icon.png` (its icon route is cookie-gated and iOS may
+  // fetch the icon without the cookie).
+  appleTouchIconHref: string;
 }
 
 function renderTopNav(args: ShellArgs): string {
@@ -496,14 +603,7 @@ function renderTopNav(args: ShellArgs): string {
   return `<div class="top-nav">
   <div class="top-nav-bar">
     <a class="top-nav-brand" href="/home" aria-label="pane home">
-      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-        <rect width="100" height="100" rx="22" fill="#0f172a"/>
-        <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-        <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-        <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-        <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-        <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-      </svg>
+      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${BRAND_MARK_SVG_BODY}</svg>
       <span class="wordmark">pane</span>
     </a>
     <div class="top-nav-presence">
@@ -569,6 +669,7 @@ export function renderShell(args: ShellArgs): string {
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
+<link rel="apple-touch-icon" sizes="180x180" href="${args.appleTouchIconHref}">
 <style nonce="${args.nonce}">
   /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
      values (kept byte-identical); the light override at the bottom adapts the
@@ -726,14 +827,7 @@ ${renderTopNav(args)}${
         ""
       : `<header>
   <span class="brand">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
-      <rect width="100" height="100" rx="22" fill="#0f172a"/>
-      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-    </svg>
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
   </span>
   <span class="spacer"></span>
@@ -779,9 +873,18 @@ ${
         // which silently drops the navigation otherwise. Without it, an template
         // that delivers a non-image file (PDF, CSV, archive) the human is meant
         // to save has no working code path — the file can be fetched via
-        // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
-        // is intentionally NOT included; only the in-tab download is enabled.
-        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
+        // window.pane.downloadBlob() but never reaches the disk.
+        //
+        // `allow-top-navigation-by-user-activation` lets a template link out
+        // (e.g. `<a target="_top" href="/s/...">` — a demo index linking to the
+        // other demo panes) by navigating the WHOLE tab on a real user click.
+        // Chosen over `allow-popups`: the destination loads as a normal
+        // top-level document (so a linked pane actually works, vs. a popup that
+        // would stay sandboxed and broken), it's gated on user activation (no
+        // silent/background redirects), and it opens no new windows.
+        // `allow-popups` and `allow-same-origin` remain omitted, so the framed
+        // document itself still runs at an opaque origin and can't spawn windows.
+        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
   }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>${
@@ -962,14 +1065,7 @@ function renderHumanError(copy: ErrorPageCopy): string {
 <body>
 <header>
   <span class="brand">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
-      <rect width="100" height="100" rx="22" fill="#0f172a"/>
-      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-    </svg>
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
   </span>
 </header>

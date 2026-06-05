@@ -33,6 +33,10 @@ beforeAll(async () => {
       PUBLIC_URL: "http://localhost:3000",
       MAX_ARTIFACTS_PER_AGENT: String(ARTIFACT_CAP),
       MAX_VERSIONS_PER_ARTIFACT: String(VERSION_CAP),
+      // Disable the open-pane list gate here — these CRUD/search tests assert
+      // on the raw listing without seeding panes. The gate has its own
+      // dedicated coverage in template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
     }),
     prisma,
   );

@@ -64,6 +64,10 @@ beforeAll(async () => {
     BLOB_MIME_ALLOWLIST:
       "image/png,image/jpeg,image/webp,image/gif,image/svg+xml",
     RATE_LIMIT: "0",
+    // Disable the owner-shell open-pane list gate — the icon-tile rendering
+    // tests seed owned templates without open panes. The gate has dedicated
+    // coverage in template-open-pane-gates.e2e.test.ts.
+    TEMPLATE_LIST_MIN_OPEN_PANES: "0",
   });
   store = await makeBlobStore(config);
   app = buildApp(config, prisma, undefined, store);
@@ -375,6 +379,48 @@ describe("GET /templates/:id/icon", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("cache-control")).toContain("max-age=3600");
+    // F-06: icon download responses carry the framing defences too.
+    expect(res.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("a 304 Not Modified icon response still carries the framing defences", async () => {
+    const { agentId, cookie } = await seedHumanAgent("t304@example.com");
+    const id = await seedTemplate(agentId);
+    const attId = await seedReadyImage({
+      ownerId: agentId,
+      scope: "template",
+      templateId: id,
+      store,
+    });
+    await prisma.template.update({
+      where: { id },
+      data: { iconAttachmentId: attId },
+    });
+
+    // First fetch to learn the ETag.
+    const first = await app.fetch(
+      new Request(`http://t/templates/${id}/icon`, withCookie(cookie)),
+    );
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+
+    // Conditional re-fetch → 304.
+    const second = await app.fetch(
+      new Request(`http://t/templates/${id}/icon`, {
+        headers: {
+          ...withCookie(cookie).headers,
+          "if-none-match": etag!,
+        },
+      }),
+    );
+    expect(second.status).toBe(304);
+    expect(second.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    expect(second.headers.get("x-frame-options")).toBe("DENY");
   });
 
   it("a different human gets 403 on unpublished, 200 on published", async () => {

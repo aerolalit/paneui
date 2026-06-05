@@ -175,14 +175,20 @@ const webpExtraRiffChunks: Builder = async () => {
 const webpHtmlAfterEnd: Builder = async () =>
   Buffer.concat([await baselines.webp(), HTML_SCRIPT]);
 
-// ── Pass-through MIMEs (documented as not normalised) ───────────────────
+// ── SVG (F-13: rasterised to PNG, not passed through) ───────────────────
 
+// A scripted SVG exercising every vector the rasterise pass must drop:
+// inline <script>, an onload handler, a javascript: xlink:href, and a
+// <foreignObject> with an onerror handler. After rasterisation to PNG none
+// of this markup survives — the output is pure pixel data.
 const svgWithScript: Builder = async () =>
   Buffer.from(
     `<?xml version="1.0"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16" onload="alert('svg-onload')">
   <rect width="16" height="16" fill="red"/>
   <script type="application/javascript">alert('svg-inline-script')</script>
+  <a xlink:href="javascript:alert('svg-xlink')"><rect width="4" height="4"/></a>
+  <foreignObject width="8" height="8"><body xmlns="http://www.w3.org/1999/xhtml"><img src="x" onerror="alert('fo')"/></body></foreignObject>
 </svg>`,
     "utf8",
   );

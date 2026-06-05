@@ -17,9 +17,11 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
-import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_LOGO } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
+import { filterByOpenPaneCount } from "./templates.js";
+import type { Config } from "../../config.js";
 
 // Wrap a shared nav glyph (nav-meta.ts) in the SPA's <svg> conventions so the
 // sidebar / account / mobile-bar icons stay byte-identical to the legacy
@@ -32,14 +34,18 @@ function spaIco(key: NavKey, size: number): string {
 
 export interface OwnerShellOptions {
   prisma: PrismaClient;
+  config: Config;
   human: HumanRow;
+  /** Per-request CSP nonce — stamped on the SPA's inline <style>/<script> so
+   *  the /home response can drop `script-src 'unsafe-inline'`. */
+  nonce: string;
 }
 
 export async function renderOwnerShell(
   opts: OwnerShellOptions,
 ): Promise<string> {
-  const data = await loadShellData(opts.prisma, opts.human);
-  return renderHtml(opts.human, data);
+  const data = await loadShellData(opts.prisma, opts.config, opts.human);
+  return renderHtml(opts.human, data, opts.nonce);
 }
 
 // ----- Data shapes (all post-Prisma, ready to render) -----
@@ -111,6 +117,7 @@ interface ShellData {
 
 async function loadShellData(
   prisma: PrismaClient,
+  config: Config,
   human: HumanRow,
 ): Promise<ShellData> {
   // One human owns N claimed agents; their templates are the "Yours"
@@ -268,7 +275,21 @@ async function loadShellData(
       hasIconImage: t.iconAttachmentId !== null,
     };
   }
-  const ownedTemplates = ownedTemplatesRaw.map(toRef);
+  // Usage-maturity list gate — the "Yours" grid is the author's OWN authored
+  // templates (ownerId ∈ the human's claimed agents), so it gets the same
+  // ≥TEMPLATE_LIST_MIN_OPEN_PANES filter as GET /v1/templates. The `installs`
+  // list below is the human's installed-from-store set (HumanTemplateInstall),
+  // NOT authored work, so it is deliberately left unfiltered — a human keeps
+  // every template they chose to install regardless of its open-pane count.
+  const ownedTemplatesGated =
+    config.TEMPLATE_LIST_MIN_OPEN_PANES > 0
+      ? await filterByOpenPaneCount(
+          prisma,
+          ownedTemplatesRaw,
+          config.TEMPLATE_LIST_MIN_OPEN_PANES,
+        )
+      : ownedTemplatesRaw;
+  const ownedTemplates = ownedTemplatesGated.map(toRef);
 
   const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
   const installedIds = new Set(liveInstalls.map((i) => i.template.id));
@@ -315,7 +336,7 @@ async function loadShellData(
 
 // ----- HTML rendering -----
 
-function renderHtml(human: HumanRow, data: ShellData): string {
+function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   const displayName =
     (human.name && human.name.trim()) || friendlyName(human.email);
   const avatarLetter = displayName.charAt(0).toUpperCase() || "?";
@@ -412,18 +433,19 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
 <title>pane</title>
-<style>${OWNER_SHELL_CSS}${EXTRA_CSS}</style>
+<style nonce="${nonce}">${OWNER_SHELL_CSS}${EXTRA_CSS}</style>
 </head>
 <body>
 
 <div class="app">
   <aside class="nav">
     <div class="brand">
-      <div class="logo">P</div>
+      <div class="logo">${BRAND_LOGO}</div>
       <div class="name">Pane</div>
     </div>
     <ul class="items" id="nav-items">
@@ -467,7 +489,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           <span class="ico">${spaIco("agents", 16)}</span>
           <span class="txt">${NAV_LABELS.agents}</span>
         </a>
-        <a class="acct-link" href="/settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
+        <a class="acct-link" href="#settings" data-go="settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
@@ -566,6 +588,43 @@ function renderHtml(human: HumanRow, data: ShellData): string {
       <div class="apps-grid" id="apps-installed">${installedHtml}</div>
     </section>
 
+    <section class="view" data-view="settings">
+      <div class="view-head">
+        <div>
+          <h1>Settings</h1>
+          <div class="sub">Your account and session.</div>
+        </div>
+      </div>
+      <div class="settings-card">
+        <h2>Account</h2>
+        <div class="settings-row" id="name-row">
+          <span class="k">Name</span>
+          <span class="name-field">
+            <span class="v" id="name-value">${escapeHtml(displayName)}</span>
+            <button id="name-edit" type="button" class="btn small" aria-label="Edit name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+            <span class="name-edit-form" id="name-edit-form" hidden>
+              <input id="name-input" type="text" maxlength="80" autocomplete="name" />
+              <button id="name-save" type="button" class="btn primary small">Save</button>
+              <button id="name-cancel" type="button" class="btn small">Cancel</button>
+            </span>
+          </span>
+        </div>
+        <div class="settings-row"><span class="k">Status</span>${
+          human.verifiedAt
+            ? `<span class="pill good">Verified</span>`
+            : `<span class="pill muted">Unverified</span>`
+        }</div>
+        <div class="settings-row"><span class="k">Account created</span><span class="v">${escapeHtml(
+          human.createdAt.toISOString().slice(0, 10),
+        )}</span></div>
+      </div>
+      <div class="settings-card">
+        <h2>Session</h2>
+        <p class="settings-note">Signing out revokes this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
+        <button id="settings-signout" type="button" class="btn">Sign out of this device</button>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -590,7 +649,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
   </div>
 </div>
 
-<script>${SHELL_JS}</script>
+<script nonce="${nonce}">${SHELL_JS}</script>
 </body>
 </html>`;
 }
@@ -631,11 +690,19 @@ function requiredInputFields(
 //              background when there's no image.
 //   seedId   — stable seed for the monogram hue (pane/template id).
 //   label    — text the monogram initials are derived from.
+//   previewUrl — when set AND the icon resolves to the monogram fallback (no
+//              image, no emoji), a lazy sandboxed <iframe> rendering a live
+//              thumbnail of the artifact is layered ON TOP of the gradient
+//              monogram. Only the BIG cards (favorites, app tiles, recents)
+//              pass this; the 44px pane-row keeps the bare monogram. The
+//              monogram stays as the tile background so transparent artifacts
+//              still read against the page. Image / emoji icons are unchanged.
 function iconTileInner(opts: {
   imageUrl?: string;
   emoji?: string | null;
   seedId: string;
   label: string;
+  previewUrl?: string;
 }): string {
   const hue = paneHue(opts.seedId);
   const initials = paneInitials(opts.label);
@@ -653,7 +720,15 @@ function iconTileInner(opts: {
   if (opts.emoji) {
     return `<span class="tile-emoji">${escapeHtml(opts.emoji)}</span>`;
   }
-  return `<span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>`;
+  const monogram = `<span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>`;
+  if (opts.previewUrl) {
+    // Monogram first (the background layer), preview iframe on top. The iframe
+    // is sandboxed (allow-scripts only — no forms/downloads for a thumbnail),
+    // lazy-loaded, non-interactive (pointer-events:none in CSS keeps the card
+    // clickable), and removed from the a11y/tab tree.
+    return `${monogram}<iframe class="tile-preview" src="${escapeHtml(opts.previewUrl)}" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>`;
+  }
+  return monogram;
 }
 
 // Home Favorites strip — each tile is a pane (an instance), not a template.
@@ -667,6 +742,7 @@ function favPaneTile(p: PaneRef): string {
     emoji: p.iconEmoji,
     seedId: p.id,
     label,
+    previewUrl: `/panes/${encodeURIComponent(p.id)}/preview`,
   });
   return `<a class="fav-tile" href="/panes/${encodeURIComponent(p.id)}" data-pane-id="${escapeHtml(p.id)}">
     <div class="icon">${inner}</div>
@@ -695,6 +771,7 @@ function appTile(
     emoji: t.iconEmoji,
     seedId: t.id,
     label: name,
+    previewUrl: `/templates/${encodeURIComponent(t.id)}/preview`,
   });
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
   // Agent-init tiles carry the slug + required-field descriptor so the click
@@ -744,9 +821,14 @@ function recentCard(p: PaneRef): string {
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
   const rel = relativeDate(p.createdAt);
+  // Recents always fell back to a gradient glyph (they never carried an image /
+  // emoji icon). Layer a lazy preview iframe on top of that glyph — same as the
+  // big tiles. The gradient thumb stays as the background so transparent
+  // artifacts still read; the version tag stays above the iframe.
   return `<a class="recent-card" href="/panes/${encodeURIComponent(p.id)}">
     <div class="thumb" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">
       <span class="glyph">${escapeHtml(initials)}</span>
+      <iframe class="tile-preview" src="/panes/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
       ${p.templateVersion > 0 ? `<span class="tag">v${p.templateVersion}</span>` : ""}
     </div>
     <div class="title">${escapeHtml(p.title)}</div>
@@ -768,8 +850,12 @@ function paneRow(p: PaneRef): string {
   });
   const rel = relativeDate(p.createdAt);
   const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
-  const statusCls = isOpen ? "open" : "closed";
-  const statusText = isOpen ? "open" : "closed";
+  // Open is the default, expected state for every row in this list ("Live
+  // sessions … Click to open"), so a green OPEN pill on every line is just
+  // noise that eats the title's width. Only flag the exception — a closed
+  // pane — and leave the cell empty otherwise so the title reclaims the space.
+  const statusCls = isOpen ? "" : "closed";
+  const statusText = isOpen ? "" : "closed";
   const tplAttr = p.templateId
     ? ` data-template-id="${escapeHtml(p.templateId)}"`
     : "";
@@ -784,7 +870,7 @@ function paneRow(p: PaneRef): string {
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
-    <div class="status ${statusCls}">${statusText}</div>
+    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
     </button>
@@ -812,7 +898,8 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function friendlyName(email: string): string {
@@ -966,6 +1053,30 @@ const EXTRA_CSS = `
   }
   .pane-menu-pop button:hover { background: var(--surface-2); }
   .pane-menu-pop button.danger { color: var(--pink, #fb7185); }
+
+  /* Editable display name (Settings → Account). The value, pencil, and the
+     inline edit form share one inline-flex container so the row stays on a
+     single line and the form sits where the value was. */
+  .name-field { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .name-field .btn.small {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 7px; line-height: 0;
+  }
+  .name-edit-form { display: inline-flex; align-items: center; gap: 6px; }
+  #name-input {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 5px 9px;
+    color: var(--ink);
+    font-size: 13px;
+    font-family: inherit;
+    min-width: 160px;
+  }
+  #name-input:focus { outline: none; border-color: var(--accent); }
+  /* Ensure [hidden] always wins — some flex rules above set display, which
+     would otherwise re-show a hidden element. */
+  [hidden] { display: none !important; }
 `;
 
 // ----- Client-side runtime -----
@@ -984,7 +1095,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'store', 'mine'];
+  const VIEWS = ['home', 'panes', 'store', 'mine', 'settings'];
   function activate(view) {
     // Back-compat: prior builds used the hashes "#apps" / "#templates" /
     // "#trash". Remap them so old links / browser-back state still land
@@ -1023,11 +1134,89 @@ const SHELL_JS = `
   });
   window.addEventListener('hashchange', () => activate(viewFromHash()));
 
-  // Sign out
-  document.getElementById('signout')?.addEventListener('click', async () => {
+  // Sign out — both the popover item (#signout) and the in-view Settings
+  // button (#settings-signout) revoke this device's login.
+  async function signOut() {
     try { await fetch('/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
     location.href = '/login';
-  });
+  }
+  document.getElementById('signout')?.addEventListener('click', signOut);
+  document.getElementById('settings-signout')?.addEventListener('click', signOut);
+
+  // Editable display name (Settings → Account). Opening the pen swaps the
+  // value for an inline input and hides the Settings sign-out button — per
+  // the UX requirement there's no sign-out while you're mid-edit. We hide
+  // the button rather than the whole Session card so the explanatory note
+  // stays put and the layout doesn't jump.
+  (function () {
+    const editBtn = document.getElementById('name-edit');
+    const form = document.getElementById('name-edit-form');
+    const valueEl = document.getElementById('name-value');
+    const input = document.getElementById('name-input');
+    const saveBtn = document.getElementById('name-save');
+    const cancelBtn = document.getElementById('name-cancel');
+    const signoutBtn = document.getElementById('settings-signout');
+    if (!editBtn || !form || !valueEl || !input || !saveBtn || !cancelBtn) return;
+
+    function open() {
+      input.value = valueEl.textContent || '';
+      valueEl.hidden = true;
+      editBtn.hidden = true;
+      form.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = true;
+      input.focus();
+      input.select();
+    }
+    function close() {
+      form.hidden = true;
+      valueEl.hidden = false;
+      editBtn.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = false;
+    }
+
+    async function save() {
+      const raw = input.value.trim();
+      const name = raw.length === 0 ? null : raw;
+      saveBtn.disabled = true;
+      try {
+        const res = await fetch('/v1/self/profile', {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: name }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          alert('Save failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+          return; // keep the form open so the human can retry / fix
+        }
+        const body = await res.json().catch(() => ({}));
+        const display = body.display_name || raw;
+        valueEl.textContent = display;
+        // Mirror the new name everywhere it's shown: sidebar, home greeting,
+        // and the avatar initial.
+        const sideName = document.querySelector('.me .who .name');
+        if (sideName) sideName.textContent = display;
+        const greetName = document.querySelector('.greet .name');
+        if (greetName) greetName.textContent = display;
+        const avatar = document.querySelector('.me .avatar');
+        if (avatar) avatar.textContent = (display.charAt(0) || '?').toUpperCase();
+        close();
+      } catch (err) {
+        alert('Save failed: network error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+
+    editBtn.addEventListener('click', open);
+    cancelBtn.addEventListener('click', close);
+    saveBtn.addEventListener('click', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+    });
+  })();
 
   // Account menu (mobile) — the "Account" bottom-bar tab toggles the
   // .acct-links popover (My agents / Settings / Sign out). On desktop the
@@ -1047,6 +1236,9 @@ const SHELL_JS = `
       if (me.classList.contains('open') && ev.target instanceof Node && !me.contains(ev.target)) close();
     });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+    // Tapping any popover item closes the sheet — including the in-app
+    // Settings view-switch (data-go), which doesn't navigate away.
+    me.querySelectorAll('.acct-link').forEach((l) => l.addEventListener('click', close));
   })();
 
   // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon

@@ -234,6 +234,111 @@ describe("per-pane WebSocket connection cap", () => {
   });
 });
 
+// F-04 — the WebSocketServer is constructed with
+// `maxPayload: MAX_EVENT_DATA_BYTES + 64 KiB` so the `ws` library rejects an
+// oversized frame at the protocol layer (close code 1009) BEFORE buffering
+// ~100 MiB and JSON.parsing it on the event loop. Default MAX_EVENT_DATA_BYTES
+// is 65_536, so the cap here is 65_536 + 65_536 = 131_072 bytes.
+describe("WebSocket per-frame payload cap (F-04)", () => {
+  const MAX_PAYLOAD = 65_536 + 64 * 1024; // mirrors config default
+
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  afterEach(async () => {
+    await closeAll();
+  });
+
+  it("closes an oversized frame with 1009 without crashing the server, and keeps other connections alive", async () => {
+    const apiKey = await seedAgent();
+    // This file pins MAX_WS_CONNECTIONS_PER_PANE=2 for the cap tests, but THIS
+    // test is about the per-frame payload cap, not the connection cap. Put each
+    // socket on its OWN pane so we never approach the per-pane cap and never
+    // race the asynchronous slot drain when the abusive socket is force-closed
+    // (that race produced a flaky cap-429 on slow CI). Distinct panes keep this
+    // test purely about payload behavior.
+    const a = await createPane(apiKey);
+    const b = await createPane(apiKey);
+    const c = await createPane(apiKey);
+
+    // An independent connection (own pane) that must survive the abusive one
+    // being killed — proves the process/event loop stayed healthy.
+    const bystander = await open(b.paneId, b.agentToken);
+    expect(bystander.readyState).toBe(WebSocket.OPEN);
+
+    const abusive = await open(a.paneId, a.agentToken);
+
+    // Frame comfortably larger than maxPayload. `ws` rejects it at the
+    // protocol layer; the client sees a close with code 1009 (message too big).
+    const closeInfo = await new Promise<{ code: number }>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("oversized frame neither closed nor errored")),
+        4000,
+      );
+      abusive.once("close", (code) => {
+        clearTimeout(timer);
+        resolve({ code });
+      });
+      // A valid-JSON envelope padded past the cap so the only thing wrong is
+      // its size. We never expect the relay to parse it.
+      const huge = JSON.stringify({
+        type: "ping",
+        data: { pad: "a".repeat(MAX_PAYLOAD + 1024) },
+      });
+      abusive.send(huge);
+    });
+
+    // ws uses 1009 (message too big) when a frame exceeds maxPayload.
+    expect(closeInfo.code).toBe(1009);
+
+    // The server is still up and the bystander socket is unaffected: a normal
+    // round-trip still works.
+    expect(bystander.readyState).toBe(WebSocket.OPEN);
+    const ack = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("no response to normal frame after oversized")),
+        4000,
+      );
+      bystander.once("message", (raw: Buffer) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(raw.toString()));
+      });
+      bystander.send(JSON.stringify({ type: "ping", data: {} }));
+    });
+    // We don't assert the exact ack shape (covered elsewhere) — only that the
+    // server responded, proving it survived the oversized frame.
+    expect(ack).toBeTruthy();
+
+    // A brand-new connection (its own fresh pane) can still be established
+    // after the abuse — the server stayed up and accepts new upgrades.
+    const after = await open(c.paneId, c.agentToken);
+    expect(after.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it("accepts a normal-sized frame just under the cap", async () => {
+    const apiKey = await seedAgent();
+    const { paneId, agentToken } = await createPane(apiKey);
+    const ws = await open(paneId, agentToken);
+
+    // A frame whose total size is comfortably under maxPayload still rides the
+    // protocol layer and reaches the app handler (which acks it).
+    const ack = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("no ack for normal-sized frame")),
+        4000,
+      );
+      ws.once("message", (raw: Buffer) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(raw.toString()));
+      });
+      ws.send(JSON.stringify({ type: "ping", data: {} }));
+    });
+    expect(ack).toBeTruthy();
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+  });
+});
+
 // Retry `open(...)` until it succeeds, swallowing only the "cap not yet
 // drained" 429. Any other failure (different status, connection refused,
 // wrong token) propagates immediately. Bounded by `deadlineMs` so a real

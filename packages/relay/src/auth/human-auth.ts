@@ -13,7 +13,7 @@
 // timestamp moves.
 
 import type { Context, MiddlewareHandler } from "hono";
-import type { Human as HumanRow } from "@prisma/client";
+import type { Human as HumanRow, PrismaClient } from "@prisma/client";
 import {
   buildClearCookieHeader,
   hashLoginCookie,
@@ -98,3 +98,65 @@ export const resolveHumanOptional: MiddlewareHandler<
   c.set("human", human);
   await next();
 };
+
+// ---------------------------------------------------------------------------
+// Identity-bound participant enforcement (F-02).
+//
+// `POST /v1/panes/:id/identity-link` mints a Participant with a non-null
+// `humanId` — a URL that ONLY that bound human may use, and only after
+// logging in. The binding used to be checked in exactly one place (the
+// shell HTML page), so every other consumer of the same `tok_h_…` token
+// (content/presence, events, records, attachments, ws-ticket, WS upgrade)
+// honoured only `revokedAt` and ignored the binding — letting anyone who
+// held the raw token act AS the bound human. These helpers centralise the
+// check so it is enforced wherever a participant token is resolved.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a raw `Cookie:` header to the logged-in human id, or null if no
+ * valid `pane_login` cookie is present / the login is unknown or expired.
+ *
+ * Read-only — unlike resolveLoginCookie it does NOT bump Login.lastSeenAt
+ * (this is called from token-resolution paths that already authenticate via
+ * the participant token; the cookie here is a *secondary* identity check, not
+ * the primary credential, so we don't treat it as a "session was used" signal).
+ * Usable from outside the Hono request lifecycle (the WS upgrade) since it
+ * takes the raw header string rather than a Context.
+ */
+export async function loginHumanIdFromCookie(
+  prisma: PrismaClient,
+  cookieHeader: string | null,
+): Promise<string | null> {
+  const cookieValue = parseLoginCookie(cookieHeader);
+  if (!cookieValue) return null;
+  const login = await prisma.login.findUnique({
+    where: { cookieHash: hashLoginCookie(cookieValue) },
+    select: { humanId: true, expiresAt: true },
+  });
+  if (!login || login.expiresAt < new Date()) return null;
+  return login.humanId;
+}
+
+/**
+ * Central guard for an identity-bound participant token. For a participant
+ * whose `humanId` is null (anonymous capability link) this is a no-op — those
+ * tokens are intentionally usable by anyone with the URL. For a participant
+ * whose `humanId` is set, the request MUST carry a valid login cookie for that
+ * exact human; otherwise the binding fails.
+ *
+ * Returns `true` when the request is allowed to use the token, `false` when
+ * the binding is violated (no cookie, expired cookie, or a cookie for a
+ * different human). Callers translate `false` into whatever opaque rejection
+ * their route family already uses (notFound for /s/* + WS, participant-token-
+ * invalid for the attachment bridges) so a probing client can't tell "wrong
+ * account" from "bad token".
+ */
+export async function participantBindingSatisfied(
+  prisma: PrismaClient,
+  participant: { humanId: string | null },
+  cookieHeader: string | null,
+): Promise<boolean> {
+  if (participant.humanId === null) return true;
+  const loggedInHumanId = await loginHumanIdFromCookie(prisma, cookieHeader);
+  return loggedInHumanId !== null && loggedInHumanId === participant.humanId;
+}
