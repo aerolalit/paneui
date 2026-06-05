@@ -225,11 +225,12 @@ class FrameQueue {
   }
 }
 
-// Postgres CI is slower than sqlite — bump the WS-open + frame timeouts
-// from the per-pane records suite's 1500ms default to 5s so the two-pane
-// fan-out test has headroom when both sockets race through the same
-// participant.joined writes.
-function waitOpen(ws: WebSocket, timeoutMs = 10000): Promise<void> {
+// CI runs every e2e file in parallel, so the runner is CPU-saturated and a
+// WS handshake can take many seconds — the original tight default produced
+// "ws open timeout" flakes on both lanes. Give the two-pane fan-out test
+// generous headroom (20s open / frame) so a slow handshake under load is not
+// mistaken for a hang; the enclosing test budget is raised to match.
+function waitOpen(ws: WebSocket, timeoutMs = 20000): Promise<void> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
     ws.once("open", () => {
@@ -324,7 +325,7 @@ describe("template-record WS broadcast", () => {
   const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
   it.skipIf(isPostgres)(
     "broadcasts to BOTH derived panes simultaneously",
-    { timeout: 30000 },
+    { timeout: 60000 },
     async () => {
       const { apiKey } = await seedAgent();
       const { templateId } = await createTemplate(apiKey);

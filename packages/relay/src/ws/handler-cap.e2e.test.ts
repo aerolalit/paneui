@@ -252,14 +252,22 @@ describe("WebSocket per-frame payload cap (F-04)", () => {
 
   it("closes an oversized frame with 1009 without crashing the server, and keeps other connections alive", async () => {
     const apiKey = await seedAgent();
-    const { paneId, agentToken } = await createPane(apiKey);
+    // This file pins MAX_WS_CONNECTIONS_PER_PANE=2 for the cap tests, but THIS
+    // test is about the per-frame payload cap, not the connection cap. Put each
+    // socket on its OWN pane so we never approach the per-pane cap and never
+    // race the asynchronous slot drain when the abusive socket is force-closed
+    // (that race produced a flaky cap-429 on slow CI). Distinct panes keep this
+    // test purely about payload behavior.
+    const a = await createPane(apiKey);
+    const b = await createPane(apiKey);
+    const c = await createPane(apiKey);
 
-    // A second, independent connection that must survive the abusive one being
-    // killed — proves the process/event loop stayed healthy.
-    const bystander = await open(paneId, agentToken);
+    // An independent connection (own pane) that must survive the abusive one
+    // being killed — proves the process/event loop stayed healthy.
+    const bystander = await open(b.paneId, b.agentToken);
     expect(bystander.readyState).toBe(WebSocket.OPEN);
 
-    const abusive = await open(paneId, agentToken);
+    const abusive = await open(a.paneId, a.agentToken);
 
     // Frame comfortably larger than maxPayload. `ws` rejects it at the
     // protocol layer; the client sees a close with code 1009 (message too big).
@@ -302,8 +310,9 @@ describe("WebSocket per-frame payload cap (F-04)", () => {
     // server responded, proving it survived the oversized frame.
     expect(ack).toBeTruthy();
 
-    // A brand-new connection can still be established after the abuse.
-    const after = await open(paneId, agentToken);
+    // A brand-new connection (its own fresh pane) can still be established
+    // after the abuse — the server stayed up and accepts new upgrades.
+    const after = await open(c.paneId, c.agentToken);
     expect(after.readyState).toBe(WebSocket.OPEN);
   });
 
