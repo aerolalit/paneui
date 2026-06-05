@@ -48,6 +48,7 @@ import {
 } from "./commands/template-records.js";
 import { runQuery, queryHelp } from "./commands/query.js";
 import { runTrash, trashHelp } from "./commands/trash.js";
+import { runDemo, demoHelp } from "./commands/demo.js";
 import { VERSION } from "./version.js";
 import { PaneApiError } from "@paneui/core";
 import { failUpgradeRequired } from "./output.js";
@@ -69,6 +70,9 @@ Pane commands (operate on the core noun — a live UI channel):
     <list|new|revoke> (list | mint a fresh URL | revoke one URL).
 
 Other noun groups:
+  demo              Take the 60-second guided tour — creates a tutorial pane,
+                    opens it, and runs a live agent loop in your terminal.
+                    Doubles as an end-to-end smoke test of your install.
   template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
   template-records  Owner-curated content scoped to a Template head
@@ -133,6 +137,9 @@ const BOOLEAN_FLAGS = new Set([
   "print-key",
   "yes",
   "plain",
+  // `pane demo --no-open`: skip the browser launch. Stored as the literal
+  // `no-open` boolean (the parser does not auto-negate `--no-` prefixes).
+  "no-open",
 ]);
 
 async function main(): Promise<void> {
@@ -189,6 +196,7 @@ async function main(): Promise<void> {
     "template-records": templateRecordsHelp,
     query: queryHelp,
     trash: trashHelp,
+    demo: demoHelp,
   };
 
   if (!(noun in helps)) {
@@ -271,6 +279,9 @@ async function main(): Promise<void> {
       break;
     case "trash":
       await runTrash(args);
+      break;
+    case "demo":
+      await runDemo(args);
       break;
   }
 }
