@@ -448,6 +448,20 @@ async function handleUpgrade(
       }
     }
 
+    // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+    // expiresAt until the hard-delete sweeper runs, so the status/expiry gate
+    // below does NOT catch it. Refuse the WS upgrade so a trashed pane can't
+    // be read (event/record replay) or written (frame writes) over the
+    // socket. Mirrors the dualAuth HTTP refusal (auth.ts) and the writeEvent
+    // refusal (core/events.ts). 410 matches errors.softDeleted's status.
+    if (pane.deletedAt !== null) {
+      sendUpgradeError(socket, 410, "pane is in trash", {
+        paneId,
+        paneStatus: pane.status,
+      });
+      return;
+    }
+
     if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
       sendUpgradeError(socket, 410, "pane closed or expired", {
         paneId,

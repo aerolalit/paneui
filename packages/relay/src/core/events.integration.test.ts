@@ -30,6 +30,21 @@ import {
   type WriteEventResult,
 } from "./events.js";
 
+// F-14 — `fire` (reached via the webhook side-effect of writeEvent) now
+// re-validates the callback URL against the SSRF guard at send time. The
+// webhook side-effect tests below use `.invalid` callback URLs that never
+// resolve in DNS, which the real guard would reject before fetch — making the
+// pipeline test depend on (failing) DNS. Stub the guard to a pass-through so
+// these tests keep exercising the fire path hermetically. The guard itself is
+// tested in http/ssrf.test.ts; its fire-time wiring in http/webhook.test.ts.
+vi.mock("../http/ssrf.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../http/ssrf.js")>();
+  return {
+    ...actual,
+    assertSafeWebhookUrl: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 let testDb: TestDb;
 let prisma: PrismaClient;
 let config: Config;
@@ -239,6 +254,31 @@ describe("writeEvent (integration, real SQLite)", () => {
         data: { body: "x" },
       }),
     ).rejects.toMatchObject({ code: "gone" });
+  });
+
+  // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+  // expiresAt until the hard-delete sweeper runs, so the gone() gate does not
+  // catch it. writeEvent must refuse it with soft_deleted, while a normal pane
+  // still writes (covered by the happy-path test above).
+  it("rejects an event on a soft-deleted pane as soft_deleted (F-08)", async () => {
+    const { pane, agentId } = await seedPane();
+    await prisma.pane.update({
+      where: { id: pane.id },
+      data: { deletedAt: new Date() },
+    });
+    const trashed = await reloadPane(pane.id);
+    // Sanity: the pane is still "open" + unexpired — only deletedAt flips.
+    expect(trashed.status).toBe("open");
+    expect(trashed.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    await expect(
+      we(trashed, agentAuthor(agentId), {
+        type: "review.commentAdded",
+        data: { body: "x" },
+      }),
+    ).rejects.toMatchObject({ code: "soft_deleted" });
+    // No event row was written.
+    const rows = await prisma.event.count({ where: { paneId: pane.id } });
+    expect(rows).toBe(0);
   });
 
   it("rejects an unknown event type via the schema validator", async () => {

@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { SerializedEvent } from "../types.js";
 import { log } from "../log.js";
+import { assertSafeWebhookUrl } from "./ssrf.js";
 
 export interface WebhookConfig {
   url: string;
@@ -42,6 +43,30 @@ export async function fire(
   paneId: string,
   event: SerializedEvent,
 ): Promise<void> {
+  // F-14 — re-validate the callback URL at FIRE time, not just at pane-create
+  // time. assertSafeWebhookUrl re-resolves DNS and rejects loopback / private /
+  // link-local (incl. the 169.254.169.254 metadata IP) / CGNAT targets. The
+  // create-time check (routes/panes.ts) can be defeated by DNS rebinding: an
+  // attacker lets the host resolve to a public IP at create time, then rebinds
+  // it to an internal address before the webhook fires. Re-resolving here at
+  // send time drastically narrows that window. It does NOT fully close it —
+  // there is still a TOCTOU gap between this lookup and the kernel's own
+  // resolution inside fetch (the platform fetch does not expose a lookup hook
+  // to pin the resolved IP, so we can't connect-to-pinned-IP without replacing
+  // the HTTP stack). `redirect: "manual"` (below) already blocks redirect-
+  // chaining to an internal address. Residual risk is documented in ssrf.ts;
+  // egress network policy remains the defence-in-depth that fully closes it.
+  try {
+    await assertSafeWebhookUrl(cfg.url);
+  } catch (err) {
+    log.warn("webhook send aborted: url failed fire-time SSRF re-validation", {
+      paneId,
+      eventId: event.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
   const ts = Math.floor(Date.now() / 1000);
   const body = JSON.stringify({ pane_id: paneId, event });
   const sig = createHmac("sha256", cfg.secret)
