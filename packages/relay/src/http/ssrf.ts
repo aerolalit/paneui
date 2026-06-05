@@ -58,6 +58,18 @@ function isBlockedIPv6(addr: string): boolean {
   return false;
 }
 
+/**
+ * True iff `address` (an IP literal of the given DNS family, 4 or 6) is a
+ * routable, non-blocked address — i.e. safe to connect to for an outbound
+ * webhook. This is the single predicate behind both the create-time URL check
+ * and the fire-time pin-and-connect: callers resolve a host, then keep only the
+ * addresses for which this returns true. Anything malformed is treated as
+ * blocked (returns false) by the underlying isBlocked* helpers.
+ */
+export function isSafeAddress(address: string, family: number): boolean {
+  return family === 4 ? !isBlockedIPv4(address) : !isBlockedIPv6(address);
+}
+
 function isBlockedHostname(host: string): boolean {
   const h = host.toLowerCase();
   if (h === "localhost") return true;
@@ -73,26 +85,51 @@ export interface AssertSafeUrlOptions {
   field?: string;
 }
 
+// DNS-rebinding posture (F-14 + follow-up).
+//
+// Create-time (routes/panes.ts) gates the URL via assertSafeOutboundUrl. That
+// alone is racy: an attacker who controls DNS can resolve to a public IP at
+// create time and rebind to a private IP before the webhook fires. The webhook
+// send path (webhook.ts) now resolves the host ITSELF via resolveSafeOutboundUrl
+// at fire time, verifies every resolved address, and PINS the connection to the
+// returned safe IP — it dials that exact IP rather than re-resolving the
+// hostname inside the HTTP client. That eliminates the second-resolution TOCTOU
+// the previous re-validate-then-fetch approach left open (fetch/undici re-
+// resolved DNS independently of the check). The original hostname is still used
+// for the Host header and TLS SNI so certificate validation holds.
+//
 /**
- * Validates that `rawUrl` does not point at a private/loopback/metadata/CGNAT
- * target, resolving DNS and checking every returned address.
- *
- * Residual risk — create-time vs fire-time TOCTOU. This runs when the pane
- * is created; the actual outbound request (the webhook callback) happens later
- * in webhook.ts and is NOT re-validated. An attacker who controls DNS for the
- * host can let it resolve to a public IP at create time, then rebind it to a
- * private IP before the webhook fires (a DNS-rebinding attack). We accept this
- * rather than re-resolve per fire because (a) re-resolving still races the next
- * packet, so it is not a real fix, and (b) the defence-in-depth that does close
- * it — egress network policy / a locked-down outbound proxy — belongs at the
- * infrastructure layer, which most cloud hosts already provide. Operators
- * running the relay where outbound traffic is unrestricted should add egress
- * filtering.
+ * A host that has been resolved AND verified safe, carrying the single IP the
+ * caller should PIN the connection to. `host` is the original hostname (used
+ * for the Host header and TLS SNI/servername so certificate validation still
+ * works); `address`/`family` is the pre-validated IP to dial. `wasLiteral` is
+ * true when the URL host was already an IP literal (no DNS was performed).
  */
-export async function assertSafeOutboundUrl(
+export interface ResolvedSafeHost {
+  url: URL;
+  host: string;
+  address: string;
+  family: number;
+  wasLiteral: boolean;
+}
+
+/**
+ * Parse + validate `rawUrl` (protocol, no credentials, allowed hostname),
+ * resolve its host, verify EVERY resolved address is safe, and return ONE safe
+ * address to pin the outbound connection to. Throws the same invalidRequest
+ * errors as before on any failure.
+ *
+ * Returning a pinned address (rather than just asserting) is what closes the
+ * fire-time DNS-rebinding TOCTOU: the caller connects to this exact IP instead
+ * of re-resolving the hostname (which the kernel/undici would otherwise do
+ * inside fetch, racing the check). If ANY resolved address is unsafe we reject
+ * the whole host — a rebind that mixes a public and a private answer must not
+ * be allowed to slip the private one through.
+ */
+export async function resolveSafeOutboundUrl(
   rawUrl: string,
   opts: AssertSafeUrlOptions = {},
-): Promise<void> {
+): Promise<ResolvedSafeHost> {
   const field = opts.field ?? "url";
   let u: URL;
   try {
@@ -118,21 +155,15 @@ export async function assertSafeOutboundUrl(
     throw errors.invalidRequest(`${field} host is not allowed`);
   }
 
-  // If the host is already an IP literal, check it directly.
+  // If the host is already an IP literal, check it directly — pin to itself.
   const ipFamily = isIP(host);
-  if (ipFamily === 4) {
-    if (isBlockedIPv4(host))
+  if (ipFamily === 4 || ipFamily === 6) {
+    if (!isSafeAddress(host, ipFamily)) {
       throw errors.invalidRequest(
         `${field} resolves to a non-routable address`,
       );
-    return;
-  }
-  if (ipFamily === 6) {
-    if (isBlockedIPv6(host))
-      throw errors.invalidRequest(
-        `${field} resolves to a non-routable address`,
-      );
-    return;
+    }
+    return { url: u, host, address: host, family: ipFamily, wasLiteral: true };
   }
 
   // DNS lookup — check ALL resolved addresses (DNS rebinding defence).
@@ -146,19 +177,45 @@ export async function assertSafeOutboundUrl(
     throw errors.invalidRequest(`${field} host could not be resolved`);
   }
   for (const r of resolved) {
-    const blocked =
-      r.family === 4 ? isBlockedIPv4(r.address) : isBlockedIPv6(r.address);
-    if (blocked) {
+    if (!isSafeAddress(r.address, r.family)) {
       throw errors.invalidRequest(
         `${field} resolves to a non-routable address`,
       );
     }
   }
+  // All addresses safe — pin to the first (prefer IPv4 if present, mirroring
+  // typical happy-eyeballs ordering and keeping literals predictable in tests).
+  const first = resolved[0]!;
+  return {
+    url: u,
+    host,
+    address: first.address,
+    family: first.family,
+    wasLiteral: false,
+  };
+}
+
+/**
+ * Assert-only wrapper around {@link resolveSafeOutboundUrl}: validates the URL
+ * is safe and discards the pinned address. Kept for callers that only gate
+ * (e.g. create-time URL acceptance in routes/panes.ts) and do not themselves
+ * dial the host.
+ */
+export async function assertSafeOutboundUrl(
+  rawUrl: string,
+  opts: AssertSafeUrlOptions = {},
+): Promise<void> {
+  await resolveSafeOutboundUrl(rawUrl, opts);
 }
 
 // Convenience aliases — keep callers readable at the use site.
 export const assertSafeWebhookUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "callback.url" });
+// Resolve-and-pin variant for the actual webhook send: returns the safe IP to
+// dial so webhook.ts connects to a pinned address (no second, unchecked DNS
+// resolution inside the HTTP client). See resolveSafeOutboundUrl.
+export const resolveSafeWebhookUrl = (url: string): Promise<ResolvedSafeHost> =>
+  resolveSafeOutboundUrl(url, { field: "callback.url" });
 export const assertSafeArtifactUrl = (url: string): Promise<void> =>
   assertSafeOutboundUrl(url, { field: "template.source" });
 export const assertSafeBlobScanHookUrl = (url: string): Promise<void> =>

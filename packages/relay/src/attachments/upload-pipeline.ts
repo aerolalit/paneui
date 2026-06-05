@@ -195,6 +195,13 @@ export async function processBlobUpload(
   let finalBytes: Buffer;
   let finalSha256: string;
   let finalSize: number;
+  // The MIME we actually STORE/serve. Usually equals `sniffedMime`, but SVG
+  // (F-13) is rasterised to PNG by the normaliser, so the stored mime becomes
+  // `image/png`. The allowlist gate above runs on `sniffedMime` (the operator
+  // opted SVG in); everything downstream of normalisation — the DB row, the
+  // store's Content-Type, the integrity check, the scan hook — uses `finalMime`
+  // so the row stays internally consistent.
+  let finalMime = sniffedMime;
   let width: number | null = null;
   let height: number | null = null;
   try {
@@ -207,10 +214,11 @@ export async function processBlobUpload(
       finalBytes = normalised.bytes;
       finalSha256 = normalised.sha256;
       finalSize = normalised.bytes.length;
+      finalMime = normalised.mime;
       width = normalised.width ?? null;
       height = normalised.height ?? null;
     } else {
-      // Pass-through (SVG, PDF). Still hash + size from the bytes we
+      // Pass-through (PDF, anything else). Still hash + size from the bytes we
       // already have so the rest of the pipeline doesn't care.
       finalBytes = uploaded;
       finalSha256 = createHash("sha256").update(uploaded).digest("hex");
@@ -253,7 +261,7 @@ export async function processBlobUpload(
       scope,
       paneId,
       templateId,
-      mime: sniffedMime,
+      mime: finalMime,
       size: finalSize,
       sha256: finalSha256,
       width,
@@ -276,7 +284,7 @@ export async function processBlobUpload(
   let info;
   try {
     info = await store.put(storageKey, Readable.from(bytesForStore), {
-      mime: sniffedMime,
+      mime: finalMime,
       maxBytes: config.MAX_BLOB_BYTES,
     });
   } catch (e) {
@@ -362,7 +370,7 @@ export async function processBlobUpload(
         {
           attachment_id: row.id,
           scope: scope,
-          mime: sniffedMime,
+          mime: finalMime,
           size: finalSize,
           sha256: finalSha256,
           download_url: downloadUrl,

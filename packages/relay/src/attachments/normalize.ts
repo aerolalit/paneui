@@ -19,12 +19,23 @@
 //   * Preserves visible pixel content (a `pHash`-level comparison between
 //     input and output is the same — verified in normalize.test.ts).
 //
-// Image formats that aren't decoded: SVG, PDF, anything else. These pass
-// through unchanged. SVG carries inline <script> and event handlers
-// natively and would need a separate XML sanitiser; v0.1.0 documents this
-// in docs/SECURITY-POLYGLOTS.md as a known limitation and recommends
-// operators remove `image/svg+xml` from BLOB_MIME_ALLOWLIST if their
-// pane is exposed to untrusted UI rendering.
+// SVG is a special case (F-13). SVG is XML and carries inline <script>,
+// event-handler attributes (onload=...), <foreignObject>, and
+// `javascript:`/external `href`/`xlink:href` references natively — none of
+// which a byte-trimming pass would remove. It is rejected by the DEFAULT
+// allowlist (see config.ts), but an operator can opt it back in via
+// BLOB_MIME_ALLOWLIST. When they do and an SVG actually reaches this
+// normaliser, we RASTERISE it to PNG via sharp (libvips → librsvg). The
+// raster output is pure pixel data: every script, handler, foreignObject and
+// external reference is dropped wholesale because none of it survives the
+// vector→bitmap decode. The stored MIME therefore changes from
+// `image/svg+xml` to `image/png` (the caller updates the row's mime/size/
+// dimensions from the NormaliseResult accordingly) and the attachment joins
+// the normalised raster set — so it is also eligible for inline disposition.
+// See docs/SECURITY-POLYGLOTS.md.
+//
+// Image formats that aren't decoded: PDF, anything else. These pass through
+// unchanged.
 
 import { createHash } from "node:crypto";
 import sharp from "sharp";
@@ -57,6 +68,57 @@ const NORMALISABLE = new Set([
   "image/webp",
 ]);
 
+/** SVG MIME. Handled by rasterisation (vector → PNG) rather than re-encode. */
+const SVG_MIME = "image/svg+xml";
+
+/**
+ * F-17 — concurrency bound for sharp decodes.
+ *
+ * `limitInputPixels` (MAX_IMAGE_PIXELS) caps the peak memory of a SINGLE
+ * decode, but says nothing about how many run at once. Under a burst of
+ * simultaneous large-image uploads, N concurrent decodes can collectively
+ * allocate N × (per-decode peak) and exhaust process memory. We bound the
+ * number of in-flight sharp operations with a tiny in-process semaphore.
+ *
+ * 4 is deliberately small: it keeps the worst-case aggregate decode memory
+ * to ~4 × 200 MB ≈ 800 MB (the MAX_IMAGE_PIXELS RGBA worst case) while still
+ * allowing useful parallelism — uploads beyond the bound queue rather than
+ * fail, and the wait is bounded by how fast a decode completes (tens of ms
+ * for realistic images). It's a constant rather than an env knob because the
+ * safe value is a function of MAX_IMAGE_PIXELS + host memory, not something an
+ * operator should tune blindly; revisit alongside MAX_IMAGE_PIXELS if needed.
+ */
+const SHARP_MAX_CONCURRENCY = 4;
+
+/**
+ * Minimal FIFO counting semaphore. `acquire()` resolves immediately while
+ * fewer than `max` permits are held, otherwise queues; `release()` hands the
+ * permit to the next waiter (or returns it to the pool). No external dep —
+ * the repo has no existing semaphore/queue util.
+ */
+class Semaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private readonly max: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.active < this.max) {
+      this.active++;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    this.active++;
+  }
+
+  release(): void {
+    this.active--;
+    const next = this.waiters.shift();
+    if (next) next();
+  }
+}
+
+const sharpSemaphore = new Semaphore(SHARP_MAX_CONCURRENCY);
+
 export interface NormaliseInput {
   bytes: Buffer;
   mime: string;
@@ -80,20 +142,31 @@ export interface NormaliseResult {
  * attachment), re-encodes to the same MIME, returns the clean bytes + sha256 +
  * dimensions.
  *
- * For non-normalisable MIMEs (svg, pdf, anything else) returns the input
- * unchanged with `normalised=false` so the caller can still hash and store.
+ * SVG is special: it is rasterised to PNG (vector → bitmap), which strips ALL
+ * executable content (script / event handlers / foreignObject / external
+ * refs). The returned `mime` is `image/png` (NOT the input `image/svg+xml`) —
+ * the caller MUST persist `result.mime`/`result.size`/`result.width/height`,
+ * not the sniffed values, so the stored row stays consistent.
+ *
+ * For non-normalisable MIMEs (pdf, anything else) returns the input unchanged
+ * with `normalised=false` so the caller can still hash and store.
  *
  * Throws if sharp can't decode the input — that's a real attacker signal
  * (a polyglot the format-sniff layer let through but isn't actually a
- * valid image). The route layer maps the throw to `mime_disallowed`.
+ * valid image, or malformed SVG XML). The route layer maps the throw to
+ * `mime_disallowed`.
+ *
+ * Concurrent calls are bounded by `sharpSemaphore` (F-17) so a burst of large
+ * uploads can't collectively exhaust memory.
  */
 export async function normaliseImage(
   input: NormaliseInput,
 ): Promise<NormaliseResult> {
   const { mime, bytes } = input;
   const stripMetadata = input.stripMetadata !== false;
+  const isSvg = mime === SVG_MIME;
 
-  if (!NORMALISABLE.has(mime)) {
+  if (!isSvg && !NORMALISABLE.has(mime)) {
     // Pass-through path: just compute sha256 and return the input bytes.
     return {
       bytes,
@@ -103,9 +176,15 @@ export async function normaliseImage(
     };
   }
 
-  // Decode → re-encode through the same format. Sharp picks the encoder
-  // from the requested format string; we keep the input MIME so the
-  // route's downstream code (Content-Type, allowlist) sees no change.
+  // The MIME of the encoded output. For raster inputs we keep the input
+  // format; for SVG we rasterise to PNG.
+  const outMime = isSvg ? "image/png" : mime;
+
+  // Decode → re-encode. For raster the encoder matches the input format; for
+  // SVG, sharp decodes the vector (via librsvg) and we encode PNG. Either way
+  // the decode-encode round trip carries only pixel data forward, dropping
+  // appended polyglot tails AND (for SVG) all script/handler/foreignObject
+  // markup.
   const pipeline = sharp(bytes, {
     // Sharp accepts wildly malformed inputs by default and tries to decode
     // them; setting `failOn: 'truncated'` makes it throw on the kind of
@@ -114,7 +193,8 @@ export async function normaliseImage(
     // Decompression-bomb ceiling — see MAX_IMAGE_PIXELS. Checked against the
     // declared header dimensions before decode; an over-limit image throws
     // (caught below → ImageNormalisationError → 415) rather than allocating
-    // a multi-hundred-MB pixel buffer.
+    // a multi-hundred-MB pixel buffer. For SVG the "dimensions" are the
+    // rasterised canvas size librsvg computes from the width/height/viewBox.
     limitInputPixels: MAX_IMAGE_PIXELS,
   });
 
@@ -122,8 +202,9 @@ export async function normaliseImage(
   // strip-all default. When stripMetadata=false (rare opt-out for photo-
   // management workflows), we pass through the metadata sharp keeps by
   // default — but the embedded thumbnail still gets dropped because the
-  // decode-encode round trip discards it regardless.
-  const formatPipeline = withFormat(pipeline, mime);
+  // decode-encode round trip discards it regardless. (SVG has no raster
+  // metadata to carry, so this is a no-op for the rasterise path.)
+  const formatPipeline = withFormat(pipeline, outMime);
   if (!stripMetadata) {
     // Keep EXIF / IPTC / XMP but the embedded thumbnail-of-original is
     // gone (sharp doesn't re-write thumbnails on encode).
@@ -134,6 +215,9 @@ export async function normaliseImage(
 
   let out: Buffer;
   let info: sharp.OutputInfo;
+  // F-17 — bound concurrent decodes. Acquire before the (memory-heavy)
+  // toBuffer(); always release in finally so a throw can't leak a permit.
+  await sharpSemaphore.acquire();
   try {
     const result = await formatPipeline.toBuffer({ resolveWithObject: true });
     out = result.data;
@@ -147,11 +231,13 @@ export async function normaliseImage(
         e instanceof Error ? e.message : String(e)
       }`,
     );
+  } finally {
+    sharpSemaphore.release();
   }
 
   return {
     bytes: out,
-    mime,
+    mime: outMime,
     sha256: createHash("sha256").update(out).digest("hex"),
     width: info.width,
     height: info.height,
@@ -183,7 +269,12 @@ function withFormat(pipe: sharp.Sharp, mime: string): sharp.Sharp {
   }
 }
 
-/** Whether `mime` is a format the normaliser actively processes. */
+/**
+ * Whether `mime` is a format the normaliser actively processes. Includes SVG
+ * (F-13): SVG is routed through `normaliseImage`, which rasterises it to PNG —
+ * so the caller MUST take the output `mime` from the NormaliseResult, since an
+ * SVG input is stored as `image/png`.
+ */
 export function isNormalisable(mime: string): boolean {
-  return NORMALISABLE.has(mime);
+  return mime === SVG_MIME || NORMALISABLE.has(mime);
 }

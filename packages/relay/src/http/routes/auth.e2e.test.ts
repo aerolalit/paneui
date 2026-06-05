@@ -19,9 +19,15 @@ import { makeDevProvider } from "../../auth/providers/dev.js";
 import {
   hashLoginCookie,
   LOGIN_COOKIE_NAME,
+  ML_NONCE_COOKIE_NAME,
   parseLoginCookie,
+  parseMagicLinkNonceCookie,
 } from "../../auth/cookie.js";
-import { hashMagicLinkToken } from "../../auth/magic-link.js";
+import {
+  generateMagicLinkNonce,
+  hashMagicLinkNonce,
+  hashMagicLinkToken,
+} from "../../auth/magic-link.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -183,6 +189,37 @@ describe("POST /v1/auth/request-link", () => {
     });
     expect(link?.name).toBeNull();
   });
+
+  // F-16 — request-link sets the pre-login nonce cookie and stores its hash
+  // on the row. The cookie carries the RAW nonce; the row stores only the
+  // hash, and the two must correspond.
+  it("sets a pane_ml_nonce cookie and stores its hash on the row (F-16)", async () => {
+    const res = await appWithDev.fetch(
+      new Request("http://t/v1/auth/request-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "nonce@example.com" }),
+      }),
+    );
+    expect(res.status).toBe(202);
+
+    const setCookie = res.headers.get("set-cookie");
+    expect(setCookie).toContain(ML_NONCE_COOKIE_NAME);
+    // Scoped + hardened: Lax (survives the email's top-level GET), HttpOnly,
+    // path-scoped to /v1/auth.
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Path=/v1/auth");
+
+    const rawNonce = parseMagicLinkNonceCookie(setCookie);
+    expect(rawNonce).not.toBeNull();
+
+    const link = await prisma.magicLink.findFirst({
+      where: { email: "nonce@example.com" },
+    });
+    // Hash stored on the row matches the hash of the raw cookie value.
+    expect(link?.nonceHash).toBe(hashMagicLinkNonce(rawNonce!));
+  });
 });
 
 // F-09 — per-(IP, email) throttle on POST /v1/auth/request-link. Each test
@@ -272,21 +309,32 @@ describe("POST /v1/auth/request-link throttle (F-09)", () => {
 
 async function mintLink(
   email: string,
-  opts: { returnUrl?: string; ttlMs?: number; name?: string } = {},
-): Promise<{ raw: string; tokenHash: string }> {
+  opts: {
+    returnUrl?: string;
+    ttlMs?: number;
+    name?: string;
+    // When true, the row is nonce-bound (F-16): a fresh nonce is generated,
+    // its hash stored, and the raw nonce returned so the caller can carry it
+    // as the pane_ml_nonce cookie on verify. Default false keeps the link
+    // null-nonce (the back-compat path), matching pre-F-16 rows.
+    nonce?: boolean;
+  } = {},
+): Promise<{ raw: string; tokenHash: string; nonce: string | null }> {
   const { generateMagicLinkToken } = await import("../../auth/magic-link.js");
   const raw = generateMagicLinkToken();
   const tokenHash = hashMagicLinkToken(raw);
+  const nonce = opts.nonce ? generateMagicLinkNonce() : null;
   await prisma.magicLink.create({
     data: {
       email,
       tokenHash,
+      nonceHash: nonce ? hashMagicLinkNonce(nonce) : null,
       expiresAt: new Date(Date.now() + (opts.ttlMs ?? 60_000)),
       returnUrl: opts.returnUrl,
       name: opts.name ?? null,
     },
   });
-  return { raw, tokenHash };
+  return { raw, tokenHash, nonce };
 }
 
 describe("GET /v1/auth/verify", () => {
@@ -446,6 +494,130 @@ describe("GET /v1/auth/verify", () => {
     // Open-redirect defence: a cross-origin returnUrl is dropped and the
     // default landing (/home, per Phase D) is used instead.
     expect(res.headers.get("location")).toBe("/home");
+  });
+
+  // ---- F-16 nonce binding (login-CSRF / session fixation) ----
+
+  it("back-compat: a null-nonceHash link still verifies without a nonce cookie", async () => {
+    // mintLink defaults to nonce:false → nonceHash null, mirroring a row
+    // minted before F-16. Must still log in (no nonce check).
+    const { raw } = await mintLink("legacy@example.com");
+    const res = await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get("set-cookie")).toContain(LOGIN_COOKIE_NAME);
+  });
+
+  it("verifies a nonce-bound link WITH the matching nonce cookie (303 + session)", async () => {
+    const { raw, nonce } = await mintLink("bound@example.com", { nonce: true });
+    expect(nonce).not.toBeNull();
+    const res = await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+        headers: { cookie: `${ML_NONCE_COOKIE_NAME}=${nonce}` },
+      }),
+    );
+    expect(res.status).toBe(303);
+    const setCookie = res.headers.get("set-cookie");
+    expect(setCookie).toContain(LOGIN_COOKIE_NAME);
+    // Session was actually established.
+    const cookieValue = parseLoginCookie(setCookie);
+    expect(cookieValue).not.toBeNull();
+    const login = await prisma.login.findUnique({
+      where: { cookieHash: hashLoginCookie(cookieValue!) },
+    });
+    expect(login).not.toBeNull();
+    // The nonce cookie is cleared on success.
+    expect(setCookie).toContain(`${ML_NONCE_COOKIE_NAME}=;`);
+  });
+
+  it("REJECTS a nonce-bound link WITHOUT any nonce cookie (login-CSRF case)", async () => {
+    const { raw, tokenHash } = await mintLink("victim@example.com", {
+      nonce: true,
+    });
+    // The attacker lures the victim to click; the victim's browser has no
+    // pane_ml_nonce cookie for this link.
+    const res = await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_token");
+    // No session was set.
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await prisma.login.count()).toBe(0);
+    // Token NOT consumed — the legitimate requester can still use it.
+    const link = await prisma.magicLink.findUnique({ where: { tokenHash } });
+    expect(link?.consumedAt).toBeNull();
+  });
+
+  it("REJECTS a nonce-bound link with the WRONG nonce cookie", async () => {
+    const { raw } = await mintLink("victim2@example.com", { nonce: true });
+    const wrong = generateMagicLinkNonce();
+    const res = await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+        headers: { cookie: `${ML_NONCE_COOKIE_NAME}=${wrong}` },
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_token");
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(await prisma.login.count()).toBe(0);
+  });
+
+  it("end-to-end: request-link → verify carrying the issued nonce cookie succeeds", async () => {
+    // Drive the real request-link endpoint to capture both the emitted nonce
+    // cookie and the magic-link token (the dev provider logs the link).
+    const reqRes = await appWithDev.fetch(
+      new Request("http://t/v1/auth/request-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "e2e@example.com" }),
+      }),
+    );
+    expect(reqRes.status).toBe(202);
+    const rawNonce = parseMagicLinkNonceCookie(
+      reqRes.headers.get("set-cookie"),
+    );
+    expect(rawNonce).not.toBeNull();
+
+    // The token isn't returned over HTTP; read it the same way mintLink does —
+    // we re-derive by issuing our own link bound to this same nonce hash, then
+    // verify the issued cookie unlocks it. (We mint with nonce:false then patch
+    // in the captured hash to keep the assertion about the COOKIE, not minting.)
+    const link = await prisma.magicLink.findFirst({
+      where: { email: "e2e@example.com" },
+    });
+    expect(link?.nonceHash).toBe(hashMagicLinkNonce(rawNonce!));
+
+    // Issue a fresh token bound to the captured nonce hash and verify it with
+    // the issued cookie — proves the request-link cookie unlocks a row whose
+    // stored hash it produced.
+    const { generateMagicLinkToken } = await import("../../auth/magic-link.js");
+    const token = generateMagicLinkToken();
+    await prisma.magicLink.create({
+      data: {
+        email: "e2e@example.com",
+        tokenHash: hashMagicLinkToken(token),
+        nonceHash: hashMagicLinkNonce(rawNonce!),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const verifyRes = await appWithDev.fetch(
+      new Request(`http://t/v1/auth/verify?token=${token}`, {
+        redirect: "manual",
+        headers: { cookie: `${ML_NONCE_COOKIE_NAME}=${rawNonce}` },
+      }),
+    );
+    expect(verifyRes.status).toBe(303);
+    expect(verifyRes.headers.get("set-cookie")).toContain(LOGIN_COOKIE_NAME);
   });
 });
 

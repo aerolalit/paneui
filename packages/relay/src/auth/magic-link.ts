@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { hashKey } from "../keys.js";
 
 const MAGIC_LINK_PREFIX = "ml_";
+const MAGIC_LINK_NONCE_PREFIX = "mln_";
 
 export function generateMagicLinkToken(): string {
   return MAGIC_LINK_PREFIX + randomBytes(32).toString("base64url");
@@ -15,6 +16,23 @@ export function generateMagicLinkToken(): string {
 
 export function hashMagicLinkToken(token: string): string {
   return hashKey(token);
+}
+
+/**
+ * Pre-login nonce that binds a magic link to the browser that requested it
+ * (login-CSRF / session-fixation defence, F-16). The raw value is set as a
+ * short-lived cookie in the requester's browser at request-link time; only
+ * its hash is stored on the MagicLink row. At verify time the cookie's hash
+ * must match the stored hash, so a link minted for an attacker's account
+ * can't log a victim's browser in — the victim never holds the matching
+ * nonce cookie. Same shape/strength as the token: 32 random bytes, prefixed.
+ */
+export function generateMagicLinkNonce(): string {
+  return MAGIC_LINK_NONCE_PREFIX + randomBytes(32).toString("base64url");
+}
+
+export function hashMagicLinkNonce(nonce: string): string {
+  return hashKey(nonce);
 }
 
 /**

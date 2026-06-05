@@ -194,11 +194,139 @@ describe("isNormalisable", () => {
     expect(isNormalisable("image/webp")).toBe(true);
   });
 
-  it("returns false for SVG (caller responsibility) + PDF + others", () => {
-    expect(isNormalisable("image/svg+xml")).toBe(false);
+  it("returns true for SVG (F-13: rasterised to PNG by normaliseImage)", () => {
+    expect(isNormalisable("image/svg+xml")).toBe(true);
+  });
+
+  it("returns false for PDF + others", () => {
     expect(isNormalisable("application/pdf")).toBe(false);
     expect(isNormalisable("text/plain")).toBe(false);
     expect(isNormalisable("application/octet-stream")).toBe(false);
+  });
+});
+
+// ── F-13 — SVG rasterisation ──────────────────────────────────────────
+//
+// When an operator opts SVG back into BLOB_MIME_ALLOWLIST, an accepted SVG
+// reaches normaliseImage(), which rasterises it to PNG. Every executable
+// vector (script / onload / javascript: / foreignObject) is dropped because
+// none of it survives the vector→bitmap decode, and the stored mime changes
+// to image/png so the caller persists a consistent row.
+
+describe("normaliseImage — SVG rasterisation (F-13)", () => {
+  const scriptedSvg = Buffer.from(
+    `<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20" onload="alert('onload')">
+  <rect width="20" height="20" fill="#3366cc"/>
+  <script type="application/javascript">alert('inline-script')</script>
+  <a xlink:href="javascript:alert('xlink')"><rect width="4" height="4"/></a>
+  <foreignObject width="8" height="8"><body xmlns="http://www.w3.org/1999/xhtml"><img src="x" onerror="alert('fo')"/></body></foreignObject>
+</svg>`,
+    "utf8",
+  );
+
+  it("transcodes a scripted SVG to PNG and drops all executable content", async () => {
+    const result = await normaliseImage({
+      bytes: scriptedSvg,
+      mime: "image/svg+xml",
+    });
+
+    // Stored mime is PNG, not svg.
+    expect(result.mime).toBe("image/png");
+    expect(result.normalised).toBe(true);
+
+    // Output is a valid raster image with sensible dimensions.
+    const meta = await sharp(result.bytes).metadata();
+    expect(meta.format).toBe("png");
+    expect(result.width).toBe(20);
+    expect(result.height).toBe(20);
+
+    // None of the SVG/script markup survives the rasterisation.
+    const out = result.bytes.toString("latin1");
+    for (const needle of [
+      "<script",
+      "onload",
+      "javascript:",
+      "onerror",
+      "foreignObject",
+      "<svg",
+    ]) {
+      expect(out, `"${needle}" survived SVG rasterisation`).not.toContain(
+        needle,
+      );
+    }
+  });
+
+  it("rejects malformed SVG XML via ImageNormalisationError", async () => {
+    // librsvg refuses to parse non-XML / non-SVG content sniffed as svg.
+    const broken = Buffer.from("<svg>not closed and not valid", "utf8");
+    await expect(
+      normaliseImage({ bytes: broken, mime: "image/svg+xml" }),
+    ).rejects.toBeInstanceOf(ImageNormalisationError);
+  });
+});
+
+// ── F-17 — bounded concurrency ────────────────────────────────────────
+//
+// normaliseImage() acquires a permit from an in-process semaphore (bound 4)
+// around the sharp decode so a burst of large uploads can't collectively
+// exhaust memory. These tests assert (a) concurrency doesn't break the happy
+// path and (b) the permit is released even when a decode throws (no leak).
+
+describe("normaliseImage — bounded concurrency (F-17)", () => {
+  it("processes many concurrent normalisations correctly", async () => {
+    const inputs = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        baselines.png(32 + (i % 8), 32 + (i % 8)),
+      ),
+    );
+    const results = await Promise.all(
+      inputs.map((bytes) => normaliseImage({ bytes, mime: "image/png" })),
+    );
+    expect(results).toHaveLength(20);
+    for (const r of results) {
+      expect(r.normalised).toBe(true);
+      expect(r.mime).toBe("image/png");
+      expect(r.bytes.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("does not leak a permit when a decode throws (failures + successes interleaved)", async () => {
+    const good = await baselines.png(48, 48);
+    const bad = Buffer.from("<!doctype html><html></html>", "utf8");
+
+    // Fire far more than the bound (4), interleaving failures with successes.
+    // If a throwing decode leaked its permit, the pool would drain and the
+    // trailing successes would hang forever — the test would time out. That
+    // it resolves at all proves the finally-release works.
+    const tasks: Array<Promise<unknown>> = [];
+    for (let i = 0; i < 24; i++) {
+      if (i % 2 === 0) {
+        tasks.push(
+          normaliseImage({ bytes: good, mime: "image/png" }).then((r) => ({
+            ok: true as const,
+            mime: r.mime,
+          })),
+        );
+      } else {
+        tasks.push(
+          normaliseImage({ bytes: bad, mime: "image/png" }).then(
+            () => ({ ok: true as const, mime: "image/png" }),
+            (e) => ({ ok: false as const, err: e }),
+          ),
+        );
+      }
+    }
+    const settled = await Promise.all(tasks);
+    const oks = settled.filter((s) => (s as { ok: boolean }).ok);
+    const fails = settled.filter((s) => !(s as { ok: boolean }).ok);
+    expect(oks).toHaveLength(12);
+    expect(fails).toHaveLength(12);
+    for (const f of fails) {
+      expect((f as { err: unknown }).err).toBeInstanceOf(
+        ImageNormalisationError,
+      );
+    }
   });
 });
 

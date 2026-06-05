@@ -30,18 +30,26 @@ import {
   type WriteEventResult,
 } from "./events.js";
 
-// F-14 — `fire` (reached via the webhook side-effect of writeEvent) now
-// re-validates the callback URL against the SSRF guard at send time. The
-// webhook side-effect tests below use `.invalid` callback URLs that never
-// resolve in DNS, which the real guard would reject before fetch — making the
-// pipeline test depend on (failing) DNS. Stub the guard to a pass-through so
-// these tests keep exercising the fire path hermetically. The guard itself is
-// tested in http/ssrf.test.ts; its fire-time wiring in http/webhook.test.ts.
+// F-14 follow-up — `fire` (reached via the webhook side-effect of writeEvent)
+// now resolves+pins the callback host via resolveSafeWebhookUrl at send time.
+// The webhook side-effect tests below use `.invalid` callback URLs that never
+// resolve in DNS, which the real guard would reject before the send — making
+// the pipeline test depend on (failing) DNS. Stub the resolver to return a
+// pinned public address so these tests keep exercising the fire path
+// hermetically. The guard itself is tested in http/ssrf.test.ts; its fire-time
+// wiring (incl. pin-and-connect) in http/webhook.test.ts.
 vi.mock("../http/ssrf.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../http/ssrf.js")>();
   return {
     ...actual,
     assertSafeWebhookUrl: vi.fn().mockResolvedValue(undefined),
+    resolveSafeWebhookUrl: vi.fn(async (url: string) => ({
+      url: new URL(url),
+      host: new URL(url).hostname,
+      address: "93.184.216.34",
+      family: 4,
+      wasLiteral: false,
+    })),
   };
 });
 
@@ -455,16 +463,17 @@ describe("writeEvent (integration, real SQLite)", () => {
     });
 
     it("does not attempt the webhook on a deduped result", async () => {
-      // Stub global fetch and verify it's only called once across two identical
-      // writes (the second write hits the dedupe path).
+      // Stub the pinned send and verify it's only called once across two
+      // identical writes (the second write hits the dedupe path).
+      const webhook = await import("../http/webhook.js");
       const { pane, agentId } = await seedPane({
         withCallback: true,
         callbackUrl: "https://example.invalid/hook",
         callbackFilter: ["review.*"],
       });
-      const fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(null, { status: 200 }));
+      const sendSpy = vi
+        .spyOn(webhook._internals, "sendOnce")
+        .mockResolvedValue({ status: 200, redirected: false });
       try {
         const key = "dedupe-no-webhook";
         await we(pane, agentAuthor(agentId), {
@@ -479,9 +488,9 @@ describe("writeEvent (integration, real SQLite)", () => {
         });
         // Webhook fire is fire-and-forget — give it a tick to dispatch.
         await new Promise((r) => setTimeout(r, 20));
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(sendSpy).toHaveBeenCalledTimes(1);
       } finally {
-        fetchSpy.mockRestore();
+        sendSpy.mockRestore();
       }
     });
   });

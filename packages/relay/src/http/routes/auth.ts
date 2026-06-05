@@ -11,15 +11,20 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   buildClearCookieHeader,
+  buildClearMagicLinkNonceCookieHeader,
+  buildMagicLinkNonceCookieHeader,
   buildSetCookieHeader,
   generateLoginCookie,
   hashLoginCookie,
   LOGIN_COOKIE_NAME,
   parseLoginCookie,
+  parseMagicLinkNonceCookie,
 } from "../../auth/cookie.js";
 import {
   buildMagicLinkUrl,
+  generateMagicLinkNonce,
   generateMagicLinkToken,
+  hashMagicLinkNonce,
   hashMagicLinkToken,
   normalizeEmail,
 } from "../../auth/magic-link.js";
@@ -109,6 +114,15 @@ auth.post("/auth/request-link", async (c) => {
   const token = generateMagicLinkToken();
   const tokenHash = hashMagicLinkToken(token);
 
+  // F-16 — bind this link to the requester's browser. We mint a random nonce,
+  // store only its hash on the row, and set the raw nonce as a short-lived
+  // cookie (below). At verify time the cookie's hash must match this stored
+  // hash, so a link minted for an attacker-controlled account can't log a
+  // victim's browser into that account (login-CSRF / session fixation): the
+  // victim's browser never holds the matching nonce cookie.
+  const nonce = generateMagicLinkNonce();
+  const nonceHash = hashMagicLinkNonce(nonce);
+
   // Insert the row BEFORE sending — if the provider fails we'd rather have
   // an unconsumed row that expires harmlessly than an email referencing a
   // token that doesn't exist.
@@ -116,11 +130,28 @@ auth.post("/auth/request-link", async (c) => {
     data: {
       email,
       tokenHash,
+      nonceHash,
       expiresAt,
       returnUrl: body.returnUrl,
       name: body.name ?? null,
     },
   });
+
+  // Set the nonce cookie now, on the request-link response, so the browser
+  // that asked for the link carries it back on the verify navigation. Set it
+  // before the (fallible) send so a provider 502 still leaves a usable cookie
+  // for any link that did go out. SameSite=Lax so it survives the top-level
+  // GET navigation from the email; Path=/v1/auth, HttpOnly, Secure in prod,
+  // Max-Age = the magic-link TTL. (No-op for non-cookie clients; see the
+  // null-nonceHash fallback in verify for backward compatibility.)
+  c.header(
+    "Set-Cookie",
+    buildMagicLinkNonceCookieHeader({
+      value: nonce,
+      maxAgeSeconds: config.MAGIC_LINK_TTL_SECONDS,
+      isProduction: config.isProduction,
+    }),
+  );
 
   const link = buildMagicLinkUrl({
     publicUrl: config.publicUrl,
@@ -193,6 +224,37 @@ auth.get("/auth/verify", async (c) => {
       },
       400,
     );
+  }
+
+  // F-16 — nonce binding. The link is valid only from the browser that
+  // requested it: hash the pane_ml_nonce cookie and require it to equal the
+  // hash stored at request-link time. We check BEFORE the atomic consume so a
+  // wrong-browser click doesn't burn the token (the legitimate requester can
+  // still click later). On mismatch/absence we return the SAME invalid_token
+  // 400 as an unknown/expired token — no oracle distinguishing "valid link,
+  // wrong browser" from "no such link".
+  //
+  // Back-compat: rows with nonceHash = null predate this change (or were
+  // minted by a non-cookie client). We can't enforce a nonce we never issued,
+  // so a null nonceHash falls back to the prior behavior (no nonce check).
+  // Every link minted after this change carries a nonceHash, so the binding
+  // is enforced for all new links and the fallback is closed over time.
+  if (link.nonceHash !== null) {
+    const nonceCookie = parseMagicLinkNonceCookie(
+      c.req.header("cookie") ?? null,
+    );
+    const presented = nonceCookie ? hashMagicLinkNonce(nonceCookie) : null;
+    if (presented === null || presented !== link.nonceHash) {
+      return c.json(
+        {
+          error: {
+            code: "invalid_token",
+            message: "magic-link token is invalid or has expired",
+          },
+        },
+        400,
+      );
+    }
   }
 
   // Atomic consume: claim the row by sweeping consumedAt = NULL. Returns 0
@@ -268,6 +330,15 @@ auth.get("/auth/verify", async (c) => {
     isProduction: config.isProduction,
   });
   c.header("Set-Cookie", setCookie);
+
+  // F-16 — the nonce has done its job; clear it so it can't be replayed and
+  // doesn't linger past this login. Appended as a second Set-Cookie alongside
+  // the login cookie (matching path so the browser actually drops it).
+  c.header(
+    "Set-Cookie",
+    buildClearMagicLinkNonceCookieHeader({ isProduction: config.isProduction }),
+    { append: true },
+  );
 
   const safeReturn = sameOriginPathOrNull(
     link.returnUrl ?? null,
