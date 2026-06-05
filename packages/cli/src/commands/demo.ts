@@ -13,13 +13,19 @@
 // "build your own" snippet, and exits 0. The pane is created with a short TTL
 // (the relay's sweeper reclaims it) and best-effort DELETEd on exit.
 
-import { openStream, type PaneEvent, type StreamHandle } from "@paneui/core";
+import {
+  openStream,
+  PaneClient,
+  type PaneEvent,
+  type StreamHandle,
+} from "@paneui/core";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import type { ParsedArgs } from "../argv.js";
 import { assertKnownFlags } from "../argv.js";
-import { makeClient, resolveConfig } from "../config.js";
+import { resolveConfig } from "../config.js";
 import { fail, failFromError } from "../output.js";
+import { VERSION } from "../version.js";
 import {
   DEMO_ARTIFACT_HTML,
   DEMO_EVENT_SCHEMA,
@@ -151,8 +157,9 @@ function buildYourOwnSnippet(): string {
  * or the spawn failed. Never throws — the tour works headless either way.
  */
 export function openInBrowser(url: string): boolean {
-  // Honour an explicit "don't touch the browser" environment, the way CI and
-  // headless setups signal it. Also bail when there's clearly no display.
+  // No env-var gating here: on headless / CI boxes the platform opener simply
+  // isn't installed (or errors), the spawn failure is swallowed below, and the
+  // caller falls back to printing the URL. (`--no-open` is handled upstream.)
   const p = platform();
   let cmd: string;
   let args: string[];
@@ -199,8 +206,15 @@ export async function runDemo(args: ParsedArgs): Promise<void> {
     ttl = t;
   }
 
+  // Resolve config once and build the client from it — the agent loop below
+  // needs the API key directly (for the WS token), and makeClient would
+  // re-resolve the same config (extra disk read + parse) to no benefit.
   const cfg = resolveConfig(args);
-  const client = makeClient(args);
+  const client = new PaneClient({
+    url: cfg.url,
+    apiKey: cfg.apiKey,
+    cliVersion: VERSION,
+  });
 
   // 1. Create the demo pane with the bundled artifact + its event schema.
   let created;
@@ -239,7 +253,7 @@ export async function runDemo(args: ParsedArgs): Promise<void> {
     out.write(`(No human URL was minted — check your relay configuration.)\n`);
   }
   out.write(
-    `\nWatching the session — your clicks will print here as they land:\n\n`,
+    `\nWatching the pane — your clicks will print here as they land:\n\n`,
   );
 
   // 3. Run the agent loop: watch the stream, react to each human event,
