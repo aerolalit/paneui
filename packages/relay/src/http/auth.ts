@@ -6,6 +6,7 @@ import type { Author } from "../types.js";
 import type { PaneWithTemplateVersion } from "../core/events.js";
 import type { AppEnv } from "./env.js";
 import { errors } from "./errors.js";
+import { participantBindingSatisfied } from "../auth/human-auth.js";
 
 export type AuthEnv = AppEnv & {
   Variables: AppEnv["Variables"] & {
@@ -40,6 +41,12 @@ export async function resolveBearer(
   prisma: PrismaClient,
   token: string,
   kind: ResolveKind = "both",
+  // Raw `Cookie:` header from the request (HTTP) or the WS upgrade request.
+  // Needed to enforce the F-02 identity binding: an identity-bound participant
+  // token only resolves when accompanied by a matching `pane_login` cookie.
+  // Defaults to null so an agent-only caller (which passes kind="agent" and
+  // never reaches the participant branch) needn't thread it.
+  cookieHeader: string | null = null,
 ): Promise<
   | { kind: "agent"; agent: Agent }
   | {
@@ -57,6 +64,14 @@ export async function resolveBearer(
     });
     if (participant) {
       if (participant.revokedAt) return null;
+      // F-02: an identity-bound participant token requires the matching login
+      // cookie. A miss collapses to null — the same "not resolvable" outcome
+      // as a revoked token, so the caller's existing 404/401 path applies and
+      // a token holder can't tell "needs the bound login" from "dead token".
+      if (
+        !(await participantBindingSatisfied(prisma, participant, cookieHeader))
+      )
+        return null;
       const pane = await prisma.pane.findUnique({
         where: { id: participant.paneId },
         include: { templateVersion: true },
@@ -133,6 +148,20 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
   if (participant.paneId !== paneId) throw errors.notFound();
+  // F-02: an identity-bound participant token (humanId set) can author events
+  // / read+write records / mint a ws-ticket only when the request carries the
+  // matching `pane_login` cookie. Without it, this token must NOT be usable to
+  // act AS the bound human. Collapse to the same opaque 404 used for an
+  // unknown/cross-pane token so a leaked-token holder learns nothing.
+  if (
+    !(await participantBindingSatisfied(
+      prisma,
+      participant,
+      c.req.header("cookie") ?? null,
+    ))
+  ) {
+    throw errors.notFound();
+  }
   const pane = await prisma.pane.findUnique({
     where: { id: participant.paneId },
     include: { templateVersion: true },
