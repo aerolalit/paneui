@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../config.js";
-import { BRAND_FAVICON_DATA_HREF } from "../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_MARK_SVG_BODY } from "../brand.js";
 import { hashKey } from "../keys.js";
 import type { AppEnv } from "../http/env.js";
 import { errors, ApiError } from "../http/errors.js";
@@ -569,6 +569,7 @@ export function renderShell(args: ShellArgs): string {
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <style nonce="${args.nonce}">
   /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
      values (kept byte-identical); the light override at the bottom adapts the
@@ -726,14 +727,7 @@ ${renderTopNav(args)}${
         ""
       : `<header>
   <span class="brand">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
-      <rect width="100" height="100" rx="22" fill="#0f172a"/>
-      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-    </svg>
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
   </span>
   <span class="spacer"></span>
@@ -962,14 +956,7 @@ function renderHumanError(copy: ErrorPageCopy): string {
 <body>
 <header>
   <span class="brand">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">
-      <rect width="100" height="100" rx="22" fill="#0f172a"/>
-      <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-      <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-      <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-      <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-      <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-    </svg>
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
   </span>
 </header>

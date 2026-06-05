@@ -17,9 +17,11 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
-import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_LOGO } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
+import { filterByOpenPaneCount } from "./templates.js";
+import type { Config } from "../../config.js";
 
 // Wrap a shared nav glyph (nav-meta.ts) in the SPA's <svg> conventions so the
 // sidebar / account / mobile-bar icons stay byte-identical to the legacy
@@ -32,13 +34,14 @@ function spaIco(key: NavKey, size: number): string {
 
 export interface OwnerShellOptions {
   prisma: PrismaClient;
+  config: Config;
   human: HumanRow;
 }
 
 export async function renderOwnerShell(
   opts: OwnerShellOptions,
 ): Promise<string> {
-  const data = await loadShellData(opts.prisma, opts.human);
+  const data = await loadShellData(opts.prisma, opts.config, opts.human);
   return renderHtml(opts.human, data);
 }
 
@@ -111,6 +114,7 @@ interface ShellData {
 
 async function loadShellData(
   prisma: PrismaClient,
+  config: Config,
   human: HumanRow,
 ): Promise<ShellData> {
   // One human owns N claimed agents; their templates are the "Yours"
@@ -268,7 +272,21 @@ async function loadShellData(
       hasIconImage: t.iconAttachmentId !== null,
     };
   }
-  const ownedTemplates = ownedTemplatesRaw.map(toRef);
+  // Usage-maturity list gate — the "Yours" grid is the author's OWN authored
+  // templates (ownerId ∈ the human's claimed agents), so it gets the same
+  // ≥TEMPLATE_LIST_MIN_OPEN_PANES filter as GET /v1/templates. The `installs`
+  // list below is the human's installed-from-store set (HumanTemplateInstall),
+  // NOT authored work, so it is deliberately left unfiltered — a human keeps
+  // every template they chose to install regardless of its open-pane count.
+  const ownedTemplatesGated =
+    config.TEMPLATE_LIST_MIN_OPEN_PANES > 0
+      ? await filterByOpenPaneCount(
+          prisma,
+          ownedTemplatesRaw,
+          config.TEMPLATE_LIST_MIN_OPEN_PANES,
+        )
+      : ownedTemplatesRaw;
+  const ownedTemplates = ownedTemplatesGated.map(toRef);
 
   const liveInstalls = installs.filter((i) => i.template.deletedAt === null);
   const installedIds = new Set(liveInstalls.map((i) => i.template.id));
@@ -412,6 +430,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
@@ -423,7 +442,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <div class="app">
   <aside class="nav">
     <div class="brand">
-      <div class="logo">P</div>
+      <div class="logo">${BRAND_LOGO}</div>
       <div class="name">Pane</div>
     </div>
     <ul class="items" id="nav-items">
@@ -467,7 +486,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
           <span class="ico">${spaIco("agents", 16)}</span>
           <span class="txt">${NAV_LABELS.agents}</span>
         </a>
-        <a class="acct-link" href="/settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
+        <a class="acct-link" href="#settings" data-go="settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
@@ -564,6 +583,43 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 
       <div class="cat-row"><h3>Installed from store</h3><span class="count">${data.installs.length}</span></div>
       <div class="apps-grid" id="apps-installed">${installedHtml}</div>
+    </section>
+
+    <section class="view" data-view="settings">
+      <div class="view-head">
+        <div>
+          <h1>Settings</h1>
+          <div class="sub">Your account and session.</div>
+        </div>
+      </div>
+      <div class="settings-card">
+        <h2>Account</h2>
+        <div class="settings-row" id="name-row">
+          <span class="k">Name</span>
+          <span class="name-field">
+            <span class="v" id="name-value">${escapeHtml(displayName)}</span>
+            <button id="name-edit" type="button" class="btn small" aria-label="Edit name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+            <span class="name-edit-form" id="name-edit-form" hidden>
+              <input id="name-input" type="text" maxlength="80" autocomplete="name" />
+              <button id="name-save" type="button" class="btn primary small">Save</button>
+              <button id="name-cancel" type="button" class="btn small">Cancel</button>
+            </span>
+          </span>
+        </div>
+        <div class="settings-row"><span class="k">Status</span>${
+          human.verifiedAt
+            ? `<span class="pill good">Verified</span>`
+            : `<span class="pill muted">Unverified</span>`
+        }</div>
+        <div class="settings-row"><span class="k">Account created</span><span class="v">${escapeHtml(
+          human.createdAt.toISOString().slice(0, 10),
+        )}</span></div>
+      </div>
+      <div class="settings-card">
+        <h2>Session</h2>
+        <p class="settings-note">Signing out revokes this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
+        <button id="settings-signout" type="button" class="btn">Sign out of this device</button>
+      </div>
     </section>
 
   </main>
@@ -703,18 +759,16 @@ function appTile(
   const agentInitData = t.isAgentInit
     ? ` data-template-slug="${escapeHtml(t.slug ?? t.id)}" data-agent-init-fields="${escapeHtml(JSON.stringify(t.agentInitFields))}"`
     : "";
-  // The badge sits at the top-right of the tile, with a clear icon
-  // alongside the word so the type registers at a glance. Earlier versions
-  // tucked a 10px text pill at the bottom — too easy to miss.
+  // Only agent-init templates carry a badge — they can't be launched cold by a
+  // human (an agent must seed input_data first), and clicking one opens the
+  // copy-paste agent instructions. A template with NO badge is ready to use:
+  // "no tag = launchable" is the whole signal, so ready tiles stay unmarked.
   const badge = t.isAgentInit
     ? `<span class="tile-corner agent-init" title="Agent-init template — an agent must seed input_data before launch">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
         agent-init
       </span>`
-    : `<span class="tile-corner ready" title="Ready to launch — no setup needed">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-        ready
-      </span>`;
+    : "";
   // Triple-dots menu — Publish/Unpublish/Delete for owned, Uninstall for
   // installed. Discover tiles get no menu.
   const menuBtn = opts.menu
@@ -728,9 +782,7 @@ function appTile(
     t.paneCount > 0
       ? `<button class="pane-count-chip" data-template-filter="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" title="Show panes from this template">${t.paneCount} ${t.paneCount === 1 ? "pane" : "panes"} →</button>`
       : "";
-  const wrapCls = t.isAgentInit
-    ? "app-tile-wrap agent-init"
-    : "app-tile-wrap ready";
+  const wrapCls = t.isAgentInit ? "app-tile-wrap agent-init" : "app-tile-wrap";
   return `<div class="${wrapCls}" data-template-id="${escapeHtml(t.id)}">
     ${badge}${menuBtn}
     <button class="app-tile" data-template-id="${escapeHtml(t.id)}" data-template-name="${escapeHtml(name)}" data-launchable="${opts.launchable ? "1" : "0"}" data-agent-init="${t.isAgentInit ? "1" : "0"}"${agentInitData}${dataAttr}>
@@ -772,8 +824,12 @@ function paneRow(p: PaneRef): string {
   });
   const rel = relativeDate(p.createdAt);
   const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
-  const statusCls = isOpen ? "open" : "closed";
-  const statusText = isOpen ? "open" : "closed";
+  // Open is the default, expected state for every row in this list ("Live
+  // sessions … Click to open"), so a green OPEN pill on every line is just
+  // noise that eats the title's width. Only flag the exception — a closed
+  // pane — and leave the cell empty otherwise so the title reclaims the space.
+  const statusCls = isOpen ? "" : "closed";
+  const statusText = isOpen ? "" : "closed";
   const tplAttr = p.templateId
     ? ` data-template-id="${escapeHtml(p.templateId)}"`
     : "";
@@ -788,7 +844,7 @@ function paneRow(p: PaneRef): string {
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
-    <div class="status ${statusCls}">${statusText}</div>
+    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
     </button>
@@ -910,9 +966,9 @@ const EXTRA_CSS = `
   }
   .filter-banner button:hover { color: var(--ink); border-color: var(--hairline-2); }
 
-  /* "agent-init" / "ready" corner badge — top-left of every template
-     tile. Bigger, brighter, and paired with an icon so the type
-     registers at a glance (previous 10px text pill was missable). */
+  /* "agent-init" corner badge — top-left of agent-init template tiles only.
+     Paired with an icon so the "needs an agent to initialize" type registers
+     at a glance. Ready-to-use templates carry no badge. */
   .tile-corner {
     position: absolute; top: 6px; left: 6px; z-index: 2;
     display: inline-flex; align-items: center; gap: 4px;
@@ -929,12 +985,6 @@ const EXTRA_CSS = `
     border: 1px solid rgba(196, 181, 253, 0.55);
     box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.10) inset;
   }
-  .tile-corner.ready {
-    color: #ccfbf1;
-    background: rgba(20, 184, 166, 0.28);
-    border: 1px solid rgba(94, 234, 212, 0.50);
-    box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.10) inset;
-  }
   /* Light mode: the badge text was tuned light-on-translucent for the dark
      tile; on a white tile it needs dark text + a slightly stronger tint. */
   @media (prefers-color-scheme: light) {
@@ -942,11 +992,6 @@ const EXTRA_CSS = `
       color: #6b21a8;
       background: rgba(168, 85, 247, 0.14);
       border-color: rgba(168, 85, 247, 0.40);
-    }
-    .tile-corner.ready {
-      color: #0f766e;
-      background: rgba(20, 184, 166, 0.14);
-      border-color: rgba(20, 184, 166, 0.40);
     }
   }
 
@@ -962,10 +1007,10 @@ const EXTRA_CSS = `
   }
   .app-tile-wrap .tile-menu-btn:hover { color: var(--ink); transform: scale(1.06); }
 
-  /* Subtle outer accent on the wrap so the type carries even without
-     a visible badge (e.g. when scrolling fast / dense grid). */
+  /* Subtle outer accent on agent-init wraps so the type carries even without
+     a visible badge (e.g. when scrolling fast / dense grid). Ready tiles get
+     no accent — no badge, no outline: their plainness IS the signal. */
   .app-tile-wrap.agent-init .app-tile { box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.18); }
-  .app-tile-wrap.ready .app-tile { box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.18); }
 
   /* Lightweight floating popover for pane-row triple-dots menu. */
   .pane-menu-pop {
@@ -981,6 +1026,30 @@ const EXTRA_CSS = `
   }
   .pane-menu-pop button:hover { background: var(--surface-2); }
   .pane-menu-pop button.danger { color: var(--pink, #fb7185); }
+
+  /* Editable display name (Settings → Account). The value, pencil, and the
+     inline edit form share one inline-flex container so the row stays on a
+     single line and the form sits where the value was. */
+  .name-field { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .name-field .btn.small {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 4px 7px; line-height: 0;
+  }
+  .name-edit-form { display: inline-flex; align-items: center; gap: 6px; }
+  #name-input {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 5px 9px;
+    color: var(--ink);
+    font-size: 13px;
+    font-family: inherit;
+    min-width: 160px;
+  }
+  #name-input:focus { outline: none; border-color: var(--accent); }
+  /* Ensure [hidden] always wins — some flex rules above set display, which
+     would otherwise re-show a hidden element. */
+  [hidden] { display: none !important; }
 `;
 
 // ----- Client-side runtime -----
@@ -999,7 +1068,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'store', 'mine'];
+  const VIEWS = ['home', 'panes', 'store', 'mine', 'settings'];
   function activate(view) {
     // Back-compat: prior builds used the hashes "#apps" / "#templates" /
     // "#trash". Remap them so old links / browser-back state still land
@@ -1038,11 +1107,89 @@ const SHELL_JS = `
   });
   window.addEventListener('hashchange', () => activate(viewFromHash()));
 
-  // Sign out
-  document.getElementById('signout')?.addEventListener('click', async () => {
+  // Sign out — both the popover item (#signout) and the in-view Settings
+  // button (#settings-signout) revoke this device's login.
+  async function signOut() {
     try { await fetch('/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
     location.href = '/login';
-  });
+  }
+  document.getElementById('signout')?.addEventListener('click', signOut);
+  document.getElementById('settings-signout')?.addEventListener('click', signOut);
+
+  // Editable display name (Settings → Account). Opening the pen swaps the
+  // value for an inline input and hides the Settings sign-out button — per
+  // the UX requirement there's no sign-out while you're mid-edit. We hide
+  // the button rather than the whole Session card so the explanatory note
+  // stays put and the layout doesn't jump.
+  (function () {
+    const editBtn = document.getElementById('name-edit');
+    const form = document.getElementById('name-edit-form');
+    const valueEl = document.getElementById('name-value');
+    const input = document.getElementById('name-input');
+    const saveBtn = document.getElementById('name-save');
+    const cancelBtn = document.getElementById('name-cancel');
+    const signoutBtn = document.getElementById('settings-signout');
+    if (!editBtn || !form || !valueEl || !input || !saveBtn || !cancelBtn) return;
+
+    function open() {
+      input.value = valueEl.textContent || '';
+      valueEl.hidden = true;
+      editBtn.hidden = true;
+      form.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = true;
+      input.focus();
+      input.select();
+    }
+    function close() {
+      form.hidden = true;
+      valueEl.hidden = false;
+      editBtn.hidden = false;
+      if (signoutBtn) signoutBtn.hidden = false;
+    }
+
+    async function save() {
+      const raw = input.value.trim();
+      const name = raw.length === 0 ? null : raw;
+      saveBtn.disabled = true;
+      try {
+        const res = await fetch('/v1/self/profile', {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: name }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          alert('Save failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+          return; // keep the form open so the human can retry / fix
+        }
+        const body = await res.json().catch(() => ({}));
+        const display = body.display_name || raw;
+        valueEl.textContent = display;
+        // Mirror the new name everywhere it's shown: sidebar, home greeting,
+        // and the avatar initial.
+        const sideName = document.querySelector('.me .who .name');
+        if (sideName) sideName.textContent = display;
+        const greetName = document.querySelector('.greet .name');
+        if (greetName) greetName.textContent = display;
+        const avatar = document.querySelector('.me .avatar');
+        if (avatar) avatar.textContent = (display.charAt(0) || '?').toUpperCase();
+        close();
+      } catch (err) {
+        alert('Save failed: network error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+
+    editBtn.addEventListener('click', open);
+    cancelBtn.addEventListener('click', close);
+    saveBtn.addEventListener('click', save);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+    });
+  })();
 
   // Account menu (mobile) — the "Account" bottom-bar tab toggles the
   // .acct-links popover (My agents / Settings / Sign out). On desktop the
@@ -1062,6 +1209,9 @@ const SHELL_JS = `
       if (me.classList.contains('open') && ev.target instanceof Node && !me.contains(ev.target)) close();
     });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+    // Tapping any popover item closes the sheet — including the in-app
+    // Settings view-switch (data-go), which doesn't navigate away.
+    me.querySelectorAll('.acct-link').forEach((l) => l.addEventListener('click', close));
   })();
 
   // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon

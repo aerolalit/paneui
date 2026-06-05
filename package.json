@@ -1,6 +1,6 @@
 {
   "name": "pane",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "A round-trip UI channel between agents and humans.",
   "private": true,
   "license": "MIT",
@@ -33,6 +33,9 @@
   "overrides": {
     "@prisma/instrumentation": {
       "@opentelemetry/instrumentation": "^0.218.0"
+    },
+    "@prisma/dev": {
+      "@hono/node-server": "1.19.13"
     }
   },
   "lint-staged": {

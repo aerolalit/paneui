@@ -13,6 +13,14 @@
 // The scopes a template declares at publish-time are stored on Template.scopes
 // (Phase A schema column). Enforcement against runtime API calls is deferred
 // until templates have a runtime API to call (§4.5).
+//
+// Publish gate (usage-maturity): the FIRST publish of a template (publishedAt
+// currently null) is refused unless the template has at least
+// TEMPLATE_PUBLISH_MIN_OPEN_PANES currently-open panes — status=open,
+// deletedAt=null, expiresAt>now, summed across all of the template's versions.
+// A re-publish of an already-published template (publishedAt set — e.g. to
+// update its scopes) SKIPS the gate, as does the human-shell publish path.
+// TEMPLATE_PUBLISH_MIN_OPEN_PANES=0 disables the gate entirely.
 
 import { Hono } from "hono";
 import { z } from "zod";
@@ -59,6 +67,7 @@ const publishBody = z.object({
 
 templatePublish.post("/:id/publish", requireAgent, async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config");
   const me = c.get("agent");
   const id = c.req.param("id");
   if (!id) throw errors.invalidRequest("missing template id");
@@ -76,6 +85,32 @@ templatePublish.post("/:id/publish", requireAgent, async (c) => {
   const scope = await agentScope(prisma, me);
   if (!template || !scope.has(template.ownerId)) {
     throw errors.notFound();
+  }
+
+  // Usage-maturity publish gate. Only the FIRST publish is gated: an already-
+  // published template (publishedAt set) re-publishing — typically to update
+  // scopes — stays allowed so the idempotent publish path never regresses.
+  // "Currently-open" = status=open, deletedAt=null, expiresAt>now, counted
+  // across every version of this template.
+  if (
+    template.publishedAt === null &&
+    config.TEMPLATE_PUBLISH_MIN_OPEN_PANES > 0
+  ) {
+    const openPanes = await prisma.pane.count({
+      where: {
+        status: "open",
+        deletedAt: null,
+        expiresAt: { gt: new Date() },
+        templateVersion: { templateId: id },
+      },
+    });
+    if (openPanes < config.TEMPLATE_PUBLISH_MIN_OPEN_PANES) {
+      throw errors.conflict(
+        `template needs at least ${config.TEMPLATE_PUBLISH_MIN_OPEN_PANES} open panes to publish (currently ${openPanes})`,
+        false,
+        "open more panes from this template (each its own live instance) until it reaches the threshold, then publish; closed, expired, and soft-deleted panes do not count",
+      );
+    }
   }
 
   const updated = await prisma.template.update({

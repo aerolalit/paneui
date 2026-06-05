@@ -16,12 +16,17 @@
 // routes; templatising them is a follow-up refactor that doesn't change
 // behaviour. See HUMAN-SIDE-PROPOSAL.md "Open decisions" tail.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   resolveHumanOptional,
   type OptionalHumanAuthEnv,
 } from "../../auth/human-auth.js";
 import { BRAND_LOGO, BRAND_FAVICON_SVG } from "../../brand.js";
+import {
+  APP_ICON_180_PNG,
+  APP_ICON_192_PNG,
+  APP_ICON_512_PNG,
+} from "../../app-icon.js";
 import { renderOwnerShell } from "./owner-shell-spa.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 
@@ -81,6 +86,7 @@ function layout(args: {
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
@@ -471,6 +477,39 @@ systemPages.get("/favicon.svg", (c) => {
 });
 
 // ----------------------------------------------------------------------
+// Home-screen / install icons — PNG raster of the marketing mark.
+//
+// iOS Safari's "Add to Home Screen" needs a real PNG apple-touch-icon; it
+// ignores the SVG-only manifest icon, which is why the shortcut used to fall
+// back to a screenshot. These are served as same-origin routes (not data:
+// URIs) so Safari fetches them via <link rel="apple-touch-icon"> and the OS
+// also finds /apple-touch-icon.png at the site root by convention. The
+// -precomposed alias covers older iOS that prefers the unglossed variant.
+// Source bytes live embedded in src/app-icon.ts (single-binary, no asset dir).
+// ----------------------------------------------------------------------
+const servePng = (png: Buffer) => {
+  // Hono's c.body type accepts ArrayBuffer (not Buffer) — hand it a clean,
+  // exact-length ArrayBuffer view. Buffer.from(base64) is unpooled, so the
+  // slice is a tight copy of just the icon bytes.
+  const ab = png.buffer.slice(
+    png.byteOffset,
+    png.byteOffset + png.byteLength,
+  ) as ArrayBuffer;
+  return (c: Context) => {
+    c.header("Content-Type", "image/png");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(ab);
+  };
+};
+systemPages.get("/apple-touch-icon.png", servePng(APP_ICON_180_PNG));
+systemPages.get(
+  "/apple-touch-icon-precomposed.png",
+  servePng(APP_ICON_180_PNG),
+);
+systemPages.get("/icon-192.png", servePng(APP_ICON_192_PNG));
+systemPages.get("/icon-512.png", servePng(APP_ICON_512_PNG));
+
+// ----------------------------------------------------------------------
 // GET /manifest.webmanifest — PWA manifest.
 //
 // Served from the relay so an installed-to-homescreen pane (Add to Home
@@ -496,11 +535,31 @@ systemPages.get("/manifest.webmanifest", (c) => {
       background_color: "#0b0e14",
       theme_color: "#0b0e14",
       categories: ["productivity", "developer"],
-      // Icons inlined as a single SVG. Real-world PWAs typically ship
-      // PNG variants too; iOS still respects the apple-touch-icon meta
-      // even when the manifest only declares SVG, so this is sufficient
-      // for the install flow without standing up an asset pipeline.
+      // Raster PNG icons for the install flow. iOS uses the apple-touch-icon
+      // <link>; Android/Chrome + desktop installs use these manifest entries
+      // (a manifest that declares only SVG gives Android no maskable icon and
+      // iOS nothing for the home screen). The scalable SVG is kept last as a
+      // progressive-enhancement "any" fallback. Bytes served from /icon-*.png
+      // and /apple-touch-icon.png above (source: src/app-icon.ts).
       icons: [
+        {
+          src: "/apple-touch-icon.png",
+          sizes: "180x180",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "/icon-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any maskable",
+        },
+        {
+          src: "/icon-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any maskable",
+        },
         {
           src: "/favicon.svg",
           sizes: "any",
@@ -660,6 +719,9 @@ systemPages.get("/login", (c) => {
 // ----------------------------------------------------------------------
 
 systemPages.get("/home", async (c) => {
+  // Authenticated, per-human HTML that inlines the owner CSS/JS — never cache
+  // it, or a UI deploy stays invisible behind a stale browser/PWA copy.
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -667,7 +729,8 @@ systemPages.get("/home", async (c) => {
     );
   }
   const prisma = c.get("prisma");
-  const html = await renderOwnerShell({ prisma, human });
+  const config = c.get("config");
+  const html = await renderOwnerShell({ prisma, config, human });
   return c.html(html);
 });
 
@@ -698,6 +761,8 @@ systemPages.get("/my-templates", (c) => c.redirect("/home#mine", 301));
 // in each iframe.
 // ----------------------------------------------------------------------
 systemPages.get("/my-templates/:id/content", async (c) => {
+  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -930,6 +995,8 @@ systemPages.get("/template-store", (c) => c.redirect("/home#store", 301));
 // GET /my-agents — list of claimed agents
 // ----------------------------------------------------------------------
 systemPages.get("/my-agents", async (c) => {
+  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
+  c.header("Cache-Control", "private, no-store");
   const human = c.get("human");
   if (!human) {
     return c.html(
@@ -1011,8 +1078,22 @@ systemPages.get("/my-agents", async (c) => {
                 a.revokedAt || isTrashed
                   ? ""
                   : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
+              // Revoke is the owner-side counterpart to `pane key revoke`:
+              // kills the credential when the human can't (lost machine) or
+              // shouldn't (leaked key) authenticate as the agent itself.
+              // Same visibility rules as rotate — nothing to revoke on a
+              // revoked or trashed row.
+              const revokeBtn =
+                a.revokedAt || isTrashed
+                  ? ""
+                  : `<button class="btn ghost" type="button" data-act="revoke" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;color:#b34700;">Revoke</button>`;
+              // flex-basis 220px (not 0) so on narrow viewports the title
+              // block can't collapse to a one-word-per-line column when the
+              // action group (pill + Regenerate + Revoke) won't fit beside
+              // it. The parent's flex-wrap kicks in and the action group
+              // moves to a second row instead of squeezing the title.
               return `<li data-agent-id="${escapeHtml(a.id)}">
-                <div style="min-width:0;flex:1;">
+                <div style="min-width:220px;flex:1 1 220px;">
                   <div class="title">${escapeHtml(a.name)}</div>
                   <div class="meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${claimed} · last used ${escapeHtml(lastUsed)}</div>
                   <div class="rotate-out" hidden style="margin-top:10px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:12px 14px;">
@@ -1024,7 +1105,7 @@ systemPages.get("/my-agents", async (c) => {
                     <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Won't be shown again. Copy now and run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or paste into <code>PANE_API_KEY</code>).</div>
                   </div>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}${revokeBtn}</div>
               </li>`;
             })
             .join("")}</ul>`
@@ -1127,6 +1208,58 @@ systemPages.get("/my-agents", async (c) => {
       }
     });
 
+    // Revoke handler — owner-side kill switch. Same confirm() pattern as
+    // rotate (no inline confirm UI — keeps the two destructive actions
+    // visually parallel). On success, flip the Active pill to Revoked and
+    // remove both Rotate + Revoke buttons; revocation is permanent so
+    // there's no follow-up action the human can take on the row.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button[data-act='revoke']");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const name = btn.getAttribute("data-name") || "this agent";
+      if (!confirm(
+        "Revoke the API key for " + name + "?\\n\\n" +
+        "The key stops working immediately and revocation is permanent. " +
+        "Claim a fresh agent if you need this one again."
+      )) return;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "Revoking…";
+      try {
+        const res = await fetch("/v1/self/agents/" + encodeURIComponent(id) + "/revoke-key", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          let detail = "HTTP " + res.status;
+          try {
+            const errBody = await res.json();
+            if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+          } catch (_) {}
+          alert("Couldn't revoke key: " + detail);
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          return;
+        }
+        // Flip the status pill in place and drop both action buttons —
+        // there is nothing left to rotate or revoke on this row.
+        const li = btn.closest("li[data-agent-id]");
+        const pill = li.querySelector(".pill");
+        if (pill) {
+          pill.className = "pill muted";
+          pill.textContent = "Revoked";
+        }
+        const rotate = li.querySelector("button[data-act='rotate']");
+        if (rotate) rotate.remove();
+        btn.remove();
+      } catch (_) {
+        alert("Network error — try again.");
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
     // Copy-to-clipboard for the revealed new key. Same approach as the
     // claim-code copy button.
     document.addEventListener("click", async (ev) => {
@@ -1193,45 +1326,10 @@ systemPages.get("/my-agents", async (c) => {
 systemPages.get("/trash", (c) => c.redirect("/home", 301));
 
 // ----------------------------------------------------------------------
-// GET /settings — email, sign-out
+// GET /settings — now a view inside the /home SPA (#settings). Redirect the
+// standalone URL in, the same way /my-panes, /my-templates, /template-store
+// already fold into the single-page app. One nav/layout/CSS everywhere.
 // ----------------------------------------------------------------------
-systemPages.get("/settings", (c) => {
-  const human = c.get("human");
-  if (!human) {
-    return c.html(
-      layout({ title: "Settings", email: null, body: loggedOutPrompt() }),
-    );
-  }
-  const verified = human.verifiedAt
-    ? `<span class="pill good">Verified</span>`
-    : `<span class="pill muted">Unverified</span>`;
-  const body = `<h1>Settings</h1>
-  <div class="card">
-    <h2 style="margin-top:0;">Account</h2>
-    <ul class="list">
-      <li><div><div class="title">Email</div><div class="meta">${escapeHtml(human.email)}</div></div>${verified}</li>
-      <li><div><div class="title">Account created</div><div class="meta">${escapeHtml(human.createdAt.toISOString().slice(0, 10))}</div></div></li>
-    </ul>
-  </div>
-  <div class="card">
-    <h2 style="margin-top:0;">Session</h2>
-    <p style="color:var(--muted);font-size:14px;">Signing out will revoke this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
-    <button id="pane-logout-btn" class="btn ghost">Sign out of this device</button>
-  </div>
-  <script>
-    document.getElementById("pane-logout-btn")?.addEventListener("click", async () => {
-      try { await fetch("/v1/auth/logout", { method: "POST" }); } catch {}
-      location.href = "/login";
-    });
-  </script>`;
-  return c.html(
-    layout({
-      title: "Settings",
-      email: human.email,
-      body,
-      active: "settings",
-    }),
-  );
-});
+systemPages.get("/settings", (c) => c.redirect("/home#settings", 301));
 
 export default systemPages;

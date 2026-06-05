@@ -124,11 +124,12 @@ export const OWNER_SHELL_CSS = `
   }
   .nav .brand .logo {
     width: 28px; height: 28px; border-radius: 7px;
-    background: var(--brand-grad);
-    display: flex; align-items: center; justify-content: center;
-    color: #07090f; font-weight: 800; font-size: 13px;
+    overflow: hidden;
     box-shadow: var(--shadow-soft);
   }
+  /* The mark is the self-contained robot SVG (its own navy tile); the tile
+     fills the box and the container's radius clips its corners. */
+  .nav .brand .logo svg { display: block; width: 100%; height: 100%; }
   .nav .brand .name {
     background: var(--brand-grad);
     -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -248,6 +249,15 @@ export const OWNER_SHELL_CSS = `
       width: 22px; height: 22px;
       display: flex; align-items: center; justify-content: center;
     }
+    /* The nav SVGs carry an 18px (account: 20px) width attribute sized for the
+       desktop sidebar. On the mobile bottom bar, force them to 22px so they
+       match the system-pages bottom-tabs icons (tab-ico, 22px). CSS beats the
+       SVG presentation attribute, so the desktop sidebar is unaffected. */
+    .nav .items li button .icon svg,
+    .nav .me .acct-tab .icon svg {
+      width: 22px;
+      height: 22px;
+    }
     .nav .me.open .acct-tab { color: var(--accent); }
     /* The desktop inline link row becomes a popover sheet above the bar. */
     .nav .me .acct-links {
@@ -338,6 +348,29 @@ export const OWNER_SHELL_CSS = `
     color: var(--ink-mute);
   }
   .view-head .actions { display: flex; gap: 8px; }
+
+  /* ============== Settings view ============== */
+  .settings-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    max-width: 640px;
+  }
+  .settings-card h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .settings-row .k { font-size: 13px; color: var(--ink); }
+  .settings-row .v { font-size: 13px; color: var(--ink-mute); font-family: var(--mono); }
+  .settings-note { color: var(--ink-mute); font-size: 13px; margin: 4px 0 14px; }
+  .settings-note a { color: var(--accent); }
+  .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .pill.good { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+  .pill.muted { background: var(--surface-2); color: var(--ink-mute); }
 
   /* ============== Top-level controls (search + profile) ============== */
   .search {
@@ -601,6 +634,9 @@ export const OWNER_SHELL_CSS = `
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  /* Open panes render an empty status cell (no pill) — collapse it so the
+     title reclaims the width. Closed panes keep their pill. */
+  .pane-row .status:empty { padding: 0; }
   .pane-row .status.open    { background: rgba(110, 231, 183, 0.1); color: var(--green); }
   .pane-row .status.closed  { background: var(--surface-2); color: var(--ink-mute); }
   .pane-row .status.expiring { background: rgba(252, 211, 77, 0.1); color: var(--amber); }

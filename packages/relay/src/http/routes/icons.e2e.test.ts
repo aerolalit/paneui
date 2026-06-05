@@ -64,6 +64,10 @@ beforeAll(async () => {
     BLOB_MIME_ALLOWLIST:
       "image/png,image/jpeg,image/webp,image/gif,image/svg+xml",
     RATE_LIMIT: "0",
+    // Disable the owner-shell open-pane list gate — the icon-tile rendering
+    // tests seed owned templates without open panes. The gate has dedicated
+    // coverage in template-open-pane-gates.e2e.test.ts.
+    TEMPLATE_LIST_MIN_OPEN_PANES: "0",
   });
   store = await makeBlobStore(config);
   app = buildApp(config, prisma, undefined, store);

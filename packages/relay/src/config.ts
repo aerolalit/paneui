@@ -73,6 +73,20 @@ const schema = z.object({
   // Max number of versions a single template may accumulate.
   // MAX_VERSIONS_PER_ARTIFACT=0 disables the cap.
   MAX_VERSIONS_PER_ARTIFACT: z.coerce.number().int().min(0).default(50),
+  // Usage-maturity gates keyed on a template's count of currently-open panes
+  // (status=open AND deletedAt=null AND expiresAt>now, summed across all of
+  // the template's versions). Both gate a template until it has proven a bit
+  // of real use before it clutters a list or enters the public store.
+  //   TEMPLATE_LIST_MIN_OPEN_PANES — GET /v1/templates (the author's own list,
+  //     and the owner-shell "Yours" grid) hides a template with fewer than
+  //     this many open panes. NOT applied to the ?include_deleted=true trash
+  //     view. 0 disables the filter (every template lists).
+  TEMPLATE_LIST_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(2),
+  //   TEMPLATE_PUBLISH_MIN_OPEN_PANES — the first publish to the public store
+  //     (POST /v1/templates/:id/publish) is refused below this threshold. A
+  //     re-publish of an already-published template (publishedAt set) skips
+  //     the gate. 0 disables the gate (any template may publish).
+  TEMPLATE_PUBLISH_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(5),
   // Caps on the agent-supplied per-pane JSON Schema. The schema is compiled
   // by Ajv at pane-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
