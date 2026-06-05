@@ -1091,18 +1091,21 @@ export const OWNER_SHELL_CSS = `
     /* Above the monogram, below any badge/tag the card lays over it. */
     z-index: 1;
   }
-  /* Favorites — 76px square icon. 76 / 1000 = 0.076. Render a 4:3 logical page
-   * (height 750) and clip to the square. */
+  /* Favorites — 76px SQUARE icon. The logical viewport must match the tile's
+   * aspect or the scaled iframe ends up shorter than the tile and the monogram
+   * gradient shows through the gap below it. Square viewport: 1000x1000 * 0.076
+   * = 76x76, fully covering the tile. */
   .fav-tile .icon { overflow: hidden; }
   .fav-tile .icon .tile-preview {
-    height: 750px;
+    height: 1000px;
     transform: scale(0.076);
   }
-  /* App tiles — 64px square icon. 64 / 1000 = 0.064. .icon needs the clip +
-   * a stacking context (it isn't positioned by default). */
+  /* App tiles — 64px SQUARE icon. Square logical viewport (1000x1000) so the
+   * scaled iframe covers the whole 64x64 tile with no gradient strip beneath.
+   * .icon needs the clip + a stacking context (it isn't positioned by default). */
   .app-tile .icon { overflow: hidden; position: relative; }
   .app-tile .icon .tile-preview {
-    height: 750px;
+    height: 1000px;
     transform: scale(0.064);
   }
   /* Recents — 280px-wide x 100px-tall thumb (.thumb already clips + is

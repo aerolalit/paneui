@@ -6,7 +6,15 @@
 // asserts the replay arrives, then writes a third template record via HTTP and
 // asserts both panes' WS connections receive the live delta.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from "vitest";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { Readable } from "node:stream";
@@ -26,6 +34,16 @@ let prisma: PrismaClient;
 let app: Hono;
 let server: Server;
 let port: number;
+
+// Every WebSocket a test opens is tracked here so `afterEach` can tear it down
+// even when the test threw before its own `ws.close()`. A leaked socket was the
+// root of this suite's CI flake: if `waitOpen`/`until` rejected under load, the
+// test bailed with the socket still live, and then (1) the next test's
+// `beforeEach` truncate raced the lingering socket's server-side writes → P2025,
+// and (2) the open connection kept `server.close()` from ever calling back, so
+// `afterAll` hit its 30s hook timeout. Closing every socket while its rows still
+// exist (afterEach runs before the next beforeEach) removes both failure modes.
+const openSockets: WebSocket[] = [];
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -76,13 +94,35 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  // Force-drop any still-live connections so server.close() can't hang waiting
+  // on a lingering socket (Node 18.2+). Without this, one leaked WS turns the
+  // teardown into a 30s hook timeout. `server?.` guards the case where beforeAll
+  // itself failed and never assigned `server`.
+  server?.closeAllConnections?.();
+  if (server)
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   await prisma.$disconnect();
   await testDb.cleanup();
 }, 30_000);
 
 beforeEach(async () => {
   await testDb.truncateAll(prisma);
+});
+
+afterEach(async () => {
+  // Terminate every socket this test opened — `terminate()` (not `close()`) so a
+  // half-open handshake is dropped immediately — then yield a tick so the
+  // server-side close handlers finish their final writes BEFORE the next
+  // beforeEach truncates the tables. This is what keeps the leak from
+  // cascading into P2025 / the afterAll hang.
+  for (const ws of openSockets.splice(0)) {
+    try {
+      ws.terminate();
+    } catch {
+      // already closed — nothing to do
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 50));
 });
 
 const templateRecordSchema = {
@@ -183,9 +223,12 @@ async function upsertTemplateRecord(
 }
 
 function connect(paneId: string, token: string, subscribe: string): WebSocket {
-  return new WebSocket(
+  const ws = new WebSocket(
     `ws://localhost:${port}/v1/panes/${paneId}/stream?token=${token}&subscribe_template_records=${encodeURIComponent(subscribe)}`,
   );
+  // Track for afterEach teardown so a thrown test never leaks the socket.
+  openSockets.push(ws);
+  return ws;
 }
 
 class FrameQueue {
@@ -240,6 +283,12 @@ function waitOpen(ws: WebSocket, timeoutMs = 20000): Promise<void> {
     ws.once("error", (err) => {
       clearTimeout(t);
       reject(err);
+    });
+    // A handshake that closes before "open" should fail fast with a clear
+    // reason rather than wait out the full timeout.
+    ws.once("close", (code) => {
+      clearTimeout(t);
+      reject(new Error(`ws closed before open (code ${code})`));
     });
   });
 }
@@ -315,13 +364,14 @@ describe("template-record WS broadcast", () => {
     ws.close();
   });
 
-  // Postgres CI flake: two parallel WS handshakes + their participant.joined
-  // writes race the test-harness's per-test cleanup (lastUsedAt / lastSeenAt
-  // updates fail with P2025 when a sibling test's beforeEach truncates).
-  // The broadcast path itself is exercised by the live-broadcast test
-  // above (single pane) and by the publish bus's own unit tests, so this
-  // test's role is documentation of the two-pane fan-out shape — fine to
-  // skip on postgres while keeping the assertion on sqlite.
+  // This two-pane fan-out test used to be the suite's CI flake (on the sqlite
+  // e2e job, where it runs): a leaked socket from a thrown assertion let the
+  // next beforeEach truncate race the lingering connection's writes (P2025) and
+  // hung afterAll's server.close(). That's fixed at the source now — every
+  // socket is terminated in afterEach before the next truncate, and afterAll
+  // force-drops connections — so this no longer needs a skip. Kept sqlite-only
+  // (the single-pane broadcast test already exercises the path on every DB);
+  // running the heavier dual-socket shape on one engine is enough.
   const isPostgres = (process.env.DATABASE_URL ?? "").startsWith("postgres");
   it.skipIf(isPostgres)(
     "broadcasts to BOTH derived panes simultaneously",
