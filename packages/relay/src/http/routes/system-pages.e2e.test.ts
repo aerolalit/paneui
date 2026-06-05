@@ -180,6 +180,70 @@ describe("GET /login", () => {
   });
 });
 
+describe("F-18 — Content-Security-Policy on system pages", () => {
+  // These pages previously shipped with no CSP. They now carry a static,
+  // 'unsafe-inline' CSP (the inline style attributes + blocks rule out a
+  // nonce-only policy) plus the sibling hardening headers the owner-shell /
+  // bridge HTML mounts already set.
+  it.each([
+    ["/", undefined],
+    ["/login", undefined],
+  ])("sets a CSP on the public HTML page %s", async (path) => {
+    const res = await app.fetch(new Request(`http://t${path}`));
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // No remote script origin is ever allowed.
+    expect(csp).not.toMatch(/script-src[^;]*https?:/);
+    // Sibling hardening headers match the owner-shell / bridge mounts.
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("permissions-policy")).toBeTruthy();
+  });
+
+  it("sets the CSP on authenticated pages (/my-agents)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/my-agents", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // The page still emits its inline behaviour scripts — 'unsafe-inline'
+    // keeps them executable.
+    const html = await res.text();
+    expect(html).toContain('id="gen-code"');
+  });
+
+  it("sets the CSP on the /home SPA", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  });
+
+  it("does NOT apply the HTML CSP to non-HTML asset routes", async () => {
+    // /manifest.webmanifest and /favicon.svg are not text/html, so the
+    // middleware leaves them alone (no CSP injected on JSON / SVG assets).
+    for (const path of ["/manifest.webmanifest", "/favicon.svg"]) {
+      const res = await app.fetch(new Request(`http://t${path}`));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-security-policy")).toBeNull();
+    }
+  });
+});
+
 describe("logged-out access to gated pages", () => {
   it.each(["/home", "/my-agents"])(
     "%s shows the sign-in prompt to logged-out callers",
@@ -417,7 +481,11 @@ describe("Owner-shell SPA at /home", () => {
     );
     const html = await res.text();
     expect(html).toContain('class="pane-row"');
-    expect(html).toContain("Yesterday's pane");
+    // F-15: the SPA escaper encodes single quotes (' -> &#39;), so a title
+    // with an apostrophe renders in its encoded form — the raw apostrophe
+    // must NOT appear inside the title text.
+    expect(html).toContain("Yesterday&#39;s pane");
+    expect(html).not.toContain("Yesterday's pane");
     // Open is the default state, so open rows render no status pill (just an
     // empty cell) — only the exceptional "closed" state is flagged.
     expect(html).not.toContain(">open<");

@@ -14,6 +14,7 @@ import { baselines } from "../../test-fixtures/polyglots/utils.js";
 import {
   ImageNormalisationError,
   isNormalisable,
+  MAX_IMAGE_PIXELS,
   normaliseImage,
 } from "./normalize.js";
 
@@ -147,6 +148,41 @@ describe("normaliseImage — focused properties", () => {
     const result = await normaliseImage({ bytes: j, mime: "image/jpeg" });
     expect(result.width).toBe(64);
     expect(result.height).toBe(16);
+  });
+
+  // F-17 — decompression-bomb headroom. Input bytes are capped at
+  // MAX_BLOB_BYTES, but a small highly-compressed image can declare huge
+  // dimensions. A solid-colour PNG just over MAX_IMAGE_PIXELS compresses to
+  // well under the 5 MB blob cap, yet must be rejected by the explicit
+  // limitInputPixels ceiling — via the same ImageNormalisationError path a
+  // malformed image takes (route maps it to 415).
+  it("rejects an image whose pixel count exceeds MAX_IMAGE_PIXELS", async () => {
+    // Pick a near-square frame just past the ceiling (~50.4 MP > 50 MP).
+    const side = Math.ceil(Math.sqrt(MAX_IMAGE_PIXELS)) + 50;
+    const bomb = await sharp({
+      create: {
+        width: side,
+        height: side,
+        channels: 3,
+        background: "#abcdef",
+      },
+    })
+      .png()
+      .toBuffer();
+    // Sanity: the crafted bomb is small enough to slip under the byte cap
+    // (the whole point of the finding — bytes are bounded, pixels are not).
+    expect(bomb.length).toBeLessThan(5_000_000);
+    await expect(
+      normaliseImage({ bytes: bomb, mime: "image/png" }),
+    ).rejects.toBeInstanceOf(ImageNormalisationError);
+  });
+
+  it("accepts an image comfortably under MAX_IMAGE_PIXELS", async () => {
+    const ok = await baselines.png(256, 256);
+    const result = await normaliseImage({ bytes: ok, mime: "image/png" });
+    expect(result.normalised).toBe(true);
+    expect(result.width).toBe(256);
+    expect(result.height).toBe(256);
   });
 });
 

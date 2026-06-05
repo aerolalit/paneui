@@ -29,6 +29,26 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
+/**
+ * Decompression-bomb ceiling for the decode step.
+ *
+ * Input bytes are already capped at MAX_BLOB_BYTES (5 MB by default), but a
+ * highly-compressed image inside that budget can declare enormous dimensions —
+ * sharp's own default (~268 MP, ~1 GB of RGBA pixels) would still be honoured
+ * and, under concurrency, several such decodes could exhaust memory. We pin a
+ * far lower explicit ceiling: 50 MP comfortably covers any image a human would
+ * realistically upload to a pane (a 50 MP photo is an ~8660×5773 frame) while
+ * keeping per-decode peak memory bounded (~200 MB RGBA worst case).
+ *
+ * sharp checks this against the declared header dimensions *before* full
+ * decode, so an over-limit image is rejected in ~constant time. The throw is
+ * caught below and surfaced as an ImageNormalisationError → the route maps it
+ * to a 415 (mime_disallowed), the same path a malformed image takes. A
+ * per-process concurrency semaphore over normaliseImage() is a sensible future
+ * hardening on top of this ceiling, but is out of scope here.
+ */
+export const MAX_IMAGE_PIXELS = 50_000_000;
+
 /** MIME types we put through sharp's decode-encode pipeline. */
 const NORMALISABLE = new Set([
   "image/jpeg",
@@ -91,6 +111,11 @@ export async function normaliseImage(
     // them; setting `failOn: 'truncated'` makes it throw on the kind of
     // borderline-corrupt images polyglots tend to be.
     failOn: "truncated",
+    // Decompression-bomb ceiling — see MAX_IMAGE_PIXELS. Checked against the
+    // declared header dimensions before decode; an over-limit image throws
+    // (caught below → ImageNormalisationError → 415) rather than allocating
+    // a multi-hundred-MB pixel buffer.
+    limitInputPixels: MAX_IMAGE_PIXELS,
   });
 
   // Metadata posture: pass `withMetadata({})` (empty options) for the

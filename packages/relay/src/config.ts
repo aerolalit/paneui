@@ -45,6 +45,17 @@ const schema = z.object({
   // RATE_LIMIT=0 disables the general limiter entirely (unlimited).
   RATE_LIMIT: z.coerce.number().int().min(0).default(120),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // Dedicated stricter limit for POST /v1/auth/request-link, keyed on BOTH the
+  // client IP and the normalized target email (so a victim can't be bombed by
+  // an attacker rotating IPs). Mirrors REGISTER_RATE_LIMIT. When the limit is
+  // hit the endpoint still returns its usual 202 (no enumeration oracle) but
+  // skips creating the MagicLink row + sending the email. =0 disables it.
+  MAGIC_LINK_RATE_LIMIT: z.coerce.number().int().min(0).default(3),
+  MAGIC_LINK_RATE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(900),
   // Comma-separated list of proxy IPs the relay sits directly behind. Only
   // when the socket peer is one of these is the `X-Forwarded-For` header
   // honored (taking the last untrusted hop). Empty = never trust XFF.
@@ -100,6 +111,16 @@ const schema = z.object({
   //     re-publish of an already-published template (publishedAt set) skips
   //     the gate. 0 disables the gate (any template may publish).
   TEMPLATE_PUBLISH_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(5),
+  // F-11 — hard ceiling on how many published-template rows the public
+  // catalog search will pull from the DB when resolving a tag-substring
+  // match (the JSON `tags` array can't be substring-matched portably across
+  // SQLite + Postgres, so the tag pass scans a bounded `{id, tags}`
+  // projection rather than the whole table). name/description matches go
+  // straight to SQL `contains` and are paginated; this cap only bounds the
+  // tag-resolution pre-scan so the catalog can never materialise the entire
+  // published set into memory regardless of how large it grows. 0 disables
+  // the tag pass entirely (name/description search still works DB-side).
+  TEMPLATE_SEARCH_SCAN_CAP: z.coerce.number().int().min(0).default(1_000),
   // Caps on the agent-supplied per-pane JSON Schema. The schema is compiled
   // by Ajv at pane-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
