@@ -56,7 +56,7 @@ and minor / major bumps require manual review + a fresh corpus run.
 | MIME | Posture | Why |
 |------|---------|-----|
 | `image/jpeg`, `image/png`, `image/gif`, `image/webp` | Normalised | sharp re-encodes; polyglot tails dropped |
-| `image/svg+xml` | **Rejected by default** | SVG carries `<script>` + event handlers as a feature and is NOT normalised; not in the default allowlist. If an operator re-enables it, it is served `Content-Disposition: attachment` (never `inline`). |
+| `image/svg+xml` | **Rejected by default; rasterised to PNG if opted in** | SVG carries `<script>` + event handlers as a feature and is not in the default allowlist. If an operator re-enables it (F-13), an accepted SVG is **rasterised to PNG** by the normaliser (`sharp(svgBytes).png()`, via libvips → librsvg) — the vector→bitmap decode drops every script / `on*` handler / `<foreignObject>` / `javascript:`/external ref. The stored attachment's MIME becomes `image/png`, so it joins the normalised raster set and serves `inline` like any other safe raster. The original SVG bytes are never stored or served. |
 | `application/pdf` | Pass-through | Served `Content-Disposition: attachment` (only raster images render inline); the response also carries `Content-Security-Policy: default-src 'none'; sandbox`. |
 | Anything else | Rejected by allowlist | Default `BLOB_MIME_ALLOWLIST=image/jpeg,image/png,image/gif,image/webp,application/pdf` |
 
@@ -76,11 +76,16 @@ for a closed self-host), set the single sentinel value `BLOB_MIME_ALLOWLIST=*`.
 
 ### Operator note: SVG
 
-Re-enabling SVG (`image/svg+xml`) is **not recommended** until v0.2's SVG
-sanitiser ships — even though every attachment download now serves a
-non-raster MIME as `Content-Disposition: attachment` with a
-`default-src 'none'; sandbox` CSP, a downloaded SVG opened directly by the
-user is still a script-execution surface.
+Re-enabling SVG (`image/svg+xml`) is safe with respect to stored XSS: an
+accepted SVG is **rasterised to PNG** (F-13) before it is stored, so no SVG
+markup — `<script>`, `on*` handlers, `<foreignObject>`, `javascript:`/external
+references — is ever persisted or served. The trade-off is that SVG semantics
+are lost: the upload is flattened to a bitmap at the canvas size librsvg
+derives from the SVG's `width`/`height`/`viewBox`, vector scalability is gone,
+and a malformed SVG that librsvg can't parse is rejected as `mime_disallowed`
+(415), the same path a corrupt raster takes. If an operator needs SVG stored
+verbatim (vector-preserving), that is explicitly **not** supported — there is
+no pass-through path for SVG.
 
 ## Defence-in-depth
 
@@ -142,9 +147,9 @@ verified by a tracked corpus at
 | Threat class | Count | What it tests |
 |--------------|-------|---------------|
 | `appended-payload` | 12 | HTML / EXE / ZIP appended after JPEG EOI, PNG IEND, GIF terminator, WebP RIFF |
-| `in-format-chunk` | 4 | JPEG COM segment, PNG iTXt / zTXt / tEXt with script payloads |
+| `in-format-chunk` | 5 | JPEG COM segment, PNG iTXt / zTXt / tEXt with script payloads, and a scripted SVG (`<script>` + `onload` + `javascript:` + `<foreignObject>`) — the SVG is rasterised to PNG, dropping all markup (F-13) |
 | `metadata` | 1 | EXIF IFD0 with script-shaped Artist / ImageDescription |
-| `passthrough-untouched` | 3 | SVG inline `<script>`, PDF `/JS` action, HEIC + HTML trailer — documents what we *don't* normalise |
+| `passthrough-untouched` | 2 | PDF `/JS` action, HEIC + HTML trailer — documents what we *don't* normalise |
 | `baseline` | 4 | known-good JPEG / PNG / GIF / WebP — verifies the normaliser preserves legitimate content |
 
 Every fixture has a builder (`packages/relay/test-fixtures/polyglots/builders.ts`)

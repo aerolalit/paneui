@@ -2032,6 +2032,129 @@ describe("/v1/attachments — default & empty allowlist (F-03 / F-12)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// F-13: SVG opted back IN via BLOB_MIME_ALLOWLIST.
+//
+// The default rejects svg (covered above). When an operator re-enables it,
+// an accepted SVG must be RASTERISED to PNG — the stored row's mime is
+// image/png, and the served bytes carry no <script> / onload / javascript: /
+// foreignObject markup. This is the security-relevant path: it only matters
+// once svg is allowed, but then sanitisation MUST kick in.
+// ---------------------------------------------------------------------------
+describe("/v1/attachments — SVG opted in is rasterised to PNG (F-13)", () => {
+  let svgApp: Hono;
+  let svgDir: string;
+
+  beforeAll(async () => {
+    svgDir = mkdtempSync(join(tmpdir(), "attachment-svg-allow-"));
+    const svgConfig = loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      BLOB_STORE: "filesystem",
+      BLOB_STORE_FS_DIR: svgDir,
+      MAX_BLOB_BYTES: String(MAX_BLOB),
+      MAX_BLOBS_PER_AGENT_BYTES: String(AGENT_CAP),
+      // Operator explicitly opts SVG back in.
+      BLOB_MIME_ALLOWLIST: "image/png,image/svg+xml",
+      RATE_LIMIT: "0",
+    });
+    svgApp = buildApp(
+      svgConfig,
+      prisma,
+      undefined,
+      await makeBlobStore(svgConfig),
+    );
+  });
+
+  afterAll(() => {
+    rmSync(svgDir, { recursive: true, force: true });
+  });
+
+  const scriptedSvg = Buffer.from(
+    `<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" onload="alert('onload')">
+  <rect width="24" height="24" fill="#22aa55"/>
+  <script type="application/javascript">alert('inline-script')</script>
+  <a xlink:href="javascript:alert('xlink')"><rect width="4" height="4"/></a>
+  <foreignObject width="8" height="8"><body xmlns="http://www.w3.org/1999/xhtml"><img src="x" onerror="alert('fo')"/></body></foreignObject>
+</svg>`,
+    "utf8",
+  );
+
+  async function postSvg(apiKey: string, body: Buffer): Promise<Response> {
+    const fd = new FormData();
+    fd.set(
+      "file",
+      new Blob([new Uint8Array(body)], { type: "image/svg+xml" }),
+      "x.svg",
+    );
+    return svgApp.fetch(
+      new Request("http://t/v1/attachments", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: fd,
+      }),
+    );
+  }
+
+  // Download must go through svgApp too — its FilesystemBlobStore points at
+  // svgDir, where the rasterised bytes were written (the main `app` uses a
+  // different blob dir, so its store can't see them even though the row is
+  // in the shared DB).
+  async function getSvgBlob(
+    apiKey: string,
+    attachmentId: string,
+  ): Promise<Response> {
+    return svgApp.fetch(
+      new Request(`http://t/v1/attachments/${attachmentId}`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+  }
+
+  it("accepts the SVG, stores it as image/png, and the served bytes carry no script", async () => {
+    const { apiKey } = await seedAgent();
+    const post = await postSvg(apiKey, scriptedSvg);
+    expect(post.status).toBe(201);
+    const json = (await post.json()) as {
+      attachment_id: string;
+      mime: string;
+      sha256: string;
+    };
+    // Stored mime is rasterised PNG, NOT image/svg+xml.
+    expect(json.mime).toBe("image/png");
+
+    // Fetch the stored bytes back via the agent download path.
+    const get = await getSvgBlob(apiKey, json.attachment_id);
+    expect(get.status).toBe(200);
+    // Now that it's a raster PNG, it serves inline (vs. attachment for svg).
+    expect(get.headers.get("content-type")).toBe("image/png");
+    expect(get.headers.get("content-disposition")).toBe("inline");
+
+    const buf = Buffer.from(await get.arrayBuffer());
+    // It's a real PNG.
+    const sharp = (await import("sharp")).default;
+    expect((await sharp(buf).metadata()).format).toBe("png");
+
+    // No executable / SVG markup survived.
+    const text = buf.toString("latin1");
+    for (const needle of [
+      "<script",
+      "onload",
+      "javascript:",
+      "onerror",
+      "foreignObject",
+      "<svg",
+    ]) {
+      expect(text, `"${needle}" survived rasterisation`).not.toContain(needle);
+    }
+
+    // sha256 returned matches the stored (rasterised) bytes, not the svg.
+    const { createHash } = await import("node:crypto");
+    expect(createHash("sha256").update(buf).digest("hex")).toBe(json.sha256);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Polling helpers.
 //
 // waitForUseCount: the per-hit audit metadata (useCount / lastUsedAt /
