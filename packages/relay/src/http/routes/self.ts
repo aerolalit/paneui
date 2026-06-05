@@ -8,6 +8,11 @@
 //                                      owned by this human. Old key is
 //                                      invalidated (key_hash overwritten);
 //                                      the new key is returned ONCE.
+//   POST  /v1/self/agents/:id/revoke-key  revoke an owned agent's API key.
+//                                      Sets revokedAt; the agent's existing
+//                                      key 401s on the next request. Owner-
+//                                      side counterpart to DELETE /v1/keys
+//                                      (self-revoke).
 //   PATCH /v1/self/profile             update the human's display name;
 //                                      `null`/empty clears it (display falls
 //                                      back to the email-local-part).
@@ -98,7 +103,7 @@ self.post("/agents/:id/rotate-key", async (c) => {
     throw errors.invalidRequest(
       "agent is revoked — rotating the key would not re-activate it",
       undefined,
-      "unrevoke the agent first (or claim a fresh one) before rotating",
+      "revocation is permanent; claim a fresh agent and retire this one",
     );
   }
 
@@ -121,6 +126,72 @@ self.post("/agents/:id/rotate-key", async (c) => {
     },
     201,
   );
+});
+
+// POST /v1/self/agents/:id/revoke-key
+// Body: {} (none)
+// Response: { agent_id, name, revoked_at }
+//
+// Owner-side counterpart to DELETE /v1/keys/:id (self-revoke). The agent
+// itself doesn't need to participate — the human kills the credential from
+// /my-agents, which matters when the key has leaked or the agent's machine
+// is gone (the two cases self-revoke can't cover).
+//
+// Authz: requireHuman (above) + the agent must be claimed by THIS human.
+// Mirrors rotate-key: a 404 (not 403) for an unclaimed-or-other-human
+// agent so the route isn't an "is agent X claimed by anyone" oracle.
+// Trashed agents (deletedAt != null) also 404 — they're already inert.
+//
+// Idempotency: a second revoke is a no-op and returns the existing
+// revoked_at as success. UI race-clicks shouldn't surface as 4xx.
+//
+// Revocation is permanent — there is no /un-revoke route. Matches the
+// agent-side `pane key revoke --yes` semantics.
+//
+// Note on live WebSockets: the WS path authenticates at connect time and
+// does not re-check revokedAt, so an already-open socket keeps streaming
+// until the client disconnects. HTTP is gated immediately. See
+// docs/DESIGN-owner-side-revoke.md for the v1 trade-off.
+self.post("/agents/:id/revoke-key", async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+
+  const agent = await prisma.agent.findFirst({
+    where: { id, ownerHumanId: human.id, deletedAt: null },
+    select: { id: true, name: true, revokedAt: true },
+  });
+  if (!agent) throw errors.notFound();
+
+  // Idempotent: if already revoked, return the existing timestamp. We
+  // intentionally skip a 4xx here — the UI may race-click and the
+  // operator-side outcome is identical either way.
+  if (agent.revokedAt) {
+    return c.json({
+      agent_id: agent.id,
+      name: agent.name,
+      revoked_at: agent.revokedAt.toISOString(),
+    });
+  }
+
+  const now = new Date();
+  // Conditional update sweeps revokedAt = null so two concurrent revoke
+  // requests can't fight over the timestamp; the loser sees the winner's
+  // value on the re-read below.
+  await prisma.agent.updateMany({
+    where: { id: agent.id, revokedAt: null },
+    data: { revokedAt: now },
+  });
+  const after = await prisma.agent.findUnique({
+    where: { id: agent.id },
+    select: { revokedAt: true },
+  });
+
+  return c.json({
+    agent_id: agent.id,
+    name: agent.name,
+    revoked_at: (after?.revokedAt ?? now).toISOString(),
+  });
 });
 
 // True if the string contains any C0/C1 control character
