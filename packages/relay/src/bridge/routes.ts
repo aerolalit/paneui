@@ -873,9 +873,18 @@ ${
         // which silently drops the navigation otherwise. Without it, an template
         // that delivers a non-image file (PDF, CSV, archive) the human is meant
         // to save has no working code path — the file can be fetched via
-        // window.pane.downloadBlob() but never reaches the disk. `allow-popups`
-        // is intentionally NOT included; only the in-tab download is enabled.
-        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
+        // window.pane.downloadBlob() but never reaches the disk.
+        //
+        // `allow-top-navigation-by-user-activation` lets a template link out
+        // (e.g. `<a target="_top" href="/s/...">` — a demo index linking to the
+        // other demo panes) by navigating the WHOLE tab on a real user click.
+        // Chosen over `allow-popups`: the destination loads as a normal
+        // top-level document (so a linked pane actually works, vs. a popup that
+        // would stay sandboxed and broken), it's gated on user activation (no
+        // silent/background redirects), and it opens no new windows.
+        // `allow-popups` and `allow-same-origin` remain omitted, so the framed
+        // document itself still runs at an opaque origin and can't spawn windows.
+        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
   }
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>${

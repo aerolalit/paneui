@@ -314,6 +314,11 @@ describe("bridge shell GET /s/:token", () => {
     expect(tokens).toContain("allow-scripts");
     expect(tokens).toContain("allow-forms");
     expect(tokens).not.toContain("allow-same-origin");
+    // Templates may link out (e.g. a demo index → other panes) via a
+    // user-activated top navigation, but must not be able to spawn popups or
+    // run at a real origin.
+    expect(tokens).toContain("allow-top-navigation-by-user-activation");
+    expect(tokens).not.toContain("allow-popups");
   });
 
   it("renders the closed banner and no iframe for a closed pane", async () => {
