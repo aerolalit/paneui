@@ -1019,6 +1019,15 @@ systemPages.get("/my-agents", async (c) => {
                 a.revokedAt || isTrashed
                   ? ""
                   : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
+              // Revoke is the owner-side counterpart to `pane key revoke`:
+              // kills the credential when the human can't (lost machine) or
+              // shouldn't (leaked key) authenticate as the agent itself.
+              // Same visibility rules as rotate — nothing to revoke on a
+              // revoked or trashed row.
+              const revokeBtn =
+                a.revokedAt || isTrashed
+                  ? ""
+                  : `<button class="btn ghost" type="button" data-act="revoke" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;color:#b34700;">Revoke</button>`;
               return `<li data-agent-id="${escapeHtml(a.id)}">
                 <div style="min-width:0;flex:1;">
                   <div class="title">${escapeHtml(a.name)}</div>
@@ -1032,7 +1041,7 @@ systemPages.get("/my-agents", async (c) => {
                     <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Won't be shown again. Copy now and run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or paste into <code>PANE_API_KEY</code>).</div>
                   </div>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}${revokeBtn}</div>
               </li>`;
             })
             .join("")}</ul>`
@@ -1127,6 +1136,58 @@ systemPages.get("/my-agents", async (c) => {
         li.querySelector(".rotate-value").textContent = body.api_key;
         reveal.hidden = false;
         // Hide the rotate button so the human focuses on copying.
+        btn.remove();
+      } catch (_) {
+        alert("Network error — try again.");
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
+    // Revoke handler — owner-side kill switch. Same confirm() pattern as
+    // rotate (no inline confirm UI — keeps the two destructive actions
+    // visually parallel). On success, flip the Active pill to Revoked and
+    // remove both Rotate + Revoke buttons; revocation is permanent so
+    // there's no follow-up action the human can take on the row.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button[data-act='revoke']");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const name = btn.getAttribute("data-name") || "this agent";
+      if (!confirm(
+        "Revoke the API key for " + name + "?\\n\\n" +
+        "The key stops working immediately and revocation is permanent. " +
+        "Claim a fresh agent if you need this one again."
+      )) return;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "Revoking…";
+      try {
+        const res = await fetch("/v1/self/agents/" + encodeURIComponent(id) + "/revoke-key", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          let detail = "HTTP " + res.status;
+          try {
+            const errBody = await res.json();
+            if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+          } catch (_) {}
+          alert("Couldn't revoke key: " + detail);
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          return;
+        }
+        // Flip the status pill in place and drop both action buttons —
+        // there is nothing left to rotate or revoke on this row.
+        const li = btn.closest("li[data-agent-id]");
+        const pill = li.querySelector(".pill");
+        if (pill) {
+          pill.className = "pill muted";
+          pill.textContent = "Revoked";
+        }
+        const rotate = li.querySelector("button[data-act='rotate']");
+        if (rotate) rotate.remove();
         btn.remove();
       } catch (_) {
         alert("Network error — try again.");
