@@ -597,6 +597,106 @@ describe("assertSchemaWithinLimits", () => {
       /JSON-serializable/,
     );
   });
+
+  // F-05 — a catastrophic regex in `pattern` or as a `patternProperties` key is
+  // attacker-controlled (the schema) and is later tested against attacker-
+  // controlled keys (event payload data) in attachments/ref-access.ts. Byte/
+  // depth caps don't help (these patterns are tiny), so we reject the
+  // nested-quantifier family at schema-validation time.
+  describe("ReDoS regex rejection (F-05)", () => {
+    const catastrophic = [
+      "^(a+)+$",
+      "(a*)*",
+      "(a+)*",
+      "(?:ab+)*",
+      "(a{1,2})+",
+      "(\\d+)+$",
+      "([a-z]+)*",
+    ];
+    for (const pattern of catastrophic) {
+      it(`rejects catastrophic patternProperties key ${JSON.stringify(pattern)}`, () => {
+        const schema = {
+          type: "object",
+          patternProperties: { [pattern]: { type: "string" } },
+        };
+        expect(() => assertSchemaWithinLimits(schema, limits)).toThrow(
+          /catastrophic regex/,
+        );
+      });
+
+      it(`rejects catastrophic pattern keyword ${JSON.stringify(pattern)}`, () => {
+        const schema = { type: "string", pattern };
+        expect(() => assertSchemaWithinLimits(schema, limits)).toThrow(
+          /catastrophic regex/,
+        );
+      });
+    }
+
+    it("rejects a catastrophic pattern nested deep inside the schema", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          nested: {
+            type: "object",
+            properties: { code: { type: "string", pattern: "^(a+)+$" } },
+          },
+        },
+      };
+      expect(() => assertSchemaWithinLimits(schema, limits)).toThrow(
+        /catastrophic regex/,
+      );
+    });
+
+    const safe = [
+      "^[a-z]+$",
+      "^\\d{1,5}$",
+      "^foo_.*$",
+      "^[A-Za-z0-9_]+$",
+      "\\.png$",
+      "^(?:foo|bar)$",
+      "[a-z]{2,8}",
+    ];
+    for (const pattern of safe) {
+      it(`accepts legitimate pattern ${JSON.stringify(pattern)}`, () => {
+        const schema = {
+          type: "object",
+          patternProperties: { [pattern]: { type: "string" } },
+        };
+        expect(() => assertSchemaWithinLimits(schema, limits)).not.toThrow();
+      });
+    }
+
+    it("verifies an accepted pattern still matches as intended", () => {
+      const schema = {
+        type: "object",
+        patternProperties: { "^x-[a-z]+$": { type: "string" } },
+      };
+      expect(() => assertSchemaWithinLimits(schema, limits)).not.toThrow();
+      // The stored pattern still works: it matches the keys it should.
+      const re = new RegExp(
+        Object.keys(
+          (schema as { patternProperties: Record<string, unknown> })
+            .patternProperties,
+        )[0],
+      );
+      expect(re.test("x-header")).toBe(true);
+      expect(re.test("y-header")).toBe(false);
+    });
+
+    it("rejects a malformed regex pattern", () => {
+      const schema = { type: "string", pattern: "(" };
+      expect(() => assertSchemaWithinLimits(schema, limits)).toThrow(
+        /invalid regex pattern/,
+      );
+    });
+
+    it("rejects an over-length regex pattern", () => {
+      const schema = { type: "string", pattern: "a".repeat(1_001) };
+      expect(() => assertSchemaWithinLimits(schema, limits)).toThrow(
+        /regex is too long/,
+      );
+    });
+  });
 });
 
 describe("validateEvent", () => {

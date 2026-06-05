@@ -239,7 +239,19 @@ export function attachWs(
   },
   deps: WsDeps,
 ): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  // Cap the per-frame buffer at the protocol layer. The `ws` default is
+  // 100 MiB, which lets an authenticated client repeatedly force a 100 MiB
+  // allocation + a synchronous JSON.parse on the single event loop (the
+  // message handler parses the full frame BEFORE the app-level
+  // MAX_EVENT_DATA_BYTES check). Size this just above the largest legitimate
+  // frame: MAX_EVENT_DATA_BYTES of `data` plus the same 64 KiB envelope
+  // headroom the HTTP event routes use (see http/app.ts bodyLimit). Oversized
+  // frames are rejected by `ws` with close code 1009 before any buffering, and
+  // the per-socket 'error' handler in handleConnection keeps the process alive.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: deps.config.MAX_EVENT_DATA_BYTES + 64 * 1024,
+  });
   server.on("upgrade", (req, socket, head) => {
     void handleUpgrade(wss, deps, req, socket, head);
   });
