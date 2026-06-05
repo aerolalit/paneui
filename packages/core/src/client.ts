@@ -110,6 +110,32 @@ export interface PatchArtifactMetadataRequest {
   icon_attachment_id?: string | null;
 }
 
+/** One identity-share grant as returned by the grants endpoints. */
+export interface PaneGrant {
+  id: string;
+  /** Set once the invitee logs in and the grant binds; null while pending. */
+  human_id: string | null;
+  /** The invited email, or null for a grant created directly against a human. */
+  invite_email: string | null;
+  /** "participant" (read + emit) | "viewer" (read-only). */
+  role: string;
+  /** ISO timestamp the grant was bound to a human, or null while pending. */
+  accepted_at: string | null;
+}
+
+/** Response from GET /v1/panes/:id/grants. */
+export interface PaneGrantsList {
+  pane_id: string;
+  is_public: boolean;
+  items: PaneGrant[];
+}
+
+/** Response from PATCH /v1/panes/:id/visibility. */
+export interface PaneVisibility {
+  pane_id: string;
+  is_public: boolean;
+}
+
 /**
  * An error thrown by the typed operations when the relay returns a non-2xx
  * response (or the request fails outright). Carries the HTTP status and the
@@ -900,6 +926,69 @@ export class PaneClient {
       `/v1/panes/${encodeURIComponent(paneId)}/participants/${encodeURIComponent(participantId)}`,
     );
     if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * GET /v1/panes/:id/grants — list the pane's identity-share grants plus
+   * its current `is_public` state. Owner/agent-scope only.
+   */
+  async listGrants(paneId: string): Promise<PaneGrantsList> {
+    const r = await this.call(
+      "GET",
+      `/v1/panes/${encodeURIComponent(paneId)}/grants`,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<PaneGrantsList>(r);
+  }
+
+  /**
+   * POST /v1/panes/:id/grants — invite a human by email. Upserts by email,
+   * so re-inviting the same address adjusts the role in place. Role defaults
+   * to "participant" (read + emit); pass "viewer" for read-only.
+   */
+  async createGrant(
+    paneId: string,
+    opts: { email: string; role?: "participant" | "viewer" },
+  ): Promise<PaneGrant> {
+    const r = await this.call(
+      "POST",
+      `/v1/panes/${encodeURIComponent(paneId)}/grants`,
+      opts.role
+        ? { email: opts.email, role: opts.role }
+        : { email: opts.email },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<PaneGrant>(r);
+  }
+
+  /**
+   * DELETE /v1/panes/:id/grants/:grantId — revoke one grant. Idempotent: a
+   * missing/already-removed grant returns 204.
+   */
+  async revokeGrant(paneId: string, grantId: string): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/panes/${encodeURIComponent(paneId)}/grants/${encodeURIComponent(grantId)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * PATCH /v1/panes/:id/visibility — toggle the pane's public visibility.
+   * When `is_public` is true the pane opens READ-ONLY to anyone at
+   * /p/:paneId without logging in; false reverts it to invite-only.
+   */
+  async setPaneVisibility(
+    paneId: string,
+    isPublic: boolean,
+  ): Promise<PaneVisibility> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/panes/${encodeURIComponent(paneId)}/visibility`,
+      { is_public: isPublic },
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<PaneVisibility>(r);
   }
 
   /**

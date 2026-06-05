@@ -309,6 +309,25 @@ auth.get("/auth/verify", async (c) => {
         },
       });
 
+  // Bind any pending identity-share grants addressed to this human's email.
+  // An owner who invited `bob@…` created PaneGrant rows with humanId NULL +
+  // inviteEmail = bob's email; bob's first successful login is the moment we
+  // can safely attach them to his (now-proven) identity. Idempotent + best-
+  // effort: a failure here must not block the login (the grant can be re-bound
+  // on bob's next visit, or via a future reconcile). Done in a single
+  // updateMany so concurrent logins can't double-bind.
+  try {
+    await prisma.paneGrant.updateMany({
+      where: { inviteEmail: link.email, humanId: null },
+      data: { humanId: human.id, acceptedAt: now },
+    });
+  } catch (err) {
+    log.warn("pending grant binding failed", {
+      humanId: human.id,
+      error: String(err),
+    });
+  }
+
   // Mint the Login.
   const cookie = generateLoginCookie();
   const cookieHash = hashLoginCookie(cookie);

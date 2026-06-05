@@ -238,6 +238,55 @@ const profileBody = z.object({
   ),
 });
 
+// GET /v1/self/recents
+// Response: { items: [{ pane_id, title, template_id, template_version_id,
+//                        last_viewed_at }] }
+//
+// Panes this human has opened (any mount: /panes/:id, /s/:token while logged
+// in, /p/:paneId), newest lastViewedAt first. Backed by the HumanPaneView
+// ledger — anonymous opens never write a row, so they never appear here.
+//
+// Soft-deleted panes are filtered out (a trashed pane shouldn't resurface in
+// Recents); the view row stays so a restore re-surfaces it. Capped at a
+// reasonable default so the response is always a single page.
+const RECENTS_LIMIT = 50;
+
+self.get("/recents", async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+
+  const views = await prisma.humanPaneView.findMany({
+    where: {
+      humanId: human.id,
+      pane: { deletedAt: null },
+    },
+    orderBy: { lastViewedAt: "desc" },
+    take: RECENTS_LIMIT,
+    select: {
+      lastViewedAt: true,
+      pane: {
+        select: {
+          id: true,
+          title: true,
+          templateVersion: {
+            select: { templateId: true, id: true },
+          },
+        },
+      },
+    },
+  });
+
+  return c.json({
+    items: views.map((v) => ({
+      pane_id: v.pane.id,
+      title: v.pane.title,
+      template_id: v.pane.templateVersion.templateId,
+      template_version_id: v.pane.templateVersion.id,
+      last_viewed_at: v.lastViewedAt.toISOString(),
+    })),
+  });
+});
+
 self.patch("/profile", async (c) => {
   const prisma = c.get("prisma");
   const human = c.get("human");

@@ -33,6 +33,7 @@ import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 import { runParticipant, participantHelp } from "./commands/participant.js";
+import { runShare, shareHelp } from "./commands/share.js";
 import { runTemplate, artifactHelp } from "./commands/template.js";
 import { runAgent, agentHelp } from "./commands/agent.js";
 import { runKey, keyHelp } from "./commands/key.js";
@@ -68,6 +69,10 @@ Pane commands (operate on the core noun — a live UI channel):
   delete <id>       Close/delete a pane (DELETE /v1/panes/:id).
   participant       Manage participant URLs on an existing pane
     <list|new|revoke> (list | mint a fresh URL | revoke one URL).
+  share <id>        Share a pane by identity: invite humans by email
+                    (--email, with --role participant|viewer), toggle
+                    public read-only access (--public|--private), list
+                    grants (--list), or revoke one (--revoke <grant-id>).
 
 Other noun groups:
   demo              Take the 60-second guided tour — creates a tutorial pane,
@@ -140,6 +145,11 @@ const BOOLEAN_FLAGS = new Set([
   // `pane demo --no-open`: skip the browser launch. Stored as the literal
   // `no-open` boolean (the parser does not auto-negate `--no-` prefixes).
   "no-open",
+  // `pane share` visibility/list verbs — registered here so the parser treats
+  // them as flags, not value-flags that would swallow the next token.
+  "public",
+  "private",
+  "list",
 ]);
 
 async function main(): Promise<void> {
@@ -183,6 +193,7 @@ async function main(): Promise<void> {
     watch: watchHelp,
     delete: deleteHelp,
     participant: participantHelp,
+    share: shareHelp,
     // Other noun groups.
     template: artifactHelp,
     key: keyHelp,
@@ -242,6 +253,9 @@ async function main(): Promise<void> {
       break;
     case "participant":
       await runParticipant(args);
+      break;
+    case "share":
+      await runShare(args);
       break;
     // Other noun groups.
     case "template":

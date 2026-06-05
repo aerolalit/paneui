@@ -16,6 +16,9 @@ export type {
   AttachmentTokenAuditEntry,
   AttachmentTokenListResponse,
   QueryResponse,
+  PaneGrant,
+  PaneGrantsList,
+  PaneVisibility,
 } from "./client.js";
 
 export { openStream } from "./stream.js";

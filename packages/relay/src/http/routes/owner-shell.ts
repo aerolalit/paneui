@@ -34,12 +34,13 @@ import {
   PERMISSIONS_POLICY,
 } from "../../bridge/routes.js";
 import {
-  generateHumanParticipantToken,
-  hashKey,
-  keyPrefix,
-} from "../../keys.js";
+  OWNER_IDENTITY_ID,
+  getOrCreateIdentityParticipant,
+} from "./identity-participant.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
+import { recordView } from "../../bridge/recents.js";
 import { errors } from "../errors.js";
+import { log } from "../../log.js";
 import type { EventSchema, Author } from "../../types.js";
 import { prefersHtml } from "../accept.js";
 
@@ -141,111 +142,11 @@ async function loadOwnedPane(
   return pane;
 }
 
-// Identity-id reserved for the pane owner's session-mode participant. A
-// fixed literal (not the monotonic `h_${N}` used elsewhere) so the existing
-// `@@unique([paneId, identityId])` constraint on Participant doubles as
-// the dedup gate for this row — only one owner participant ever exists per
-// pane, and two concurrent mints from the same owner collide on the
-// constraint instead of producing duplicate rows. Distinct from the
-// `h_${N}` namespace Phase E's identity-link and public-link routes mint
-// from, so an admin reading the audit log can tell "owner's own click" from
-// "human invited by email" at a glance.
-const OWNER_IDENTITY_ID = "h_owner";
-
-// Lazy-mint (or reuse) the owner's identity-bound participant. The raw token
-// is generated only because Participant.tokenHash is `@unique` and required;
-// it is NEVER returned to the caller and never persisted in any form besides
-// the SHA-256 hash, so the row is reachable only via cookie-authed pane-id
-// routes — never via /s/<token>.
-//
-// Concurrency: `findFirst` + `create` is a classic check-then-act race —
-// two concurrent ws-ticket calls (e.g. two tabs the owner opened at once,
-// or a rapid mobile/desktop overlap) could both see "no row" and both try
-// to create. The `(paneId, identityId)` unique constraint serialises the
-// write: the loser gets P2002, we re-`findFirst`, return the winner's row.
-// Phase E's identity-link route deliberately allows multiple Participants
-// for the same `(paneId, humanId)` (so the owner can mint several
-// revocable invite URLs for the same person), so we cannot add a
-// `(paneId, humanId)` unique constraint; this is why the
-// identity-id-based scheme is the right shape of fix here.
-async function getOrCreateOwnerParticipant(
-  prisma: PrismaClient,
-  paneId: string,
-  humanId: string,
-): Promise<{ identityId: string; id: string }> {
-  // Look up by (paneId, identityId) — the dedup key. We include `humanId`
-  // in the lookup as defence-in-depth: a row with our identity-id but a
-  // different humanId would be a data-integrity bug, and reusing it would
-  // mis-attribute events. In practice the constraint ensures one such row
-  // exists per pane and we wrote its humanId ourselves, so this is just
-  // a safety belt.
-  const existing = await prisma.participant.findFirst({
-    where: {
-      paneId,
-      identityId: OWNER_IDENTITY_ID,
-      humanId,
-      kind: "human",
-      revokedAt: null,
-    },
-    select: { id: true, identityId: true },
-  });
-  if (existing) return existing;
-
-  const tok = generateHumanParticipantToken();
-  try {
-    const created = await prisma.participant.create({
-      data: {
-        paneId,
-        kind: "human",
-        identityId: OWNER_IDENTITY_ID,
-        tokenHash: hashKey(tok),
-        tokenPrefix: keyPrefix(tok),
-        humanId,
-      },
-      select: { id: true, identityId: true },
-    });
-    return created;
-  } catch (e) {
-    // Narrow to the identity-id collision (the race we're handling). Other
-    // P2002s — most plausibly an astronomically unlikely tokenHash collision
-    // — would indicate a real bug, so we let them bubble. The collision
-    // fingerprint is engine-dependent (see panes.ts:854-873 for the same
-    // analysis); we match either Prisma 6's `target` array or Prisma 7's
-    // message-body form.
-    const code = (e as { code?: string } | null)?.code;
-    if (code !== "P2002") throw e;
-    const target = (e as { meta?: { target?: unknown } } | null)?.meta?.target;
-    const targetStr = Array.isArray(target)
-      ? target.join(",")
-      : String(target ?? "");
-    const message = (e as { message?: string } | null)?.message ?? "";
-    const isIdentityCollision =
-      targetStr.includes("identity_id") ||
-      targetStr.includes("participants_session_id_identity_id_key") ||
-      message.includes("identity_id");
-    if (!isIdentityCollision) throw e;
-
-    // Re-query — the racing call won the row; reuse it.
-    const winner = await prisma.participant.findFirst({
-      where: {
-        paneId,
-        identityId: OWNER_IDENTITY_ID,
-        humanId,
-        kind: "human",
-        revokedAt: null,
-      },
-      select: { id: true, identityId: true },
-    });
-    if (!winner) {
-      // The race resolved against us but the row isn't there on re-query.
-      // Either it was revoked between the P2002 and the re-query (acceptable
-      // — the next call will mint a new one) or there's a deeper consistency
-      // bug. Rethrow the original error so the operator notices.
-      throw e;
-    }
-    return winner;
-  }
-}
+// The owner's session-mode participant is minted via the shared
+// getOrCreateIdentityParticipant helper under the OWNER_IDENTITY_ID slot.
+// See src/http/routes/identity-participant.ts for the concurrency + token
+// handling. The same helper backs the `participant`-role grantee on the
+// /p/:paneId mount, so the two never drift.
 
 // GET /panes/:id — shell HTML for the owner.
 ownerShell.get("/:id", async (c) => {
@@ -254,6 +155,15 @@ ownerShell.get("/:id", async (c) => {
   const human = c.get("human");
   const id = c.req.param("id");
   const pane = await loadOwnedPane(prisma, id, human.id);
+
+  // Recents: record the owner's open. Best-effort — never block the page.
+  recordView(prisma, human.id, pane.id).catch((err: unknown) =>
+    log.warn("recordView failed (owner-shell)", {
+      paneId: pane.id,
+      humanId: human.id,
+      error: String(err),
+    }),
+  );
 
   const { agentLive, agentLastEventAt, agentLastUsedAt } =
     await computeAgentPresence(prisma, pane);
@@ -424,10 +334,11 @@ ownerShell.post("/:id/ws-ticket", async (c) => {
     throw errors.gone();
   }
 
-  const participant = await getOrCreateOwnerParticipant(
+  const participant = await getOrCreateIdentityParticipant(
     prisma,
     pane.id,
     human.id,
+    OWNER_IDENTITY_ID,
   );
   const author: Author = { kind: "human", id: participant.identityId };
   const ticket = issueTicket(author, pane.id);

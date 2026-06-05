@@ -249,6 +249,60 @@ model HumanPaneFavorite {
   @@map("human_pane_favorites")
 }
 
+// Identity-share grant — the "invitation" visibility mode. The owner invites
+// an email; the grant is pending (`humanId` NULL, `inviteEmail` set) until the
+// invitee logs in via magic-link, at which point the auth verify step binds
+// it (sets `humanId` + `acceptedAt`). A grant carries a role:
+//   - "participant" — read + emit (mints an emit-capable Participant on open).
+//   - "viewer"      — read-only (no emit credential is ever issued).
+// No `human` relation field by design — the scalar `humanId` mirrors
+// DeletionLog.ownerHumanId so the row stays portable and the Human model
+// doesn't need a back-relation for a grant that may have no human yet.
+model PaneGrant {
+  id          String    @id @default(cuid())
+  paneId      String    @map("pane_id")
+  pane        Pane      @relation(fields: [paneId], references: [id], onDelete: Cascade)
+  // Set once the invitee logs in (magic-link verify binds the pending grant).
+  // NULL while the invite is still pending.
+  humanId     String?   @map("human_id")
+  // The invited email, normalised. Set on create; the binding step matches on
+  // it. NULL is allowed for a grant created directly against a known humanId
+  // (not used by the v1 routes, but the column tolerates it).
+  inviteEmail String?   @map("invite_email")
+  // "participant" | "viewer". Defaults to participant (read + emit).
+  role        String    @default("participant")
+  // humanId of the granter (the pane owner who issued the invite).
+  invitedBy   String    @map("invited_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  // Set when the invitee first logs in and the grant binds to their human row.
+  acceptedAt  DateTime? @map("accepted_at")
+
+  // One active grant per (pane, human) and one per (pane, inviteEmail) so an
+  // upsert-by-email is well-defined and a human can't accrue duplicate grants.
+  @@unique([paneId, humanId])
+  @@unique([paneId, inviteEmail])
+  @@index([humanId])
+  @@map("pane_grants")
+}
+
+// Per-human view ledger — drives GET /v1/self/recents. One row per
+// (human, pane) the human has opened; `lastViewedAt` bumps on each open so
+// Recents can sort newest-first. Anonymous opens record nothing (no humanId).
+// No `human` relation field — same rationale as PaneGrant (scalar humanId
+// keeps the Human model untouched).
+model HumanPaneView {
+  id            String   @id @default(cuid())
+  humanId       String   @map("human_id")
+  paneId        String   @map("pane_id")
+  pane          Pane     @relation(fields: [paneId], references: [id], onDelete: Cascade)
+  firstViewedAt DateTime @default(now()) @map("first_viewed_at")
+  lastViewedAt  DateTime @default(now()) @map("last_viewed_at")
+
+  @@unique([humanId, paneId])
+  @@index([humanId, lastViewedAt])
+  @@map("human_pane_views")
+}
+
 model Feedback {
   id             String   @id @default(cuid())
   agentId        String?  @map("agent_id")
@@ -388,6 +442,14 @@ model Pane {
   // just a Participant, but for now both columns coexist.
   ownerHumanId    String?       @map("owner_human_id")
   ownerHuman      Human?        @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
+  // Identity-share visibility. The token-share path (Participant rows minted
+  // via /public-link, /identity-link, agent participants) is unchanged and
+  // layered independently; `isPublic` is the only new visibility *state* and
+  // sits on top of it. When true, /p/:paneId serves the pane READ-ONLY to any
+  // anonymous viewer (no login, no grant) — event emit still requires a
+  // participant token or a `participant`-role grant. Default false (every
+  // existing pane stays private; the migration does no backfill).
+  isPublic        Boolean       @default(false) @map("is_public")
   // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
   // NULL = ad-hoc pane, no dedup. Used by pane-create to dedupe
   // (template, owner, contextKey) into a single row.
@@ -444,6 +506,10 @@ model Pane {
   // #288 — per-pane mutable record collections.
   recordCollections RecordCollection[]
   favorites         HumanPaneFavorite[]
+  // Identity-share grants (invitation mode) + the per-human view ledger that
+  // drives Recents. Both cascade when the pane is hard-deleted.
+  grants            PaneGrant[]
+  views             HumanPaneView[]
 
   // #302 — soft-delete timestamp. NULL = active. When the TTL sweeper
   // (#303) fires it sets `deletedAt = now()` instead of `DELETE`-ing the
