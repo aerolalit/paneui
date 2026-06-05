@@ -2,6 +2,20 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { shouldFire, fire, WEBHOOK_TIMEOUT_MS } from "./webhook.js";
 import type { SerializedEvent } from "../types.js";
 
+// F-14 — `fire` now re-validates the URL against the SSRF guard at send time.
+// The fire-behaviour tests below use `.test` hostnames that never resolve in
+// DNS, so without this stub the guard would abort every send before fetch and
+// the retry/redirect assertions would never run. Stub it to a pass-through so
+// these tests keep exercising the fetch path; the dedicated "fire-time SSRF
+// re-validation" block below removes the stub to test the guard for real.
+vi.mock("./ssrf.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ssrf.js")>();
+  return {
+    ...actual,
+    assertSafeWebhookUrl: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 describe("shouldFire (glob)", () => {
   it("exact literal match", () => {
     expect(shouldFire("review.commentAdded", ["review.commentAdded"])).toBe(
@@ -193,5 +207,89 @@ describe("fire (SSRF: redirects are not followed)", () => {
 
     // Delivered on the first attempt — no retries.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fire (F-14: fire-time SSRF re-validation)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  const event: SerializedEvent = {
+    id: "evt_1",
+    pane_id: "sess_1",
+    author: { kind: "agent", id: "agent_1" },
+    ts: "2026-01-01T00:00:00.000Z",
+    type: "review.commentAdded",
+    data: {},
+    causation_id: null,
+    idempotency_key: null,
+  };
+
+  it("does NOT send when the URL fails the fire-time guard (DNS-rebinding window)", async () => {
+    // Simulate the URL now resolving to a blocked/internal address at fire
+    // time (the rebind). The guard rejects; fire() must abort before fetch.
+    const ssrf = await import("./ssrf.js");
+    vi.mocked(ssrf.assertSafeWebhookUrl).mockRejectedValueOnce(
+      new Error("callback.url resolves to a non-routable address"),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fire(
+      { url: "https://rebinds-to-internal.example/hook", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    // Guard tripped → no outbound request at all.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it("still sends to a URL that passes the fire-time guard", async () => {
+    const ssrf = await import("./ssrf.js");
+    vi.mocked(ssrf.assertSafeWebhookUrl).mockResolvedValueOnce(undefined);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      type: "basic" as ResponseType,
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fire(
+      { url: "https://validated-public.test/hook", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    // Guard passed → the single happy-path delivery still fires.
+    expect(ssrf.assertSafeWebhookUrl).toHaveBeenCalledWith(
+      "https://validated-public.test/hook",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts the send for a literal internal IP via the REAL guard", async () => {
+    // No per-test stub override here — exercise the real assertSafeWebhookUrl
+    // against a literal link-local/metadata IP, which it rejects synchronously
+    // (no DNS needed). Proves the wiring trips on a genuinely blocked target.
+    const real = await vi.importActual<typeof import("./ssrf.js")>("./ssrf.js");
+    const ssrf = await import("./ssrf.js");
+    vi.mocked(ssrf.assertSafeWebhookUrl).mockImplementation(
+      real.assertSafeWebhookUrl,
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fire(
+      { url: "http://169.254.169.254/latest/meta-data/", secret: "s" },
+      "sess_1",
+      event,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
   });
 });

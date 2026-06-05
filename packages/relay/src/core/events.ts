@@ -122,6 +122,17 @@ export async function writeEvent(
   input: WriteEventInput,
 ): Promise<WriteEventResult> {
   const { prisma, config } = deps;
+  // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+  // expiresAt until the hard-delete sweeper runs, so the status/expiry gate
+  // below does NOT catch it. Refuse the write outright: a trashed pane must
+  // not accept new events on either transport (this covers POST
+  // /v1/panes/:id/events and the WS frame write, both of which re-read the
+  // pane and route through here). `deletedAt` is a scalar on Pane and is
+  // loaded by every PaneWithTemplateVersion caller (findUnique with no
+  // `select` returns all scalars).
+  if (pane.deletedAt !== null) {
+    throw errors.softDeleted("pane");
+  }
   if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
   }
