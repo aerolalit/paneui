@@ -445,6 +445,22 @@ describe("/v1/attachments — POST rejection paths", () => {
     expect(body.error.code).toBe("mime_disallowed");
   });
 
+  it("415 mime_disallowed for an SVG under the restricted allowlist", async () => {
+    const { apiKey } = await seedAgent();
+    // An SVG carrying an inline script — the stored-XSS payload F-03 is about.
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>',
+      "utf8",
+    );
+    const res = await upload(apiKey, svg, {
+      declaredMime: "image/svg+xml",
+      filename: "x.svg",
+    });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("mime_disallowed");
+  });
+
   it("400 invalid_request when the file part is missing", async () => {
     const { apiKey } = await seedAgent();
     const fd = new FormData();
@@ -607,6 +623,11 @@ describe("/v1/attachments/:id — GET", () => {
     expect(get.headers.get("cache-control")).toBe("private, no-store");
     expect(get.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(get.headers.get("referrer-policy")).toBe("no-referrer");
+    // F-06: framing defences on the agent download path too.
+    expect(get.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    expect(get.headers.get("x-frame-options")).toBe("DENY");
 
     const buf = Buffer.from(await get.arrayBuffer());
     expect(buf.equals(payload)).toBe(true);
@@ -1141,7 +1162,7 @@ describe("/b/<token> — capability URL", () => {
     // frame an inline image. CSP frame-ancestors + X-Frame-Options
     // close that gap.
     expect(res.headers.get("content-security-policy")).toBe(
-      "frame-ancestors 'none'",
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
     );
     expect(res.headers.get("x-frame-options")).toBe("DENY");
 
@@ -1876,6 +1897,137 @@ describe("/v1/attachments/:id/tokens — GET list", () => {
     };
     expect(body.attachment_id).toBe(attachment_id);
     expect(body.items).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-03 / F-12: SHIPPED-DEFAULT and empty BLOB_MIME_ALLOWLIST behaviour.
+//
+// The main suite above pins a restricted allowlist for determinism. These
+// tests build dedicated apps to exercise (a) the actual shipped default and
+// (b) the accidental-empty case, which must fall back to the secure default
+// (never accept-any).
+// ---------------------------------------------------------------------------
+describe("/v1/attachments — default & empty allowlist (F-03 / F-12)", () => {
+  let defaultApp: Hono;
+  let emptyApp: Hono;
+  let dir1: string;
+  let dir2: string;
+
+  beforeAll(async () => {
+    dir1 = mkdtempSync(join(tmpdir(), "attachment-default-allow-"));
+    dir2 = mkdtempSync(join(tmpdir(), "attachment-empty-allow-"));
+
+    // No BLOB_MIME_ALLOWLIST override → the shipped secure default
+    // (image/jpeg,image/png,image/gif,image/webp,application/pdf — NO svg).
+    const defaultConfig = loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      BLOB_STORE: "filesystem",
+      BLOB_STORE_FS_DIR: dir1,
+      MAX_BLOB_BYTES: String(MAX_BLOB),
+      RATE_LIMIT: "0",
+    });
+    defaultApp = buildApp(
+      defaultConfig,
+      prisma,
+      undefined,
+      await makeBlobStore(defaultConfig),
+    );
+
+    // Explicitly EMPTY allowlist → must fall back to the secure default, NOT
+    // accept-any. So svg is still rejected.
+    const emptyConfig = loadConfig({
+      DATABASE_URL: testDb.dbUrl,
+      PUBLIC_URL: "http://localhost:3000",
+      BLOB_STORE: "filesystem",
+      BLOB_STORE_FS_DIR: dir2,
+      MAX_BLOB_BYTES: String(MAX_BLOB),
+      BLOB_MIME_ALLOWLIST: "",
+      RATE_LIMIT: "0",
+    });
+    emptyApp = buildApp(
+      emptyConfig,
+      prisma,
+      undefined,
+      await makeBlobStore(emptyConfig),
+    );
+  });
+
+  afterAll(() => {
+    rmSync(dir1, { recursive: true, force: true });
+    rmSync(dir2, { recursive: true, force: true });
+  });
+
+  async function postTo(
+    targetApp: Hono,
+    apiKey: string,
+    body: Buffer,
+    declaredMime: string,
+    filename: string,
+  ): Promise<Response> {
+    const fd = new FormData();
+    fd.set(
+      "file",
+      new Blob([new Uint8Array(body)], { type: declaredMime }),
+      filename,
+    );
+    return targetApp.fetch(
+      new Request("http://t/v1/attachments", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: fd,
+      }),
+    );
+  }
+
+  const svgPayload = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>',
+    "utf8",
+  );
+
+  it("rejects image/svg+xml under the shipped default allowlist", async () => {
+    const { apiKey } = await seedAgent();
+    const res = await postTo(
+      defaultApp,
+      apiKey,
+      svgPayload,
+      "image/svg+xml",
+      "x.svg",
+    );
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("mime_disallowed");
+  });
+
+  it("still accepts a raster PNG under the shipped default allowlist", async () => {
+    const { apiKey } = await seedAgent();
+    const png = await makePng();
+    const res = await postTo(defaultApp, apiKey, png, "image/png", "x.png");
+    expect(res.status).toBe(201);
+    const json = (await res.json()) as { mime: string };
+    expect(json.mime).toBe("image/png");
+  });
+
+  it("an empty BLOB_MIME_ALLOWLIST falls back to the default — svg still rejected (F-12, no accept-any)", async () => {
+    const { apiKey } = await seedAgent();
+    const res = await postTo(
+      emptyApp,
+      apiKey,
+      svgPayload,
+      "image/svg+xml",
+      "x.svg",
+    );
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("mime_disallowed");
+  });
+
+  it("an empty BLOB_MIME_ALLOWLIST still accepts raster PNG (default, not reject-all)", async () => {
+    const { apiKey } = await seedAgent();
+    const png = await makePng();
+    const res = await postTo(emptyApp, apiKey, png, "image/png", "x.png");
+    expect(res.status).toBe(201);
   });
 });
 
