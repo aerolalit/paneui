@@ -100,6 +100,16 @@ const schema = z.object({
   //     re-publish of an already-published template (publishedAt set) skips
   //     the gate. 0 disables the gate (any template may publish).
   TEMPLATE_PUBLISH_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(5),
+  // F-11 — hard ceiling on how many published-template rows the public
+  // catalog search will pull from the DB when resolving a tag-substring
+  // match (the JSON `tags` array can't be substring-matched portably across
+  // SQLite + Postgres, so the tag pass scans a bounded `{id, tags}`
+  // projection rather than the whole table). name/description matches go
+  // straight to SQL `contains` and are paginated; this cap only bounds the
+  // tag-resolution pre-scan so the catalog can never materialise the entire
+  // published set into memory regardless of how large it grows. 0 disables
+  // the tag pass entirely (name/description search still works DB-side).
+  TEMPLATE_SEARCH_SCAN_CAP: z.coerce.number().int().min(0).default(1_000),
   // Caps on the agent-supplied per-pane JSON Schema. The schema is compiled
   // by Ajv at pane-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
