@@ -17,7 +17,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
-import { BRAND_FAVICON_DATA_HREF } from "../../brand.js";
+import { BRAND_FAVICON_DATA_HREF, BRAND_LOGO } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
 import { filterByOpenPaneCount } from "./templates.js";
@@ -430,6 +430,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
@@ -441,7 +442,7 @@ function renderHtml(human: HumanRow, data: ShellData): string {
 <div class="app">
   <aside class="nav">
     <div class="brand">
-      <div class="logo">P</div>
+      <div class="logo">${BRAND_LOGO}</div>
       <div class="name">Pane</div>
     </div>
     <ul class="items" id="nav-items">
