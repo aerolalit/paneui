@@ -14,6 +14,8 @@ import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
 import { paneAppleTouchIcon } from "../http/routes/apple-touch-icon.js";
+import { recordView } from "./recents.js";
+import { log } from "../log.js";
 
 const bridge = new Hono<AppEnv>();
 
@@ -150,6 +152,58 @@ async function loadByToken(
   return { participant, pane };
 }
 
+// Recover the paneId a token points at even when the participant is REVOKED
+// (but the row still exists). Used by the /s/:token shell handler to upgrade
+// an expired/revoked share link into a 302 → /p/:paneId, where the identity-
+// share resolver re-evaluates access (public? grant? login?) instead of a
+// dead-end 404. Returns null when the token is malformed, fully purged, or
+// the pane row is gone — in those cases the caller falls back to the generic
+// 404/login path (no crash, no oracle).
+async function recoverPaneIdFromToken(
+  prisma: PrismaClient,
+  token: string,
+): Promise<string | null> {
+  if (!TOKEN_RX.test(token)) return null;
+  const participant = await prisma.participant.findUnique({
+    where: { tokenHash: hashKey(token) },
+    select: { paneId: true },
+  });
+  if (!participant) return null;
+  const pane = await prisma.pane.findUnique({
+    where: { id: participant.paneId },
+    select: { id: true },
+  });
+  return pane?.id ?? null;
+}
+
+// Resolve a logged-in human from the request cookie and record a pane view for
+// Recents. Best-effort: any failure (no cookie, expired login, DB hiccup) is
+// swallowed — recording a view must never affect serving the pane. Anonymous
+// opens (no/invalid cookie) record nothing.
+async function recordTokenOpenerView(
+  prisma: PrismaClient,
+  cookieHeader: string | null,
+  paneId: string,
+): Promise<void> {
+  try {
+    const { parseLoginCookie, hashLoginCookie } =
+      await import("../auth/cookie.js");
+    const cookieValue = parseLoginCookie(cookieHeader);
+    if (!cookieValue) return;
+    const login = await prisma.login.findUnique({
+      where: { cookieHash: hashLoginCookie(cookieValue) },
+      select: { humanId: true, expiresAt: true },
+    });
+    if (!login || login.expiresAt < new Date()) return;
+    await recordView(prisma, login.humanId, paneId);
+  } catch (err) {
+    log.warn("recordView failed (token opener)", {
+      paneId,
+      error: String(err),
+    });
+  }
+}
+
 // The shell shows an "agent presence" pill. Presence is LIVE runtime state,
 // so it is computed from three present-tense signals — NOT by replaying the
 // persisted `system.participant.*` log (a `left` event can be lost, which
@@ -210,11 +264,27 @@ bridge.get("/:token", async (c) => {
     loaded = await loadByToken(prisma, token, { enforceBinding: false });
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+      // Expired/revoked token: instead of a dead-end 404, try to recover the
+      // pane id the (now-dead) token pointed at and 302 → /p/:paneId, where
+      // the identity-share resolver re-evaluates access (public? grant?
+      // login?). Falls back to the generic 404/login page when the token is
+      // fully unrecoverable (malformed, purged, pane gone) — no crash, no
+      // existence oracle. Only redirect HTML navigations; API/curl callers
+      // keep the JSON envelope they branch on.
+      if (prefersHtml(c.req.header("Accept"))) {
+        const paneId = await recoverPaneIdFromToken(prisma, token);
+        if (paneId) return c.redirect(`/p/${encodeURIComponent(paneId)}`, 302);
+      }
       return humanOrJsonError(c, err);
     }
     throw err;
   }
   const { pane, participant } = loaded;
+
+  // Recents: if the opener is a logged-in human, record the view. Best-effort
+  // and fire-and-forget — never block the page. Anonymous opens record
+  // nothing (no humanId resolved).
+  void recordTokenOpenerView(prisma, c.req.header("cookie") ?? null, pane.id);
 
   // Logged-in owner → upgrade to the clean session-authed URL. If the
   // caller is signed in as the pane's owner, redirect them off the

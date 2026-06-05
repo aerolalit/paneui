@@ -65,7 +65,7 @@ type PaneScopeFields = { agentId: string; ownerHumanId: string | null };
 
 // Returns the narrowed (non-null) pane so callers can continue working
 // with the pane in a type-safe way without re-asserting.
-async function assertPaneInScope<T extends PaneScopeFields>(
+export async function assertPaneInScope<T extends PaneScopeFields>(
   prisma: PrismaClient,
   pane: T | null,
   me: { id: string; ownerHumanId: string | null },

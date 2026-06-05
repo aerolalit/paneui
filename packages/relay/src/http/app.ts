@@ -27,6 +27,8 @@ import {
 } from "./routes/template-marketplace.js";
 import systemPages from "./routes/system-pages.js";
 import ownerShell from "./routes/owner-shell.js";
+import paneAccess from "./routes/pane-access.js";
+import paneSharing from "./routes/pane-sharing.js";
 import icons from "./routes/icons.js";
 import previews from "./routes/previews.js";
 import events from "./routes/events.js";
@@ -293,6 +295,10 @@ export function buildApp(
   // limiter as /s/* so an attacker who steals a session cookie can't grind
   // through endpoints any faster than they could with a participant token.
   app.use("/panes/*", generalRateLimit);
+  // /p/:paneId/* — the identity-share mount (public / invited access). Same
+  // limiter as /panes/* and /s/* so an anonymous prober can't grind the
+  // resolver (which does a login-cookie + grant lookup per request).
+  app.use("/p/*", generalRateLimit);
 
   // CLI-version skew check on the agent-facing API. Runs after the rate
   // limiter so a hostile too-old CLI also pays the per-IP cost; runs before
@@ -330,6 +336,15 @@ export function buildApp(
   // just like they would on /s/*.
   app.route("/panes", ownerShell);
 
+  // Identity-share mount — /p/:paneId + nested content/presence/ws-ticket.
+  // Resolves access from the login cookie + the pane's visibility state
+  // (public / invited / owner) and serves the SAME shell as /s/:token and
+  // /panes/:id. An expired/revoked /s/:token 302s here so a dead share link
+  // turns into a re-evaluated access decision instead of a 404. Read-only for
+  // public-anon + viewer grants (the ws-ticket route refuses them). Same
+  // rate-limit posture as /panes/* + /s/* (applied above).
+  app.route("/p", paneAccess);
+
   // Human-facing icon images for templates + panes. Cookie-authed, cacheable
   // GETs that <img src> from inside the owner shell. Mounted at root so it
   // serves both `/templates/:id/icon` and `/panes/:id/icon`; the latter does
@@ -354,6 +369,12 @@ export function buildApp(
   // EMAIL_PROVIDER=none case internally (returns 503 auth_provider_unavailable)
   // so unconfigured self-hosters get a clear signal instead of a 404.
   app.route("/v1", auth);
+  // Pane sharing management — agent-authed PATCH /:id/visibility + grants CRUD.
+  // Mounted BEFORE the agent-CRUD `panes` router: its sub-paths
+  // (/:id/visibility, /:id/grants[/:gid]) are more specific than panes'
+  // `/:id`, and both share the requireAgent + assertPaneInScope authz, so
+  // ordering is for readability rather than correctness.
+  app.route("/v1/panes", paneSharing);
   app.route("/v1/panes", panes);
   // Event bodies carry at most MAX_EVENT_DATA_BYTES of `data`; a tighter cap
   // here (leaving headroom for the JSON envelope) rejects an oversized event
