@@ -47,6 +47,8 @@ import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
 import { cliVersionMiddleware } from "./cli-version.js";
+import { baselineSecurityHeaders } from "./security-headers.js";
+import { csrfProtect } from "./csrf.js";
 
 // Build the Hono app with its dependencies injected. `config` and `prisma` are
 // placed on the request context by the first middleware so every route and
@@ -74,6 +76,14 @@ export function buildApp(
     config.REGISTER_RATE_WINDOW_SECONDS * 1000,
   );
 
+  // F-09 — dedicated limiter for POST /v1/auth/request-link, keyed on
+  // (IP, email). Created here so its sliding-window state is owned by this app
+  // instance, exactly like registerLimiter above.
+  const magicLinkLimiter = createRateLimiter(
+    config.MAGIC_LINK_RATE_LIMIT,
+    config.MAGIC_LINK_RATE_WINDOW_SECONDS * 1000,
+  );
+
   // Fall back to an app-owned general limiter when the caller did not inject a
   // shared one (HTTP-only tests). The relay always injects the shared instance.
   const effectiveGeneralLimiter =
@@ -98,6 +108,7 @@ export function buildApp(
     c.set("config", config);
     c.set("prisma", prisma);
     c.set("registerLimiter", registerLimiter);
+    c.set("magicLinkLimiter", magicLinkLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
     if (blobStore) c.set("blobStore", blobStore);
     if (effectiveBlobRevokeCache)
@@ -105,6 +116,16 @@ export function buildApp(
     c.set("emailProvider", effectiveEmailProvider);
     await next();
   });
+
+  // F-10 — baseline security headers (X-Content-Type-Options always;
+  // Strict-Transport-Security in production only) on EVERY response, including
+  // the JSON API which previously set none. Runs right after config injection
+  // (it reads config.isProduction) and BEFORE the routes, so a per-route
+  // CSP / X-Frame-Options / Referrer-Policy still wins — this middleware sets
+  // none of those. See security-headers.ts for why we hand-roll it instead of
+  // hono's secureHeaders() (which sets headers after next() and would clobber
+  // the carefully-tuned per-route values).
+  app.use("*", baselineSecurityHeaders);
 
   app.use("*", async (c, next) => {
     const start = Date.now();
@@ -279,6 +300,25 @@ export function buildApp(
   // (/s/*) are human-facing and have no CLI version to check; the skill +
   // health routes are mounted above and stay unmetered.
   app.use("/v1/*", cliVersionMiddleware(config));
+
+  // F-07 — CSRF Origin/Referer check on the cookie-authed mounts only. The
+  // agent API (/v1 bearer routes) is NOT cookie-authed and is deliberately
+  // excluded — a stolen browser cookie can't drive it, and agent callers send
+  // no browser Origin. Runs after rate-limit + cli-version (a forged request
+  // still pays the per-IP cost) and before the route's requireHuman gate, so a
+  // cross-site POST/PATCH/DELETE is refused with 403 before any DB work. GET/
+  // HEAD/OPTIONS are exempt inside the middleware (so GET /v1/auth/verify and
+  // the owner-shell HTML GETs keep working), and requests without a session
+  // cookie pass through to be 401'd by requireHuman.
+  app.use("/v1/self/*", csrfProtect);
+  app.use("/v1/my-panes/*", csrfProtect);
+  app.use("/v1/my-trash/*", csrfProtect);
+  app.use("/v1/my-templates/*", csrfProtect);
+  app.use("/panes/*", csrfProtect);
+  // Logout is the one cookie-authed mutation under /v1/auth — scope the check
+  // to the exact path so the cookie-less request-link POST and the verify GET
+  // (which must carry the cookie on a top-level navigation) are untouched.
+  app.use("/v1/auth/logout", csrfProtect);
 
   // Owner-shell mount — /panes/:id + nested content/presence/ws-ticket.
   // Cookie-authed, owner-only: renders the same shell + iframe runtime as the

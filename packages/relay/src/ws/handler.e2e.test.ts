@@ -250,6 +250,26 @@ describe("WS e2e", () => {
     await expect(waitOpen(ws)).rejects.toThrow(/404/);
   });
 
+  // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+  // expiresAt until the hard-delete sweeper runs, so the WS connect's
+  // status/expiry gate alone wouldn't catch it. The added deletedAt check must
+  // refuse the upgrade (410), closing the WS replay-read + frame-write surface
+  // on a trashed pane.
+  it("rejects a WS upgrade on a soft-deleted pane (410, F-08)", async () => {
+    const { apiKey } = await seedAgent();
+    const { paneId, agentToken } = await createPane(apiKey);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { deletedAt: new Date() },
+    });
+    // Sanity: still open + unexpired — only deletedAt flipped.
+    const row = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(row?.status).toBe("open");
+    expect(row?.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    const ws = connect(paneId, agentToken);
+    await expect(waitOpen(ws)).rejects.toThrow(/410/);
+  });
+
   it("agent connects, sends a frame, receives an ack", async () => {
     const { apiKey } = await seedAgent();
     const { paneId, agentToken } = await createPane(apiKey);

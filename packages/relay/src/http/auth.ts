@@ -128,6 +128,13 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
       include: { templateVersion: true },
     });
     if (!pane || pane.agentId !== agent.id) throw errors.notFound();
+    // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+    // expiresAt until the hard-delete sweeper runs. dualAuth is the shared
+    // choke point for the pane-scoped event reads/writes (routes/events.ts),
+    // record reads/writes (routes/records.ts), and the ws-ticket mint
+    // (routes/panes.ts) — refuse all of them on a trashed pane so a trashed
+    // pane is read-only-via-trash, not still mutable through these surfaces.
+    if (pane.deletedAt !== null) throw errors.softDeleted("pane");
     prisma.agent
       .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
       .catch((err: unknown) =>
@@ -167,6 +174,10 @@ export const dualAuth: MiddlewareHandler<AuthEnv> = async (c, next) => {
     include: { templateVersion: true },
   });
   if (!pane) throw errors.notFound();
+  // F-08 — same soft-delete refusal as the agent branch above: a trashed
+  // pane must not be mutable (or readable) through the dualAuth-gated
+  // event/record/ws-ticket surfaces for a participant either.
+  if (pane.deletedAt !== null) throw errors.softDeleted("pane");
   // Note: `participant.joinedAt` is intentionally NOT stamped here. The SPEC
   // defines it as stamped "on first connect", and a connect is a WebSocket
   // upgrade — not an HTTP poll of GET /v1/panes/:id/events. A human who

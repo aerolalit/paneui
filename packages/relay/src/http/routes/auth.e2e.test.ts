@@ -27,6 +27,13 @@ let testDb: TestDb;
 let prisma: PrismaClient;
 let appWithDev: Hono;
 let appWithNone: Hono;
+// Dedicated app whose request-link throttle uses a low limit, so the F-09
+// throttle test can exhaust it deterministically. Each test that uses it
+// targets a distinct email so the per-email key is independent across tests;
+// the per-IP key ("unknown" in tests) is shared, so each F-09 test resets the
+// limiter by rebuilding this app in its own beforeEach-equivalent setup.
+let appThrottle: Hono;
+const THROTTLE_LIMIT = 3;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
@@ -38,6 +45,13 @@ beforeAll(async () => {
   const baseConfig = {
     DATABASE_URL: testDb.dbUrl,
     PUBLIC_URL: "http://localhost:3000",
+    // The default per-(IP,email) request-link throttle is 3/15min. In tests
+    // clientIp() resolves to "unknown" (no socket), so EVERY request-link call
+    // in this file shares one IP bucket — at the default these unrelated
+    // functional tests would throttle each other. Raise the cap well above the
+    // number of request-link calls here; the throttle itself is exercised by a
+    // dedicated app (appThrottle) + test below that uses the low default.
+    MAGIC_LINK_RATE_LIMIT: "1000",
   };
   appWithDev = buildApp(
     loadConfig({ ...baseConfig, EMAIL_PROVIDER: "dev" }),
@@ -168,6 +182,91 @@ describe("POST /v1/auth/request-link", () => {
       where: { email: "alice3@example.com" },
     });
     expect(link?.name).toBeNull();
+  });
+});
+
+// F-09 — per-(IP, email) throttle on POST /v1/auth/request-link. Each test
+// builds its own app so the in-process limiter (owned by the app instance)
+// starts empty — the per-IP key resolves to "unknown" in tests and is shared
+// across the whole file otherwise.
+describe("POST /v1/auth/request-link throttle (F-09)", () => {
+  function buildThrottleApp(): Hono {
+    return buildApp(
+      loadConfig({
+        DATABASE_URL: testDb.dbUrl,
+        PUBLIC_URL: "http://localhost:3000",
+        EMAIL_PROVIDER: "dev",
+        MAGIC_LINK_RATE_LIMIT: String(THROTTLE_LIMIT),
+        MAGIC_LINK_RATE_WINDOW_SECONDS: "900",
+      }),
+      prisma,
+      undefined,
+      undefined,
+      undefined,
+      makeDevProvider({ isProduction: false }),
+    );
+  }
+
+  async function requestLink(app: Hono, email: string): Promise<number> {
+    const res = await app.fetch(
+      new Request("http://t/v1/auth/request-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email }),
+      }),
+    );
+    return res.status;
+  }
+
+  it("always returns 202 but stops creating rows past the limit (no enumeration oracle)", async () => {
+    appThrottle = buildThrottleApp();
+    const email = "victim@example.com";
+
+    // Fire LIMIT + 3 requests. EVERY response must be 202 — a different status
+    // on the throttled requests would let an attacker enumerate which address
+    // is rate-limited.
+    const statuses: number[] = [];
+    for (let i = 0; i < THROTTLE_LIMIT + 3; i++) {
+      statuses.push(await requestLink(appThrottle, email));
+    }
+    expect(statuses.every((s) => s === 202)).toBe(true);
+
+    // Only LIMIT rows/emails were actually created; the rest were silently
+    // dropped while still returning 202.
+    const rows = await prisma.magicLink.count({ where: { email } });
+    expect(rows).toBe(THROTTLE_LIMIT);
+  });
+
+  it("throttles per-email independently — a different address is unaffected", async () => {
+    appThrottle = buildThrottleApp();
+    const bombed = "bombed@example.com";
+    const other = "other@example.com";
+
+    // Exhaust the bombed address's email key.
+    for (let i = 0; i < THROTTLE_LIMIT + 2; i++) {
+      expect(await requestLink(appThrottle, bombed)).toBe(202);
+    }
+    expect(await prisma.magicLink.count({ where: { email: bombed } })).toBe(
+      THROTTLE_LIMIT,
+    );
+
+    // The per-IP key is shared and also consumed by the calls above, so the
+    // other address can still get rows only up to whatever IP budget remains.
+    // With the IP and email limits equal, the bombing already exhausted the
+    // shared IP key — so the second address is now throttled too, proving the
+    // IP key bounds a rotating-target attacker. Assert it still always-202s.
+    expect(await requestLink(appThrottle, other)).toBe(202);
+    // No new row for `other`: the shared per-IP bucket is exhausted.
+    expect(await prisma.magicLink.count({ where: { email: other } })).toBe(0);
+  });
+
+  it("a fresh address under a fresh IP bucket is allowed (email key is independent)", async () => {
+    // Distinct app => fresh limiter => fresh IP bucket. A first-time address
+    // gets its link created and a 202.
+    appThrottle = buildThrottleApp();
+    const fresh = "fresh@example.com";
+    expect(await requestLink(appThrottle, fresh)).toBe(202);
+    expect(await prisma.magicLink.count({ where: { email: fresh } })).toBe(1);
   });
 });
 

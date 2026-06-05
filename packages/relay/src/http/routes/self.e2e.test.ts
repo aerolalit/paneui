@@ -16,6 +16,7 @@ import {
   LOGIN_COOKIE_NAME,
 } from "../../auth/cookie.js";
 import { hashClaimCode } from "../../auth/claim.js";
+import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -215,8 +216,6 @@ describe("PATCH /v1/self/profile", () => {
     expect(body.error.code).toBe("invalid_request");
   });
 });
-
-import { hashKey, keyPrefix } from "../../keys.js";
 
 describe("POST /v1/self/agents/:id/rotate-key", () => {
   async function seedClaimedAgent(
@@ -499,5 +498,180 @@ describe("POST /v1/self/agents/:id/revoke-key", () => {
     expect(body.error.code).toBe("invalid_request");
     // The updated hint — the old "unrevoke first" copy is gone.
     expect(body.error.hint ?? "").toMatch(/revocation is permanent/);
+  });
+});
+
+// F-07 — CSRF Origin/Referer check on the cookie-authed mounts. The app under
+// test was built with PUBLIC_URL=http://localhost:3000, so that is the relay's
+// own origin. /v1/self/* is one of the protected mounts.
+const SELF_ORIGIN = "http://localhost:3000";
+
+describe("CSRF Origin check (F-07)", () => {
+  it("rejects a cookie-authed POST with a cross-origin Origin (403)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/v1/self/claim-codes", {
+        method: "POST",
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          origin: "https://evil.example.com",
+        },
+      }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("csrf_origin_mismatch");
+  });
+
+  it("rejects a cookie-authed POST whose Referer is cross-origin (403)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/v1/self/claim-codes", {
+        method: "POST",
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          referer: "https://evil.example.com/page",
+        },
+      }),
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("csrf_origin_mismatch");
+  });
+
+  it("allows a cookie-authed POST with the correct same-origin Origin", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/v1/self/claim-codes", {
+        method: "POST",
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          origin: SELF_ORIGIN,
+        },
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("allows a cookie-authed POST with no Origin and no Referer (established pattern)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/v1/self/claim-codes", {
+        method: "POST",
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("does not 403 a cross-origin request that carries NO session cookie (401 instead)", async () => {
+    // No cookie => nothing to forge => CSRF middleware passes through and
+    // requireHuman 401s. A cross-site Origin must NOT turn this into a 403.
+    const res = await app.fetch(
+      new Request("http://t/v1/self/claim-codes", {
+        method: "POST",
+        headers: { origin: "https://evil.example.com" },
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("does not apply to GET — a cookie-authed GET on a protected mount with a cross-origin Origin is unaffected", async () => {
+    // GET is a safe method — exempt from the Origin check even on a CSRF-
+    // protected mount (/v1/my-trash is one). A cross-origin Origin on a GET
+    // must not 403; the request reaches the handler and returns 200.
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/v1/my-trash", {
+        method: "GET",
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          origin: "https://evil.example.com",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("does NOT apply to the agent bearer API (/v1 bearer routes)", async () => {
+    // The agent API is not cookie-authed. A bearer-authed mutation with a
+    // cross-origin Origin (or none) must work normally — the CSRF middleware
+    // is mounted only on the cookie-authed paths, never on the generic /v1
+    // agent routes. Exercise POST /v1/panes (agent-create) with a foreign
+    // Origin and assert it is NOT rejected with 403.
+    const apiKey = generateApiKey();
+    await prisma.agent.create({
+      data: {
+        name: "csrf-agent",
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/v1/panes", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json",
+          origin: "https://evil.example.com",
+        },
+        body: JSON.stringify({ title: "csrf-test" }),
+      }),
+    );
+    expect(res.status).not.toBe(403);
+    // It should be a normal create (201) or a validation error, but never a
+    // CSRF rejection.
+    expect([200, 201, 400, 422]).toContain(res.status);
+  });
+});
+
+describe("baseline security headers (F-10)", () => {
+  it("sets X-Content-Type-Options: nosniff on a /v1 JSON response", async () => {
+    const res = await app.fetch(new Request("http://t/v1/auth/status"));
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("does NOT set Strict-Transport-Security off production", async () => {
+    // The shared `app` is built with NODE_ENV unset (not production), so HSTS
+    // must be absent — pointless and harmful for localhost http: dev.
+    const res = await app.fetch(new Request("http://t/v1/auth/status"));
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("sets Strict-Transport-Security in production and still leaves a route CSP intact", async () => {
+    // A production app: HSTS present. AND the per-route CSP an HTML/owner-shell
+    // GET sets must NOT be clobbered by the global middleware.
+    const prodApp = buildApp(
+      loadConfig({
+        DATABASE_URL: testDb.dbUrl,
+        PUBLIC_URL: "https://relay.example.com",
+        NODE_ENV: "production",
+      }),
+      prisma,
+    );
+
+    const jsonRes = await prodApp.fetch(new Request("http://t/v1/auth/status"));
+    expect(jsonRes.headers.get("strict-transport-security")).toMatch(
+      /max-age=\d+/,
+    );
+    expect(jsonRes.headers.get("x-content-type-options")).toBe("nosniff");
+
+    // An HTML-negotiated bridge route (/s/:token) renders a styled error page
+    // with a tight per-route CSP + X-Frame-Options: DENY + Referrer-Policy:
+    // no-referrer — no DB seed needed (an unknown token is enough). The global
+    // baseline middleware must NOT clobber any of these (it sets neither CSP
+    // nor X-Frame-Options nor Referrer-Policy).
+    const htmlRes = await prodApp.fetch(
+      new Request("http://t/s/unknown-token-xyz", {
+        headers: { accept: "text/html" },
+      }),
+    );
+    const csp = htmlRes.headers.get("content-security-policy");
+    expect(csp).not.toBeNull();
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(htmlRes.headers.get("x-frame-options")).toBe("DENY");
+    expect(htmlRes.headers.get("referrer-policy")).toBe("no-referrer");
+    // The global nosniff is present alongside the route's own headers.
+    expect(htmlRes.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });

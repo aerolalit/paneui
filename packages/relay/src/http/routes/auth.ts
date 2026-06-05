@@ -25,6 +25,7 @@ import {
 } from "../../auth/magic-link.js";
 import type { AppEnv } from "../env.js";
 import { errors } from "../errors.js";
+import { checkMagicLinkRateLimit } from "../rate-limit.js";
 import { log } from "../../log.js";
 
 const auth = new Hono<AppEnv>();
@@ -92,9 +93,21 @@ auth.post("/auth/request-link", async (c) => {
   }
 
   const email = normalizeEmail(body.email);
+  const expiresAt = new Date(Date.now() + config.MAGIC_LINK_TTL_SECONDS * 1000);
+
+  // F-09 — per-(IP, email) throttle. When the limit is hit we MUST still
+  // return the same 202 the endpoint always returns: a different status here
+  // would turn the rate limit into an account-enumeration oracle (an attacker
+  // could distinguish "this address gets throttled" from "this one doesn't").
+  // So on throttle we skip the MagicLink row + the email send entirely and
+  // fall straight through to the identical 202 response below.
+  if (!(await checkMagicLinkRateLimit(c, email))) {
+    log.warn("magic-link request throttled", { email });
+    return c.json({ ok: true, expires_at: expiresAt.toISOString() }, 202);
+  }
+
   const token = generateMagicLinkToken();
   const tokenHash = hashMagicLinkToken(token);
-  const expiresAt = new Date(Date.now() + config.MAGIC_LINK_TTL_SECONDS * 1000);
 
   // Insert the row BEFORE sending — if the provider fails we'd rather have
   // an unconsumed row that expires harmlessly than an email referencing a
