@@ -12,6 +12,7 @@ import { prefersHtml } from "../http/accept.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
+import { paneAppleTouchIcon } from "../http/routes/apple-touch-icon.js";
 
 const bridge = new Hono<AppEnv>();
 
@@ -329,8 +330,60 @@ bridge.get("/:token", async (c) => {
       // hitting /s/<token> is already 302'd to /panes/<id> above this
       // point, so they never see the bare token shell.)
       topNav: null,
+      // This pane's own home-screen icon (effective image icon → robot).
+      appleTouchIconHref: `${tokenSeg}/icon.png`,
     }),
   );
+});
+
+// GET /s/:token/icon.png — this pane's iOS home-screen (apple-touch) icon. The
+// token in the URL is the auth: iOS fetches apple-touch-icon with no cookie, so
+// a cookie-gated route would 401 and leave the shortcut with a screenshot. The
+// resolver ALWAYS returns a 180×180 PNG (the pane's effective IMAGE icon
+// composited on the brand tile, else the robot default), so the shortcut always
+// gets a real icon.
+bridge.get("/:token/icon.png", async (c) => {
+  const prisma = c.get("prisma");
+  const token = c.req.param("token");
+  // loadByToken validates the token shape + resolves the pane (404 on a bad or
+  // revoked token — a non-pane URL shouldn't yield an icon).
+  const { pane } = await loadByToken(prisma, token);
+
+  // Effective IMAGE icon: pane override → template fallback. (loadByToken's pane
+  // row carries the pane's own iconAttachmentId; the template's lives one join
+  // away, fetched only when the pane has no override.)
+  let effective = pane.iconAttachmentId;
+  if (!effective) {
+    const withTpl = await prisma.pane.findUnique({
+      where: { id: pane.id },
+      select: {
+        templateVersion: {
+          select: { template: { select: { iconAttachmentId: true } } },
+        },
+      },
+    });
+    effective = withTpl?.templateVersion?.template?.iconAttachmentId ?? null;
+  }
+
+  const { png, etag } = await paneAppleTouchIcon(
+    c.get("blobStore"),
+    prisma,
+    effective,
+  );
+
+  c.header("ETag", etag);
+  c.header("Content-Type", "image/png");
+  c.header("Cache-Control", "public, max-age=3600");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cross-Origin-Resource-Policy", "same-origin");
+  if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+
+  // Hono's c.body wants an ArrayBuffer, not a Buffer — hand it a tight slice.
+  const ab = png.buffer.slice(
+    png.byteOffset,
+    png.byteOffset + png.byteLength,
+  ) as ArrayBuffer;
+  return c.body(ab);
 });
 
 bridge.get("/:token/content", async (c) => {
@@ -484,6 +537,12 @@ export interface ShellArgs {
   // The capability-token mount (/s/<token>) leaves this null — anonymous
   // callers get no account bar at all.
   topNav: { email: string } | null;
+  // Href for the iOS home-screen icon (apple-touch-icon). The /s/<token> mount
+  // points at this pane's own icon route (`/s/<token>/icon.png` — the pane's
+  // effective image icon, else the robot default); the owner mount keeps the
+  // static `/apple-touch-icon.png` (its icon route is cookie-gated and iOS may
+  // fetch the icon without the cookie).
+  appleTouchIconHref: string;
 }
 
 function renderTopNav(args: ShellArgs): string {
@@ -496,14 +555,7 @@ function renderTopNav(args: ShellArgs): string {
   return `<div class="top-nav">
   <div class="top-nav-bar">
     <a class="top-nav-brand" href="/home" aria-label="pane home">
-      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-        <rect width="100" height="100" rx="22" fill="#0f172a"/>
-        <circle cx="62" cy="58" r="17" fill="#22d3ee"/>
-        <rect x="20" y="26" width="40" height="32" rx="10" fill="#0f172a"/>
-        <rect x="24" y="30" width="32" height="24" rx="7" fill="#a78bfa"/>
-        <circle cx="33.5" cy="42" r="3.4" fill="#0f172a"/>
-        <circle cx="46.5" cy="42" r="3.4" fill="#0f172a"/>
-      </svg>
+      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${BRAND_MARK_SVG_BODY}</svg>
       <span class="wordmark">pane</span>
     </a>
     <div class="top-nav-presence">
@@ -569,7 +621,7 @@ export function renderShell(args: ShellArgs): string {
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="${args.appleTouchIconHref}">
 <style nonce="${args.nonce}">
   /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
      values (kept byte-identical); the light override at the bottom adapts the
