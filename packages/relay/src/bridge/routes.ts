@@ -9,6 +9,7 @@ import { hashKey } from "../keys.js";
 import type { AppEnv } from "../http/env.js";
 import { errors, ApiError } from "../http/errors.js";
 import { prefersHtml } from "../http/accept.js";
+import { participantBindingSatisfied } from "../auth/human-auth.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
@@ -107,12 +108,40 @@ const PERMISSIONS_POLICY = [
 // defence.
 const TOKEN_RX = /^tok_[ah]_[A-Za-z0-9_-]{43}$/;
 
-async function loadByToken(prisma: PrismaClient, token: string) {
+// loadByToken resolves a /s/:token participant + pane and — by default —
+// ENFORCES the identity binding (F-02): if the participant is bound to a
+// human (`humanId` set), the request must carry a matching `pane_login`
+// cookie, else it 404s opaquely (same shape as a bad/revoked token, so the
+// bridge isn't an "account exists" oracle).
+//
+// `opts.cookieHeader` MUST be threaded in by every caller (the raw `Cookie:`
+// header) so the binding can be checked. The one exception is the shell page
+// handler, which passes `enforceBinding: false` because it implements a
+// RICHER UX for the same condition (302 → /login when logged out, 403
+// wrong_account when logged in as someone else) and so does its own check.
+async function loadByToken(
+  prisma: PrismaClient,
+  token: string,
+  opts: { cookieHeader?: string | null; enforceBinding?: boolean } = {},
+) {
+  const { cookieHeader = null, enforceBinding = true } = opts;
   if (!TOKEN_RX.test(token)) throw errors.notFound();
   const participant = await prisma.participant.findUnique({
     where: { tokenHash: hashKey(token) },
   });
   if (!participant || participant.revokedAt) throw errors.notFound();
+  if (enforceBinding) {
+    const ok = await participantBindingSatisfied(
+      prisma,
+      participant,
+      cookieHeader,
+    );
+    // Opaque 404 — identical to an unknown/revoked token so a holder of a
+    // leaked identity-bound token can't distinguish "needs the bound login"
+    // from "token is dead". The shell page (enforceBinding:false) is the
+    // human-facing surface that turns this into a login redirect / 403.
+    if (!ok) throw errors.notFound();
+  }
   const pane = await prisma.pane.findUnique({
     where: { id: participant.paneId },
     include: { templateVersion: true },
@@ -175,7 +204,10 @@ bridge.get("/:token", async (c) => {
   }
   let loaded: Awaited<ReturnType<typeof loadByToken>>;
   try {
-    loaded = await loadByToken(prisma, token);
+    // enforceBinding:false — this handler implements the richer human-facing
+    // UX for the identity binding below (302 → /login, 403 wrong_account)
+    // instead of the opaque 404 loadByToken would otherwise raise.
+    loaded = await loadByToken(prisma, token, { enforceBinding: false });
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
       return humanOrJsonError(c, err);
@@ -347,7 +379,14 @@ bridge.get("/:token/icon.png", async (c) => {
   const token = c.req.param("token");
   // loadByToken validates the token shape + resolves the pane (404 on a bad or
   // revoked token — a non-pane URL shouldn't yield an icon).
-  const { pane } = await loadByToken(prisma, token);
+  //
+  // enforceBinding:false — iOS fetches apple-touch-icon with NO cookie, so an
+  // identity-bound token could never satisfy the cookie check here and the
+  // shortcut would fall back to a screenshot. The icon route deliberately
+  // returns only this pane's (or the default robot) 180×180 PNG — no event
+  // data, no template body, no presence — so leaving it token-only does not
+  // expose anything the binding is meant to protect.
+  const { pane } = await loadByToken(prisma, token, { enforceBinding: false });
 
   // Effective IMAGE icon: pane override → template fallback. (loadByToken's pane
   // row carries the pane's own iconAttachmentId; the template's lives one join
@@ -394,7 +433,12 @@ bridge.get("/:token/content", async (c) => {
   }
   let loaded: Awaited<ReturnType<typeof loadByToken>>;
   try {
-    loaded = await loadByToken(prisma, token);
+    // Enforce the identity binding here (default): a leaked identity-bound
+    // token must NOT be able to fetch the template body without the bound
+    // login cookie. The iframe carries the cookie on this same-origin fetch.
+    loaded = await loadByToken(prisma, token, {
+      cookieHeader: c.req.header("cookie") ?? null,
+    });
   } catch (err) {
     if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
       return humanOrJsonError(c, err);
@@ -483,7 +527,11 @@ bridge.get("/:token/presence", async (c) => {
   const prisma = c.get("prisma");
   const token = c.req.param("token");
   if (!token) throw errors.notFound();
-  const { pane } = await loadByToken(prisma, token);
+  // Enforce the identity binding (default) — the shell polls this with the
+  // bound login cookie; a leaked token without it 404s like a dead token.
+  const { pane } = await loadByToken(prisma, token, {
+    cookieHeader: c.req.header("cookie") ?? null,
+  });
 
   const presence = await computeAgentPresence(prisma, pane);
 

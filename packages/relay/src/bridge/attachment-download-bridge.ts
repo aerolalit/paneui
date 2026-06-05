@@ -52,6 +52,7 @@ import { hashKey } from "../keys.js";
 import { errors } from "../http/errors.js";
 import type { AppEnv } from "../http/env.js";
 import { collectBlobRefs } from "../attachments/ref-access.js";
+import { participantBindingSatisfied } from "../auth/human-auth.js";
 import type { EventSchema } from "../types.js";
 
 // Participant tokens are minted in keys.ts with a type prefix ("tok_a_" for
@@ -122,9 +123,21 @@ blobDownloadBridge.get(
     // Resolve participant -> pane -> agent. Identical to the upload bridge.
     const participant = await prisma.participant.findUnique({
       where: { tokenHash: hashKey(token) },
-      select: { paneId: true, revokedAt: true },
+      select: { paneId: true, revokedAt: true, humanId: true },
     });
     if (!participant || participant.revokedAt) {
+      throw errors.participantTokenInvalid();
+    }
+    // F-02: an identity-bound token only works with the matching login cookie.
+    // A miss collapses to the same opaque participant_token_invalid this route
+    // returns for a bad/revoked token — no "wrong account" oracle on the bytes.
+    if (
+      !(await participantBindingSatisfied(
+        prisma,
+        participant,
+        c.req.header("cookie") ?? null,
+      ))
+    ) {
       throw errors.participantTokenInvalid();
     }
     const pane = await prisma.pane.findUnique({
