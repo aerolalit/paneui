@@ -1087,8 +1087,13 @@ systemPages.get("/my-agents", async (c) => {
                 a.revokedAt || isTrashed
                   ? ""
                   : `<button class="btn ghost" type="button" data-act="revoke" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;color:#b34700;">Revoke</button>`;
+              // flex-basis 220px (not 0) so on narrow viewports the title
+              // block can't collapse to a one-word-per-line column when the
+              // action group (pill + Regenerate + Revoke) won't fit beside
+              // it. The parent's flex-wrap kicks in and the action group
+              // moves to a second row instead of squeezing the title.
               return `<li data-agent-id="${escapeHtml(a.id)}">
-                <div style="min-width:0;flex:1;">
+                <div style="min-width:220px;flex:1 1 220px;">
                   <div class="title">${escapeHtml(a.name)}</div>
                   <div class="meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${claimed} · last used ${escapeHtml(lastUsed)}</div>
                   <div class="rotate-out" hidden style="margin-top:10px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:12px 14px;">
