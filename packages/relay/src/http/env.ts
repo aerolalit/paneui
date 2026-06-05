@@ -14,6 +14,9 @@ export type AppEnv = {
     config: Config;
     // Per-IP limiter for the open POST /v1/register endpoint.
     registerLimiter: SlidingWindowLimiter;
+    // Stricter limiter for POST /v1/auth/request-link, keyed on (IP, email).
+    // Bounds magic-link email-bombing of a single address from rotating IPs.
+    magicLinkLimiter: SlidingWindowLimiter;
     // General per-IP + per-token limiter for every /v1/* and /s/* route. The
     // same instance is also handed to the WebSocket-upgrade path via
     // attachWs(), so HTTP and WS-upgrade attempts share one IP bucket.

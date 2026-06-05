@@ -325,6 +325,11 @@ ownerShell.get("/:id", async (c) => {
       // logo links back to /home; system-page tabs are intentionally omitted
       // here so the pane viewer stays a focused single-pane surface.
       topNav: { email: human.email },
+      // Owner mount keeps the static robot home-screen icon. The per-pane icon
+      // route (/s/<token>/icon.png) is token-authed; an owner equivalent would
+      // be cookie-gated, and iOS may fetch apple-touch-icon without the cookie,
+      // so a 401 there would yield no icon at all (worse than the robot).
+      appleTouchIconHref: "/apple-touch-icon.png",
     }),
   );
 });

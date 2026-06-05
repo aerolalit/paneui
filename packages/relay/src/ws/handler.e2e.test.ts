@@ -22,6 +22,12 @@ import { hashKey, keyPrefix } from "../keys.js";
 import { buildApp } from "../http/app.js";
 import { createRateLimiter } from "../http/rate-limit.js";
 import { attachWs } from "./handler.js";
+import { generateHumanParticipantToken } from "../keys.js";
+import {
+  generateLoginCookie,
+  hashLoginCookie,
+  LOGIN_COOKIE_NAME,
+} from "../auth/cookie.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -242,6 +248,26 @@ describe("WS e2e", () => {
     const b = await createPane(apiKey);
     const ws = connect(a.paneId, b.humanToken);
     await expect(waitOpen(ws)).rejects.toThrow(/404/);
+  });
+
+  // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+  // expiresAt until the hard-delete sweeper runs, so the WS connect's
+  // status/expiry gate alone wouldn't catch it. The added deletedAt check must
+  // refuse the upgrade (410), closing the WS replay-read + frame-write surface
+  // on a trashed pane.
+  it("rejects a WS upgrade on a soft-deleted pane (410, F-08)", async () => {
+    const { apiKey } = await seedAgent();
+    const { paneId, agentToken } = await createPane(apiKey);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { deletedAt: new Date() },
+    });
+    // Sanity: still open + unexpired — only deletedAt flipped.
+    const row = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(row?.status).toBe("open");
+    expect(row?.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    const ws = connect(paneId, agentToken);
+    await expect(waitOpen(ws)).rejects.toThrow(/410/);
   });
 
   it("agent connects, sends a frame, receives an ack", async () => {
@@ -553,6 +579,97 @@ describe("WS e2e", () => {
       // Drain the join broadcast + replay.complete so handleConnection's
       // appendSystemEvent has finished before we close and the suite tears
       // down — otherwise the system-event write races the pane delete.
+      await q.take(2);
+      ws.close();
+    });
+  });
+
+  // F-02 — identity-bound participant token enforcement on the WS upgrade.
+  // The token-path upgrade must require the matching `pane_login` cookie when
+  // the participant is bound to a human; without it the upgrade is rejected
+  // (collapsed to the same 404 "bearer not resolvable" a dead token sees).
+  describe("identity-bound token (F-02)", () => {
+    async function seedLogin(
+      email: string,
+    ): Promise<{ humanId: string; cookie: string }> {
+      const human = await prisma.human.create({
+        data: { email, verifiedAt: new Date() },
+      });
+      const cookie = generateLoginCookie();
+      await prisma.login.create({
+        data: {
+          humanId: human.id,
+          cookieHash: hashLoginCookie(cookie),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+      return { humanId: human.id, cookie };
+    }
+
+    // Mint a participant token directly on an existing pane. humanId set =
+    // identity-bound; null = anonymous capability link.
+    async function mintParticipant(
+      paneId: string,
+      humanId: string | null,
+    ): Promise<string> {
+      const token = generateHumanParticipantToken();
+      await prisma.participant.create({
+        data: {
+          paneId,
+          kind: "human",
+          identityId: `h_${randomBytes(3).toString("hex")}`,
+          tokenHash: hashKey(token),
+          tokenPrefix: keyPrefix(token),
+          ...(humanId ? { humanId } : {}),
+        },
+      });
+      return token;
+    }
+
+    it("rejects an identity-bound token with no cookie (404)", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      const bob = await seedLogin("bob@example.com");
+      const token = await mintParticipant(paneId, bob.humanId);
+      const ws = connect(paneId, token); // no cookie header
+      await expect(waitOpen(ws)).rejects.toThrow(/404/);
+    });
+
+    it("rejects an identity-bound token with a different human's cookie (404)", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      const bob = await seedLogin("bob@example.com");
+      const eve = await seedLogin("eve@example.com");
+      const token = await mintParticipant(paneId, bob.humanId);
+      const ws = new WebSocket(
+        `ws://localhost:${port}/v1/panes/${paneId}/stream?token=${token}`,
+        { headers: { cookie: `${LOGIN_COOKIE_NAME}=${eve.cookie}` } },
+      );
+      await expect(waitOpen(ws)).rejects.toThrow(/404/);
+    });
+
+    it("accepts an identity-bound token with the bound human's cookie", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      const bob = await seedLogin("bob@example.com");
+      const token = await mintParticipant(paneId, bob.humanId);
+      const ws = new WebSocket(
+        `ws://localhost:${port}/v1/panes/${paneId}/stream?token=${token}`,
+        { headers: { cookie: `${LOGIN_COOKIE_NAME}=${bob.cookie}` } },
+      );
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
+      await q.take(2); // join + replay.complete
+      ws.close();
+    });
+
+    it("accepts an anonymous token with no cookie (regression guard)", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      const token = await mintParticipant(paneId, null);
+      const ws = connect(paneId, token); // no cookie
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
       await q.take(2);
       ws.close();
     });

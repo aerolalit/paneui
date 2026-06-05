@@ -1,4 +1,17 @@
 import { z } from "zod";
+import { RASTER_ICON_MIME_ALLOWLIST } from "@paneui/core";
+
+// Secure default for BLOB_MIME_ALLOWLIST. Derived from the shared raster-image
+// allowlist (png/jpeg/webp/gif) + application/pdf so it can never drift from
+// the icon allowlist or the download disposition logic. Deliberately an
+// EXPLICIT list of full MIME types — NOT the bare `image/` prefix, which would
+// also admit `image/svg+xml` (unnormalised, script-carrying → stored XSS).
+export const DEFAULT_BLOB_MIME_ALLOWLIST_PARTS: readonly string[] = [
+  ...RASTER_ICON_MIME_ALLOWLIST,
+  "application/pdf",
+];
+export const DEFAULT_BLOB_MIME_ALLOWLIST =
+  DEFAULT_BLOB_MIME_ALLOWLIST_PARTS.join(",");
 
 const schema = z.object({
   NODE_ENV: z
@@ -32,6 +45,17 @@ const schema = z.object({
   // RATE_LIMIT=0 disables the general limiter entirely (unlimited).
   RATE_LIMIT: z.coerce.number().int().min(0).default(120),
   RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  // Dedicated stricter limit for POST /v1/auth/request-link, keyed on BOTH the
+  // client IP and the normalized target email (so a victim can't be bombed by
+  // an attacker rotating IPs). Mirrors REGISTER_RATE_LIMIT. When the limit is
+  // hit the endpoint still returns its usual 202 (no enumeration oracle) but
+  // skips creating the MagicLink row + sending the email. =0 disables it.
+  MAGIC_LINK_RATE_LIMIT: z.coerce.number().int().min(0).default(3),
+  MAGIC_LINK_RATE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(900),
   // Comma-separated list of proxy IPs the relay sits directly behind. Only
   // when the socket peer is one of these is the `X-Forwarded-For` header
   // honored (taking the last untrusted hop). Empty = never trust XFF.
@@ -73,6 +97,30 @@ const schema = z.object({
   // Max number of versions a single template may accumulate.
   // MAX_VERSIONS_PER_ARTIFACT=0 disables the cap.
   MAX_VERSIONS_PER_ARTIFACT: z.coerce.number().int().min(0).default(50),
+  // Usage-maturity gates keyed on a template's count of currently-open panes
+  // (status=open AND deletedAt=null AND expiresAt>now, summed across all of
+  // the template's versions). Both gate a template until it has proven a bit
+  // of real use before it clutters a list or enters the public store.
+  //   TEMPLATE_LIST_MIN_OPEN_PANES — GET /v1/templates (the author's own list,
+  //     and the owner-shell "Yours" grid) hides a template with fewer than
+  //     this many open panes. NOT applied to the ?include_deleted=true trash
+  //     view. 0 disables the filter (every template lists).
+  TEMPLATE_LIST_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(2),
+  //   TEMPLATE_PUBLISH_MIN_OPEN_PANES — the first publish to the public store
+  //     (POST /v1/templates/:id/publish) is refused below this threshold. A
+  //     re-publish of an already-published template (publishedAt set) skips
+  //     the gate. 0 disables the gate (any template may publish).
+  TEMPLATE_PUBLISH_MIN_OPEN_PANES: z.coerce.number().int().min(0).default(5),
+  // F-11 — hard ceiling on how many published-template rows the public
+  // catalog search will pull from the DB when resolving a tag-substring
+  // match (the JSON `tags` array can't be substring-matched portably across
+  // SQLite + Postgres, so the tag pass scans a bounded `{id, tags}`
+  // projection rather than the whole table). name/description matches go
+  // straight to SQL `contains` and are paginated; this cap only bounds the
+  // tag-resolution pre-scan so the catalog can never materialise the entire
+  // published set into memory regardless of how large it grows. 0 disables
+  // the tag pass entirely (name/description search still works DB-side).
+  TEMPLATE_SEARCH_SCAN_CAP: z.coerce.number().int().min(0).default(1_000),
   // Caps on the agent-supplied per-pane JSON Schema. The schema is compiled
   // by Ajv at pane-create / schema-patch time; an oversized or
   // pathologically-nested schema is a CPU sink, so both are bounded up front.
@@ -260,19 +308,31 @@ const schema = z.object({
     .default(true)
     .transform((v) => v === true || v === "true"),
 
-  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default
-  // covers images and PDFs. Comma-separated for the env var; an empty string
-  // disables the allowlist (every sniffed MIME is accepted — only sensible
-  // for closed self-host).
+  // Allowed MIME prefixes (matched as `mime.startsWith(prefix)`). Default is an
+  // EXPLICIT raster-image + PDF list — deliberately NOT the bare `image/`
+  // prefix, which would also match `image/svg+xml` (an XSS vector: SVG carries
+  // inline <script>/event handlers and is not normalised). See
+  // docs/SECURITY-POLYGLOTS.md.
+  //
+  // Comma-separated for the env var. An empty / unset value FALLS BACK to this
+  // secure default — it does NOT disable the allowlist (an accidental empty
+  // `BLOB_MIME_ALLOWLIST=` must never fail open and accept every type). To
+  // intentionally accept any sniffed MIME (only sensible for a closed
+  // self-host), set the single sentinel value `*`.
   BLOB_MIME_ALLOWLIST: z
     .string()
-    .default("image/,application/pdf")
-    .transform((s) =>
-      s
+    .default(DEFAULT_BLOB_MIME_ALLOWLIST)
+    .transform((s) => {
+      const parts = s
         .split(",")
         .map((p) => p.trim())
-        .filter(Boolean),
-    ),
+        .filter(Boolean);
+      // Accidental-empty (`BLOB_MIME_ALLOWLIST=`) → secure default, never
+      // accept-any. The explicit accept-any escape hatch is the `*` sentinel,
+      // preserved verbatim and interpreted by isMimeAllowed().
+      if (parts.length === 0) return [...DEFAULT_BLOB_MIME_ALLOWLIST_PARTS];
+      return parts;
+    }),
 
   // Default TTL for a /b/<token> capability URL minted against an
   // template-scope attachment. 30 days. Template-scope is the longest-lived; these

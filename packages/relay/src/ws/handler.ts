@@ -239,7 +239,19 @@ export function attachWs(
   },
   deps: WsDeps,
 ): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  // Cap the per-frame buffer at the protocol layer. The `ws` default is
+  // 100 MiB, which lets an authenticated client repeatedly force a 100 MiB
+  // allocation + a synchronous JSON.parse on the single event loop (the
+  // message handler parses the full frame BEFORE the app-level
+  // MAX_EVENT_DATA_BYTES check). Size this just above the largest legitimate
+  // frame: MAX_EVENT_DATA_BYTES of `data` plus the same 64 KiB envelope
+  // headroom the HTTP event routes use (see http/app.ts bodyLimit). Oversized
+  // frames are rejected by `ws` with close code 1009 before any buffering, and
+  // the per-socket 'error' handler in handleConnection keeps the process alive.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: deps.config.MAX_EVENT_DATA_BYTES + 64 * 1024,
+  });
   server.on("upgrade", (req, socket, head) => {
     void handleUpgrade(wss, deps, req, socket, head);
   });
@@ -388,7 +400,21 @@ async function handleUpgrade(
         });
       }
     } else {
-      const resolved = await resolveBearer(prisma, cred.value);
+      // F-02: thread the upgrade request's Cookie header into resolveBearer so
+      // an identity-bound participant token only resolves with the matching
+      // `pane_login` cookie. The browser sends cookies on the WS handshake
+      // (same-origin upgrade); a leaked token used from a context without the
+      // cookie collapses to "not resolvable" and is rejected below.
+      const cookieHeader =
+        typeof req.headers["cookie"] === "string"
+          ? req.headers["cookie"]
+          : null;
+      const resolved = await resolveBearer(
+        prisma,
+        cred.value,
+        "both",
+        cookieHeader,
+      );
       if (!resolved) {
         sendUpgradeError(socket, 404, "bearer not resolvable", { paneId });
         return;
@@ -420,6 +446,20 @@ async function handleUpgrade(
         pane = s;
         author = { kind: "agent", id: resolved.agent.id };
       }
+    }
+
+    // F-08 — a soft-deleted (trashed) pane keeps status="open" + a future
+    // expiresAt until the hard-delete sweeper runs, so the status/expiry gate
+    // below does NOT catch it. Refuse the WS upgrade so a trashed pane can't
+    // be read (event/record replay) or written (frame writes) over the
+    // socket. Mirrors the dualAuth HTTP refusal (auth.ts) and the writeEvent
+    // refusal (core/events.ts). 410 matches errors.softDeleted's status.
+    if (pane.deletedAt !== null) {
+      sendUpgradeError(socket, 410, "pane is in trash", {
+        paneId,
+        paneStatus: pane.status,
+      });
+      return;
     }
 
     if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {

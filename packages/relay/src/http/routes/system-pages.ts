@@ -16,18 +16,123 @@
 // routes; templatising them is a follow-up refactor that doesn't change
 // behaviour. See HUMAN-SIDE-PROPOSAL.md "Open decisions" tail.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   resolveHumanOptional,
   type OptionalHumanAuthEnv,
 } from "../../auth/human-auth.js";
 import { BRAND_LOGO, BRAND_FAVICON_SVG } from "../../brand.js";
+import {
+  APP_ICON_180_PNG,
+  APP_ICON_192_PNG,
+  APP_ICON_512_PNG,
+} from "../../app-icon.js";
 import { renderOwnerShell } from "./owner-shell-spa.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
+import { PERMISSIONS_POLICY } from "../../bridge/routes.js";
 
 const systemPages = new Hono<OptionalHumanAuthEnv>();
 
+// Defence-in-depth Content-Security-Policy for every HTML page this router
+// emits (/, /login, /home, /my-templates/:id/content, /my-agents, plus the
+// logged-out / not-found variants). No XSS is currently reachable here — the
+// escapers are applied consistently — but unlike the owner-shell SPA and the
+// bridge routes these pages previously shipped with NO CSP, so a future
+// escaping regression had no second line of defence.
+//
+// F-18 follow-up: the system-pages-authored HTML (everything rendered through
+// `layout()` — /, /login, /my-templates/:id/content, /my-agents, and the
+// logged-out variants) is now served with a NONCE-based CSP — NO
+// 'unsafe-inline' on either script-src or style-src — mirroring the bridge /
+// owner-shell shells. Every inline <script>/<style> element these pages emit
+// carries the per-request nonce, and the ~50 inline `style="…"` *attributes*
+// (which a nonce cannot cover) were migrated into the single nonce'd <style>
+// block in `layout()` as classes/ids.
+//
+// The lone exception is /home, which delegates to the owner-shell SPA
+// (renderOwnerShell). The SPA's <script>/<style> elements are nonce'd too (so
+// script-src drops 'unsafe-inline' there as well), but the SPA still carries
+// dynamic, per-element inline `style="…"` attributes — hash-derived hue
+// gradients computed both server-side AND client-side (innerHTML in SHELL_JS).
+// A nonce cannot cover style *attributes*, so /home keeps `style-src
+// 'unsafe-inline'` as a documented interim until those dynamic styles are
+// reworked to use CSSOM (el.style.setProperty, which style-src does not
+// govern). See HOME_SPA_CSP below.
+
+// 16 bytes of entropy, base64url so the value is safe inside both a CSP
+// directive and an HTML attribute without escaping. Same construction as the
+// bridge / owner-shell shells (src/bridge/routes.ts, owner-shell.ts).
+function generateCspNonce(): string {
+  const buf = new Uint8Array(16);
+  crypto.getRandomValues(buf);
+  return Buffer.from(buf).toString("base64url");
+}
+
+// Nonce-based CSP for the system-pages-authored HTML. No 'unsafe-inline' on
+// script-src or style-src — every inline block is nonce'd and there are no
+// inline style attributes left in this file's output.
+function systemPageCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'nonce-${nonce}'`,
+    `style-src 'nonce-${nonce}'`,
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+// CSP for the /home owner-shell SPA. script-src is nonce-only (the SPA's one
+// inline <script> + one inline <style> are nonce'd); style-src retains
+// 'unsafe-inline' as a documented interim because the SPA emits dynamic
+// per-element inline `style="…"` attributes (hue gradients) — including ones
+// produced client-side by SHELL_JS — that a nonce cannot cover.
+function homeSpaCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "frame-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
 systemPages.use("*", resolveHumanOptional);
+
+// Set the CSP + the sibling hardening headers the owner-shell / bridge HTML
+// mounts already set. Called by every HTML-emitting handler in this router.
+//
+// NOTE: this is deliberately a per-handler helper rather than a
+// `systemPages.use("*", …)` middleware. systemPages is mounted at "/" in
+// app.ts, so a router-level wildcard middleware here would run for EVERY app
+// route (including the bridge /s/:token shell and the owner-shell /panes/:id
+// mount, which set their own nonce-based CSPs) and clobber their headers.
+// Scoping to the handlers keeps the policy on exactly the pages this file owns.
+function setSystemPageSecurityHeaders(c: Context, csp: string): void {
+  c.header("Content-Security-Policy", csp);
+  c.header("X-Frame-Options", "DENY");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
+}
+
+// Render an HTML system page with the security headers applied. Thin wrapper
+// over c.html so no HTML route can forget the CSP. `csp` defaults to the
+// nonce-based system-pages policy; /home passes the SPA variant explicitly.
+function htmlPage(
+  c: Context,
+  body: string,
+  opts: { nonce: string; status?: 200 | 404; csp?: string },
+): Response {
+  setSystemPageSecurityHeaders(c, opts.csp ?? systemPageCsp(opts.nonce));
+  return opts.status === undefined ? c.html(body) : c.html(body, opts.status);
+}
 
 // Shared layout primitives — every system page wraps its body in this
 // shell so the visual identity is uniform.
@@ -59,6 +164,8 @@ function layout(args: {
   title: string;
   email: string | null;
   body: string;
+  /** Per-request CSP nonce — stamped on the inline <style> + <script>. */
+  nonce: string;
   /** Slug of the current page (e.g. "home"). Highlights the nav link. */
   active?: string;
 }): string {
@@ -81,11 +188,12 @@ function layout(args: {
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="pane" />
 <title>${escapeHtml(args.title)} · pane</title>
-<style>
+<style nonce="${args.nonce}">
   :root {
     --bg: #f6f7f9;
     --panel: #ffffff;
@@ -360,6 +468,64 @@ function layout(args: {
   .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; flex: none; }
   .pill.good { background: var(--good-soft); color: var(--good); }
   .pill.muted { background: var(--code-bg); color: var(--muted); }
+
+  /* ---- F-18: classes replacing former inline style attributes ----
+     A nonce-only style-src blocks inline style attributes, so every
+     presentational style attribute in the pages this file renders moved
+     here. Grouped by page; names are descriptive so the markup reads
+     cleanly. */
+
+  /* GET / — public landing */
+  .landing-card { max-width: 560px; margin: 24px auto 0; padding: 32px 28px; }
+  .landing-title { margin: 0 0 14px; font-size: 28px; letter-spacing: -0.015em; }
+  .landing-lede { color: var(--muted); font-size: 15px; margin: 0 0 18px; }
+  .landing-cta-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 22px; }
+  .landing-cta-btn { min-width: 160px; }
+  .landing-disabled { color: var(--muted); font-size: 14px; }
+  .landing-section-h { font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 18px 0 10px; }
+
+  /* GET /login — sign-in form */
+  .login-h2 { margin-top: 0; }
+  .login-sub { color: var(--muted); font-size: 14.5px; }
+  .login-label { font-size: 13px; color: var(--muted); margin-bottom: 6px; display: block; }
+  .login-label-name { margin-top: 0; }
+  .login-label-opt { color: var(--muted); font-weight: 400; }
+  .login-input-name { margin-bottom: 12px; }
+  .login-submit { width: 100%; margin-top: 14px; }
+  .login-status { margin-top: 14px; font-size: 14px; color: var(--muted); }
+  .login-footnote { margin-top: 18px; font-size: 13px; color: var(--muted); }
+
+  /* GET /my-templates/:id/content — template-records management */
+  .trec-back { margin: 0 0 4px; }
+  .trec-back-link { font-size: 13px; }
+  .trec-subtitle { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+  .trec-section-h { margin: 0 0 12px; font-size: 16px; letter-spacing: -0.005em; }
+  .trec-add { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .trec-key { flex: 0 1 180px; min-width: 140px; }
+  .trec-data { flex: 1 1 240px; min-width: 200px; font-family: "SF Mono",Menlo,Consolas,monospace; font-size: 13px; }
+  .meta-dim { color: var(--muted); }
+
+  /* GET /my-agents — claimed agents */
+  .agents-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .agents-head h1 { margin: 0; }
+  .agents-toggle { padding: 6px 14px; font-size: 13px; }
+  .agents-lede { color: var(--muted); font-size: 14.5px; }
+  .agents-claim-row { justify-content: space-between; margin-bottom: 6px; }
+  .agents-claim-row h2 { margin: 0; }
+  .agents-claim-hint { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  .reveal-box { background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 10px; padding: 14px 16px; }
+  .reveal-box.tight { padding: 12px 14px; margin-top: 10px; }
+  .reveal-label { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+  .reveal-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .reveal-code { font-size: 15px; background: var(--panel); padding: 6px 10px; display: inline-block; border-radius: 6px; border: 1px solid var(--accent-border); user-select: all; }
+  .reveal-code.key { font-size: 14px; word-break: break-all; }
+  .reveal-foot { font-size: 13px; color: var(--accent-ink); margin-top: 8px; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; min-height: 36px; }
+  .agents-claimed-h { margin-top: 0; }
+  .agent-title-col { min-width: 220px; flex: 1 1 220px; }
+  .agent-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pill.trashed { background: #fff4ec; color: #b34700; }
+  .btn-danger-ink { color: #b34700; }
 </style>
 </head>
 <body>
@@ -389,7 +555,7 @@ function layout(args: {
     ${nav("settings", NAV_LABELS.settings, "/settings")}
   </div>
 </nav>
-<script>
+<script nonce="${args.nonce}">
   document.getElementById("pane-logout")?.addEventListener("click", async () => {
     try {
       await fetch("/v1/auth/logout", { method: "POST" });
@@ -471,6 +637,39 @@ systemPages.get("/favicon.svg", (c) => {
 });
 
 // ----------------------------------------------------------------------
+// Home-screen / install icons — PNG raster of the marketing mark.
+//
+// iOS Safari's "Add to Home Screen" needs a real PNG apple-touch-icon; it
+// ignores the SVG-only manifest icon, which is why the shortcut used to fall
+// back to a screenshot. These are served as same-origin routes (not data:
+// URIs) so Safari fetches them via <link rel="apple-touch-icon"> and the OS
+// also finds /apple-touch-icon.png at the site root by convention. The
+// -precomposed alias covers older iOS that prefers the unglossed variant.
+// Source bytes live embedded in src/app-icon.ts (single-binary, no asset dir).
+// ----------------------------------------------------------------------
+const servePng = (png: Buffer) => {
+  // Hono's c.body type accepts ArrayBuffer (not Buffer) — hand it a clean,
+  // exact-length ArrayBuffer view. Buffer.from(base64) is unpooled, so the
+  // slice is a tight copy of just the icon bytes.
+  const ab = png.buffer.slice(
+    png.byteOffset,
+    png.byteOffset + png.byteLength,
+  ) as ArrayBuffer;
+  return (c: Context) => {
+    c.header("Content-Type", "image/png");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(ab);
+  };
+};
+systemPages.get("/apple-touch-icon.png", servePng(APP_ICON_180_PNG));
+systemPages.get(
+  "/apple-touch-icon-precomposed.png",
+  servePng(APP_ICON_180_PNG),
+);
+systemPages.get("/icon-192.png", servePng(APP_ICON_192_PNG));
+systemPages.get("/icon-512.png", servePng(APP_ICON_512_PNG));
+
+// ----------------------------------------------------------------------
 // GET /manifest.webmanifest — PWA manifest.
 //
 // Served from the relay so an installed-to-homescreen pane (Add to Home
@@ -496,11 +695,31 @@ systemPages.get("/manifest.webmanifest", (c) => {
       background_color: "#0b0e14",
       theme_color: "#0b0e14",
       categories: ["productivity", "developer"],
-      // Icons inlined as a single SVG. Real-world PWAs typically ship
-      // PNG variants too; iOS still respects the apple-touch-icon meta
-      // even when the manifest only declares SVG, so this is sufficient
-      // for the install flow without standing up an asset pipeline.
+      // Raster PNG icons for the install flow. iOS uses the apple-touch-icon
+      // <link>; Android/Chrome + desktop installs use these manifest entries
+      // (a manifest that declares only SVG gives Android no maskable icon and
+      // iOS nothing for the home screen). The scalable SVG is kept last as a
+      // progressive-enhancement "any" fallback. Bytes served from /icon-*.png
+      // and /apple-touch-icon.png above (source: src/app-icon.ts).
       icons: [
+        {
+          src: "/apple-touch-icon.png",
+          sizes: "180x180",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "/icon-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any maskable",
+        },
+        {
+          src: "/icon-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any maskable",
+        },
         {
           src: "/favicon.svg",
           sizes: "any",
@@ -527,20 +746,25 @@ systemPages.get("/", (c) => {
     return c.redirect("/home", 302);
   }
   const provider = c.get("emailProvider");
+  const nonce = generateCspNonce();
   const signInCta = provider.available
-    ? `<a class="btn" href="/login" style="min-width:160px;">Sign in</a>`
-    : `<span style="color:var(--muted);font-size:14px;">Human login is disabled on this relay (<code>EMAIL_PROVIDER=none</code>). The agent API is still available.</span>`;
-  const body = `<div class="card" style="max-width:560px;margin:24px auto 0;padding:32px 28px;">
-      <h1 style="margin:0 0 14px;font-size:28px;letter-spacing:-0.015em;">Pane relay</h1>
-      <p style="color:var(--muted);font-size:15px;margin:0 0 18px;">A round-trip UI channel between agents and humans. An agent renders an HTML pane, the relay hands a human the URL, the human's interactions come back to the agent as structured events.</p>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 22px;">${signInCta}</div>
-      <h2 style="font-size:14px;letter-spacing:0.04em;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;">For agents</h2>
+    ? `<a class="btn landing-cta-btn" href="/login">Sign in</a>`
+    : `<span class="landing-disabled">Human login is disabled on this relay (<code>EMAIL_PROVIDER=none</code>). The agent API is still available.</span>`;
+  const body = `<div class="card landing-card">
+      <h1 class="landing-title">Pane relay</h1>
+      <p class="landing-lede">A round-trip UI channel between agents and humans. An agent renders an HTML pane, the relay hands a human the URL, the human's interactions come back to the agent as structured events.</p>
+      <div class="landing-cta-row">${signInCta}</div>
+      <h2 class="landing-section-h">For agents</h2>
       <ul class="list">
         <li><div><div class="title">Skill</div><div class="meta">The pane skill, served verbatim. <code>pane skill show</code> fetches this.</div></div><a class="btn ghost" href="/skills/pane/SKILL.md">Open</a></li>
         <li><div><div class="title">Project home</div><div class="meta">Docs, releases, and source.</div></div><a class="btn ghost" href="https://paneui.com" rel="noreferrer">paneui.com</a></li>
       </ul>
     </div>`;
-  return c.html(layout({ title: "Pane relay", email: null, body, active: "" }));
+  return htmlPage(
+    c,
+    layout({ title: "Pane relay", email: null, body, active: "", nonce }),
+    { nonce },
+  );
 });
 
 // ----------------------------------------------------------------------
@@ -562,6 +786,7 @@ systemPages.get("/login", (c) => {
     Math.round(config.MAGIC_LINK_TTL_SECONDS / 60),
   );
   const ttlLabel = ttlMinutes === 1 ? "1 minute" : `${ttlMinutes} minutes`;
+  const nonce = generateCspNonce();
   const body = !provider.available
     ? `<div class="card">
         <h1>Human-side login is disabled</h1>
@@ -592,20 +817,20 @@ systemPages.get("/login", (c) => {
           </div>
         </section>
         <section class="login-form-card card">
-          <h2 style="margin-top:0;">Sign in</h2>
-          <p style="color:var(--muted);font-size:14.5px;">We'll email you a one-time sign-in link. No password.</p>
+          <h2 class="login-h2">Sign in</h2>
+          <p class="login-sub">We'll email you a one-time sign-in link. No password.</p>
           <form id="login-form" autocomplete="on">
-            <label for="name" style="font-size:13px;color:var(--muted);margin-bottom:6px;display:block;margin-top:0;">Your name <span style="color:var(--muted);font-weight:400;">— optional, shown on /home</span></label>
-            <input id="name" name="name" type="text" autocomplete="name" placeholder="e.g. Alice" maxlength="80" style="margin-bottom:12px;" />
-            <label for="email" style="font-size:13px;color:var(--muted);margin-bottom:6px;display:block;">Email</label>
+            <label for="name" class="login-label login-label-name">Your name <span class="login-label-opt">— optional, shown on /home</span></label>
+            <input id="name" name="name" type="text" autocomplete="name" placeholder="e.g. Alice" maxlength="80" class="login-input-name" />
+            <label for="email" class="login-label">Email</label>
             <input id="email" name="email" type="email" required autofocus autocomplete="email" />
-            <button class="btn" type="submit" style="width:100%;margin-top:14px;">Email me a link</button>
+            <button class="btn login-submit" type="submit">Email me a link</button>
           </form>
-          <p id="login-status" style="margin-top:14px;font-size:14px;color:var(--muted);" aria-live="polite"></p>
-          <p style="margin-top:18px;font-size:13px;color:var(--muted);">New here? Sign-in creates your account on first use — there's nothing to set up first.</p>
+          <p id="login-status" class="login-status" aria-live="polite"></p>
+          <p class="login-footnote">New here? Sign-in creates your account on first use — there's nothing to set up first.</p>
         </section>
        </div>
-       <script>
+       <script nonce="${nonce}">
          const form = document.getElementById("login-form");
          const status = document.getElementById("login-status");
          form?.addEventListener("submit", async (e) => {
@@ -633,7 +858,11 @@ systemPages.get("/login", (c) => {
            }
          });
        </script>`;
-  return c.html(layout({ title: "Sign in", email: null, body, active: "" }));
+  return htmlPage(
+    c,
+    layout({ title: "Sign in", email: null, body, active: "", nonce }),
+    { nonce },
+  );
 });
 
 // ----------------------------------------------------------------------
@@ -663,15 +892,24 @@ systemPages.get("/home", async (c) => {
   // Authenticated, per-human HTML that inlines the owner CSS/JS — never cache
   // it, or a UI deploy stays invisible behind a stale browser/PWA copy.
   c.header("Cache-Control", "private, no-store");
+  const nonce = generateCspNonce();
   const human = c.get("human");
   if (!human) {
-    return c.html(
-      layout({ title: "Home", email: null, body: loggedOutPrompt() }),
+    // Logged-out: the simple system-pages shell — fully nonce-able, so it
+    // gets the strict system-pages CSP (no 'unsafe-inline' at all).
+    return htmlPage(
+      c,
+      layout({ title: "Home", email: null, body: loggedOutPrompt(), nonce }),
+      { nonce },
     );
   }
   const prisma = c.get("prisma");
-  const html = await renderOwnerShell({ prisma, human });
-  return c.html(html);
+  const config = c.get("config");
+  // The owner-shell SPA nonces its inline <script>/<style>, so script-src
+  // drops 'unsafe-inline'. style-src keeps 'unsafe-inline' (homeSpaCsp) for
+  // the SPA's dynamic per-element hue-gradient style attributes.
+  const html = await renderOwnerShell({ prisma, config, human, nonce });
+  return htmlPage(c, html, { nonce, csp: homeSpaCsp(nonce) });
 });
 
 // ----------------------------------------------------------------------
@@ -703,14 +941,18 @@ systemPages.get("/my-templates", (c) => c.redirect("/home#mine", 301));
 systemPages.get("/my-templates/:id/content", async (c) => {
   // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
   c.header("Cache-Control", "private, no-store");
+  const nonce = generateCspNonce();
   const human = c.get("human");
   if (!human) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({
         title: "Template content",
         email: null,
         body: loggedOutPrompt(),
+        nonce,
       }),
+      { nonce },
     );
   }
   const prisma = c.get("prisma");
@@ -723,14 +965,16 @@ systemPages.get("/my-templates/:id/content", async (c) => {
   // owner-only routes; never confirms the existence of someone else's
   // template to the caller.
   if (!template || template.owner.ownerHumanId !== human.id) {
-    return c.html(
+    return htmlPage(
+      c,
       layout({
         title: "Template content",
         email: human.email,
         body: `<div class="card"><h1>Template not found</h1><p>This template does not exist or is not yours. <a href="/my-templates">Back to My templates</a>.</p></div>`,
         active: "templates",
+        nonce,
       }),
-      404,
+      { nonce, status: 404 },
     );
   }
   const version = await prisma.templateVersion.findUnique({
@@ -759,9 +1003,9 @@ systemPages.get("/my-templates/:id/content", async (c) => {
   // Render shell HTML; the row lists hydrate client-side from
   // /v1/my-templates/:id/template-records/:collection so a fresh write
   // (or a delete) can refresh without a full reload.
-  let body = `<p style="margin:0 0 4px;"><a href="/my-templates" style="font-size:13px;">← My templates</a></p>
+  let body = `<p class="trec-back"><a href="/my-templates" class="trec-back-link">← My templates</a></p>
   <h1>${escapeHtml(name)} · content</h1>
-  <p style="color:var(--muted);font-size:14px;margin:0 0 18px;">${escapeHtml(subtitle)}</p>`;
+  <p class="trec-subtitle">${escapeHtml(subtitle)}</p>`;
 
   if (collections.length === 0) {
     body += `<div class="card empty-state">
@@ -776,17 +1020,17 @@ systemPages.get("/my-templates/:id/content", async (c) => {
       // [data-collection="..."] selectors so collection names with hyphens
       // stay safe.
       body += `<section class="card" data-collection="${escapeHtml(collection)}">
-        <h2 style="margin:0 0 12px;font-size:16px;letter-spacing:-0.005em;">${escapeHtml(collection)}</h2>
-        <form class="trec-add" data-collection="${escapeHtml(collection)}" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-          <input class="trec-key" type="text" placeholder="record key (optional)" style="flex:0 1 180px;min-width:140px;" />
-          <input class="trec-data" type="text" placeholder='data JSON, e.g. {"text":"Hello"}' required style="flex:1 1 240px;min-width:200px;font-family:&quot;SF Mono&quot;,Menlo,Consolas,monospace;font-size:13px;" />
+        <h2 class="trec-section-h">${escapeHtml(collection)}</h2>
+        <form class="trec-add" data-collection="${escapeHtml(collection)}">
+          <input class="trec-key" type="text" placeholder="record key (optional)" />
+          <input class="trec-data" type="text" placeholder='data JSON, e.g. {"text":"Hello"}' required />
           <button class="btn" type="submit">Add</button>
         </form>
         <ul class="list trec-rows" data-collection="${escapeHtml(collection)}"><li class="empty">Loading…</li></ul>
       </section>`;
     }
 
-    body += `<script>
+    body += `<script nonce="${nonce}">
       // Client-side hydration. Each collection block has a UL the script
       // populates via GET /v1/my-templates/:id/template-records/:collection.
       // Mutations (add / delete) hit the matching POST / DELETE under the
@@ -822,7 +1066,7 @@ systemPages.get("/my-templates/:id/content", async (c) => {
             return '<li data-key="' + escape(r.key) + '">'
               + '<div><div class="title">' + escape(r.key) + '</div>'
               + '<div class="meta"><code>' + escape(dataStr) + '</code></div>'
-              + '<div class="meta meta-dim" style="color:var(--muted);">v' + escape(r.version) + ' · ' + escape(r.author.kind) + '</div></div>'
+              + '<div class="meta meta-dim">v' + escape(r.version) + ' · ' + escape(r.author.kind) + '</div></div>'
               + '<div><button class="btn ghost trec-delete" data-key="' + escape(r.key) + '" data-version="' + escape(r.version) + '">Delete</button></div>'
               + '</li>';
           }).join('');
@@ -907,13 +1151,16 @@ systemPages.get("/my-templates/:id/content", async (c) => {
     </script>`;
   }
 
-  return c.html(
+  return htmlPage(
+    c,
     layout({
       title: name + " · content",
       email: human.email,
       body,
       active: "templates",
+      nonce,
     }),
+    { nonce },
   );
 });
 
@@ -937,10 +1184,18 @@ systemPages.get("/template-store", (c) => c.redirect("/home#store", 301));
 systemPages.get("/my-agents", async (c) => {
   // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
   c.header("Cache-Control", "private, no-store");
+  const nonce = generateCspNonce();
   const human = c.get("human");
   if (!human) {
-    return c.html(
-      layout({ title: "My agents", email: null, body: loggedOutPrompt() }),
+    return htmlPage(
+      c,
+      layout({
+        title: "My agents",
+        email: null,
+        body: loggedOutPrompt(),
+        nonce,
+      }),
+      { nonce },
     );
   }
   const prisma = c.get("prisma");
@@ -966,30 +1221,30 @@ systemPages.get("/my-agents", async (c) => {
     },
   });
   const agentsToggleLink = showDeleted
-    ? `<a class="btn ghost" href="/my-agents" style="padding:6px 14px;font-size:13px;">Hide trashed</a>`
-    : `<a class="btn ghost" href="/my-agents?show_deleted=true" style="padding:6px 14px;font-size:13px;">Show trashed</a>`;
-  const body = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-    <h1 style="margin:0;">My agents</h1>
+    ? `<a class="btn ghost agents-toggle" href="/my-agents">Hide trashed</a>`
+    : `<a class="btn ghost agents-toggle" href="/my-agents?show_deleted=true">Show trashed</a>`;
+  const body = `<div class="agents-head">
+    <h1>My agents</h1>
     ${agentsToggleLink}
   </div>
-  <p style="color:var(--muted);font-size:14.5px;">Agents bound to you via the claim flow. Each agent's API key still works after claim — claiming just records ownership.</p>
+  <p class="agents-lede">Agents bound to you via the claim flow. Each agent's API key still works after claim — claiming just records ownership.</p>
   <div class="card">
-    <div class="row" style="justify-content:space-between;margin-bottom:6px;">
-      <h2 style="margin:0;">Claim a new agent</h2>
+    <div class="row agents-claim-row">
+      <h2>Claim a new agent</h2>
       <button id="gen-code" class="btn">Generate claim code</button>
     </div>
-    <p style="color:var(--muted);font-size:14px;margin:0 0 8px;">Generate a one-time code, then run <code>pane agent claim &lt;code&gt;</code> on the agent.</p>
-    <div id="code-out" hidden style="background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:14px 16px;">
-      <div style="font-size:12px;color:var(--accent);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">Your code</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <code id="code-value" style="font-size:15px;background:var(--panel);padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid var(--accent-border);user-select:all;"></code>
-        <button id="copy-code" type="button" class="btn ghost" style="padding:6px 12px;font-size:13px;min-height:36px;">Copy</button>
+    <p class="agents-claim-hint">Generate a one-time code, then run <code>pane agent claim &lt;code&gt;</code> on the agent.</p>
+    <div id="code-out" hidden class="reveal-box">
+      <div class="reveal-label">Your code</div>
+      <div class="reveal-row">
+        <code id="code-value" class="reveal-code"></code>
+        <button id="copy-code" type="button" class="btn ghost btn-sm">Copy</button>
       </div>
-      <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
+      <div class="reveal-foot">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
     </div>
   </div>
   <div class="card">
-    <h2 style="margin-top:0;">Claimed</h2>
+    <h2 class="agents-claimed-h">Claimed</h2>
     ${
       agents.length === 0
         ? `<div class="empty-state">
@@ -1007,7 +1262,7 @@ systemPages.get("/my-agents", async (c) => {
                 : "—";
               const isTrashed = a.deletedAt !== null;
               const status = isTrashed
-                ? `<span class="pill" style="background:#fff4ec;color:#b34700;">Trashed</span>`
+                ? `<span class="pill trashed">Trashed</span>`
                 : a.revokedAt
                   ? `<span class="pill muted">Revoked</span>`
                   : `<span class="pill good">Active</span>`;
@@ -1017,27 +1272,41 @@ systemPages.get("/my-agents", async (c) => {
               const rotateBtn =
                 a.revokedAt || isTrashed
                   ? ""
-                  : `<button class="btn ghost" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="padding:6px 12px;font-size:13px;min-height:36px;">Regenerate key</button>`;
+                  : `<button class="btn ghost btn-sm" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}">Regenerate key</button>`;
+              // Revoke is the owner-side counterpart to `pane key revoke`:
+              // kills the credential when the human can't (lost machine) or
+              // shouldn't (leaked key) authenticate as the agent itself.
+              // Same visibility rules as rotate — nothing to revoke on a
+              // revoked or trashed row.
+              const revokeBtn =
+                a.revokedAt || isTrashed
+                  ? ""
+                  : `<button class="btn ghost btn-sm btn-danger-ink" type="button" data-act="revoke" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}">Revoke</button>`;
+              // flex-basis 220px (not 0) so on narrow viewports the title
+              // block can't collapse to a one-word-per-line column when the
+              // action group (pill + Regenerate + Revoke) won't fit beside
+              // it. The parent's flex-wrap kicks in and the action group
+              // moves to a second row instead of squeezing the title.
               return `<li data-agent-id="${escapeHtml(a.id)}">
-                <div style="min-width:0;flex:1;">
+                <div class="agent-title-col">
                   <div class="title">${escapeHtml(a.name)}</div>
                   <div class="meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${claimed} · last used ${escapeHtml(lastUsed)}</div>
-                  <div class="rotate-out" hidden style="margin-top:10px;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:10px;padding:12px 14px;">
-                    <div style="font-size:12px;color:var(--accent);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">New API key</div>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                      <code class="rotate-value" style="font-size:14px;background:var(--panel);padding:6px 10px;display:inline-block;border-radius:6px;border:1px solid var(--accent-border);user-select:all;word-break:break-all;"></code>
-                      <button class="btn ghost rotate-copy" type="button" style="padding:6px 12px;font-size:13px;min-height:36px;">Copy</button>
+                  <div class="rotate-out reveal-box tight" hidden>
+                    <div class="reveal-label">New API key</div>
+                    <div class="reveal-row">
+                      <code class="rotate-value reveal-code key"></code>
+                      <button class="btn ghost rotate-copy btn-sm" type="button">Copy</button>
                     </div>
-                    <div style="font-size:13px;color:var(--accent-ink);margin-top:8px;">Won't be shown again. Copy now and run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or paste into <code>PANE_API_KEY</code>).</div>
+                    <div class="reveal-foot">Won't be shown again. Copy now and run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or paste into <code>PANE_API_KEY</code>).</div>
                   </div>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${status}${rotateBtn}</div>
+                <div class="agent-actions">${status}${rotateBtn}${revokeBtn}</div>
               </li>`;
             })
             .join("")}</ul>`
     }
   </div>
-  <script>
+  <script nonce="${nonce}">
     document.getElementById("gen-code")?.addEventListener("click", async (ev) => {
       const btn = ev.target;
       btn.disabled = true;
@@ -1134,6 +1403,58 @@ systemPages.get("/my-agents", async (c) => {
       }
     });
 
+    // Revoke handler — owner-side kill switch. Same confirm() pattern as
+    // rotate (no inline confirm UI — keeps the two destructive actions
+    // visually parallel). On success, flip the Active pill to Revoked and
+    // remove both Rotate + Revoke buttons; revocation is permanent so
+    // there's no follow-up action the human can take on the row.
+    document.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest && ev.target.closest("button[data-act='revoke']");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const name = btn.getAttribute("data-name") || "this agent";
+      if (!confirm(
+        "Revoke the API key for " + name + "?\\n\\n" +
+        "The key stops working immediately and revocation is permanent. " +
+        "Claim a fresh agent if you need this one again."
+      )) return;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = "Revoking…";
+      try {
+        const res = await fetch("/v1/self/agents/" + encodeURIComponent(id) + "/revoke-key", {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          let detail = "HTTP " + res.status;
+          try {
+            const errBody = await res.json();
+            if (errBody && errBody.error && errBody.error.message) detail = errBody.error.message;
+          } catch (_) {}
+          alert("Couldn't revoke key: " + detail);
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          return;
+        }
+        // Flip the status pill in place and drop both action buttons —
+        // there is nothing left to rotate or revoke on this row.
+        const li = btn.closest("li[data-agent-id]");
+        const pill = li.querySelector(".pill");
+        if (pill) {
+          pill.className = "pill muted";
+          pill.textContent = "Revoked";
+        }
+        const rotate = li.querySelector("button[data-act='rotate']");
+        if (rotate) rotate.remove();
+        btn.remove();
+      } catch (_) {
+        alert("Network error — try again.");
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
     // Copy-to-clipboard for the revealed new key. Same approach as the
     // claim-code copy button.
     document.addEventListener("click", async (ev) => {
@@ -1168,13 +1489,16 @@ systemPages.get("/my-agents", async (c) => {
       setTimeout(() => { btn.textContent = original; }, 1500);
     });
   </script>`;
-  return c.html(
+  return htmlPage(
+    c,
     layout({
       title: "My agents",
       email: human.email,
       body,
       active: "agents",
+      nonce,
     }),
+    { nonce },
   );
 });
 
@@ -1200,47 +1524,10 @@ systemPages.get("/my-agents", async (c) => {
 systemPages.get("/trash", (c) => c.redirect("/home", 301));
 
 // ----------------------------------------------------------------------
-// GET /settings — email, sign-out
+// GET /settings — now a view inside the /home SPA (#settings). Redirect the
+// standalone URL in, the same way /my-panes, /my-templates, /template-store
+// already fold into the single-page app. One nav/layout/CSS everywhere.
 // ----------------------------------------------------------------------
-systemPages.get("/settings", (c) => {
-  // no-store: authenticated, CSS-inlining HTML must not be cached (see /home).
-  c.header("Cache-Control", "private, no-store");
-  const human = c.get("human");
-  if (!human) {
-    return c.html(
-      layout({ title: "Settings", email: null, body: loggedOutPrompt() }),
-    );
-  }
-  const verified = human.verifiedAt
-    ? `<span class="pill good">Verified</span>`
-    : `<span class="pill muted">Unverified</span>`;
-  const body = `<h1>Settings</h1>
-  <div class="card">
-    <h2 style="margin-top:0;">Account</h2>
-    <ul class="list">
-      <li><div><div class="title">Email</div><div class="meta">${escapeHtml(human.email)}</div></div>${verified}</li>
-      <li><div><div class="title">Account created</div><div class="meta">${escapeHtml(human.createdAt.toISOString().slice(0, 10))}</div></div></li>
-    </ul>
-  </div>
-  <div class="card">
-    <h2 style="margin-top:0;">Session</h2>
-    <p style="color:var(--muted);font-size:14px;">Signing out will revoke this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
-    <button id="pane-logout-btn" class="btn ghost">Sign out of this device</button>
-  </div>
-  <script>
-    document.getElementById("pane-logout-btn")?.addEventListener("click", async () => {
-      try { await fetch("/v1/auth/logout", { method: "POST" }); } catch {}
-      location.href = "/login";
-    });
-  </script>`;
-  return c.html(
-    layout({
-      title: "Settings",
-      email: human.email,
-      body,
-      active: "settings",
-    }),
-  );
-});
+systemPages.get("/settings", (c) => c.redirect("/home#settings", 301));
 
 export default systemPages;

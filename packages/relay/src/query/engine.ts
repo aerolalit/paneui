@@ -190,7 +190,35 @@ export async function runQuery(
 
   // Spin up a fresh in-memory DuckDB. We discard it after the query, so
   // creating one per call is acceptable.
-  const inst = await DuckDBInstance.create(":memory:");
+  //
+  // SECURITY (F-01): the agent's SQL runs in this instance. By default DuckDB
+  // ships with `enable_external_access=true`, which lets table functions like
+  // read_text / read_blob / read_csv[_auto] / read_json[_auto] / read_parquet /
+  // glob — and httpfs URLs — reach the host filesystem and make outbound
+  // network requests. Those are *functions*, not statements, so the SQL
+  // allow-list parser in parser.ts does NOT block them (it only constrains the
+  // leading keyword + a banned-token list). Without the flags below, an
+  // authenticated agent could exfiltrate arbitrary local files (e.g.
+  // `read_text('/etc/passwd')`, the relay's `.pane-secret-key`), enumerate the
+  // filesystem (`glob('/*')`), or trigger server-side requests (SSRF via an
+  // httpfs URL).
+  //
+  // `enable_external_access=false` is the load-bearing flag: it disables all
+  // filesystem reads, httpfs, and file ATTACH. The remaining flags stop DuckDB
+  // from auto-installing / auto-loading / loading unsigned extensions (which
+  // could otherwise reintroduce external access), and `lock_configuration=true`
+  // prevents any in-query `SET` from re-enabling these (SET is already banned
+  // by the parser; this is defense-in-depth at the engine boundary).
+  //
+  // The parser allow-list (parser.ts) remains as UX / defense-in-depth — it is
+  // NOT the security boundary. THIS config is.
+  const inst = await DuckDBInstance.create(":memory:", {
+    enable_external_access: "false",
+    autoinstall_known_extensions: "false",
+    autoload_known_extensions: "false",
+    allow_unsigned_extensions: "false",
+    lock_configuration: "true",
+  });
   const conn = await inst.connect();
 
   try {

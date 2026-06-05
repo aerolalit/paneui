@@ -13,6 +13,14 @@
 // The scopes a template declares at publish-time are stored on Template.scopes
 // (Phase A schema column). Enforcement against runtime API calls is deferred
 // until templates have a runtime API to call (§4.5).
+//
+// Publish gate (usage-maturity): the FIRST publish of a template (publishedAt
+// currently null) is refused unless the template has at least
+// TEMPLATE_PUBLISH_MIN_OPEN_PANES currently-open panes — status=open,
+// deletedAt=null, expiresAt>now, summed across all of the template's versions.
+// A re-publish of an already-published template (publishedAt set — e.g. to
+// update its scopes) SKIPS the gate, as does the human-shell publish path.
+// TEMPLATE_PUBLISH_MIN_OPEN_PANES=0 disables the gate entirely.
 
 import { Hono } from "hono";
 import { z } from "zod";
@@ -41,6 +49,125 @@ import {
 } from "../../keys.js";
 import type { Config } from "../../config.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
+import type { PrismaClient } from "@prisma/client";
+
+// Columns the public-catalog search projects. Shared by the agent `catalog`
+// and human `public` paths so the two stay in lock step.
+const CATALOG_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  description: true,
+  tags: true,
+  shape: true,
+  publishedAt: true,
+  installCount: true,
+  latestVersion: true,
+  scopes: true,
+} as const;
+
+type CatalogRow = Prisma.TemplateGetPayload<{ select: typeof CATALOG_SELECT }>;
+
+interface CatalogPage {
+  items: CatalogRow[];
+  total: number;
+}
+
+// Public-catalog search — DB-side + bounded (F-11).
+//
+// Before: when `q` was present the route DROPPED take/skip and loaded EVERY
+// published template into memory, then `.filter()`/`.slice()` in JS — an
+// unbounded materialisation that grows with the catalog.
+//
+// Now: name + description are matched in SQL via `contains` and the result is
+// paginated with take/skip, so the unfiltered set is never fully loaded.
+//
+// Case-sensitivity tradeoff: Prisma's `mode: "insensitive"` is Postgres-only
+// and is not even present on the SQLite-generated StringFilter, so it can't be
+// used in code that type-checks against the SQLite client (the relay ships
+// both schemas). Plain `contains` therefore compiles on both engines, and its
+// runtime case-behaviour follows the engine: SQLite `LIKE` is case-INsensitive
+// for ASCII (so the historical "case-insensitive" feel is preserved on the
+// default self-host build), while Postgres `LIKE` is case-sensitive. This
+// matches how the rest of the codebase already treats portable search.
+//
+// Tags: the `tags` JSON array can't be substring-matched portably (SQLite's
+// Prisma `string_contains` on a JSON column is a silent no-op; `array_contains`
+// is exact-element + Postgres-leaning). To preserve the historical tag-search
+// behaviour without re-introducing the unbounded load, the tag pass scans a
+// hard-capped (`TEMPLATE_SEARCH_SCAN_CAP`) `{id, tags}` projection, JS-filters
+// for the substring, and folds the matching ids back into the SQL `where` as
+// `{ id: { in } }`. The final fetch + count are a single paginated DB query.
+async function searchPublicCatalog(
+  prisma: PrismaClient,
+  config: Config,
+  q: string,
+  limit: number,
+  offset: number,
+): Promise<CatalogPage> {
+  const baseWhere: Prisma.TemplateWhereInput = { publishedAt: { not: null } };
+  const orderBy: Prisma.TemplateOrderByWithRelationInput[] = [
+    { installCount: "desc" },
+    { publishedAt: "desc" },
+  ];
+
+  if (q.length === 0) {
+    const [items, total] = await Promise.all([
+      prisma.template.findMany({
+        where: baseWhere,
+        orderBy,
+        take: limit,
+        skip: offset,
+        select: CATALOG_SELECT,
+      }),
+      prisma.template.count({ where: baseWhere }),
+    ]);
+    return { items, total };
+  }
+
+  // Tag-match pre-scan: bounded `{id, tags}` projection, JS substring filter.
+  // SQLite `LIKE` (the `contains` translation) is case-insensitive for ASCII,
+  // so to keep the tag pass consistent with the name/description pass on the
+  // default build we lowercase-compare here too.
+  const ql = q.toLowerCase();
+  let tagMatchIds: string[] = [];
+  if (config.TEMPLATE_SEARCH_SCAN_CAP > 0) {
+    const tagCandidates = await prisma.template.findMany({
+      where: baseWhere,
+      orderBy,
+      take: config.TEMPLATE_SEARCH_SCAN_CAP,
+      select: { id: true, tags: true },
+    });
+    tagMatchIds = tagCandidates
+      .filter((t) =>
+        ((t.tags as string[] | null) ?? []).some((tag) =>
+          tag.toLowerCase().includes(ql),
+        ),
+      )
+      .map((t) => t.id);
+  }
+
+  const where: Prisma.TemplateWhereInput = {
+    ...baseWhere,
+    OR: [
+      { name: { contains: q } },
+      { description: { contains: q } },
+      ...(tagMatchIds.length > 0 ? [{ id: { in: tagMatchIds } }] : []),
+    ],
+  };
+
+  const [items, total] = await Promise.all([
+    prisma.template.findMany({
+      where,
+      orderBy,
+      take: limit,
+      skip: offset,
+      select: CATALOG_SELECT,
+    }),
+    prisma.template.count({ where }),
+  ]);
+  return { items, total };
+}
 
 // ----------------------------------------------------------------------
 // Agent-authenticated publish/unpublish
@@ -59,6 +186,7 @@ const publishBody = z.object({
 
 templatePublish.post("/:id/publish", requireAgent, async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config");
   const me = c.get("agent");
   const id = c.req.param("id");
   if (!id) throw errors.invalidRequest("missing template id");
@@ -76,6 +204,32 @@ templatePublish.post("/:id/publish", requireAgent, async (c) => {
   const scope = await agentScope(prisma, me);
   if (!template || !scope.has(template.ownerId)) {
     throw errors.notFound();
+  }
+
+  // Usage-maturity publish gate. Only the FIRST publish is gated: an already-
+  // published template (publishedAt set) re-publishing — typically to update
+  // scopes — stays allowed so the idempotent publish path never regresses.
+  // "Currently-open" = status=open, deletedAt=null, expiresAt>now, counted
+  // across every version of this template.
+  if (
+    template.publishedAt === null &&
+    config.TEMPLATE_PUBLISH_MIN_OPEN_PANES > 0
+  ) {
+    const openPanes = await prisma.pane.count({
+      where: {
+        status: "open",
+        deletedAt: null,
+        expiresAt: { gt: new Date() },
+        templateVersion: { templateId: id },
+      },
+    });
+    if (openPanes < config.TEMPLATE_PUBLISH_MIN_OPEN_PANES) {
+      throw errors.conflict(
+        `template needs at least ${config.TEMPLATE_PUBLISH_MIN_OPEN_PANES} open panes to publish (currently ${openPanes})`,
+        false,
+        "open more panes from this template (each its own live instance) until it reaches the threshold, then publish; closed, expired, and soft-deleted panes do not count",
+      );
+    }
   }
 
   const updated = await prisma.template.update({
@@ -120,48 +274,18 @@ templatePublish.post("/:id/unpublish", requireAgent, async (c) => {
 // recommend existing apps to an agent before it creates a duplicate.
 templatePublish.get("/catalog", requireAgent, async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config") as Config;
   const limit = Math.min(50, Number(c.req.query("limit") ?? 25));
   const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
   const q = c.req.query("q")?.trim() ?? "";
 
-  const baseWhere: Prisma.TemplateWhereInput = {
-    publishedAt: { not: null },
-  };
-  const items = await prisma.template.findMany({
-    where: baseWhere,
-    orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
-    ...(q.length === 0 ? { take: limit, skip: offset } : {}),
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      description: true,
-      tags: true,
-      shape: true,
-      publishedAt: true,
-      installCount: true,
-      latestVersion: true,
-      scopes: true,
-    },
-  });
-  const ql = q.toLowerCase();
-  const filtered =
-    q.length > 0
-      ? items.filter(
-          (t) =>
-            (t.name && t.name.toLowerCase().includes(ql)) ||
-            (t.description && t.description.toLowerCase().includes(ql)) ||
-            ((t.tags as string[] | null) ?? []).some((tag) =>
-              tag.toLowerCase().includes(ql),
-            ),
-        )
-      : items;
-  const total =
-    q.length === 0
-      ? await prisma.template.count({ where: baseWhere })
-      : filtered.length;
-  const matched =
-    q.length > 0 ? filtered.slice(offset, offset + limit) : filtered;
+  const { items: matched, total } = await searchPublicCatalog(
+    prisma,
+    config,
+    q,
+    limit,
+    offset,
+  );
 
   return c.json({
     items: matched.map((t) => ({
@@ -192,53 +316,23 @@ export const templateMarketplace = new Hono<HumanAuthEnv>();
 // without paying the version-fetch cost.
 templateMarketplace.get("/public", requireHuman, async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config") as Config;
   const human = c.get("human");
   // Pagination: simple offset for v1 (issue tracker has a cursor follow-up).
   const limit = Math.min(50, Number(c.req.query("limit") ?? 25));
   const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
   const q = c.req.query("q")?.trim() ?? "";
-  // Filter post-DB: SQLite Prisma can't do case-insensitive `contains`
-  // on `name`/`description` and can't match inside a JSON tag array.
-  // The published catalog is bounded (few hundred rows) so load-then-
-  // filter is fine until we need fts.
-  const baseWhere: Prisma.TemplateWhereInput = {
-    publishedAt: { not: null },
-  };
-  const items = await prisma.template.findMany({
-    where: baseWhere,
-    orderBy: [{ installCount: "desc" }, { publishedAt: "desc" }],
-    ...(q.length === 0 ? { take: limit, skip: offset } : {}),
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      description: true,
-      tags: true,
-      shape: true,
-      publishedAt: true,
-      installCount: true,
-      latestVersion: true,
-      scopes: true,
-    },
-  });
-  const ql = q.toLowerCase();
-  const filtered =
-    q.length > 0
-      ? items.filter(
-          (t) =>
-            (t.name && t.name.toLowerCase().includes(ql)) ||
-            (t.description && t.description.toLowerCase().includes(ql)) ||
-            ((t.tags as string[] | null) ?? []).some((tag) =>
-              tag.toLowerCase().includes(ql),
-            ),
-        )
-      : items;
-  const total =
-    q.length === 0
-      ? await prisma.template.count({ where: baseWhere })
-      : filtered.length;
-  const matched =
-    q.length > 0 ? filtered.slice(offset, offset + limit) : filtered;
+
+  // F-11 — DB-side + paginated search. See searchPublicCatalog for the
+  // name/description (SQL `contains`) + tags (bounded scan) split and the
+  // case-sensitivity tradeoff. Identical to the agent `/catalog` path.
+  const { items: matched, total } = await searchPublicCatalog(
+    prisma,
+    config,
+    q,
+    limit,
+    offset,
+  );
 
   // Mark which the caller has already installed so the UI can render a
   // "Installed" pill without a second round-trip.

@@ -314,6 +314,11 @@ describe("bridge shell GET /s/:token", () => {
     expect(tokens).toContain("allow-scripts");
     expect(tokens).toContain("allow-forms");
     expect(tokens).not.toContain("allow-same-origin");
+    // Templates may link out (e.g. a demo index → other panes) via a
+    // user-activated top navigation, but must not be able to spawn popups or
+    // run at a real origin.
+    expect(tokens).toContain("allow-top-navigation-by-user-activation");
+    expect(tokens).not.toContain("allow-popups");
   });
 
   it("renders the closed banner and no iframe for a closed pane", async () => {
@@ -662,5 +667,48 @@ describe("bridge human-facing error pages", () => {
       expect(res.status).toBe(404);
       expect(res.headers.get("content-type")).toContain("application/json");
     });
+  });
+});
+
+describe("bridge GET /s/:token/icon.png (home-screen icon)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("serves a 180x180 PNG — the robot default for a pane with no icon", async () => {
+    const { token } = await seedPane();
+    const res = await app.fetch(new Request(`http://t/s/${token}/icon.png`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // PNG magic number — proves real raster bytes, not an HTML/JSON body.
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("honours If-None-Match with a 304", async () => {
+    const { token } = await seedPane();
+    const first = await app.fetch(new Request(`http://t/s/${token}/icon.png`));
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+    const second = await app.fetch(
+      new Request(`http://t/s/${token}/icon.png`, {
+        headers: { "if-none-match": etag as string },
+      }),
+    );
+    expect(second.status).toBe(304);
+  });
+
+  it("404s for a well-formed but unknown token", async () => {
+    const bogus = generateHumanParticipantToken();
+    const res = await app.fetch(new Request(`http://t/s/${bogus}/icon.png`));
+    expect(res.status).toBe(404);
+  });
+
+  it("the viewer shell links this pane's own apple-touch-icon", async () => {
+    const { token } = await seedPane();
+    const res = await app.fetch(new Request(`http://t/s/${token}`));
+    const html = await res.text();
+    expect(html).toContain('rel="apple-touch-icon"');
+    expect(html).toContain(`href="/s/${token}/icon.png"`);
   });
 });

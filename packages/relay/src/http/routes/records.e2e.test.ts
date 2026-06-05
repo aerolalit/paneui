@@ -511,3 +511,79 @@ describe("records router fallback handlers", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F-08 — a soft-deleted (trashed) pane must refuse record reads + writes
+// through dualAuth. Trashing sets deletedAt but keeps status="open" + a
+// future expiresAt, so the status/expiry gate alone does NOT catch it; the
+// dualAuth deletedAt check does. A non-deleted pane keeps working (covered by
+// the happy-path tests above; re-asserted here for the before/after contrast).
+// ---------------------------------------------------------------------------
+
+describe("F-08: trashed pane refuses records via dualAuth", () => {
+  it("rejects a record WRITE on a soft-deleted pane with 410 soft_deleted", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { deletedAt: new Date() },
+    });
+    // Sanity: still open + unexpired — only deletedAt flipped.
+    const row = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(row?.status).toBe("open");
+    expect(row?.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+    const res = await req(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+      { data: { body: "hi" } },
+    );
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("soft_deleted");
+  });
+
+  it("rejects a record READ on a soft-deleted pane with 410 soft_deleted", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    // Write one record while the pane is live, then trash it.
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
+      record_key: "c1",
+      data: { body: "live" },
+    });
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { deletedAt: new Date() },
+    });
+
+    const res = await req(
+      "GET",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+    );
+    expect(res.status).toBe(410);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("soft_deleted");
+  });
+
+  it("a non-deleted pane still reads + writes records normally", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const write = await req(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+      { record_key: "ok1", data: { body: "still works" } },
+    );
+    expect(write.status).toBe(201);
+    const read = await req(
+      "GET",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+    );
+    expect(read.status).toBe(200);
+    const body = (await read.json()) as { records: { key: string }[] };
+    expect(body.records.map((r) => r.key)).toContain("ok1");
+  });
+});

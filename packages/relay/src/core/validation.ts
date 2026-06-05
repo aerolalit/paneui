@@ -310,10 +310,120 @@ function jsonDepth(value: unknown, limit: number): number {
   return max;
 }
 
+// Hard cap on the length of any regex sourced from an agent-supplied schema
+// (`pattern` keywords and `patternProperties` keys). Catastrophic regexes are
+// usually tiny, so the length cap is not the primary defence — but a long
+// pattern multiplies the cost of the structural scan below, so we bound it.
+const MAX_SCHEMA_PATTERN_LENGTH = 1_000;
+
+// Conservative, no-dependency ReDoS guard. Both the `pattern`/`patternProperties`
+// regex sources AND the strings they are later tested against come from
+// agent-controlled input (the pane event/record schema and the event payload
+// keys respectively — see attachments/ref-access.ts collectBlobRefs). A tiny
+// pattern such as `^(a+)+$` against a key like `"aaaa…aaa!"` triggers
+// catastrophic backtracking that pins the single-threaded event loop. Byte/
+// depth caps do not help because such patterns are small.
+//
+// Rather than pull in a native/3rd-party safe-regex engine, we reject the
+// classic catastrophic-backtracking shapes at SCHEMA-VALIDATION time so the
+// dangerous pattern is never stored or compiled against attacker data. The
+// heuristic is intentionally conservative — it targets *nested quantifiers*,
+// the root cause of exponential backtracking:
+//
+//   - a quantified group whose body is itself quantified, e.g.
+//     (a+)+  (a*)*  (a+)*  (a*)+  (a{1,2})+  (?:ab+)*  — and the `{n,m}`
+//     equivalents on either the inner or outer quantifier.
+//
+// It does NOT attempt to model overlapping alternations like (a|a)* — those
+// are far rarer in practice and a full model needs a real engine. The limit is
+// documented here so the trade-off is explicit: this blocks the common,
+// trivially-weaponised ReDoS patterns with zero dependencies; it is not a
+// complete safe-regex oracle. Legitimate patterns (anchors, char classes,
+// single quantifiers, `{n,m}` repetition, non-nested groups) are unaffected.
+//
+// A group is `( ... )` or `(?: ... )` or `(?<name> ... )` immediately followed
+// by a quantifier (`*`, `+`, `?`, or `{...}`). We flag it when its body
+// contains a quantifier applied to a token (i.e. a nested quantifier).
+function isUnsafeRegexSource(source: string): boolean {
+  // A quantifier char that may carry a lazy `?` suffix.
+  const quant = "(?:[*+?]|\\{\\d+(?:,\\d*)?\\})\\??";
+  // Group open: capturing `(`, non-capturing `(?:`, or named `(?<name>`.
+  const groupOpen = "\\((?:\\?:|\\?<[^>]+>)?";
+  // A group whose body contains a quantified token (`<atom><quant>`), where the
+  // group itself is then quantified: `(...x+...)+`. `[^()]*` keeps the body to a
+  // single nesting level (JS regex can't recurse), which is enough to catch the
+  // `(x+)+`, `(?:ab+)*`, `(x{2,})+`, `(\d+)+` family. The atom before the inner
+  // quantifier is a word char, a char-class close `]`, or a group close `)`.
+  const nestedQuantifier = new RegExp(
+    `${groupOpen}[^()]*[\\w\\]\\)]${quant}[^()]*\\)${quant}`,
+  );
+  return nestedQuantifier.test(source);
+}
+
+// Recursively walk an agent-supplied JSON Schema and reject any regex it
+// declares (`pattern` keyword, or a `patternProperties` key) that is malformed,
+// over-length, or matches the catastrophic-backtracking heuristic above. Throws
+// a 400 naming the offending pattern. Called from assertSchemaWithinLimits so
+// every schema-ingestion path (pane create, template create, schema patch)
+// is covered by one choke point.
+function assertSchemaRegexesSafe(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const child of value) assertSchemaRegexesSafe(child);
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+
+  // `pattern` keyword: a string regex applied to string instances.
+  if (typeof obj.pattern === "string") {
+    rejectIfUnsafePattern(obj.pattern);
+  }
+
+  // `patternProperties`: each KEY is a regex applied to an object's property
+  // names. The sub-schemas (values) are walked as normal schema nodes below.
+  if (
+    obj.patternProperties &&
+    typeof obj.patternProperties === "object" &&
+    !Array.isArray(obj.patternProperties)
+  ) {
+    for (const key of Object.keys(
+      obj.patternProperties as Record<string, unknown>,
+    )) {
+      rejectIfUnsafePattern(key);
+    }
+  }
+
+  for (const child of Object.values(obj)) assertSchemaRegexesSafe(child);
+}
+
+function rejectIfUnsafePattern(pattern: string): void {
+  if (pattern.length > MAX_SCHEMA_PATTERN_LENGTH) {
+    throw errors.invalidRequest(
+      `schema regex is too long: pattern exceeds ${MAX_SCHEMA_PATTERN_LENGTH} characters`,
+    );
+  }
+  try {
+    new RegExp(pattern);
+  } catch {
+    throw errors.invalidRequest(
+      `schema contains an invalid regex pattern: ${JSON.stringify(pattern)}`,
+    );
+  }
+  if (isUnsafeRegexSource(pattern)) {
+    throw errors.invalidRequest(
+      `schema contains a potentially catastrophic regex pattern (nested quantifier): ${JSON.stringify(
+        pattern,
+      )}; rewrite it without nested quantifiers such as (a+)+`,
+    );
+  }
+}
+
 // Reject an agent-supplied schema that exceeds the configured byte size or
-// nesting depth, *before* it reaches Ajv. The serialized byte size guards
-// against large schemas; the depth limit guards against deeply-nested ones.
-// Both throw a 400 with a message naming the limit that was exceeded.
+// nesting depth, declares an unsafe regex, *before* it reaches Ajv. The
+// serialized byte size guards against large schemas; the depth limit guards
+// against deeply-nested ones; the regex scan guards against ReDoS via
+// `pattern` / `patternProperties` (see assertSchemaRegexesSafe). All throw a
+// 400 with a message naming the limit/issue that was hit.
 export function assertSchemaWithinLimits(
   raw: unknown,
   limits: { maxBytes: number; maxDepth: number },
@@ -338,6 +448,9 @@ export function assertSchemaWithinLimits(
       `schema is too deeply nested: depth exceeds the MAX_SCHEMA_DEPTH limit of ${limits.maxDepth}`,
     );
   }
+  // Depth-bounded walk has already established the structure is finite and not
+  // pathologically nested, so this regex scan is itself bounded.
+  assertSchemaRegexesSafe(raw);
 }
 
 // #300 — top-level allowed keys for the standards-aligned event schema. Strict

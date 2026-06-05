@@ -7,6 +7,9 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import type { PrismaClient } from "@prisma/client";
 
@@ -308,6 +311,109 @@ describe("POST /v1/query — SELECT-only enforcement", () => {
       const res = await postQuery(apiKey, sql);
       expect(res.status, `sql=${sql}`).toBe(200);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-01 (Critical) — DuckDB external-access sandbox.
+//
+// The per-request DuckDB instance is hardened with enable_external_access=false
+// (engine.ts). DuckDB's file/network table functions (read_text, read_blob,
+// read_csv[_auto], read_json[_auto], read_parquet, glob, httpfs URLs) are
+// FUNCTIONS, not statements, so the parser allow-list does not block them —
+// the engine config is the boundary. These tests confirm that agent SQL can no
+// longer read host files, enumerate the filesystem, or make outbound requests:
+// such queries must error (query_error / 422) and must NOT return file/network
+// data in the response.
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/query — F-01: external-access sandbox", () => {
+  const SECRET = "F01_TOP_SECRET_FILE_CONTENT_DO_NOT_LEAK";
+  let secretDir: string;
+  let secretFile: string;
+
+  beforeAll(() => {
+    secretDir = mkdtempSync(join(tmpdir(), "pane-f01-"));
+    secretFile = join(secretDir, "secret.txt");
+    writeFileSync(secretFile, SECRET);
+  });
+
+  afterAll(() => {
+    rmSync(secretDir, { recursive: true, force: true });
+  });
+
+  it("read_text on a local file is blocked and never returns its contents", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+
+    // A temp file we control (deterministic) plus the canonical /etc/passwd.
+    for (const path of [secretFile, "/etc/passwd"]) {
+      const res = await postQuery(
+        apiKey,
+        `SELECT content FROM read_text('${path}')`,
+      );
+      // External access disabled → DuckDB raises a permission/IO error, which
+      // the engine maps to query_error (HTTP 422). Crucially it must not be a
+      // 200 with leaked data.
+      expect(res.status, `path=${path}`).toBe(422);
+      const text = await res.text();
+      expect(text, `path=${path}`).not.toContain(SECRET);
+      const body = JSON.parse(text) as { error: { code: string } };
+      expect(body.error.code, `path=${path}`).toBe("query_error");
+    }
+  });
+
+  it("glob cannot enumerate the host filesystem", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+
+    const res = await postQuery(apiKey, `SELECT * FROM glob('${secretDir}/*')`);
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(text).not.toContain("secret.txt");
+    const body = JSON.parse(text) as { error: { code: string } };
+    expect(body.error.code).toBe("query_error");
+  });
+
+  it("read_csv_auto on a local file is blocked", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+
+    const res = await postQuery(
+      apiKey,
+      `SELECT * FROM read_csv_auto('${secretFile}')`,
+    );
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(text).not.toContain(SECRET);
+    const body = JSON.parse(text) as { error: { code: string } };
+    expect(body.error.code).toBe("query_error");
+  });
+
+  it("read_text over an httpfs URL is blocked (no SSRF)", async () => {
+    const { humanId } = await seedHuman();
+    const { apiKey } = await seedClaimedAgent(humanId);
+
+    // With external access off, httpfs can't load / make the outbound request.
+    const res = await postQuery(
+      apiKey,
+      `SELECT content FROM read_text('http://127.0.0.1:1/x')`,
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("query_error");
+  });
+
+  it("a legitimate query still works alongside the sandbox", async () => {
+    // Regression guard: hardening must not break valid in-instance SQL.
+    const { humanId } = await seedHuman();
+    const agent = await seedClaimedAgent(humanId);
+    await seedPaneOwnedByHuman(agent.agentId, humanId, "sandbox-ok");
+
+    const res = await postQuery(agent.apiKey, "SELECT title FROM panes");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: string[][] };
+    expect(body.rows.map((r) => r[0])).toEqual(["sandbox-ok"]);
   });
 });
 

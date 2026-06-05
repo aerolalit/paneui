@@ -124,11 +124,12 @@ export const OWNER_SHELL_CSS = `
   }
   .nav .brand .logo {
     width: 28px; height: 28px; border-radius: 7px;
-    background: var(--brand-grad);
-    display: flex; align-items: center; justify-content: center;
-    color: #07090f; font-weight: 800; font-size: 13px;
+    overflow: hidden;
     box-shadow: var(--shadow-soft);
   }
+  /* The mark is the self-contained robot SVG (its own navy tile); the tile
+     fills the box and the container's radius clips its corners. */
+  .nav .brand .logo svg { display: block; width: 100%; height: 100%; }
   .nav .brand .name {
     background: var(--brand-grad);
     -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -248,6 +249,15 @@ export const OWNER_SHELL_CSS = `
       width: 22px; height: 22px;
       display: flex; align-items: center; justify-content: center;
     }
+    /* The nav SVGs carry an 18px (account: 20px) width attribute sized for the
+       desktop sidebar. On the mobile bottom bar, force them to 22px so they
+       match the system-pages bottom-tabs icons (tab-ico, 22px). CSS beats the
+       SVG presentation attribute, so the desktop sidebar is unaffected. */
+    .nav .items li button .icon svg,
+    .nav .me .acct-tab .icon svg {
+      width: 22px;
+      height: 22px;
+    }
     .nav .me.open .acct-tab { color: var(--accent); }
     /* The desktop inline link row becomes a popover sheet above the bar. */
     .nav .me .acct-links {
@@ -338,6 +348,29 @@ export const OWNER_SHELL_CSS = `
     color: var(--ink-mute);
   }
   .view-head .actions { display: flex; gap: 8px; }
+
+  /* ============== Settings view ============== */
+  .settings-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    max-width: 640px;
+  }
+  .settings-card h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .settings-row .k { font-size: 13px; color: var(--ink); }
+  .settings-row .v { font-size: 13px; color: var(--ink-mute); font-family: var(--mono); }
+  .settings-note { color: var(--ink-mute); font-size: 13px; margin: 4px 0 14px; }
+  .settings-note a { color: var(--accent); }
+  .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .pill.good { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+  .pill.muted { background: var(--surface-2); color: var(--ink-mute); }
 
   /* ============== Top-level controls (search + profile) ============== */
   .search {
@@ -601,6 +634,9 @@ export const OWNER_SHELL_CSS = `
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  /* Open panes render an empty status cell (no pill) — collapse it so the
+     title reclaims the width. Closed panes keep their pill. */
+  .pane-row .status:empty { padding: 0; }
   .pane-row .status.open    { background: rgba(110, 231, 183, 0.1); color: var(--green); }
   .pane-row .status.closed  { background: var(--surface-2); color: var(--ink-mute); }
   .pane-row .status.expiring { background: rgba(252, 211, 77, 0.1); color: var(--amber); }
@@ -1030,6 +1066,57 @@ export const OWNER_SHELL_CSS = `
     font-weight: 700;
     line-height: 1;
   }
+
+  /* ----- Live artifact preview thumbnails -----
+   * A lazy, sandboxed <iframe> rendering the real artifact, layered over the
+   * gradient monogram on BIG cards (favorites 76px, app tiles 64px, recents
+   * 280x100 thumb). Only emitted when the icon would otherwise be the monogram
+   * fallback — image / emoji icons never carry one, and the 44px pane-row keeps
+   * the bare monogram.
+   *
+   * The trick: render the iframe at a large LOGICAL viewport (1000px wide) so
+   * the artifact lays out like a real page, then transform:scale() it down
+   * to the tile so it reads as a shrunk web page rather than a cropped corner.
+   * transform-origin:top left anchors the scale to the tile's corner; the
+   * tile container clips the overflow. pointer-events:none keeps the card
+   * itself clickable (the iframe would otherwise swallow the click). */
+  .tile-preview {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1000px;
+    border: 0;
+    background: transparent;
+    transform-origin: top left;
+    pointer-events: none;
+    /* Above the monogram, below any badge/tag the card lays over it. */
+    z-index: 1;
+  }
+  /* Favorites — 76px SQUARE icon. The logical viewport must match the tile's
+   * aspect or the scaled iframe ends up shorter than the tile and the monogram
+   * gradient shows through the gap below it. Square viewport: 1000x1000 * 0.076
+   * = 76x76, fully covering the tile. */
+  .fav-tile .icon { overflow: hidden; }
+  .fav-tile .icon .tile-preview {
+    height: 1000px;
+    transform: scale(0.076);
+  }
+  /* App tiles — 64px SQUARE icon. Square logical viewport (1000x1000) so the
+   * scaled iframe covers the whole 64x64 tile with no gradient strip beneath.
+   * .icon needs the clip + a stacking context (it isn't positioned by default). */
+  .app-tile .icon { overflow: hidden; position: relative; }
+  .app-tile .icon .tile-preview {
+    height: 1000px;
+    transform: scale(0.064);
+  }
+  /* Recents — 280px-wide x 100px-tall thumb (.thumb already clips + is
+   * positioned). 280 / 1000 = 0.28; a 1000x750 logical page scales to
+   * 280x210, clipped to the 100px-tall thumb (top of the page shows). */
+  .recent-card .thumb .tile-preview {
+    height: 750px;
+    transform: scale(0.28);
+  }
+  /* The recents version tag must sit above the preview. */
+  .recent-card .thumb .tag { z-index: 2; }
 
   /* ============== Agent-init instructions modal ============== */
   .ai-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }

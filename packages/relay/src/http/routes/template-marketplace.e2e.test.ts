@@ -29,6 +29,11 @@ beforeAll(async () => {
     loadConfig({
       DATABASE_URL: testDb.dbUrl,
       PUBLIC_URL: "http://localhost:3000",
+      // Disable the usage-maturity gates here — these publish/install/catalog
+      // tests publish templates without seeding open panes. The gates have
+      // their own dedicated coverage in template-open-pane-gates.e2e.test.ts.
+      TEMPLATE_LIST_MIN_OPEN_PANES: "0",
+      TEMPLATE_PUBLISH_MIN_OPEN_PANES: "0",
     }),
     prisma,
   );
@@ -292,6 +297,91 @@ describe("GET /v1/templates/public (human)", () => {
     ).json()) as { items: unknown[]; total: number };
     expect(noHit.total).toBe(0);
     expect(noHit.items).toEqual([]);
+  });
+
+  // F-11 — the ?q= path is now DB-filtered AND paginated (it used to drop
+  // take/skip and load the whole published set into memory). Seed more
+  // name-matches than one page holds and assert take/skip is applied on the
+  // search path: total = full match count, but each page returns only `limit`
+  // rows, and page 1 vs page 2 are disjoint.
+  it("?q= applies take/skip pagination on the search path (F-11)", async () => {
+    const owner = await seedAgent();
+    // 5 published templates all matching q=Widget, plus one non-match.
+    for (let i = 0; i < 5; i++) {
+      await prisma.template.create({
+        data: {
+          ownerId: owner.id,
+          name: `Widget ${i}`,
+          description: "a widget",
+          publishedAt: new Date(Date.now() - (10 - i) * 1000),
+          installCount: i, // deterministic order: installCount desc
+        },
+      });
+    }
+    await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Unrelated",
+        publishedAt: new Date(),
+        installCount: 99,
+      },
+    });
+    const { cookie } = await seedLoggedInHuman();
+
+    const page1 = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=Widget&limit=2&offset=0", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { id: string; name: string }[]; total: number };
+    // total reflects ALL matches, not just the page.
+    expect(page1.total).toBe(5);
+    // The page is bounded by limit — proof take/skip is applied DB-side.
+    expect(page1.items).toHaveLength(2);
+    expect(page1.items.every((t) => t.name.startsWith("Widget"))).toBe(true);
+
+    const page2 = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?q=Widget&limit=2&offset=2", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { id: string }[]; total: number };
+    expect(page2.total).toBe(5);
+    expect(page2.items).toHaveLength(2);
+    // Disjoint from page 1 — offset advanced the window.
+    const ids1 = new Set(page1.items.map((t) => t.id));
+    expect(page2.items.some((t) => ids1.has(t.id))).toBe(false);
+  });
+
+  // F-11 — the non-search path (no ?q=) must be unchanged: still paginated,
+  // still ordered installCount desc then publishedAt desc.
+  it("non-search path stays paginated + ordered (F-11 no-regression)", async () => {
+    const owner = await seedAgent();
+    for (let i = 0; i < 4; i++) {
+      await prisma.template.create({
+        data: {
+          ownerId: owner.id,
+          name: `T${i}`,
+          publishedAt: new Date(Date.now() - i * 1000),
+          installCount: i, // i=3 has the most installs → ranked first
+        },
+      });
+    }
+    const { cookie } = await seedLoggedInHuman();
+    const res = (await (
+      await app.fetch(
+        new Request("http://t/v1/templates/public?limit=2&offset=0", {
+          headers: withCookie(cookie),
+        }),
+      )
+    ).json()) as { items: { name: string }[]; total: number };
+    expect(res.total).toBe(4);
+    expect(res.items).toHaveLength(2);
+    // installCount desc ordering preserved.
+    expect(res.items[0]!.name).toBe("T3");
+    expect(res.items[1]!.name).toBe("T2");
   });
 
   it("marks installed templates with installed=true", async () => {
@@ -1036,6 +1126,42 @@ describe("GET /v1/templates/catalog (agent, #279 PR C)", () => {
     };
     expect(body.total).toBe(1);
     expect(body.items[0]!.name).toBe("PR Reviewer");
+  });
+
+  // F-11 — agent catalog search path is paginated DB-side too (mirrors the
+  // human /public fix). Same assertion shape: total = all matches, page is
+  // bounded by limit, pages are disjoint.
+  it("?q= applies take/skip pagination on the search path (F-11)", async () => {
+    const owner = await seedAgent();
+    for (let i = 0; i < 5; i++) {
+      await prisma.template.create({
+        data: {
+          ownerId: owner.id,
+          name: `Gadget ${i}`,
+          publishedAt: new Date(Date.now() - (10 - i) * 1000),
+          installCount: i,
+        },
+      });
+    }
+    const caller = await seedAgent();
+    const fetchPage = async (offset: number) =>
+      (await (
+        await app.fetch(
+          new Request(
+            `http://t/v1/templates/catalog?q=Gadget&limit=2&offset=${offset}`,
+            { headers: { authorization: `Bearer ${caller.apiKey}` } },
+          ),
+        )
+      ).json()) as { items: { id: string }[]; total: number };
+
+    const page1 = await fetchPage(0);
+    const page2 = await fetchPage(2);
+    expect(page1.total).toBe(5);
+    expect(page1.items).toHaveLength(2);
+    expect(page2.total).toBe(5);
+    expect(page2.items).toHaveLength(2);
+    const ids1 = new Set(page1.items.map((t) => t.id));
+    expect(page2.items.some((t) => ids1.has(t.id))).toBe(false);
   });
 });
 

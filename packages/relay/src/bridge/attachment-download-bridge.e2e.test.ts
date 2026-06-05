@@ -284,6 +284,14 @@ describe("GET /s/:participantToken/attachments/:attachment_id — happy paths", 
     expect(res.headers.get("content-length")).toBe(String(size));
     expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    // F-03: raster image → inline; F-06: framing defences on this path too.
+    expect(res.headers.get("content-disposition")).toBe("inline");
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
 
     const got = Buffer.from(await res.arrayBuffer());
     const gotSha = createHash("sha256").update(got).digest("hex");
