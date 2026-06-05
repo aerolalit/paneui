@@ -228,6 +228,34 @@ export async function enforceRegisterRateLimit(
 }
 
 /**
+ * Check the magic-link request-link rate limit, keyed on BOTH the client IP
+ * and the normalized target email. Unlike enforceRegisterRateLimit this does
+ * NOT throw on exhaustion — POST /v1/auth/request-link always returns 202 to
+ * avoid an account-enumeration oracle, so the caller uses the boolean to skip
+ * creating the MagicLink row / sending the email while still returning 202.
+ *
+ * Both keys must be under their limit for the request to be allowed; if either
+ * is exhausted the request is throttled. The two keys are namespaced (`ip:` /
+ * `ml:`) so they never collide with each other or with the general limiter's
+ * `ip:` bucket (which lives in a different limiter instance / Redis namespace).
+ *
+ * Returns true if a link may be sent, false if the request should be silently
+ * dropped (still 202 at the route).
+ */
+export async function checkMagicLinkRateLimit(
+  c: Context<AppEnv>,
+  email: string,
+): Promise<boolean> {
+  const limiter = c.get("magicLinkLimiter");
+  const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
+  // Check the email key first so a rotating-IP attacker bombing one address is
+  // throttled regardless of source IP, then the per-IP key. Both must pass.
+  const emailOk = await limiter.check("ml:" + email);
+  const ipOk = await limiter.check("ip:" + ip);
+  return emailOk && ipOk;
+}
+
+/**
  * Extract a stable, low-cardinality token fingerprint from the Authorization
  * header for rate-limiting purposes. We never log or store the raw token —
  * a short prefix is enough to bucket a single credential.
