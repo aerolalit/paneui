@@ -1067,6 +1067,54 @@ export const OWNER_SHELL_CSS = `
     line-height: 1;
   }
 
+  /* ----- Live artifact preview thumbnails -----
+   * A lazy, sandboxed <iframe> rendering the real artifact, layered over the
+   * gradient monogram on BIG cards (favorites 76px, app tiles 64px, recents
+   * 280x100 thumb). Only emitted when the icon would otherwise be the monogram
+   * fallback — image / emoji icons never carry one, and the 44px pane-row keeps
+   * the bare monogram.
+   *
+   * The trick: render the iframe at a large LOGICAL viewport (1000px wide) so
+   * the artifact lays out like a real page, then transform:scale() it down
+   * to the tile so it reads as a shrunk web page rather than a cropped corner.
+   * transform-origin:top left anchors the scale to the tile's corner; the
+   * tile container clips the overflow. pointer-events:none keeps the card
+   * itself clickable (the iframe would otherwise swallow the click). */
+  .tile-preview {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1000px;
+    border: 0;
+    background: transparent;
+    transform-origin: top left;
+    pointer-events: none;
+    /* Above the monogram, below any badge/tag the card lays over it. */
+    z-index: 1;
+  }
+  /* Favorites — 76px square icon. 76 / 1000 = 0.076. Render a 4:3 logical page
+   * (height 750) and clip to the square. */
+  .fav-tile .icon { overflow: hidden; }
+  .fav-tile .icon .tile-preview {
+    height: 750px;
+    transform: scale(0.076);
+  }
+  /* App tiles — 64px square icon. 64 / 1000 = 0.064. .icon needs the clip +
+   * a stacking context (it isn't positioned by default). */
+  .app-tile .icon { overflow: hidden; position: relative; }
+  .app-tile .icon .tile-preview {
+    height: 750px;
+    transform: scale(0.064);
+  }
+  /* Recents — 280px-wide x 100px-tall thumb (.thumb already clips + is
+   * positioned). 280 / 1000 = 0.28; a 1000x750 logical page scales to
+   * 280x210, clipped to the 100px-tall thumb (top of the page shows). */
+  .recent-card .thumb .tile-preview {
+    height: 750px;
+    transform: scale(0.28);
+  }
+  /* The recents version tag must sit above the preview. */
+  .recent-card .thumb .tag { z-index: 2; }
+
   /* ============== Agent-init instructions modal ============== */
   .ai-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .ai-modal[hidden] { display: none; }

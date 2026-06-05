@@ -687,11 +687,19 @@ function requiredInputFields(
 //              background when there's no image.
 //   seedId   — stable seed for the monogram hue (pane/template id).
 //   label    — text the monogram initials are derived from.
+//   previewUrl — when set AND the icon resolves to the monogram fallback (no
+//              image, no emoji), a lazy sandboxed <iframe> rendering a live
+//              thumbnail of the artifact is layered ON TOP of the gradient
+//              monogram. Only the BIG cards (favorites, app tiles, recents)
+//              pass this; the 44px pane-row keeps the bare monogram. The
+//              monogram stays as the tile background so transparent artifacts
+//              still read against the page. Image / emoji icons are unchanged.
 function iconTileInner(opts: {
   imageUrl?: string;
   emoji?: string | null;
   seedId: string;
   label: string;
+  previewUrl?: string;
 }): string {
   const hue = paneHue(opts.seedId);
   const initials = paneInitials(opts.label);
@@ -709,7 +717,15 @@ function iconTileInner(opts: {
   if (opts.emoji) {
     return `<span class="tile-emoji">${escapeHtml(opts.emoji)}</span>`;
   }
-  return `<span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>`;
+  const monogram = `<span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>`;
+  if (opts.previewUrl) {
+    // Monogram first (the background layer), preview iframe on top. The iframe
+    // is sandboxed (allow-scripts only — no forms/downloads for a thumbnail),
+    // lazy-loaded, non-interactive (pointer-events:none in CSS keeps the card
+    // clickable), and removed from the a11y/tab tree.
+    return `${monogram}<iframe class="tile-preview" src="${escapeHtml(opts.previewUrl)}" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>`;
+  }
+  return monogram;
 }
 
 // Home Favorites strip — each tile is a pane (an instance), not a template.
@@ -723,6 +739,7 @@ function favPaneTile(p: PaneRef): string {
     emoji: p.iconEmoji,
     seedId: p.id,
     label,
+    previewUrl: `/panes/${encodeURIComponent(p.id)}/preview`,
   });
   return `<a class="fav-tile" href="/panes/${encodeURIComponent(p.id)}" data-pane-id="${escapeHtml(p.id)}">
     <div class="icon">${inner}</div>
@@ -751,6 +768,7 @@ function appTile(
     emoji: t.iconEmoji,
     seedId: t.id,
     label: name,
+    previewUrl: `/templates/${encodeURIComponent(t.id)}/preview`,
   });
   const dataAttr = opts.install ? ` data-needs-install="1"` : "";
   // Agent-init tiles carry the slug + required-field descriptor so the click
@@ -800,9 +818,14 @@ function recentCard(p: PaneRef): string {
   const hue = paneHue(p.id);
   const initials = paneInitials(tplName);
   const rel = relativeDate(p.createdAt);
+  // Recents always fell back to a gradient glyph (they never carried an image /
+  // emoji icon). Layer a lazy preview iframe on top of that glyph — same as the
+  // big tiles. The gradient thumb stays as the background so transparent
+  // artifacts still read; the version tag stays above the iframe.
   return `<a class="recent-card" href="/panes/${encodeURIComponent(p.id)}">
     <div class="thumb" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">
       <span class="glyph">${escapeHtml(initials)}</span>
+      <iframe class="tile-preview" src="/panes/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
       ${p.templateVersion > 0 ? `<span class="tag">v${p.templateVersion}</span>` : ""}
     </div>
     <div class="title">${escapeHtml(p.title)}</div>
