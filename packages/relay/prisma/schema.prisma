@@ -173,6 +173,12 @@ model MagicLink {
   email       String
   // sha256(token) — the raw token is in the email link and never stored.
   tokenHash   String    @unique @map("token_hash")
+  // sha256(pre-login nonce) — F-16 login-CSRF / session-fixation binding.
+  // The raw nonce is set as a short-lived cookie in the requester's browser
+  // at request-link time; verify requires the cookie's hash to match this.
+  // Nullable: rows minted before this column (or by non-cookie clients) have
+  // null and fall back to the pre-F-16 behavior (no nonce check) in verify.
+  nonceHash   String?   @map("nonce_hash")
   expiresAt   DateTime  @map("expires_at")
   // Set when the token is redeemed. Once-only by construction.
   consumedAt  DateTime? @map("consumed_at")
