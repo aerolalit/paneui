@@ -181,48 +181,102 @@ describe("GET /login", () => {
 });
 
 describe("F-18 — Content-Security-Policy on system pages", () => {
-  // These pages previously shipped with no CSP. They now carry a static,
-  // 'unsafe-inline' CSP (the inline style attributes + blocks rule out a
-  // nonce-only policy) plus the sibling hardening headers the owner-shell /
-  // bridge HTML mounts already set.
+  // F-18 follow-up: these pages now carry a NONCE-based CSP (no
+  // 'unsafe-inline' on script-src; system-pages-authored HTML also drops it on
+  // style-src) plus the sibling hardening headers the owner-shell / bridge
+  // HTML mounts already set. Every inline <script>/<style> carries the
+  // per-request nonce, so a CSP that blocks the page's own scripts would be a
+  // regression — the tests below assert the nonce actually matches.
+
+  // Extract the script-src nonce token from a CSP header value.
+  function scriptNonce(csp: string): string | null {
+    const m = csp.match(/script-src 'nonce-([^']+)'/);
+    return m ? (m[1] ?? null) : null;
+  }
+  function styleNonce(csp: string): string | null {
+    const m = csp.match(/style-src 'nonce-([^']+)'/);
+    return m ? (m[1] ?? null) : null;
+  }
+
   it.each([
     ["/", undefined],
     ["/login", undefined],
-  ])("sets a CSP on the public HTML page %s", async (path) => {
-    const res = await app.fetch(new Request(`http://t${path}`));
-    expect(res.status).toBe(200);
-    const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
-    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-    expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain("base-uri 'none'");
-    expect(csp).toContain("frame-ancestors 'none'");
-    // No remote script origin is ever allowed.
-    expect(csp).not.toMatch(/script-src[^;]*https?:/);
-    // Sibling hardening headers match the owner-shell / bridge mounts.
-    expect(res.headers.get("x-frame-options")).toBe("DENY");
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(res.headers.get("permissions-policy")).toBeTruthy();
-  });
+  ])(
+    "sets a nonce-based CSP (no 'unsafe-inline') on the public HTML page %s",
+    async (path) => {
+      const res = await app.fetch(new Request(`http://t${path}`));
+      expect(res.status).toBe(200);
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp).toContain("default-src 'self'");
+      // Nonce-only on both script-src and style-src — NO 'unsafe-inline'.
+      expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+      expect(csp).toMatch(/style-src 'nonce-[^']+'/);
+      expect(csp).not.toContain("'unsafe-inline'");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("base-uri 'none'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      // No remote script origin is ever allowed.
+      expect(csp).not.toMatch(/script-src[^;]*https?:/);
 
-  it("sets the CSP on authenticated pages (/my-agents)", async () => {
+      // The page's own inline blocks carry the matching nonce, so the CSP
+      // does not block the page's own scripts/styles.
+      const html = await res.text();
+      const sNonce = scriptNonce(csp);
+      const stNonce = styleNonce(csp);
+      expect(sNonce).toBeTruthy();
+      expect(stNonce).toBe(sNonce);
+      // Every inline <script>/<style> element must carry the nonce.
+      const inlineTags = [
+        ...html.matchAll(/<(script|style)(\s[^>]*)?>/g),
+      ].filter((m) => {
+        const attrs = m[2] ?? "";
+        // Skip non-executable JSON script blocks (type="application/json").
+        return !/type="application\/json"/.test(attrs);
+      });
+      expect(inlineTags.length).toBeGreaterThan(0);
+      for (const tag of inlineTags) {
+        expect(tag[0]).toContain(`nonce="${sNonce}"`);
+      }
+
+      // Sibling hardening headers match the owner-shell / bridge mounts.
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("permissions-policy")).toBeTruthy();
+    },
+  );
+
+  it("sets a nonce CSP on authenticated pages (/my-agents) and nonces every inline block", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/my-agents", withCookie(cookie)),
     );
     expect(res.status).toBe(200);
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+    expect(csp).toMatch(/style-src 'nonce-[^']+'/);
+    expect(csp).not.toContain("'unsafe-inline'");
     expect(csp).toContain("frame-ancestors 'none'");
-    // The page still emits its inline behaviour scripts — 'unsafe-inline'
-    // keeps them executable.
+
     const html = await res.text();
+    // The page still emits its inline behaviour scripts — now nonce'd, not
+    // 'unsafe-inline'. The nonce must match or the script won't execute.
     expect(html).toContain('id="gen-code"');
+    const sNonce = scriptNonce(csp);
+    expect(sNonce).toBeTruthy();
+    const inlineTags = [...html.matchAll(/<(script|style)(\s[^>]*)?>/g)].filter(
+      (m) => !/type="application\/json"/.test(m[2] ?? ""),
+    );
+    expect(inlineTags.length).toBeGreaterThan(0);
+    for (const tag of inlineTags) {
+      expect(tag[0]).toContain(`nonce="${sNonce}"`);
+    }
+    // No inline style="…" attribute survives — those are blocked under the
+    // nonce-only style-src and were migrated to classes.
+    expect(html).not.toMatch(/\sstyle="/);
   });
 
-  it("sets the CSP on the /home SPA", async () => {
+  it("nonces the /home SPA script (dropping script-src 'unsafe-inline')", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
@@ -230,7 +284,25 @@ describe("F-18 — Content-Security-Policy on system pages", () => {
     expect(res.status).toBe(200);
     const csp = res.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("default-src 'self'");
+    // Scripts are nonce-only on /home too — no 'unsafe-inline' in script-src.
+    expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    // style-src KEEPS 'unsafe-inline' here — documented interim for the SPA's
+    // dynamic per-element hue-gradient inline style attributes (server- AND
+    // client-rendered) that a nonce cannot cover.
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+
+    const html = await res.text();
+    const sNonce = scriptNonce(csp);
+    expect(sNonce).toBeTruthy();
+    // The SPA's inline <script> + <style> both carry the matching nonce.
+    const inlineTags = [...html.matchAll(/<(script|style)(\s[^>]*)?>/g)].filter(
+      (m) => !/type="application\/json"/.test(m[2] ?? ""),
+    );
+    expect(inlineTags.length).toBeGreaterThan(0);
+    for (const tag of inlineTags) {
+      expect(tag[0]).toContain(`nonce="${sNonce}"`);
+    }
   });
 
   it("does NOT apply the HTML CSP to non-HTML asset routes", async () => {
