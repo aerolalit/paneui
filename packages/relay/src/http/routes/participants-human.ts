@@ -17,7 +17,6 @@
 
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import type { PrismaClient } from "@prisma/client";
 import {
   generateHumanParticipantToken,
   hashKey,
@@ -26,70 +25,14 @@ import {
 import { normalizeEmail } from "../../auth/magic-link.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
+import {
+  mintHumanParticipantWithRetry,
+  buildParticipantUrl,
+} from "./human-participant-mint.js";
 
 const participantsHuman = new Hono<HumanAuthEnv>();
 
 participantsHuman.use("*", requireHuman);
-
-// Mint a kind="human" Participant on a pane, retrying on the
-// (paneId, identityId) unique-constraint collision a concurrent mint can
-// cause. The identityId is allocated monotonically from the ever-minted human
-// count (matching the agent-side allocator in routes/panes.ts); two
-// concurrent invites that both read the same count and pick the same `h_${N}`
-// see P2002 on the loser, which then loops back, re-reads the count, and
-// picks the next index. Without this, both identity-link and public-link
-// would 500 under realistic concurrency (the comment used to say "we retry on
-// conflict" but the retry was never actually wired up).
-async function mintHumanParticipantWithRetry(args: {
-  prisma: PrismaClient;
-  paneId: string;
-  tokenHash: string;
-  tokenPrefix: string;
-  humanId?: string;
-}): Promise<{ id: string; identityId: string; tokenPrefix: string }> {
-  const { prisma, paneId, tokenHash, tokenPrefix, humanId } = args;
-  // Cap the retry budget. Each round wins or loses one identity-id slot, so
-  // the worst case bounded by "at most N concurrent racers each running to
-  // exhaustion against each other" — pegging this at 8 covers any realistic
-  // owner-side burst (clicking Invite twice fast in two tabs).
-  const MAX_ATTEMPTS = 8;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const everCount = await prisma.participant.count({
-      where: { paneId, kind: "human" },
-    });
-    try {
-      return await prisma.participant.create({
-        data: {
-          paneId,
-          kind: "human",
-          identityId: `h_${everCount}`,
-          tokenHash,
-          tokenPrefix,
-          ...(humanId ? { humanId } : {}),
-        },
-        select: { id: true, identityId: true, tokenPrefix: true },
-      });
-    } catch (e) {
-      // Narrow to (paneId, identityId) collisions; let other P2002s
-      // (e.g. tokenHash) bubble — those signal a real bug. See
-      // routes/panes.ts (POST /:id/participants) for the matching shape.
-      const code = (e as { code?: string } | null)?.code;
-      if (code !== "P2002" || attempt === MAX_ATTEMPTS - 1) throw e;
-      const target = (e as { meta?: { target?: unknown } } | null)?.meta
-        ?.target;
-      const targetStr = Array.isArray(target)
-        ? target.join(",")
-        : String(target ?? "");
-      const message = (e as { message?: string } | null)?.message ?? "";
-      const isIdentityCollision =
-        targetStr.includes("identity_id") ||
-        targetStr.includes("participants_session_id_identity_id_key") ||
-        message.includes("identity_id");
-      if (!isIdentityCollision) throw e;
-    }
-  }
-  throw new Error("could not allocate participant identity-id after retries");
-}
 
 /**
  * Verifies the calling human owns the pane (or owns the agent that
@@ -128,18 +71,6 @@ async function loadOwnedPane(c: Context<HumanAuthEnv>): Promise<{
     expiresAt: pane.expiresAt,
     status: pane.status,
   };
-}
-
-/**
- * Build the URL the human shares. Falls back to a path if PUBLIC_URL is
- * not absolute — the caller can always combine with their own base.
- */
-function buildParticipantUrl(args: {
-  publicUrl: string;
-  token: string;
-}): string {
-  const base = args.publicUrl.replace(/\/$/, "");
-  return `${base}/s/${args.token}`;
 }
 
 // ----------------------------------------------------------------------
