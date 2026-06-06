@@ -284,4 +284,70 @@ describe("POST /v1/agents/claim", () => {
     });
     expect(after?.ownerHumanId).toBe(humanId);
   });
+
+  it("claims an agent that has a soft-deleted tombstone sharing a context_key with its live pane", async () => {
+    // Regression: an unclaimed agent can hold a soft-deleted pane and its live
+    // replacement with the SAME (templateVersion, contextKey) — they coexist
+    // because ownerHumanId is NULL on both (NULLs are distinct on the unique
+    // index). The claim migration must touch only LIVE panes; migrating the
+    // tombstone too would flip both to the same human at once and trip the
+    // (templateVersionId, ownerHumanId, contextKey) unique index -> 500.
+    const { id: agentId, apiKey } = await seedAgent();
+    const humanId = await seedHuman();
+
+    const tmpl = await prisma.template.create({
+      data: { ownerId: agentId, name: "t" },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    // Soft-deleted tombstone + live replacement, same templateVersion + key.
+    const dead = await prisma.pane.create({
+      data: {
+        id: "pan_dead",
+        agentId,
+        templateVersionId: tv.id,
+        contextKey: "demo:x",
+        title: "old",
+        expiresAt: new Date(Date.now() + 60_000),
+        deletedAt: new Date(),
+      },
+    });
+    const live = await prisma.pane.create({
+      data: {
+        id: "pan_live",
+        agentId,
+        templateVersionId: tv.id,
+        contextKey: "demo:x",
+        title: "new",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const { raw } = await mintCode(humanId);
+    const res = await app.fetch(
+      new Request("http://t/v1/agents/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ code: raw }),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // Live pane is migrated; the tombstone is left unowned (it gets swept).
+    expect(
+      (await prisma.pane.findUnique({ where: { id: live.id } }))?.ownerHumanId,
+    ).toBe(humanId);
+    expect(
+      (await prisma.pane.findUnique({ where: { id: dead.id } }))?.ownerHumanId,
+    ).toBeNull();
+  });
 });
