@@ -11,23 +11,29 @@
 //   POST /p/:paneId/ws-ticket short-lived WS upgrade ticket (emit-capable
 //                             callers only: owner + participant-role grant)
 //
-// Resolver order (mirrors the approved design §access-resolution):
+// Resolver order (mirrors the approved three-mode design):
 //   1. valid participant token for this pane → allow(token role)
 //        — N/A on this cookie mount (no token in the URL); the /s/:token
 //          mount owns the token path. Kept here as a comment so the ordering
-//          maps 1:1 to the design.
-//   2. pane.isPublic                         → allow(viewer, READ-ONLY)
-//   3. NOT logged in                         → login redirect (prompt first,
-//        for ANY pane id, so the prompt is identical whether or not the pane
-//        exists — no existence oracle)
-//   4. logged-in human is owner OR has a grant → allow(owner|grant role)
-//   5. logged-in, no grant                   → 404 (no oracle; never 403)
+//          maps 1:1 to the design. CRITICAL: accessMode NEVER gates the token
+//          path — a token works in every mode until explicitly revoked.
+//   2. accessMode === "public" → allow(viewer, READ-ONLY) for anyone (anon OK)
+//   3. accessMode === "link"   → allow(viewer, READ-ONLY) for anyone (anon OK).
+//        Functionally identical to "public" at this resolver; the only
+//        eventual difference is discovery/listing (a SEPARATE follow-up — a
+//        "public" pane may be listed, a "link" pane never is).
+//   4. accessMode === "invite_only" (the gated path):
+//        a. NOT logged in                          → login redirect (prompt
+//             first, for ANY pane id, so the prompt is identical whether or
+//             not the pane exists — no existence oracle)
+//        b. logged-in human is owner OR has a grant → allow(owner|grant role)
+//        c. logged-in, no grant                    → 404 (no oracle; never 403)
 //
 // On any allow, a logged-in human's open is recorded for Recents (best-
-// effort). Public-anonymous and `viewer`-grant access are READ-ONLY: the
-// ws-ticket route refuses them, and they never receive a participant token,
-// so the page can never emit an event. Emit needs a participant token or a
-// `participant`-role grant (owner included).
+// effort). Anonymous (link/public) and `viewer`-grant access are READ-ONLY:
+// the ws-ticket route refuses them, and they never receive a participant
+// token, so the page can never emit an event. Emit needs a participant token
+// or a `participant`-role grant (owner included).
 
 import { Hono, type Context } from "hono";
 import type { PrismaClient } from "@prisma/client";
@@ -59,7 +65,7 @@ type Access =
   // grant) can mint a ws-ticket; "viewer" (public-anon or viewer grant) is
   // read-only. `humanId` is the logged-in human (null for public-anon).
   | { kind: "allow"; role: "participant" | "viewer"; humanId: string | null }
-  // Bounce to /login carrying the return URL (not-logged-in, non-public pane).
+  // Bounce to /login carrying the return URL (not-logged-in, invite_only pane).
   | { kind: "login" }
   // Indistinguishable from "pane does not exist" — no existence oracle.
   | { kind: "not_found" };
@@ -85,7 +91,7 @@ async function resolveHumanFromCookie(
 // The pane fields the resolver + serving path need. Loaded once per request.
 type LoadedPane = ServeablePane & {
   ownerHumanId: string | null;
-  isPublic: boolean;
+  accessMode: string;
   deletedAt: Date | null;
 };
 
@@ -113,19 +119,27 @@ async function resolveAccess(
   // oracle-free.
   const paneExists = pane !== null && pane.deletedAt === null;
 
-  // (2) public pane → read-only viewer, even for anonymous callers. Checked
-  // before login state so a public pane opens without a prompt.
-  if (paneExists && pane!.isPublic) {
+  // (2)+(3) "public" and "link" both open READ-ONLY to anyone, including an
+  // anonymous caller — no login prompt. Checked before login state so the pane
+  // opens immediately. The two modes are identical here; they diverge only at
+  // the (future) discovery surface, which is out of scope for this resolver.
+  // Any unrecognised stored value falls through to the gated (invite_only)
+  // branch — fail closed.
+  if (
+    paneExists &&
+    (pane!.accessMode === "public" || pane!.accessMode === "link")
+  ) {
     return { kind: "allow", role: "viewer", humanId: human?.id ?? null };
   }
 
-  // (3) not logged in + not public → prompt to log in. Done for ANY pane id
-  // (existing or not) so the prompt can't be used to probe pane existence.
+  // (4) invite_only (and any unknown mode, fail-closed). Not logged in → prompt
+  // to log in. Done for ANY pane id (existing or not) so the prompt can't be
+  // used to probe pane existence.
   if (!human) {
     return { kind: "login" };
   }
 
-  // From here the caller is a logged-in human on a non-public pane.
+  // From here the caller is a logged-in human on an invite_only pane.
   if (!paneExists) {
     // Logged in but the pane is gone/trashed → 404 (same as "no grant").
     return { kind: "not_found" };

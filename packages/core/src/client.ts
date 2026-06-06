@@ -123,17 +123,26 @@ export interface PaneGrant {
   accepted_at: string | null;
 }
 
+/**
+ * The pane-id (`/p/:paneId`) access mode. Governs ONLY the pane-id path; token
+ * (`/s/<token>`) links are unaffected and keep working in every mode.
+ *   - "invite_only" — only invited emails (after login) may open /p.
+ *   - "link"        — anyone with the /p URL opens it read-only, no login.
+ *   - "public"      — anyone opens it read-only, no login (discovery TBD).
+ */
+export type AccessMode = "invite_only" | "link" | "public";
+
 /** Response from GET /v1/panes/:id/grants. */
 export interface PaneGrantsList {
   pane_id: string;
-  is_public: boolean;
+  access_mode: AccessMode;
   items: PaneGrant[];
 }
 
 /** Response from PATCH /v1/panes/:id/visibility. */
 export interface PaneVisibility {
   pane_id: string;
-  is_public: boolean;
+  access_mode: AccessMode;
 }
 
 /**
@@ -930,7 +939,7 @@ export class PaneClient {
 
   /**
    * GET /v1/panes/:id/grants — list the pane's identity-share grants plus
-   * its current `is_public` state. Owner/agent-scope only.
+   * its current `access_mode`. Owner/agent-scope only.
    */
   async listGrants(paneId: string): Promise<PaneGrantsList> {
     const r = await this.call(
@@ -974,18 +983,20 @@ export class PaneClient {
   }
 
   /**
-   * PATCH /v1/panes/:id/visibility — toggle the pane's public visibility.
-   * When `is_public` is true the pane opens READ-ONLY to anyone at
-   * /p/:paneId without logging in; false reverts it to invite-only.
+   * PATCH /v1/panes/:id/visibility — set the pane's /p access mode.
+   *   - "invite_only" — only invited emails (after login) may open /p.
+   *   - "link"        — anyone with the /p URL opens it READ-ONLY, no login.
+   *   - "public"      — anyone opens it READ-ONLY, no login (discovery TBD).
+   * Token (`/s/<token>`) links are independent of this and keep working.
    */
   async setPaneVisibility(
     paneId: string,
-    isPublic: boolean,
+    accessMode: AccessMode,
   ): Promise<PaneVisibility> {
     const r = await this.call(
       "PATCH",
       `/v1/panes/${encodeURIComponent(paneId)}/visibility`,
-      { is_public: isPublic },
+      { access_mode: accessMode },
     );
     if (!r.ok) this.fail(r);
     return this.asObject<PaneVisibility>(r);

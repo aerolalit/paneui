@@ -125,12 +125,12 @@ function cookieHeaders(cookie: string): HeadersInit {
 }
 
 describe("/p/:paneId resolver", () => {
-  it("public pane opens anonymously (read-only)", async () => {
+  it("public mode opens anonymously (read-only)", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
     await prisma.pane.update({
       where: { id: paneId },
-      data: { isPublic: true },
+      data: { accessMode: "public" },
     });
 
     const res = await app.fetch(
@@ -149,9 +149,40 @@ describe("/p/:paneId resolver", () => {
     expect(ticket.status).toBe(403);
   });
 
-  it("private pane: logged-out browser → login redirect", async () => {
+  it("link mode opens anonymously for a stranger (read-only)", async () => {
+    // The new behaviour: `link` (the default) opens /p with no login — same
+    // resolver outcome as public; only discovery (a follow-up) differs.
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
+    // Sanity: a freshly seeded pane defaults to `link`.
+    const fresh = await prisma.pane.findUniqueOrThrow({
+      where: { id: paneId },
+      select: { accessMode: true },
+    });
+    expect(fresh.accessMode).toBe("link");
+
+    const res = await app.fetch(
+      new Request(`http://t/p/${paneId}`, {
+        headers: { accept: "text/html" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+
+    // Read-only: an anonymous link-mode viewer cannot mint a ws-ticket.
+    const ticket = await app.fetch(
+      new Request(`http://t/p/${paneId}/ws-ticket`, { method: "POST" }),
+    );
+    expect(ticket.status).toBe(403);
+  });
+
+  it("invite_only mode: logged-out browser → login redirect", async () => {
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
 
     const res = await app.fetch(
       new Request(`http://t/p/${paneId}`, {
@@ -174,9 +205,13 @@ describe("/p/:paneId resolver", () => {
     expect(res.headers.get("location")).toContain("/login?return=");
   });
 
-  it("logged-in non-grantee → 404 (NOT 403, no existence leak)", async () => {
+  it("invite_only: logged-in non-grantee → 404 (NOT 403, no existence leak)", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
     const stranger = await seedHumanWithCookie("stranger@example.com");
 
     const res = await app.fetch(
@@ -188,9 +223,13 @@ describe("/p/:paneId resolver", () => {
     expect(res.status).not.toBe(403);
   });
 
-  it("invited human → opens with their role; participant grant can emit", async () => {
+  it("invite_only: invited human → opens with their role; participant grant can emit", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
     const bob = await seedHumanWithCookie("bob@example.com");
     await prisma.paneGrant.create({
       data: {
@@ -220,9 +259,13 @@ describe("/p/:paneId resolver", () => {
     expect(ticket.status).toBe(201);
   });
 
-  it("viewer grant is read-only (ws-ticket refused)", async () => {
+  it("invite_only: viewer grant is read-only (ws-ticket refused)", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
     const viewer = await seedHumanWithCookie("viewer@example.com");
     await prisma.paneGrant.create({
       data: {
@@ -251,9 +294,13 @@ describe("/p/:paneId resolver", () => {
     expect(ticket.status).toBe(403);
   });
 
-  it("owner can open via /p and emit", async () => {
+  it("invite_only: owner can open via /p and emit", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
     const ticket = await app.fetch(
       new Request(`http://t/p/${paneId}/ws-ticket`, {
         method: "POST",

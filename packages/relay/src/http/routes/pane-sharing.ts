@@ -1,6 +1,6 @@
 // Pane sharing management — agent-authed (the CLI's `pane share` entry point).
 //
-//   PATCH  /v1/panes/:id/visibility   toggle isPublic { is_public: bool }
+//   PATCH  /v1/panes/:id/visibility   set accessMode { access_mode: mode }
 //   GET    /v1/panes/:id/grants        list identity-share grants
 //   POST   /v1/panes/:id/grants        invite by email (upsert) { email, role? }
 //   DELETE /v1/panes/:id/grants/:gid   revoke one grant (idempotent)
@@ -45,12 +45,12 @@ async function loadInScope(
 ) {
   const pane = await prisma.pane.findUnique({
     where: { id: paneId },
-    select: { id: true, agentId: true, ownerHumanId: true, isPublic: true },
+    select: { id: true, agentId: true, ownerHumanId: true, accessMode: true },
   });
   return assertPaneInScope(prisma, pane, me);
 }
 
-// PATCH /v1/panes/:id/visibility — toggle the pane's public visibility.
+// PATCH /v1/panes/:id/visibility — set the pane's /p access mode.
 paneSharing.patch("/:id/visibility", requireAgent, async (c) => {
   const prisma = c.get("prisma");
   const me = c.get("agent");
@@ -61,14 +61,14 @@ paneSharing.patch("/:id/visibility", requireAgent, async (c) => {
     throw errors.invalidRequest(
       "invalid visibility update",
       parsed.error.flatten(),
-      "send { is_public: boolean }",
+      "send { access_mode: 'invite_only' | 'link' | 'public' }",
     );
   }
 
   const pane = await loadInScope(prisma, id, me);
-  await setVisibility(prisma, pane.id, parsed.data.is_public);
+  await setVisibility(prisma, pane.id, parsed.data.access_mode);
 
-  return c.json({ pane_id: pane.id, is_public: parsed.data.is_public });
+  return c.json({ pane_id: pane.id, access_mode: parsed.data.access_mode });
 });
 
 // GET /v1/panes/:id/grants — list every grant on the pane.
@@ -78,11 +78,11 @@ paneSharing.get("/:id/grants", requireAgent, async (c) => {
   const id = c.req.param("id");
 
   const pane = await loadInScope(prisma, id, me);
-  const { isPublic, grants } = await listGrantsAndVisibility(prisma, pane.id);
+  const { accessMode, grants } = await listGrantsAndVisibility(prisma, pane.id);
 
   return c.json({
     pane_id: pane.id,
-    is_public: isPublic,
+    access_mode: accessMode,
     items: grants,
   });
 });

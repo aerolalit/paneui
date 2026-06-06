@@ -70,9 +70,10 @@ Pane commands (operate on the core noun — a live UI channel):
   participant       Manage participant URLs on an existing pane
     <list|new|revoke> (list | mint a fresh URL | revoke one URL).
   share <id>        Share a pane by identity: invite humans by email
-                    (--email, with --role participant|viewer), toggle
-                    public read-only access (--public|--private), list
-                    grants (--list), or revoke one (--revoke <grant-id>).
+                    (--email, with --role participant|viewer), set the /p
+                    access mode (--mode invite-only|link|public, or the
+                    aliases --public/--link/--invite-only), list grants
+                    (--list), or revoke one (--revoke <grant-id>).
 
 Other noun groups:
   demo              Take the 60-second guided tour — creates a tutorial pane,
@@ -145,10 +146,12 @@ const BOOLEAN_FLAGS = new Set([
   // `pane demo --no-open`: skip the browser launch. Stored as the literal
   // `no-open` boolean (the parser does not auto-negate `--no-` prefixes).
   "no-open",
-  // `pane share` visibility/list verbs — registered here so the parser treats
-  // them as flags, not value-flags that would swallow the next token.
+  // `pane share` access-mode aliases + list verb — registered here so the
+  // parser treats them as flags, not value-flags that would swallow the next
+  // token. (The full --mode <value> is a value-flag, handled in share.ts.)
   "public",
-  "private",
+  "link",
+  "invite-only",
   "list",
 ]);
 

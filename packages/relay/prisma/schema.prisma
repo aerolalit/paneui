@@ -442,14 +442,24 @@ model Pane {
   // just a Participant, but for now both columns coexist.
   ownerHumanId    String?       @map("owner_human_id")
   ownerHuman      Human?        @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
-  // Identity-share visibility. The token-share path (Participant rows minted
-  // via /public-link, /identity-link, agent participants) is unchanged and
-  // layered independently; `isPublic` is the only new visibility *state* and
-  // sits on top of it. When true, /p/:paneId serves the pane READ-ONLY to any
-  // anonymous viewer (no login, no grant) — event emit still requires a
-  // participant token or a `participant`-role grant. Default false (every
-  // existing pane stays private; the migration does no backfill).
-  isPublic        Boolean       @default(false) @map("is_public")
+  // Identity-share visibility for the pane-id `/p/:paneId` path. The token-
+  // share path (`/s/<token>`, Participant rows minted via /public-link,
+  // /identity-link, agent participants) is UNCHANGED and layered independently:
+  // `accessMode` never gates a valid token — tokens work in every mode until
+  // explicitly revoked. Three modes (validated in app code, plain string so it
+  // stays portable across SQLite + Postgres, matching how `PaneGrant.role` is
+  // done):
+  //   - "invite_only" — only invited emails (after login) may open /p; a
+  //     logged-out caller is bounced to /login, a logged-in non-grantee 404s
+  //     (no existence oracle).
+  //   - "link" (DEFAULT) — anyone with the /p URL opens it READ-ONLY, no login;
+  //     the pane is not discoverable/listed.
+  //   - "public" — anyone opens it READ-ONLY, no login. Discovery/listing is a
+  //     SEPARATE follow-up; today it resolves identically to "link" at /p.
+  // Read-only enforcement is unchanged: anon/link/public/viewer-grant callers
+  // never get a ws-ticket; only the owner or a participant grant (or a
+  // participant token) can emit.
+  accessMode      String        @default("link") @map("access_mode")
   // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
   // NULL = ad-hoc pane, no dedup. Used by pane-create to dedupe
   // (template, owner, contextKey) into a single row.

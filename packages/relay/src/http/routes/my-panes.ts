@@ -6,7 +6,7 @@
 //   GET    /v1/my-panes/:id/grants       list grants + visibility (Share dialog)
 //   POST   /v1/my-panes/:id/grants       invite by email { email, role? }
 //   DELETE /v1/my-panes/:id/grants/:gid  revoke a grant
-//   PATCH  /v1/my-panes/:id/visibility   { is_public } restricted ↔ public
+//   PATCH  /v1/my-panes/:id/visibility   { access_mode } set the /p access mode
 //   POST   /v1/my-panes/:id/share-link   mint a default /s/<token> share link
 //
 // Parallels DELETE /v1/panes/:id (which is agent-authed) but lets the
@@ -52,7 +52,7 @@ export const myPanes = new Hono<HumanAuthEnv>();
 // be shareable). Used by the Share-dialog routes below.
 async function loadOwnedPaneForShare(
   c: Context<HumanAuthEnv>,
-): Promise<{ id: string; isPublic: boolean }> {
+): Promise<{ id: string }> {
   const prisma = c.get("prisma");
   const human = c.get("human");
   const id = c.req.param("id");
@@ -60,12 +60,12 @@ async function loadOwnedPaneForShare(
 
   const pane = await prisma.pane.findUnique({
     where: { id },
-    select: { id: true, ownerHumanId: true, isPublic: true, deletedAt: true },
+    select: { id: true, ownerHumanId: true, deletedAt: true },
   });
   if (!pane || pane.ownerHumanId !== human.id || pane.deletedAt !== null) {
     throw errors.notFound();
   }
-  return { id: pane.id, isPublic: pane.isPublic };
+  return { id: pane.id };
 }
 
 // DELETE /v1/my-panes/:id
@@ -186,8 +186,8 @@ myPanes.delete("/:id/favorite", requireHuman, async (c) => {
 myPanes.get("/:id/grants", requireHuman, async (c) => {
   const prisma = c.get("prisma");
   const pane = await loadOwnedPaneForShare(c);
-  const { isPublic, grants } = await listGrantsAndVisibility(prisma, pane.id);
-  return c.json({ pane_id: pane.id, is_public: isPublic, items: grants });
+  const { accessMode, grants } = await listGrantsAndVisibility(prisma, pane.id);
+  return c.json({ pane_id: pane.id, access_mode: accessMode, items: grants });
 });
 
 // POST /v1/my-panes/:id/grants — invite by email. Role defaults to participant.
@@ -222,7 +222,7 @@ myPanes.delete("/:id/grants/:gid", requireHuman, async (c) => {
   return c.body(null, 204);
 });
 
-// PATCH /v1/my-panes/:id/visibility — flip restricted ↔ public { is_public }.
+// PATCH /v1/my-panes/:id/visibility — set the /p access mode { access_mode }.
 myPanes.patch("/:id/visibility", requireHuman, async (c) => {
   const prisma = c.get("prisma");
   const pane = await loadOwnedPaneForShare(c);
@@ -232,12 +232,12 @@ myPanes.patch("/:id/visibility", requireHuman, async (c) => {
     throw errors.invalidRequest(
       "invalid visibility update",
       parsed.error.flatten(),
-      "send { is_public: boolean }",
+      "send { access_mode: 'invite_only' | 'link' | 'public' }",
     );
   }
 
-  await setVisibility(prisma, pane.id, parsed.data.is_public);
-  return c.json({ pane_id: pane.id, is_public: parsed.data.is_public });
+  await setVisibility(prisma, pane.id, parsed.data.access_mode);
+  return c.json({ pane_id: pane.id, access_mode: parsed.data.access_mode });
 });
 
 // POST /v1/my-panes/:id/share-link — mint a default anonymous /s/<token>
