@@ -93,22 +93,69 @@ agents.post("/claim", async (c) => {
       // owner); the rule "ownerHumanId IS NOT NULL => human-owned" lets
       // Phase D's lookups treat the human as the new owner.
       //
-      // NOTE: this writes ownerHumanId on EVERY LIVE pane the agent owns.
-      // The proposal also describes flipping the ownership model in Phase D
-      // (Pane.agentId removed); until then we just tag the human owner alongside.
+      // NOTE: this writes ownerHumanId on the agent's panes. The proposal
+      // also describes flipping the ownership model in Phase D (Pane.agentId
+      // removed); until then we just tag the human owner alongside.
       //
-      // `deletedAt: null` is load-bearing. The `(templateVersionId,
-      // ownerHumanId, contextKey)` unique index is NOT partial on deletedAt,
-      // so a soft-deleted tombstone and its live replacement (same template
-      // version + context_key) coexist only while ownerHumanId is NULL (NULLs
-      // are distinct). Migrating tombstones too would flip both to the same
-      // human at once and trip the unique index (P2002 -> 500). Tombstones
-      // don't need ownership — they're invisible and the hard-delete sweeper
-      // reclaims them — so we leave them NULL and migrate only live panes.
+      // The migration must NOT create a duplicate on the (templateVersionId,
+      // ownerHumanId, contextKey) unique index, which is NOT partial on
+      // deletedAt/status. While ownerHumanId is NULL an agent can hold several
+      // panes with the SAME (templateVersion, contextKey) — an unclaimed agent
+      // gets no contextKey dedup, so recreating a context_key leaves the old
+      // pane (closed, then soft-deleted by the sweeper) beside the new one, all
+      // unowned (NULLs are distinct). Flipping the whole set to the same human
+      // at once would collide (P2002 -> 500). So:
+      //
+      //   * Panes with NO context_key can never collide -> migrate them all.
+      //   * Context-keyed panes: migrate exactly ONE winner per
+      //     (templateVersion, contextKey) group — the most "current" one
+      //     (prefer non-deleted, then open, then newest) — and leave the rest
+      //     unowned. The leftovers are recreate debris the sweeper reclaims.
+      //
+      // Done in app code (group + pick) rather than SQL DISTINCT ON so it works
+      // on both the sqlite and postgres builds.
       await tx.pane.updateMany({
-        where: { agentId: agent.id, ownerHumanId: null, deletedAt: null },
+        where: { agentId: agent.id, ownerHumanId: null, contextKey: null },
         data: { ownerHumanId: claim.humanId },
       });
+      const keyed = await tx.pane.findMany({
+        where: {
+          agentId: agent.id,
+          ownerHumanId: null,
+          contextKey: { not: null },
+        },
+        select: {
+          id: true,
+          templateVersionId: true,
+          contextKey: true,
+          status: true,
+          deletedAt: true,
+          createdAt: true,
+        },
+      });
+      type KeyedPane = (typeof keyed)[number];
+      // Higher rank = more current. Tie-break on createdAt (newest wins).
+      const rank = (p: KeyedPane) =>
+        (p.deletedAt === null ? 2 : 0) + (p.status === "open" ? 1 : 0);
+      const winners = new Map<string, KeyedPane>();
+      for (const p of keyed) {
+        const k = `${p.templateVersionId}|${p.contextKey}`;
+        const cur = winners.get(k);
+        if (
+          !cur ||
+          rank(p) > rank(cur) ||
+          (rank(p) === rank(cur) && p.createdAt > cur.createdAt)
+        ) {
+          winners.set(k, p);
+        }
+      }
+      const winnerIds = [...winners.values()].map((p) => p.id);
+      if (winnerIds.length > 0) {
+        await tx.pane.updateMany({
+          where: { id: { in: winnerIds } },
+          data: { ownerHumanId: claim.humanId },
+        });
+      }
       // Templates are agent-owned via Template.ownerId. Today there's no
       // human-ownership column on Template; auto-flow (§8.1) just joins
       // through Agent.ownerHumanId at query time, so no per-row write
