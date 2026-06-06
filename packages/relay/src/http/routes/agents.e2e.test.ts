@@ -350,4 +350,125 @@ describe("POST /v1/agents/claim", () => {
       (await prisma.pane.findUnique({ where: { id: dead.id } }))?.ownerHumanId,
     ).toBeNull();
   });
+
+  it("claims an agent with a CLOSED (not-yet-swept) duplicate pane on a context_key", async () => {
+    // The realistic case: DELETE /v1/panes/:id closes a pane (status=closed,
+    // deletedAt still NULL until the TTL sweeper trashes it). Recreating the
+    // same context_key leaves the closed pane beside the new open one, both
+    // deletedAt=NULL — so a deletedAt-only filter would still collide.
+    const { id: agentId, apiKey } = await seedAgent();
+    const humanId = await seedHuman();
+    const tmpl = await prisma.template.create({
+      data: { ownerId: agentId, name: "t" },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    const closed = await prisma.pane.create({
+      data: {
+        id: "pan_closed",
+        agentId,
+        templateVersionId: tv.id,
+        contextKey: "demo:x",
+        title: "old",
+        status: "closed",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const open = await prisma.pane.create({
+      data: {
+        id: "pan_open",
+        agentId,
+        templateVersionId: tv.id,
+        contextKey: "demo:x",
+        title: "new",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const { raw } = await mintCode(humanId);
+    const res = await app.fetch(
+      new Request("http://t/v1/agents/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ code: raw }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    // The open pane wins the (templateVersion, contextKey) group; closed left unowned.
+    expect(
+      (await prisma.pane.findUnique({ where: { id: open.id } }))?.ownerHumanId,
+    ).toBe(humanId);
+    expect(
+      (await prisma.pane.findUnique({ where: { id: closed.id } }))
+        ?.ownerHumanId,
+    ).toBeNull();
+  });
+
+  it("migrates every non-duplicate pane (null context_key + unique-key closed panes keep ownership)", async () => {
+    // No regression: panes that can't collide must still be migrated — a
+    // null-context_key pane and a closed pane with a UNIQUE context_key both
+    // get the human owner.
+    const { id: agentId, apiKey } = await seedAgent();
+    const humanId = await seedHuman();
+    const tmpl = await prisma.template.create({
+      data: { ownerId: agentId, name: "t" },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tmpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p/>",
+      },
+    });
+    const noKey = await prisma.pane.create({
+      data: {
+        id: "pan_nokey",
+        agentId,
+        templateVersionId: tv.id,
+        title: "n",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const uniqueClosed = await prisma.pane.create({
+      data: {
+        id: "pan_uniq",
+        agentId,
+        templateVersionId: tv.id,
+        contextKey: "demo:only",
+        title: "u",
+        status: "closed",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const { raw } = await mintCode(humanId);
+    const res = await app.fetch(
+      new Request("http://t/v1/agents/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ code: raw }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(
+      (await prisma.pane.findUnique({ where: { id: noKey.id } }))?.ownerHumanId,
+    ).toBe(humanId);
+    expect(
+      (await prisma.pane.findUnique({ where: { id: uniqueClosed.id } }))
+        ?.ownerHumanId,
+    ).toBe(humanId);
+  });
 });
