@@ -797,7 +797,9 @@ export function renderShell(args: ShellArgs): string {
   .brand {
     display: inline-flex; align-items: center; gap: 7px;
     user-select: none;
+    text-decoration: none; color: inherit;
   }
+  .brand:hover .brand-name { opacity: 0.85; }
   .brand-logo { display: block; flex: none; }
   .brand-name {
     font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
@@ -895,11 +897,15 @@ ${renderTopNav(args)}${
         // shell shows three header rows (brand, presence, tabs) for one
         // page's worth of context.
         ""
-      : `<header>
-  <span class="brand">
+      : // Standalone header — runs on /s/<token> (anonymous capability-link
+        // mount) and on /p/:paneId when not signed in. Both audiences see the
+        // landing page at /, not the owner's /home (which is logged-in-only).
+        // The owner's mount renders the top-nav variant above with /home.
+        `<header>
+  <a class="brand" href="/" aria-label="pane home">
     <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
-  </span>
+  </a>
   <span class="spacer"></span>
   <span class="pill">
     <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -1107,7 +1113,10 @@ function renderHumanError(copy: ErrorPageCopy): string {
   .brand {
     display: inline-flex; align-items: center; gap: 7px;
     user-select: none;
+    text-decoration: none; color: inherit; border-bottom: 0;
   }
+  .brand:hover { border-bottom: 0; }
+  .brand:hover .brand-name { opacity: 0.85; }
   .brand-logo { display: block; flex: none; }
   .brand-name {
     font-weight: 600; font-size: 14px; letter-spacing: 0.2px;
@@ -1134,10 +1143,10 @@ function renderHumanError(copy: ErrorPageCopy): string {
 </head>
 <body>
 <header>
-  <span class="brand">
+  <a class="brand" href="/" aria-label="pane home">
     <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
     <span class="brand-name">Pane</span>
-  </span>
+  </a>
 </header>
 <main>
   <div class="card">
