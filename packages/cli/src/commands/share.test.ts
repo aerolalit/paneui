@@ -7,7 +7,7 @@ const calls: { method: string; args: unknown[] }[] = [];
 const fakeClient = {
   listGrants: vi.fn((id: unknown) => {
     calls.push({ method: "listGrants", args: [id] });
-    return Promise.resolve({ pane_id: id, is_public: false, items: [] });
+    return Promise.resolve({ pane_id: id, access_mode: "link", items: [] });
   }),
   createGrant: vi.fn((id: unknown, opts: unknown) => {
     calls.push({ method: "createGrant", args: [id, opts] });
@@ -23,9 +23,9 @@ const fakeClient = {
     calls.push({ method: "revokeGrant", args: [id, gid] });
     return Promise.resolve();
   }),
-  setPaneVisibility: vi.fn((id: unknown, pub: unknown) => {
-    calls.push({ method: "setPaneVisibility", args: [id, pub] });
-    return Promise.resolve({ pane_id: id, is_public: pub });
+  setPaneVisibility: vi.fn((id: unknown, mode: unknown) => {
+    calls.push({ method: "setPaneVisibility", args: [id, mode] });
+    return Promise.resolve({ pane_id: id, access_mode: mode });
   }),
 };
 
@@ -46,7 +46,8 @@ const BOOLS = new Set([
   "yes",
   "plain",
   "public",
-  "private",
+  "link",
+  "invite-only",
   "list",
 ]);
 function argv(tokens: string[]) {
@@ -112,16 +113,41 @@ describe("pane share", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("--public calls setPaneVisibility(true)", async () => {
+  it("--public calls setPaneVisibility('public')", async () => {
     await run(["pan_abc", "--public"]);
     expect(calls[0]!.method).toBe("setPaneVisibility");
-    expect(calls[0]!.args[1]).toBe(true);
+    expect(calls[0]!.args[1]).toBe("public");
   });
 
-  it("--private calls setPaneVisibility(false)", async () => {
-    await run(["pan_abc", "--private"]);
+  it("--link calls setPaneVisibility('link')", async () => {
+    await run(["pan_abc", "--link"]);
     expect(calls[0]!.method).toBe("setPaneVisibility");
-    expect(calls[0]!.args[1]).toBe(false);
+    expect(calls[0]!.args[1]).toBe("link");
+  });
+
+  it("--invite-only calls setPaneVisibility('invite_only')", async () => {
+    await run(["pan_abc", "--invite-only"]);
+    expect(calls[0]!.method).toBe("setPaneVisibility");
+    expect(calls[0]!.args[1]).toBe("invite_only");
+  });
+
+  it("--mode public calls setPaneVisibility('public')", async () => {
+    await run(["pan_abc", "--mode", "public"]);
+    expect(calls[0]!.method).toBe("setPaneVisibility");
+    expect(calls[0]!.args[1]).toBe("public");
+  });
+
+  it("--mode invite-only normalizes the hyphen to invite_only", async () => {
+    await run(["pan_abc", "--mode", "invite-only"]);
+    expect(calls[0]!.method).toBe("setPaneVisibility");
+    expect(calls[0]!.args[1]).toBe("invite_only");
+  });
+
+  it("rejects an invalid --mode", async () => {
+    await run(["pan_abc", "--mode", "everyone"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("invalid_args");
+    expect(calls).toHaveLength(0);
   });
 
   it("--revoke calls revokeGrant", async () => {

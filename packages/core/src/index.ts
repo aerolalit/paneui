@@ -19,6 +19,7 @@ export type {
   PaneGrant,
   PaneGrantsList,
   PaneVisibility,
+  AccessMode,
 } from "./client.js";
 
 export { openStream } from "./stream.js";

@@ -362,10 +362,11 @@ model Pane {
   // just a Participant, but for now both columns coexist.
   ownerHumanId    String?       @map("owner_human_id")
   ownerHuman      Human?        @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
-  // Identity-share visibility. See sqlite schema for the full design notes.
-  // The only new visibility state; token sharing is layered independently.
-  // Default false; the migration does no backfill.
-  isPublic        Boolean       @default(false) @map("is_public")
+  // Identity-share visibility for /p/:paneId. See the sqlite schema for the
+  // full design notes. Three modes ("invite_only" | "link" | "public"),
+  // validated in app code; token sharing is layered independently and never
+  // gated by accessMode. Default "link".
+  accessMode      String        @default("link") @map("access_mode")
   // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
   // NULL = ad-hoc pane, no dedup. Used by pane-create to dedupe
   // (template, owner, contextKey) into a single row.

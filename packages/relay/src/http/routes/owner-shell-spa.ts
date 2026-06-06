@@ -699,8 +699,9 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <h3>General access</h3>
       <div class="share-access">
         <select id="share-visibility" aria-label="General access">
-          <option value="restricted">Restricted — only invited people</option>
-          <option value="public">Public — anyone with the link</option>
+          <option value="invite_only">Invite only</option>
+          <option value="link">Anyone with the link</option>
+          <option value="public">Public</option>
         </select>
         <button id="share-visibility-toggle" type="button" class="btn"></button>
         <div class="share-access-note" id="share-access-note"></div>
@@ -1971,30 +1972,44 @@ const SHELL_JS = `
 
     function paneUrl(id) { return location.origin + '/p/' + encodeURIComponent(id); }
 
-    function setAccessNote(isPublic) {
-      if (!accessNote) return;
-      accessNote.textContent = isPublic
-        ? 'Anyone with the link can open this pane without signing in.'
-        : 'Only people you invite can open this pane.';
+    // Track the last known access mode so the quick-action button and the
+    // copy-link hint can branch on it without re-reading the <select>.
+    let currentMode = 'link';
+
+    // Coerce any value to one of the three known modes; unknown → 'link'.
+    function normMode(m) {
+      return (m === 'invite_only' || m === 'link' || m === 'public') ? m : 'link';
     }
 
-    // The quick-action toggle next to the dropdown. When the pane is
-    // restricted it offers "Make public" (primary, globe icon); when public it
-    // offers "Make restricted" (secondary). The icon goes in its own span so
-    // the label can be set with textContent (no innerHTML on dynamic text).
-    function setToggleButton(isPublic) {
+    function setAccessNote(mode) {
+      if (!accessNote) return;
+      accessNote.textContent =
+        mode === 'invite_only'
+          ? 'Only invited people can open this pane.'
+          : mode === 'public'
+            ? 'Anyone can open this; it may be listed publicly.'
+            : 'Anyone with the link can open this, no sign-in.';
+    }
+
+    // The quick-action button next to the dropdown. Under the 3-mode model it
+    // quick-sets Public: when the pane is NOT public it offers "Make public"
+    // (primary, globe icon); when already public it becomes a secondary "Make
+    // invite only" so the button is never a dead end. The dropdown remains the
+    // full 3-way control. The icon goes in its own span so the label can be set
+    // with textContent (no innerHTML on dynamic text).
+    function setToggleButton(mode) {
       if (!visToggle) return;
       visToggle.textContent = '';
-      if (isPublic) {
+      if (mode === 'public') {
         visToggle.classList.remove('primary');
         const label = document.createElement('span');
-        label.textContent = 'Make restricted';
+        label.textContent = 'Make invite only';
         visToggle.appendChild(label);
-        visToggle.setAttribute('aria-label', 'Make this pane restricted');
+        visToggle.setAttribute('aria-label', 'Make this pane invite only');
       } else {
         visToggle.classList.add('primary');
         const icon = document.createElement('span');
-        // Globe — a public/anyone-with-the-link affordance.
+        // Globe — a public/anyone-can-open affordance.
         icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
         const label = document.createElement('span');
         label.textContent = 'Make public';
@@ -2004,22 +2019,26 @@ const SHELL_JS = `
       }
     }
 
-    // Single source of truth for reflecting a visibility value across the whole
+    // Single source of truth for reflecting an access mode across the whole
     // section: dropdown selection, helper note, and the quick-action button.
-    function reflectVisibility(isPublic) {
-      visEl.value = isPublic ? 'public' : 'restricted';
-      setAccessNote(isPublic);
-      setToggleButton(isPublic);
+    function reflectVisibility(mode) {
+      const m = normMode(mode);
+      currentMode = m;
+      visEl.value = m;
+      setAccessNote(m);
+      setToggleButton(m);
+      updateLinkHint();
     }
 
-    // Apply a visibility change: PATCH the pane, then reflect it in the UI.
+    // Apply an access-mode change: PATCH the pane, then reflect it in the UI.
     // Both the dropdown's change handler and the button's click handler call
     // this, so there is exactly one request + state-update path. Disables the
     // select + button while in flight; on failure shows the dialog's inline
     // error and reverts the UI to the previous value.
-    async function applyVisibility(isPublic) {
+    async function applyVisibility(mode) {
       if (!currentPaneId) return;
-      const prev = !isPublic;
+      const next = normMode(mode);
+      const prev = currentMode;
       clearErr();
       visEl.disabled = true;
       if (visToggle) visToggle.disabled = true;
@@ -2027,14 +2046,14 @@ const SHELL_JS = `
         const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/visibility', {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ is_public: isPublic }),
+          body: JSON.stringify({ access_mode: next }),
         });
         if (!res.ok) {
           showErr('Could not change access: ' + (await readErr(res)));
           reflectVisibility(prev); // revert
           return;
         }
-        reflectVisibility(isPublic);
+        reflectVisibility(next);
       } catch (e) {
         showErr('Network error — try again.');
         reflectVisibility(prev);
@@ -2104,7 +2123,7 @@ const SHELL_JS = `
         if (!res.ok) { showErr('Could not load sharing: ' + (await readErr(res))); return; }
         const body = await res.json();
         renderGrants(Array.isArray(body.items) ? body.items : []);
-        reflectVisibility(!!body.is_public);
+        reflectVisibility(body.access_mode);
       } catch (e) {
         showErr('Network error loading sharing.');
       }
@@ -2184,23 +2203,43 @@ const SHELL_JS = `
       }
     });
 
-    // Visibility — the dropdown and the quick-action button both route
-    // through applyVisibility() so they stay in sync and share one request +
+    // Visibility — the dropdown (full 3-way control) and the quick-action
+    // button (quick-set Public ↔ Invite only) both route through
+    // applyVisibility() so they stay in sync and share one request +
     // state-update path.
     visEl.addEventListener('change', () => {
-      applyVisibility(visEl.value === 'public');
+      applyVisibility(visEl.value);
     });
     if (visToggle) {
       visToggle.addEventListener('click', () => {
-        // Toggle relative to the current dropdown state.
-        applyVisibility(visEl.value !== 'public');
+        // Quick-set: if not already public, go public; otherwise go invite_only.
+        applyVisibility(currentMode === 'public' ? 'invite_only' : 'public');
       });
     }
 
-    // Copy link — default is the immediate-view /s/<token> link (no login).
-    // We mint it lazily on first click via the share-link route, then cache it
-    // for the dialog's lifetime. When the pane is public we also note the
-    // /p/:paneId identity-share link in the hint.
+    // Update the copy-link hint to match the current access mode. Called by
+    // reflectVisibility (so the hint reacts to mode changes) and after a copy.
+    //   - link:        the token /s link is primary (immediate view, no login).
+    //   - public:      surface the /p/:paneId link (anyone, no login).
+    //   - invite_only: the /p/:paneId link (login required for invitees).
+    function updateLinkHint() {
+      if (!linkHint || !currentPaneId) return;
+      if (currentMode === 'public') {
+        linkHint.textContent = 'Public link: ' + paneUrl(currentPaneId) + ' — anyone can open it, no sign-in.';
+      } else if (currentMode === 'invite_only') {
+        linkHint.textContent = 'Invite-only link: ' + paneUrl(currentPaneId) + ' — invited people sign in to open it.';
+      } else {
+        // link mode — the copy button mints/copies the token /s link.
+        linkHint.textContent = shareToken
+          ? 'Immediate-view link copied — anyone with it can open the pane.'
+          : 'Copy link gives an immediate-view /s link — anyone with it can open the pane, no sign-in.';
+      }
+    }
+
+    // Copy link — for link mode the immediate-view /s/<token> link (no login),
+    // minted lazily on first click via the share-link route and cached for the
+    // dialog's lifetime. For public and invite_only the pane-id /p link is the
+    // right thing to share, so we copy that directly (no token mint).
     async function copy(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -2225,22 +2264,26 @@ const SHELL_JS = `
       copyBtn.disabled = true;
       const orig = copyBtn.textContent;
       try {
-        if (!shareToken) {
-          const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/share-link', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' }, body: '{}',
-          });
-          if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
-          const body = await res.json();
-          shareToken = body.url;
+        let toCopy;
+        if (currentMode === 'public' || currentMode === 'invite_only') {
+          // The pane-id /p link is the shareable URL for these modes.
+          toCopy = paneUrl(currentPaneId);
+        } else {
+          // link mode — mint (lazily) and copy the immediate-view /s token link.
+          if (!shareToken) {
+            const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/share-link', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' }, body: '{}',
+            });
+            if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
+            const body = await res.json();
+            shareToken = body.url;
+          }
+          toCopy = shareToken;
         }
-        const ok = await copy(shareToken);
+        const ok = await copy(toCopy);
         copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
-        if (linkHint) {
-          linkHint.textContent = visEl.value === 'public'
-            ? 'Immediate-view link copied. Signed-in people can also use ' + paneUrl(currentPaneId)
-            : 'Immediate-view link copied — anyone with it can open the pane.';
-        }
+        updateLinkHint();
         setTimeout(() => { copyBtn.textContent = orig; }, 1400);
       } catch (e) {
         showErr('Network error — try again.');
