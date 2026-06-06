@@ -577,6 +577,9 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('id="share-title"');
     expect(html).toContain('id="share-invite-form"');
     expect(html).toContain('id="share-visibility"');
+    // Quick-action button to make the pane public/restricted without digging
+    // into the dropdown.
+    expect(html).toContain('id="share-visibility-toggle"');
     expect(html).toContain('id="share-copy-link"');
     // Recently-viewed section is rendered (hidden) and hydrated from
     // /v1/self/recents on load.

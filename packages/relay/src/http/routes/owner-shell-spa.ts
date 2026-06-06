@@ -702,6 +702,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <option value="restricted">Restricted — only invited people</option>
           <option value="public">Public — anyone with the link</option>
         </select>
+        <button id="share-visibility-toggle" type="button" class="btn"></button>
         <div class="share-access-note" id="share-access-note"></div>
       </div>
     </div>
@@ -1227,8 +1228,13 @@ const EXTRA_CSS = `
   }
   .share-grant .revoke:hover { color: var(--pink, #fb7185); }
   .share-grants-empty { color: var(--ink-mute); font-size: 12.5px; padding: 8px 0 0; }
-  .share-access { display: flex; flex-direction: column; gap: 6px; }
+  .share-access { display: flex; flex-direction: column; gap: 8px; }
   #share-visibility { width: 100%; }
+  #share-visibility-toggle {
+    align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  #share-visibility-toggle svg { display: block; }
   .share-access-note { color: var(--ink-mute); font-size: 12px; }
   .share-foot {
     margin-top: 20px; display: flex; align-items: center; gap: 12px;
@@ -1941,6 +1947,7 @@ const SHELL_JS = `
     const inviteBtn = document.getElementById('share-invite-btn');
     const grantsEl = document.getElementById('share-grants');
     const visEl = document.getElementById('share-visibility');
+    const visToggle = document.getElementById('share-visibility-toggle');
     const accessNote = document.getElementById('share-access-note');
     const copyBtn = document.getElementById('share-copy-link');
     const linkHint = document.getElementById('share-link-hint');
@@ -1969,6 +1976,72 @@ const SHELL_JS = `
       accessNote.textContent = isPublic
         ? 'Anyone with the link can open this pane without signing in.'
         : 'Only people you invite can open this pane.';
+    }
+
+    // The quick-action toggle next to the dropdown. When the pane is
+    // restricted it offers "Make public" (primary, globe icon); when public it
+    // offers "Make restricted" (secondary). The icon goes in its own span so
+    // the label can be set with textContent (no innerHTML on dynamic text).
+    function setToggleButton(isPublic) {
+      if (!visToggle) return;
+      visToggle.textContent = '';
+      if (isPublic) {
+        visToggle.classList.remove('primary');
+        const label = document.createElement('span');
+        label.textContent = 'Make restricted';
+        visToggle.appendChild(label);
+        visToggle.setAttribute('aria-label', 'Make this pane restricted');
+      } else {
+        visToggle.classList.add('primary');
+        const icon = document.createElement('span');
+        // Globe — a public/anyone-with-the-link affordance.
+        icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+        const label = document.createElement('span');
+        label.textContent = 'Make public';
+        visToggle.appendChild(icon);
+        visToggle.appendChild(label);
+        visToggle.setAttribute('aria-label', 'Make this pane public');
+      }
+    }
+
+    // Single source of truth for reflecting a visibility value across the whole
+    // section: dropdown selection, helper note, and the quick-action button.
+    function reflectVisibility(isPublic) {
+      visEl.value = isPublic ? 'public' : 'restricted';
+      setAccessNote(isPublic);
+      setToggleButton(isPublic);
+    }
+
+    // Apply a visibility change: PATCH the pane, then reflect it in the UI.
+    // Both the dropdown's change handler and the button's click handler call
+    // this, so there is exactly one request + state-update path. Disables the
+    // select + button while in flight; on failure shows the dialog's inline
+    // error and reverts the UI to the previous value.
+    async function applyVisibility(isPublic) {
+      if (!currentPaneId) return;
+      const prev = !isPublic;
+      clearErr();
+      visEl.disabled = true;
+      if (visToggle) visToggle.disabled = true;
+      try {
+        const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/visibility', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ is_public: isPublic }),
+        });
+        if (!res.ok) {
+          showErr('Could not change access: ' + (await readErr(res)));
+          reflectVisibility(prev); // revert
+          return;
+        }
+        reflectVisibility(isPublic);
+      } catch (e) {
+        showErr('Network error — try again.');
+        reflectVisibility(prev);
+      } finally {
+        visEl.disabled = false;
+        if (visToggle) visToggle.disabled = false;
+      }
     }
 
     function renderGrants(items) {
@@ -2031,8 +2104,7 @@ const SHELL_JS = `
         if (!res.ok) { showErr('Could not load sharing: ' + (await readErr(res))); return; }
         const body = await res.json();
         renderGrants(Array.isArray(body.items) ? body.items : []);
-        visEl.value = body.is_public ? 'public' : 'restricted';
-        setAccessNote(!!body.is_public);
+        reflectVisibility(!!body.is_public);
       } catch (e) {
         showErr('Network error loading sharing.');
       }
@@ -2112,31 +2184,18 @@ const SHELL_JS = `
       }
     });
 
-    // Visibility toggle.
-    visEl.addEventListener('change', async () => {
-      if (!currentPaneId) return;
-      const isPublic = visEl.value === 'public';
-      clearErr();
-      visEl.disabled = true;
-      try {
-        const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/visibility', {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ is_public: isPublic }),
-        });
-        if (!res.ok) {
-          showErr('Could not change access: ' + (await readErr(res)));
-          visEl.value = isPublic ? 'restricted' : 'public'; // revert
-          return;
-        }
-        setAccessNote(isPublic);
-      } catch (e) {
-        showErr('Network error — try again.');
-        visEl.value = isPublic ? 'restricted' : 'public';
-      } finally {
-        visEl.disabled = false;
-      }
+    // Visibility — the dropdown and the quick-action button both route
+    // through applyVisibility() so they stay in sync and share one request +
+    // state-update path.
+    visEl.addEventListener('change', () => {
+      applyVisibility(visEl.value === 'public');
     });
+    if (visToggle) {
+      visToggle.addEventListener('click', () => {
+        // Toggle relative to the current dropdown state.
+        applyVisibility(visEl.value !== 'public');
+      });
+    }
 
     // Copy link — default is the immediate-view /s/<token> link (no login).
     // We mint it lazily on first click via the share-link route, then cache it
