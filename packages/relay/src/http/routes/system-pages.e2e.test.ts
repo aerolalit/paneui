@@ -553,6 +553,8 @@ describe("Owner-shell SPA at /home", () => {
     );
     const html = await res.text();
     expect(html).toContain('class="pane-row"');
+    // Each pane row carries a Share affordance that opens the Share dialog.
+    expect(html).toContain("data-pane-share=");
     // F-15: the SPA escaper encodes single quotes (' -> &#39;), so a title
     // with an apostrophe renders in its encoded form — the raw apostrophe
     // must NOT appear inside the title text.
@@ -562,6 +564,24 @@ describe("Owner-shell SPA at /home", () => {
     // empty cell) — only the exceptional "closed" state is flagged.
     expect(html).not.toContain(">open<");
     expect(html).toContain(">closed<");
+  });
+
+  it("renders the Share dialog scaffolding + Recently-viewed section", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Share dialog is always present (hidden); opened client-side per-pane.
+    expect(html).toContain('id="share-modal"');
+    expect(html).toContain('id="share-title"');
+    expect(html).toContain('id="share-invite-form"');
+    expect(html).toContain('id="share-visibility"');
+    expect(html).toContain('id="share-copy-link"');
+    // Recently-viewed section is rendered (hidden) and hydrated from
+    // /v1/self/recents on load.
+    expect(html).toContain('id="recently-viewed-section"');
+    expect(html).toContain(">Recently viewed<");
   });
 });
 

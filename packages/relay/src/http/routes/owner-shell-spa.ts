@@ -30,6 +30,10 @@ function spaIco(key: NavKey, size: number): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_GLYPHS[key]}</svg>`;
 }
 
+// Inline share icon — NOT routed through spaIco (which only knows NavKeys).
+// The classic three-node share glyph (two endpoints + one, connected).
+const SHARE_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+
 // ----- Public entry: serve the SPA -----
 
 export interface OwnerShellOptions {
@@ -527,6 +531,18 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <div class="recents" id="recents">${recentsHtml}</div>
       </div>
 
+      <!-- Recently viewed — panes this human has OPENED (any mount), sourced
+           from the HumanPaneView ledger via GET /v1/self/recents. Distinct from
+           "Open panes" above (which lists panes the human owns/joined): a pane
+           can appear here without being owned. Hidden until the fetch resolves
+           with at least one row; stays out of the way when empty. -->
+      <div class="section" id="recently-viewed-section" hidden>
+        <div class="section-head">
+          <h2>Recently viewed</h2>
+        </div>
+        <div class="recents" id="recently-viewed"></div>
+      </div>
+
       <div class="section">
         <div class="section-head">
           <h2>All templates</h2>
@@ -646,6 +662,54 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <pre id="ai-modal-text"></pre>
     </div>
     <p class="ai-modal-foot">Already have a seeded pane? Open it from the <b>Panes</b> tab instead.</p>
+  </div>
+</div>
+
+<!-- Share dialog — Google-Docs-style People + General-access controls. Hidden
+     until a human taps a pane's Share affordance; populated client-side from
+     GET /v1/my-panes/:id/grants. All rendering uses .textContent (never
+     innerHTML) for grant/email data. -->
+<div class="share-modal" id="share-modal" hidden>
+  <div class="share-backdrop" data-share-close></div>
+  <div class="share-card" role="dialog" aria-modal="true" aria-labelledby="share-title">
+    <button class="share-x" data-share-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="share-head">
+      <h2 id="share-title">Share</h2>
+      <div class="share-sub" id="share-pane-title"></div>
+    </div>
+
+    <div class="share-err" id="share-err" hidden></div>
+
+    <div class="share-sec">
+      <h3>People</h3>
+      <form class="share-invite" id="share-invite-form">
+        <input id="share-email" type="email" placeholder="Add people by email" autocomplete="off" inputmode="email" aria-label="Email to invite" />
+        <select id="share-role" aria-label="Role for the invited person">
+          <option value="participant">Participant</option>
+          <option value="viewer">Viewer</option>
+        </select>
+        <button id="share-invite-btn" type="submit" class="btn primary small">Invite</button>
+      </form>
+      <ul class="share-grants" id="share-grants"></ul>
+    </div>
+
+    <div class="share-sec">
+      <h3>General access</h3>
+      <div class="share-access">
+        <select id="share-visibility" aria-label="General access">
+          <option value="restricted">Restricted — only invited people</option>
+          <option value="public">Public — anyone with the link</option>
+        </select>
+        <div class="share-access-note" id="share-access-note"></div>
+      </div>
+    </div>
+
+    <div class="share-foot">
+      <button id="share-copy-link" type="button" class="btn">Copy link</button>
+      <div class="share-link-hint" id="share-link-hint"></div>
+    </div>
   </div>
 </div>
 
@@ -874,6 +938,9 @@ function paneRow(p: PaneRef): string {
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
     </button>
+    <button class="row-share" data-noopen="1" data-pane-share="${escapeHtml(p.id)}" data-pane-title="${escapeHtml(p.title)}" title="Share" aria-label="Share">
+      ${SHARE_ICON_SVG}
+    </button>
     <button class="menu-btn" title="More" aria-label="More" data-noopen="1" data-pane-menu="${escapeHtml(p.id)}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
     </button>
@@ -1074,6 +1141,102 @@ const EXTRA_CSS = `
     min-width: 160px;
   }
   #name-input:focus { outline: none; border-color: var(--accent); }
+  /* Share button on each pane row — sits between the star and the menu. */
+  .pane-row .row-share {
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; padding: 6px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 120ms, transform 120ms;
+  }
+  .pane-row .row-share:hover { color: var(--accent); transform: scale(1.08); }
+
+  /* Share dialog — overlays the page, Google-Docs-style. Reuses the
+     ai-modal backdrop/card feel so the two dialogs read as a set. */
+  .share-modal {
+    position: fixed; inset: 0; z-index: 1200;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .share-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(8, 11, 18, 0.55); backdrop-filter: blur(2px);
+  }
+  .share-card {
+    position: relative; z-index: 1; width: 100%; max-width: 460px;
+    max-height: calc(100vh - 40px); overflow-y: auto;
+    background: var(--bg-2, #11151f); color: var(--ink, #e5e7eb);
+    border: 1px solid var(--hairline); border-radius: 14px;
+    box-shadow: var(--shadow-pop, 0 20px 60px rgba(0,0,0,0.5));
+    padding: 22px;
+  }
+  .share-x {
+    position: absolute; top: 12px; right: 12px;
+    width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; border-radius: 8px;
+  }
+  .share-x:hover { color: var(--ink); background: var(--surface-2); }
+  .share-head h2 { margin: 0 28px 2px 0; font-size: 18px; }
+  .share-sub {
+    color: var(--ink-mute); font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .share-err {
+    margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(251,113,133,0.12); border: 1px solid rgba(251,113,133,0.35);
+    color: var(--pink, #fb7185); font-size: 12.5px;
+  }
+  .share-sec { margin-top: 18px; }
+  .share-sec h3 {
+    margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--ink-mute); font-weight: 600;
+  }
+  .share-invite { display: flex; gap: 6px; align-items: stretch; }
+  .share-invite input {
+    flex: 1 1 auto; min-width: 0;
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 8px; padding: 7px 10px; color: var(--ink);
+    font-size: 13px; font-family: inherit;
+  }
+  .share-invite input:focus { outline: none; border-color: var(--accent); }
+  .share-invite select, #share-visibility {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 8px; padding: 7px 8px; color: var(--ink);
+    font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .share-grants { list-style: none; margin: 10px 0 0; padding: 0; }
+  .share-grant {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 0; border-top: 1px solid var(--hairline);
+  }
+  .share-grant .who { flex: 1 1 auto; min-width: 0; }
+  .share-grant .email {
+    font-size: 13px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .share-grant .role { font-size: 11px; color: var(--ink-mute); }
+  .share-grant .pending {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.03em;
+    padding: 2px 6px; border-radius: 999px; color: var(--ink-mute);
+    background: var(--surface-2); border: 1px solid var(--hairline);
+  }
+  .share-grant .revoke {
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; padding: 4px; border-radius: 6px; line-height: 0;
+  }
+  .share-grant .revoke:hover { color: var(--pink, #fb7185); }
+  .share-grants-empty { color: var(--ink-mute); font-size: 12.5px; padding: 8px 0 0; }
+  .share-access { display: flex; flex-direction: column; gap: 6px; }
+  #share-visibility { width: 100%; }
+  .share-access-note { color: var(--ink-mute); font-size: 12px; }
+  .share-foot {
+    margin-top: 20px; display: flex; align-items: center; gap: 12px;
+    flex-wrap: wrap;
+  }
+  .share-link-hint { color: var(--ink-mute); font-size: 12px; flex: 1 1 160px; }
+  .share-modal .btn[disabled] { opacity: 0.55; cursor: default; }
+
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
   [hidden] { display: none !important; }
@@ -1698,6 +1861,330 @@ const SHELL_JS = `
   bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
   bindSearch('store-search', ['#apps-discover .app-tile-wrap']);
   bindSearch('mine-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap']);
+
+  // Recently viewed — fetch the human's HumanPaneView ledger and render a
+  // distinct Home section. Graceful when empty (the section stays hidden) and
+  // on error (logs, leaves the section hidden — never blocks the page).
+  (function () {
+    const section = document.getElementById('recently-viewed-section');
+    const list = document.getElementById('recently-viewed');
+    if (!section || !list) return;
+    function hue(seed) {
+      let h = 5381;
+      for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
+      return Math.abs(h) % 360;
+    }
+    function initials(name) {
+      const t = (name || '').trim();
+      if (!t) return '?';
+      const w = t.split(/[\\s_\\-/.]+/).filter((x) => /[A-Za-z0-9]/.test(x));
+      if (!w.length) return t.slice(0, 2).toUpperCase();
+      if (w.length === 1) return w[0].slice(0, 2).toUpperCase();
+      return (w[0][0] + w[1][0]).toUpperCase();
+    }
+    fetch('/v1/self/recents', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        const items = body && Array.isArray(body.items) ? body.items : [];
+        if (!items.length) return;
+        for (const it of items.slice(0, 12)) {
+          const title = it.title || it.pane_id;
+          const h = hue(it.pane_id);
+          const card = document.createElement('a');
+          card.className = 'recent-card';
+          card.href = '/panes/' + encodeURIComponent(it.pane_id);
+          const thumb = document.createElement('div');
+          thumb.className = 'thumb';
+          thumb.style.background =
+            'linear-gradient(135deg, hsl(' + h + ', 80%, 70%) 0%, hsl(' + ((h + 30) % 360) + ', 75%, 60%) 100%)';
+          const glyph = document.createElement('span');
+          glyph.className = 'glyph';
+          glyph.textContent = initials(title);
+          thumb.appendChild(glyph);
+          const titleEl = document.createElement('div');
+          titleEl.className = 'title';
+          titleEl.textContent = title;
+          card.appendChild(thumb);
+          card.appendChild(titleEl);
+          list.appendChild(card);
+        }
+        section.hidden = false;
+      })
+      .catch(() => { /* leave hidden — recents are non-essential */ });
+  })();
+
+  // Share dialog — People + General access, backed by the cookie-authed
+  // /v1/my-panes/:id/{grants,visibility,share-link} routes. Opening fetches
+  // current state; every action live-updates the DOM (no reload). All grant
+  // data is rendered with textContent (never innerHTML).
+  (function () {
+    const modal = document.getElementById('share-modal');
+    const card = modal && modal.querySelector('.share-card');
+    const subEl = document.getElementById('share-pane-title');
+    const errEl = document.getElementById('share-err');
+    const inviteForm = document.getElementById('share-invite-form');
+    const emailEl = document.getElementById('share-email');
+    const roleEl = document.getElementById('share-role');
+    const inviteBtn = document.getElementById('share-invite-btn');
+    const grantsEl = document.getElementById('share-grants');
+    const visEl = document.getElementById('share-visibility');
+    const accessNote = document.getElementById('share-access-note');
+    const copyBtn = document.getElementById('share-copy-link');
+    const linkHint = document.getElementById('share-link-hint');
+    if (!modal || !card || !inviteForm || !emailEl || !roleEl || !grantsEl || !visEl || !copyBtn) return;
+
+    let currentPaneId = null;
+    let lastFocus = null;
+    let shareToken = null; // minted lazily on first "Copy link"
+
+    function showErr(msg) {
+      if (!errEl) return;
+      errEl.textContent = msg;
+      errEl.hidden = false;
+    }
+    function clearErr() { if (errEl) { errEl.hidden = true; errEl.textContent = ''; } }
+
+    async function readErr(res) {
+      const body = await res.json().catch(() => ({}));
+      return (body && body.error && body.error.message) || ('HTTP ' + res.status);
+    }
+
+    function paneUrl(id) { return location.origin + '/p/' + encodeURIComponent(id); }
+
+    function setAccessNote(isPublic) {
+      if (!accessNote) return;
+      accessNote.textContent = isPublic
+        ? 'Anyone with the link can open this pane without signing in.'
+        : 'Only people you invite can open this pane.';
+    }
+
+    function renderGrants(items) {
+      grantsEl.textContent = '';
+      if (!items.length) {
+        const empty = document.createElement('li');
+        empty.className = 'share-grants-empty';
+        empty.textContent = 'No one invited yet.';
+        grantsEl.appendChild(empty);
+        return;
+      }
+      for (const g of items) {
+        const li = document.createElement('li');
+        li.className = 'share-grant';
+        li.setAttribute('data-grant-id', g.id);
+        const who = document.createElement('div');
+        who.className = 'who';
+        const email = document.createElement('div');
+        email.className = 'email';
+        email.textContent = g.invite_email || g.human_id || 'unknown';
+        const role = document.createElement('div');
+        role.className = 'role';
+        role.textContent = (g.role === 'viewer' ? 'Viewer' : 'Participant');
+        who.appendChild(email);
+        who.appendChild(role);
+        li.appendChild(who);
+        // Pending = an unaccepted invitation (no bound human / no acceptedAt).
+        if (!g.accepted_at) {
+          const pending = document.createElement('span');
+          pending.className = 'pending';
+          pending.textContent = 'pending';
+          li.appendChild(pending);
+        }
+        const revoke = document.createElement('button');
+        revoke.className = 'revoke';
+        revoke.type = 'button';
+        revoke.title = 'Remove';
+        revoke.setAttribute('aria-label', 'Remove ' + email.textContent);
+        revoke.setAttribute('data-revoke-grant', g.id);
+        revoke.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        li.appendChild(revoke);
+        grantsEl.appendChild(li);
+      }
+    }
+
+    async function openShare(paneId, paneTitle) {
+      currentPaneId = paneId;
+      shareToken = null;
+      clearErr();
+      if (subEl) subEl.textContent = paneTitle || paneId;
+      grantsEl.textContent = '';
+      if (linkHint) linkHint.textContent = '';
+      copyBtn.textContent = 'Copy link';
+      lastFocus = document.activeElement;
+      modal.hidden = false;
+      try {
+        const res = await fetch('/v1/my-panes/' + encodeURIComponent(paneId) + '/grants', {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) { showErr('Could not load sharing: ' + (await readErr(res))); return; }
+        const body = await res.json();
+        renderGrants(Array.isArray(body.items) ? body.items : []);
+        visEl.value = body.is_public ? 'public' : 'restricted';
+        setAccessNote(!!body.is_public);
+      } catch (e) {
+        showErr('Network error loading sharing.');
+      }
+      // Focus the first field for keyboard users.
+      emailEl.focus();
+    }
+
+    function closeShare() {
+      modal.hidden = true;
+      currentPaneId = null;
+      if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    }
+
+    // Open from any pane-row Share button.
+    document.body.addEventListener('click', (ev) => {
+      const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-pane-share]');
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id = btn.getAttribute('data-pane-share');
+      if (!id) return;
+      openShare(id, btn.getAttribute('data-pane-title') || id);
+    });
+
+    // Invite.
+    inviteForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (!currentPaneId) return;
+      const email = (emailEl.value || '').trim();
+      if (!email) { emailEl.focus(); return; }
+      clearErr();
+      inviteBtn.disabled = true;
+      try {
+        const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/grants', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: email, role: roleEl.value }),
+        });
+        if (!res.ok) { showErr('Invite failed: ' + (await readErr(res))); return; }
+        // Re-fetch the canonical list so an upsert/re-invite reflects correctly.
+        const listRes = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/grants', {
+          credentials: 'same-origin',
+        });
+        if (listRes.ok) {
+          const body = await listRes.json();
+          renderGrants(Array.isArray(body.items) ? body.items : []);
+        }
+        emailEl.value = '';
+        emailEl.focus();
+      } catch (e) {
+        showErr('Network error — try again.');
+      } finally {
+        inviteBtn.disabled = false;
+      }
+    });
+
+    // Revoke a grant.
+    grantsEl.addEventListener('click', async (ev) => {
+      const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-revoke-grant]');
+      if (!btn || !currentPaneId) return;
+      const gid = btn.getAttribute('data-revoke-grant');
+      if (!gid) return;
+      clearErr();
+      btn.disabled = true;
+      try {
+        const res = await fetch(
+          '/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/grants/' + encodeURIComponent(gid),
+          { method: 'DELETE', credentials: 'same-origin' },
+        );
+        if (!res.ok && res.status !== 204) { showErr('Remove failed: ' + (await readErr(res))); btn.disabled = false; return; }
+        const row = grantsEl.querySelector('[data-grant-id="' + CSS.escape(gid) + '"]');
+        if (row) row.remove();
+        if (!grantsEl.querySelector('.share-grant')) renderGrants([]);
+      } catch (e) {
+        showErr('Network error — try again.');
+        btn.disabled = false;
+      }
+    });
+
+    // Visibility toggle.
+    visEl.addEventListener('change', async () => {
+      if (!currentPaneId) return;
+      const isPublic = visEl.value === 'public';
+      clearErr();
+      visEl.disabled = true;
+      try {
+        const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/visibility', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ is_public: isPublic }),
+        });
+        if (!res.ok) {
+          showErr('Could not change access: ' + (await readErr(res)));
+          visEl.value = isPublic ? 'restricted' : 'public'; // revert
+          return;
+        }
+        setAccessNote(isPublic);
+      } catch (e) {
+        showErr('Network error — try again.');
+        visEl.value = isPublic ? 'restricted' : 'public';
+      } finally {
+        visEl.disabled = false;
+      }
+    });
+
+    // Copy link — default is the immediate-view /s/<token> link (no login).
+    // We mint it lazily on first click via the share-link route, then cache it
+    // for the dialog's lifetime. When the pane is public we also note the
+    // /p/:paneId identity-share link in the hint.
+    async function copy(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {
+        // Fallback for insecure contexts / permission-denied.
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+      }
+    }
+    copyBtn.addEventListener('click', async () => {
+      if (!currentPaneId) return;
+      clearErr();
+      copyBtn.disabled = true;
+      const orig = copyBtn.textContent;
+      try {
+        if (!shareToken) {
+          const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/share-link', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' }, body: '{}',
+          });
+          if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
+          const body = await res.json();
+          shareToken = body.url;
+        }
+        const ok = await copy(shareToken);
+        copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+        if (linkHint) {
+          linkHint.textContent = visEl.value === 'public'
+            ? 'Immediate-view link copied. Signed-in people can also use ' + paneUrl(currentPaneId)
+            : 'Immediate-view link copied — anyone with it can open the pane.';
+        }
+        setTimeout(() => { copyBtn.textContent = orig; }, 1400);
+      } catch (e) {
+        showErr('Network error — try again.');
+      } finally {
+        copyBtn.disabled = false;
+      }
+    });
+
+    // Close on ✕, backdrop, Escape. Trap nothing fancy — just return focus.
+    modal.querySelectorAll('[data-share-close]').forEach((el) =>
+      el.addEventListener('click', closeShare),
+    );
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !modal.hidden) { ev.preventDefault(); closeShare(); }
+    });
+  })();
 
   // Initial view selection from the URL hash.
   activate(viewFromHash());
