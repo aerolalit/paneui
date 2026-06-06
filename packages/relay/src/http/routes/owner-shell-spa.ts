@@ -1907,6 +1907,19 @@ const SHELL_JS = `
           glyph.className = 'glyph';
           glyph.textContent = initials(title);
           thumb.appendChild(glyph);
+          // Layer a lazy preview iframe on top of the gradient glyph — same
+          // shape as the server-rendered recentCard for the open-panes strip.
+          // Without this, closed/old panes in the ledger only show the
+          // gradient + initials and never the real HTML.
+          const previewFrame = document.createElement('iframe');
+          previewFrame.className = 'tile-preview';
+          previewFrame.src = '/panes/' + encodeURIComponent(it.pane_id) + '/preview';
+          previewFrame.setAttribute('sandbox', 'allow-scripts');
+          previewFrame.setAttribute('loading', 'lazy');
+          previewFrame.setAttribute('scrolling', 'no');
+          previewFrame.setAttribute('tabindex', '-1');
+          previewFrame.setAttribute('aria-hidden', 'true');
+          thumb.appendChild(previewFrame);
           const titleEl = document.createElement('div');
           titleEl.className = 'title';
           titleEl.textContent = title;
