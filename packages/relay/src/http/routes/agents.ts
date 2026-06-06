@@ -93,12 +93,20 @@ agents.post("/claim", async (c) => {
       // owner); the rule "ownerHumanId IS NOT NULL => human-owned" lets
       // Phase D's lookups treat the human as the new owner.
       //
-      // NOTE: this writes ownerHumanId on EVERY pane/template the
-      // agent owns. The proposal also describes flipping the ownership
-      // model in Phase D (Pane.agentId removed); until then we just
-      // tag the human owner alongside.
+      // NOTE: this writes ownerHumanId on EVERY LIVE pane the agent owns.
+      // The proposal also describes flipping the ownership model in Phase D
+      // (Pane.agentId removed); until then we just tag the human owner alongside.
+      //
+      // `deletedAt: null` is load-bearing. The `(templateVersionId,
+      // ownerHumanId, contextKey)` unique index is NOT partial on deletedAt,
+      // so a soft-deleted tombstone and its live replacement (same template
+      // version + context_key) coexist only while ownerHumanId is NULL (NULLs
+      // are distinct). Migrating tombstones too would flip both to the same
+      // human at once and trip the unique index (P2002 -> 500). Tombstones
+      // don't need ownership — they're invisible and the hard-delete sweeper
+      // reclaims them — so we leave them NULL and migrate only live panes.
       await tx.pane.updateMany({
-        where: { agentId: agent.id, ownerHumanId: null },
+        where: { agentId: agent.id, ownerHumanId: null, deletedAt: null },
         data: { ownerHumanId: claim.humanId },
       });
       // Templates are agent-owned via Template.ownerId. Today there's no
