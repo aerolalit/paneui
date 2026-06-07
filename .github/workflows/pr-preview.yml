@@ -1,0 +1,160 @@
+name: pr-preview
+
+# Ephemeral preview environment per pull request.
+#
+# On open/update: build the PR's Postgres image, then ask paneui-ops to stand
+# up an isolated relay `ca-eur-dev-pane-pr<N>` (own DB cloned from dev) in the
+# dev Container Apps Environment, and post the preview URL on the PR.
+# On close/merge: ask paneui-ops to tear the preview (app + DB) down.
+#
+# Why this exists: the shared dev relay tracks main, so a branch deployed there
+# gets clobbered by the next merge. A per-PR preview is isolated — test a PR on
+# its own URL with its own seeded data, no waiting for merge, no clobbering.
+#
+# Split of responsibility (Azure creds live only in paneui-ops):
+#   - here: build + push the image, fire repository_dispatch, comment the URL
+#   - paneui-ops preview.yml: the Azure create/teardown via OIDC
+#
+# The preview URL is deterministic — an ACA app's FQDN is
+# `<app-name>.<CAE-default-domain>` — so we can post it immediately without
+# waiting on the deploy. DEV_CAE_DOMAIN is a repo variable; update it if the
+# dev CAE is ever recreated (its default domain rotates).
+#
+# Note: GitHub withholds secrets (incl. OPS_DEPLOY_TOKEN) from fork PRs, so
+# previews only fire for same-repo branch PRs. That's the intended scope while
+# the project has a single contributor.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  # One run per PR; a new push supersedes an in-flight build.
+  group: pr-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write # build + push the preview image to GHCR
+  pull-requests: write # sticky preview comment
+
+jobs:
+  up:
+    if: github.event.action != 'closed'
+    name: build + deploy preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Immutable per-commit tag (changes every push, so ACA always pulls the
+      # new digest) plus a convenience moving per-PR tag.
+      - name: Derive image tags
+        id: meta
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.number }}
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          IMAGE="ghcr.io/${OWNER}/paneui"
+          SHA7="${HEAD_SHA:0:7}"
+          SHA_TAG="${IMAGE}:sha-${SHA7}-postgres"
+          PR_TAG="${IMAGE}:pr-${PR}-postgres"
+          {
+            echo "image=${SHA_TAG}"
+            echo "tags=${SHA_TAG},${PR_TAG}"
+            echo "sha7=${SHA7}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push preview image (postgres)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/relay/Dockerfile
+          build-args: |
+            DATABASE_PROVIDER=postgres
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # Share the postgres buildx cache with release-image/build-branch so
+          # preview builds reuse main's layers.
+          cache-from: type=gha,scope=postgres
+          cache-to: type=gha,mode=max,scope=postgres
+
+      - name: Dispatch preview-up to paneui-ops
+        env:
+          OPS_DEPLOY_TOKEN: ${{ secrets.OPS_DEPLOY_TOKEN }}
+          PR: ${{ github.event.number }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          if [ -z "$OPS_DEPLOY_TOKEN" ]; then
+            echo "::error::OPS_DEPLOY_TOKEN not set — cannot deploy preview"
+            exit 1
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $OPS_DEPLOY_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/aerolalit/paneui-ops/dispatches \
+            -d "{\"event_type\":\"preview-up\",\"client_payload\":{\"pr\":\"${PR}\",\"image\":\"${IMAGE}\"}}"
+          echo "→ dispatched preview-up for PR #${PR} (${IMAGE})"
+
+      - name: Comment preview URL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.number }}
+          CAE_DOMAIN: ${{ vars.DEV_CAE_DOMAIN }}
+          SHA7: ${{ steps.meta.outputs.sha7 }}
+        run: |
+          URL="https://ca-eur-dev-pane-pr${PR}.${CAE_DOMAIN}"
+          BODY="<!-- pane-pr-preview -->
+          🚀 **Preview environment** for this PR
+
+          | | |
+          |---|---|
+          | URL | ${URL} |
+          | Commit | \`${SHA7}\` |
+          | Database | isolated \`relay_pr${PR}\` (seeded from dev) |
+
+          Deploying the build now — it'll be live at the URL above shortly (the app scales to zero when idle, so the first hit may cold-start). Torn down automatically when this PR closes."
+          ./.github/scripts/sticky-comment.sh "$PR" "$BODY"
+
+  down:
+    if: github.event.action == 'closed'
+    name: tear down preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dispatch preview-down to paneui-ops
+        env:
+          OPS_DEPLOY_TOKEN: ${{ secrets.OPS_DEPLOY_TOKEN }}
+          PR: ${{ github.event.number }}
+        run: |
+          if [ -z "$OPS_DEPLOY_TOKEN" ]; then
+            echo "::warning::OPS_DEPLOY_TOKEN not set — skipping preview teardown"
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $OPS_DEPLOY_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/aerolalit/paneui-ops/dispatches \
+            -d "{\"event_type\":\"preview-down\",\"client_payload\":{\"pr\":\"${PR}\"}}"
+          echo "→ dispatched preview-down for PR #${PR}"
+
+      - name: Update preview comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.number }}
+        run: |
+          BODY="<!-- pane-pr-preview -->
+          🗑️ **Preview environment torn down** (PR closed). The app \`ca-eur-dev-pane-pr${PR}\` and its database \`relay_pr${PR}\` have been removed."
+          ./.github/scripts/sticky-comment.sh "$PR" "$BODY"
