@@ -459,8 +459,21 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('data-view="home"');
     expect(html).toContain('data-view="panes"');
     expect(html).toContain('data-view="explore"');
-    expect(html).toContain('data-view="store"');
-    expect(html).toContain('data-view="mine"');
+    // Template store + My templates merged into one Templates tab with a
+    // Yours/Store segmented control inside the view.
+    expect(html).toContain('data-view="templates"');
+    expect(html).not.toContain('data-view="store"');
+    expect(html).not.toContain('data-view="mine"');
+    expect(html).toContain('data-seg="yours"');
+    expect(html).toContain('data-seg="store"');
+    // The merged Templates view carries both segment panels, each keeping its
+    // own grid (so the launch/install/search logic is unchanged).
+    expect(html).toContain('data-seg-panel="yours"');
+    expect(html).toContain('data-seg-panel="store"');
+    expect(html).toContain('id="apps-mine"');
+    expect(html).toContain('id="apps-installed"');
+    expect(html).toContain('id="apps-discover"');
+    expect(html).toContain('id="templates-search"');
     expect(html).not.toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
     // Footer utility links must stay reachable from the shell. /my-agents is

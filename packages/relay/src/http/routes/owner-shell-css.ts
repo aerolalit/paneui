@@ -395,6 +395,30 @@ export const OWNER_SHELL_CSS = `
     pointer-events: none;
   }
   .search input::placeholder { color: var(--ink-mute); }
+  /* Segmented control — Yours / Store scope switch on the Templates view. */
+  .seg {
+    display: inline-flex; gap: 2px; margin: 0 0 16px;
+    padding: 3px; border-radius: 10px;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+  }
+  .seg-btn {
+    appearance: none; border: none; background: transparent; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 14px; border-radius: 7px;
+    color: var(--ink-mute); font-family: inherit; font-size: 13px; font-weight: 600;
+    transition: color 100ms, background 100ms;
+  }
+  .seg-btn:hover { color: var(--ink); }
+  .seg-btn[aria-selected="true"] {
+    background: var(--surface); color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  }
+  .seg-btn .count {
+    font-size: 11px; font-weight: 600; color: var(--ink-mute);
+    background: var(--surface-3); border-radius: 999px; padding: 1px 7px;
+  }
+  .seg-btn[aria-selected="true"] .count { color: var(--accent); }
+  .seg-panel[hidden] { display: none; }
 
   /* ============== HOME screen ============== */
   .greet {
