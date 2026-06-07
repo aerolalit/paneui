@@ -10,7 +10,7 @@ import type { AttachmentStore } from "../../attachments/store.js";
 import { compositeOnTile, paneAppleTouchIcon } from "./apple-touch-icon.js";
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
-const ROBOT_ETAG = '"atc-robot-v1"';
+const ROBOT_ETAG = '"atc-robot-v2"';
 
 async function makePng(
   w: number,
@@ -94,7 +94,7 @@ describe("paneAppleTouchIcon", () => {
     } as unknown as PrismaClient;
 
     const res = await paneAppleTouchIcon(store, prisma, "att_1");
-    expect(res.etag).toBe('"atc1-deadbeef"');
+    expect(res.etag).toBe('"atc2-deadbeef"');
     expect(Array.from(res.png.slice(0, 4))).toEqual(PNG_MAGIC);
     const meta = await sharp(Buffer.from(res.png)).metadata();
     expect(meta.format).toBe("png");
