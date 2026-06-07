@@ -21,6 +21,12 @@ export type AppEnv = {
     // same instance is also handed to the WebSocket-upgrade path via
     // attachWs(), so HTTP and WS-upgrade attempts share one IP bucket.
     generalLimiter: SlidingWindowLimiter;
+    // Stricter per-IP limiter for ANONYMOUS / public record mutations on
+    // /v1/panes/:id/records/:collection. Only anonymous (no token, no login
+    // cookie) writes consume it; authenticated writes are exempt. Bounds the
+    // public-pane anonymous-write spam surface — the HTTP-side peer of the WS
+    // per-connection anonymous-emit cap (#445).
+    anonRecordWriteLimiter: SlidingWindowLimiter;
     // Configured AttachmentStore backend (filesystem or azure, per config.BLOB_STORE).
     // Optional in tests that don't exercise attachment routes — the /v1/attachments route
     // throws if it's missing so callers can't accidentally rely on an

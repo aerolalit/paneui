@@ -66,7 +66,12 @@ import type { AppEnv } from "../env.js";
 const paneAccess = new Hono<AppEnv>();
 
 // The resolved access decision for a /p/:paneId request.
-type Access =
+//
+// Exported so the per-pane records HTTP API (routes/records.ts) can authorize
+// cookie/public callers through the SAME access model the share mount + the WS
+// emit path (#445) use — owner / participant-grant / viewer-grant / public-
+// guest / link-mode-anon — instead of duplicating the rules.
+export type Access =
   // Serve the pane. `canEmit` is the emit capability stamped onto the WS
   // ticket: a `participant`/owner grant and an anonymous PUBLIC visitor are
   // emit-capable; a `viewer` grant and a link-mode anon visitor are
@@ -87,8 +92,12 @@ type Access =
 
 // Resolve the login cookie to a Human, or null. Inlined (not resolveHuman-
 // Optional) because we branch on present-vs-missing and need the human row.
-async function resolveHumanFromCookie(
-  c: Context<AppEnv>,
+// Exported for the records HTTP API, which resolves the same cookie identity.
+// Generic over the env so a caller on a SUPERSET env (records.ts is on AuthEnv,
+// which extends AppEnv) can pass its own Context — Hono's Context.set is
+// invariant, so a bare `Context<AppEnv>` param would reject an AuthEnv context.
+export async function resolveHumanFromCookie<E extends AppEnv>(
+  c: Context<E>,
 ): Promise<HumanRow | null> {
   const prisma = c.get("prisma");
   const { parseLoginCookie, hashLoginCookie } =
@@ -104,13 +113,16 @@ async function resolveHumanFromCookie(
 }
 
 // The pane fields the resolver + serving path need. Loaded once per request.
-type LoadedPane = ServeablePane & {
+// Exported (with loadPane) so the records HTTP API can load the same pane shape
+// — it includes `templateVersion`, which is also what core/records.ts needs as
+// its PaneWithRecordSchema, so a single load serves both auth + the handlers.
+export type LoadedPane = ServeablePane & {
   ownerHumanId: string | null;
   accessMode: string;
   deletedAt: Date | null;
 };
 
-async function loadPane(
+export async function loadPane(
   prisma: PrismaClient,
   paneId: string,
 ): Promise<LoadedPane | null> {
@@ -123,7 +135,10 @@ async function loadPane(
 }
 
 // The whole access decision. Order matches the design comment above.
-async function resolveAccess(
+// Exported so the records HTTP API authorizes cookie/public callers with the
+// IDENTICAL rules — including the invite_only "no oracle" 404 and the read vs
+// emit (canEmit) split — rather than reimplementing them.
+export async function resolveAccess(
   prisma: PrismaClient,
   pane: LoadedPane | null,
   human: HumanRow | null,
