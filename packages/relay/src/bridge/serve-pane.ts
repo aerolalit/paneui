@@ -62,7 +62,10 @@ export interface PaneServeMode {
   wsTicketUrl: string;
   wsTicketAuthorization: string | null;
   // Slim account bar shown for a logged-in human; null for anonymous callers.
-  topNav: { email: string } | null;
+  // `canShare` gates the Share button — true only when the logged-in human owns
+  // this pane, so a non-owner grantee viewing /p/:paneId sees the bar but no
+  // Share affordance.
+  topNav: { canShare: boolean } | null;
   // Optional override for the apple-touch-icon href. Defaults to the static
   // `/apple-touch-icon.png` (the icon route is cookie/visibility-gated and iOS
   // may fetch the icon without the cookie).

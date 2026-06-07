@@ -342,6 +342,51 @@ describe("/p/:paneId resolver", () => {
     );
     expect(ticket.status).toBe(201);
   });
+
+  it("Share affordance on /p is owner-only — present for owner, absent for grantee", async () => {
+    // The account bar renders for any logged-in human on /p/:paneId, but the
+    // Share button (and dialog) must be gated on pane ownership: a participant
+    // grantee can use the pane but cannot manage its sharing.
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
+    const bob = await seedHumanWithCookie("bob@example.com");
+    await prisma.paneGrant.create({
+      data: {
+        paneId,
+        humanId: bob.humanId,
+        inviteEmail: "bob@example.com",
+        role: "participant",
+        invitedBy: owner.humanId,
+        acceptedAt: new Date(),
+      },
+    });
+
+    // Owner: account bar carries the Share button + dialog.
+    const ownerShell = await app.fetch(
+      new Request(`http://t/p/${paneId}`, {
+        headers: cookieHeaders(owner.cookie),
+      }),
+    );
+    const ownerHtml = await ownerShell.text();
+    expect(ownerHtml).toContain('id="top-nav-share"');
+    expect(ownerHtml).toContain('id="share-modal"');
+    expect(ownerHtml).toContain('id="top-nav-signout"');
+
+    // Grantee: still gets the account bar (Sign out) but NO Share affordance.
+    const granteeShell = await app.fetch(
+      new Request(`http://t/p/${paneId}`, {
+        headers: cookieHeaders(bob.cookie),
+      }),
+    );
+    const granteeHtml = await granteeShell.text();
+    expect(granteeHtml).toContain('id="top-nav-signout"');
+    expect(granteeHtml).not.toContain('id="top-nav-share"');
+    expect(granteeHtml).not.toContain('id="share-modal"');
+  });
 });
 
 describe("expired/revoked /s/:token → 302 /p/:paneId", () => {

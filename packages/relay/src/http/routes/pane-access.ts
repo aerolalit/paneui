@@ -286,8 +286,10 @@ paneAccess.get("/:paneId", async (c) => {
     // read-only callers) — no Authorization header.
     wsTicketUrl: `${seg}/ws-ticket`,
     wsTicketAuthorization: null,
-    // Slim account bar only when a human is logged in.
-    topNav: human ? { email: human.email } : null,
+    // Slim account bar only when a human is logged in. The Share button is
+    // owner-only: a logged-in grantee (participant/viewer) sees the bar but
+    // cannot manage sharing, so canShare is gated on pane ownership.
+    topNav: human ? { canShare: human.id === pane!.ownerHumanId } : null,
   });
 });
 
