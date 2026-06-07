@@ -20,15 +20,25 @@ describe("ws ticket store", () => {
     expect(t.length).toBe(43);
   });
 
-  it("issue -> redeem round trip returns the bound author", () => {
+  it("issue -> redeem round trip returns the bound author (emit-capable by default)", () => {
     const t = issueTicket(author, "pan_a");
-    expect(redeemTicket(t, "pan_a")).toEqual(author);
+    expect(redeemTicket(t, "pan_a")).toEqual({ author, canEmit: true });
   });
 
   it("is single-use: a second redeem fails", () => {
     const t = issueTicket(author, "pan_a");
-    expect(redeemTicket(t, "pan_a")).toEqual(author);
+    expect(redeemTicket(t, "pan_a")).toEqual({ author, canEmit: true });
     expect(redeemTicket(t, "pan_a")).toBeNull();
+  });
+
+  it("stamps canEmit:false on a receive-only ticket", () => {
+    const t = issueTicket(author, "pan_a", { canEmit: false });
+    expect(redeemTicket(t, "pan_a")).toEqual({ author, canEmit: false });
+  });
+
+  it("defaults to canEmit:true when no options are given (back-compat)", () => {
+    const t = issueTicket(author, "pan_a", {});
+    expect(redeemTicket(t, "pan_a")).toEqual({ author, canEmit: true });
   });
 
   it("rejects an unknown ticket", () => {
@@ -58,7 +68,7 @@ describe("ws ticket store", () => {
     try {
       const t = issueTicket(author, "pan_a");
       vi.advanceTimersByTime(TICKET_TTL_MS - 1);
-      expect(redeemTicket(t, "pan_a")).toEqual(author);
+      expect(redeemTicket(t, "pan_a")).toEqual({ author, canEmit: true });
     } finally {
       vi.useRealTimers();
     }
@@ -67,6 +77,9 @@ describe("ws ticket store", () => {
   it("binds the agent author kind/id", () => {
     const agentAuthor: Author = { kind: "agent", id: "ag_1" };
     const t = issueTicket(agentAuthor, "pan_x");
-    expect(redeemTicket(t, "pan_x")).toEqual(agentAuthor);
+    expect(redeemTicket(t, "pan_x")).toEqual({
+      author: agentAuthor,
+      canEmit: true,
+    });
   });
 });

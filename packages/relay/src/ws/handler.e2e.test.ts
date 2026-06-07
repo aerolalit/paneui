@@ -22,6 +22,11 @@ import { hashKey, keyPrefix } from "../keys.js";
 import { buildApp } from "../http/app.js";
 import { createRateLimiter } from "../http/rate-limit.js";
 import { attachWs } from "./handler.js";
+import { issueTicket } from "./ticket.js";
+import {
+  PUBLIC_IDENTITY_ID,
+  getOrCreatePublicGuestParticipant,
+} from "../http/routes/identity-participant.js";
 import { generateHumanParticipantToken } from "../keys.js";
 import {
   generateLoginCookie,
@@ -498,6 +503,157 @@ describe("WS e2e", () => {
       ),
     ).toBe(true);
     ws.close();
+  });
+
+  // Capability-flagged tickets (#fix-public-pane-ws). A receive-only ticket
+  // (canEmit:false) connects + replays but cannot emit; an emit-capable ticket
+  // bound to the shared public-guest identity persists events under that
+  // identity. Both mint the ticket directly via issueTicket so the test
+  // controls the canEmit flag and author (the same in-process ticket map the
+  // handler redeems from).
+  describe("ticket emit capability", () => {
+    it("a receive-only connection replays but its emit frame is rejected (not persisted)", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId, agentToken } = await createPane(apiKey);
+
+      // Seed one event so we can assert the read-only socket still RECEIVES it.
+      await fetch(`http://localhost:${port}/v1/panes/${paneId}/events`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${agentToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "review.commentAdded",
+          data: { body: "seeded" },
+        }),
+      });
+
+      // Mint a receive-only ticket bound to the public guest identity.
+      const ticket = issueTicket(
+        { kind: "human", id: PUBLIC_IDENTITY_ID },
+        paneId,
+        { canEmit: false },
+      );
+      const ws = connectWithTicket(paneId, ticket);
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
+
+      // Replay arrives: joined + the seeded event + replay.complete.
+      const frames = await q.take(3);
+      const replayed = frames.filter(
+        (f) => (f as { type?: string }).type === "review.commentAdded",
+      ) as { data: { body: string } }[];
+      expect(replayed.map((f) => f.data.body)).toEqual(["seeded"]);
+
+      // Emit is rejected with read_only — no ack, no new row, socket stays open.
+      ws.send(
+        JSON.stringify({
+          type: "review.commentAdded",
+          data: { body: "blocked" },
+          correlation_id: "c-ro-1",
+        }),
+      );
+      const frame = (await q.next()) as {
+        error?: { code: string };
+        correlation_id?: string;
+      };
+      expect(frame.error?.code).toBe("read_only");
+      expect(frame.correlation_id).toBe("c-ro-1");
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+
+      const rows = await prisma.event.findMany({
+        where: { paneId, type: "review.commentAdded" },
+      });
+      // Only the seeded row — the blocked emit was NOT persisted.
+      expect(rows).toHaveLength(1);
+      ws.close();
+    });
+
+    it("a public anonymous (guest) connection can emit; the event persists under the guest identity", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      // Lazily create the shared guest participant (mirrors what the ws-ticket
+      // route does for an anonymous public visitor).
+      await getOrCreatePublicGuestParticipant(prisma, paneId);
+
+      const ticket = issueTicket(
+        { kind: "human", id: PUBLIC_IDENTITY_ID },
+        paneId,
+        { canEmit: true },
+      );
+      const ws = connectWithTicket(paneId, ticket);
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
+      await q.take(2); // joined + replay.complete
+
+      ws.send(
+        JSON.stringify({
+          type: "review.commentAdded",
+          data: { body: "from guest" },
+        }),
+      );
+      const echo = (await q.next()) as {
+        type?: string;
+        data?: { body: string };
+      };
+      expect(echo.type).toBe("review.commentAdded");
+      const ack = (await q.next()) as { ack?: string };
+      expect(typeof ack.ack).toBe("string");
+
+      const rows = await prisma.event.findMany({
+        where: { paneId, type: "review.commentAdded" },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.authorKind).toBe("human");
+      expect(rows[0]!.authorId).toBe(PUBLIC_IDENTITY_ID);
+      ws.close();
+    });
+
+    it("rate-limits anonymous-public emits beyond the per-connection cap", async () => {
+      const { apiKey } = await seedAgent();
+      const { paneId } = await createPane(apiKey);
+      await getOrCreatePublicGuestParticipant(prisma, paneId);
+
+      const ticket = issueTicket(
+        { kind: "human", id: PUBLIC_IDENTITY_ID },
+        paneId,
+        { canEmit: true },
+      );
+      const ws = connectWithTicket(paneId, ticket);
+      const q = new FrameQueue(ws);
+      await waitOpen(ws);
+      await q.take(2); // joined + replay.complete
+
+      // The per-connection cap is 60. Fire 61 emits; the 61st must be rejected
+      // with too_many_requests. Each accepted emit echoes (broadcast) + acks,
+      // so we don't strictly parse every frame — we drain until we observe a
+      // rate-limit error frame, which must appear.
+      let sawRateLimit = false;
+      for (let i = 0; i < 61; i++) {
+        ws.send(
+          JSON.stringify({
+            type: "review.commentAdded",
+            data: { body: "spam-" + i },
+            correlation_id: "c-rl-" + i,
+          }),
+        );
+      }
+      // Drain frames looking for the rate-limit rejection (bounded loop so a
+      // bug can't hang the suite).
+      for (let i = 0; i < 200 && !sawRateLimit; i++) {
+        const f = (await q.next(3000)) as { error?: { code: string } };
+        if (f.error?.code === "rate_limited") sawRateLimit = true;
+      }
+      expect(sawRateLimit).toBe(true);
+
+      // At most the cap (60) rows were persisted, never all 61.
+      const rows = await prisma.event.findMany({
+        where: { paneId, type: "review.commentAdded" },
+      });
+      expect(rows.length).toBeLessThanOrEqual(60);
+      ws.close();
+    });
   });
 
   // Issue #15: `participant.joined_at` is stamped on the first WebSocket

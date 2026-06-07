@@ -32,6 +32,27 @@ interface TicketEntry {
   author: Author;
   paneId: string;
   expiresAt: number;
+  // Capability flag: whether a connection redeeming this ticket may EMIT page
+  // events. `false` is a receive-only ticket — the holder gets full event/
+  // record replay + live updates over the WS, but any incoming emit frame is
+  // rejected by the WS handler (see ws/handler.ts). Read-only viewers
+  // (link-mode anon, viewer-grants) get `canEmit:false`; owners, participant
+  // grants, agents, tokens, and public-pane participants get `canEmit:true`.
+  canEmit: boolean;
+}
+
+/** Options for {@link issueTicket}. */
+export interface IssueTicketOptions {
+  // Whether the connection may emit page events. Defaults to `true` so the
+  // existing emit-capable callers (the /s token mint, the agent path, the
+  // owner/participant ws-ticket routes) keep their behaviour unchanged.
+  canEmit?: boolean;
+}
+
+/** The redeemed ticket's bound author plus its emit capability. */
+export interface RedeemedTicket {
+  author: Author;
+  canEmit: boolean;
 }
 
 const tickets = new Map<string, TicketEntry>();
@@ -48,8 +69,17 @@ function prune(now: number): void {
  * Mint a ticket bound to `author` and `paneId`. Returns the opaque ticket
  * string the caller hands back to the client. The ticket is valid for
  * `TICKET_TTL_MS` and can be redeemed exactly once.
+ *
+ * `opts.canEmit` (default `true`) stamps the connection's emit capability onto
+ * the ticket. A `canEmit:false` ticket is receive-only — the holder still
+ * connects and gets full replay + live updates, but the WS handler rejects any
+ * emit frame from it. The default preserves the existing emit-capable callers.
  */
-export function issueTicket(author: Author, paneId: string): string {
+export function issueTicket(
+  author: Author,
+  paneId: string,
+  opts?: IssueTicketOptions,
+): string {
   const now = Date.now();
   // Opportunistic sweep on the mint path keeps the map bounded without a timer.
   prune(now);
@@ -59,17 +89,21 @@ export function issueTicket(author: Author, paneId: string): string {
     author,
     paneId,
     expiresAt: now + TICKET_TTL_MS,
+    canEmit: opts?.canEmit ?? true,
   });
   return ticket;
 }
 
 /**
- * Redeem a ticket on the WS upgrade. Returns the bound `Author` and DELETES
- * the entry (single-use) when the ticket exists, is unexpired, and its bound
- * pane matches `paneId`. Returns `null` for an unknown, expired,
+ * Redeem a ticket on the WS upgrade. Returns the bound author + emit capability
+ * and DELETES the entry (single-use) when the ticket exists, is unexpired, and
+ * its bound pane matches `paneId`. Returns `null` for an unknown, expired,
  * wrong-pane, or already-redeemed ticket.
  */
-export function redeemTicket(ticket: string, paneId: string): Author | null {
+export function redeemTicket(
+  ticket: string,
+  paneId: string,
+): RedeemedTicket | null {
   const now = Date.now();
   // Prune-on-access in addition to the mint-path sweep.
   prune(now);
@@ -80,7 +114,7 @@ export function redeemTicket(ticket: string, paneId: string): Author | null {
   tickets.delete(ticket);
   if (entry.expiresAt <= now) return null;
   if (entry.paneId !== paneId) return null;
-  return entry.author;
+  return { author: entry.author, canEmit: entry.canEmit };
 }
 
 // Test-only: clear all tickets so unit tests start from a clean map.
