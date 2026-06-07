@@ -145,6 +145,9 @@ interface ShellData {
   favoritePanes: PaneRef[];
   /** Public panes from ANY owner — the Explore community gallery. */
   publicPanes: PublicPaneRef[];
+  /** True once the human has claimed at least one agent. Drives the
+   *  first-run "connect your first agent" nudge on Home. */
+  hasClaimedAgents: boolean;
 }
 
 async function loadShellData(
@@ -159,18 +162,6 @@ async function loadShellData(
     select: { id: true },
   });
   const claimedAgentIds = claimedAgents.map((a) => a.id);
-
-  // First-run nudge: a human with zero claimed agents has no way for panes
-  // to appear here yet. Point them at /get-started (install → claim code →
-  // claim). Hidden the moment they've claimed an agent.
-  const firstAgentNudge =
-    claimedAgents.length === 0
-      ? `<a class="gs-nudge" href="/get-started">
-          <span class="gs-nudge-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
-          <span class="gs-nudge-text"><b>Connect your first agent</b><span>Link your coding agent to start building panes you'll see here.</span></span>
-          <span class="gs-nudge-cta">Set up an agent →</span>
-        </a>`
-      : "";
 
   // Latest-version input_schema include — used to compute isAgentInit
   // for every template returned below. One sub-query per template; cheap
@@ -427,6 +418,7 @@ async function loadShellData(
     panes,
     favoritePanes,
     publicPanes,
+    hasClaimedAgents: claimedAgents.length > 0,
   };
 }
 
@@ -436,6 +428,16 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   const displayName =
     (human.name && human.name.trim()) || friendlyName(human.email);
   const avatarLetter = displayName.charAt(0).toUpperCase() || "?";
+
+  // First-run nudge: a human with zero claimed agents has no way for panes
+  // to appear here yet. Point them at /get-started. Hidden once they claim.
+  const firstAgentNudge = data.hasClaimedAgents
+    ? ""
+    : `<a class="gs-nudge" href="/get-started">
+          <span class="gs-nudge-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 4v4"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
+          <span class="gs-nudge-text"><b>Connect your first agent</b><span>Link your coding agent to start building panes you'll see here.</span></span>
+          <span class="gs-nudge-cta">Set up an agent →</span>
+        </a>`;
 
   const tplLibraryCount = data.ownedTemplates.length + data.installs.length;
   const panesCount = data.panes.length;
