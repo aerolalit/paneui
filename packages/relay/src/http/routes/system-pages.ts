@@ -524,6 +524,24 @@ function layout(args: {
   .agents-claimed-h { margin-top: 0; }
   .agent-title-col { min-width: 220px; flex: 1 1 220px; }
   .agent-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* /get-started onboarding */
+  .gs-head h1 { margin: 0 0 6px; }
+  .gs-lede { color: var(--muted); font-size: 15px; line-height: 1.55; margin: 0 0 20px; max-width: 60ch; }
+  .gs-done { background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); color: var(--good); border-radius: 10px; padding: 11px 14px; font-size: 14px; margin: 0 0 18px; }
+  .gs-done a { color: var(--good); font-weight: 650; text-decoration: underline; }
+  .gs-steps { list-style: none; counter-reset: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  .gs-step { display: flex; gap: 16px; align-items: flex-start; }
+  .gs-step-n { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+  .gs-step-body { flex: 1; min-width: 0; }
+  .gs-step-body h2 { margin: 2px 0 8px; font-size: 17px; }
+  .gs-step-body p { margin: 0 0 10px; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+  .gs-cmd { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 13px; margin: 0 0 12px; overflow-x: auto; }
+  .gs-cmd code { font-family: "SF Mono",Menlo,Consolas,monospace; font-size: 13.5px; color: var(--fg); user-select: all; white-space: nowrap; }
+  .gs-note { font-size: 13px !important; color: var(--muted); }
+  .gs-note code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; user-select: all; }
+  .gs-note a, .gs-step-body p a { color: var(--accent); font-weight: 600; }
+  .gs-reveal { margin-top: 12px; }
   .pill.trashed { background: #fff4ec; color: #b34700; }
   .btn-danger-ink { color: #b34700; }
 </style>
@@ -1227,7 +1245,7 @@ systemPages.get("/my-agents", async (c) => {
     <h1>My agents</h1>
     ${agentsToggleLink}
   </div>
-  <p class="agents-lede">Agents bound to you via the claim flow. Each agent's API key still works after claim — claiming just records ownership.</p>
+  <p class="agents-lede">Agents bound to you via the claim flow. Each agent's API key still works after claim — claiming just records ownership. New here? Follow the <a href="/get-started">get-started guide</a>.</p>
   <div class="card">
     <div class="row agents-claim-row">
       <h2>Claim a new agent</h2>
@@ -1493,6 +1511,144 @@ systemPages.get("/my-agents", async (c) => {
     c,
     layout({
       title: "My agents",
+      email: human.email,
+      body,
+      active: "agents",
+      nonce,
+    }),
+    { nonce },
+  );
+});
+
+// ----------------------------------------------------------------------
+// GET /get-started — first-run agent onboarding. Three steps: install Pane
+// in your coding agent, generate a one-time claim code, then claim the
+// agent so it's bound to your account. Reuses the claim-code generator
+// from /my-agents (POST /v1/self/claim-codes). The /home empty-state nudge
+// and the landing page's "Open relay" CTA both funnel new humans here.
+// ----------------------------------------------------------------------
+systemPages.get("/get-started", async (c) => {
+  c.header("Cache-Control", "private, no-store");
+  const nonce = generateCspNonce();
+  const human = c.get("human");
+  if (!human) {
+    return htmlPage(
+      c,
+      layout({
+        title: "Get started",
+        email: null,
+        body: loggedOutPrompt(),
+        nonce,
+      }),
+      { nonce },
+    );
+  }
+  const prisma = c.get("prisma");
+  const agentCount = await prisma.agent.count({
+    where: { ownerHumanId: human.id, deletedAt: null },
+  });
+  // The relay the human is actually on (relay.paneui.com in prod), so the
+  // self-host --url hint and the register target are accurate per-deploy.
+  const relayOrigin = new URL(c.req.url).origin;
+  const doneBanner =
+    agentCount > 0
+      ? `<div class="gs-done">✓ You've connected ${agentCount} agent${agentCount === 1 ? "" : "s"}. <a href="/home">Go to Home</a> · <a href="/my-agents">manage agents</a>. You can connect another below.</div>`
+      : "";
+  const body = `<div class="gs-head">
+    <h1>Connect your agent</h1>
+    <p class="gs-lede">Pane works through your coding agent — it builds the panes, dashboards, and artifacts you need, and Pane hosts them by URL so they show up here. Set it up once.</p>
+  </div>
+  ${doneBanner}
+  <ol class="gs-steps">
+    <li class="card gs-step">
+      <span class="gs-step-n">1</span>
+      <div class="gs-step-body">
+        <h2>Install Pane in your agent</h2>
+        <p>In your coding agent (Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf), add the Pane skill:</p>
+        <div class="gs-cmd"><code>npx skills add aerolalit/paneui --skill pane</code></div>
+        <p>then register it against this relay:</p>
+        <div class="gs-cmd"><code>pane agent register --name "my-agent"</code></div>
+        <p class="gs-note">Self-hosting? add <code>--url ${escapeHtml(relayOrigin)}</code>.</p>
+      </div>
+    </li>
+    <li class="card gs-step">
+      <span class="gs-step-n">2</span>
+      <div class="gs-step-body">
+        <h2>Generate a claim code</h2>
+        <p>A one-time code links that agent to your account. It expires after a few minutes.</p>
+        <button id="gen-code" class="btn">Generate claim code</button>
+        <div id="code-out" hidden class="reveal-box gs-reveal">
+          <div class="reveal-label">Your code</div>
+          <div class="reveal-row">
+            <code id="code-value" class="reveal-code"></code>
+            <button id="copy-code" type="button" class="btn ghost btn-sm">Copy</button>
+          </div>
+          <div class="reveal-foot">Expires in <span id="code-ttl"></span>. Copy now — you won't see it again.</div>
+        </div>
+      </div>
+    </li>
+    <li class="card gs-step">
+      <span class="gs-step-n">3</span>
+      <div class="gs-step-body">
+        <h2>Link your agent</h2>
+        <p>On the agent's machine, run:</p>
+        <div class="gs-cmd"><code>pane agent claim &lt;code&gt;</code></div>
+        <p class="gs-note">That binds the agent to you. From then on, anything it builds shows up on your <a href="/home">Home</a>.</p>
+      </div>
+    </li>
+  </ol>
+  <script nonce="${nonce}">
+    document.getElementById("gen-code")?.addEventListener("click", async (ev) => {
+      const btn = ev.target;
+      btn.disabled = true;
+      btn.textContent = "Generating…";
+      try {
+        const res = await fetch("/v1/self/claim-codes", { method: "POST" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const body = await res.json();
+        document.getElementById("code-value").textContent = body.code;
+        const ttl = Math.max(0, Math.round((new Date(body.expires_at).getTime() - Date.now()) / 60000));
+        document.getElementById("code-ttl").textContent = ttl + " min";
+        document.getElementById("code-out").hidden = false;
+      } catch (err) {
+        alert("Failed to generate code: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Generate claim code";
+      }
+    });
+    document.getElementById("copy-code")?.addEventListener("click", async (ev) => {
+      const code = document.getElementById("code-value").textContent || "";
+      if (!code) return;
+      const btn = ev.target;
+      const original = btn.textContent;
+      let ok = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+          ok = true;
+        } else {
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+      } catch {
+        ok = false;
+      }
+      btn.textContent = ok ? "Copied!" : "Copy failed";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+  </script>`;
+  return htmlPage(
+    c,
+    layout({
+      title: "Get started",
       email: human.email,
       body,
       active: "agents",
