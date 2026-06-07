@@ -520,8 +520,8 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
-<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
-<meta name="theme-color" content="#0a0d14" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#14110d" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_DATA_HREF}" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />

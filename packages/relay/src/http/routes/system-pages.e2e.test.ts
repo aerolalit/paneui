@@ -686,11 +686,11 @@ describe("brand mark consistency", () => {
     expect(fav.status).toBe(200);
     expect(fav.headers.get("content-type")).toContain("image/svg+xml");
     const favBody = await fav.text();
-    // Robot mark fills: navy tile, cyan circle, purple chat-bubble. The old
+    // Robot mark fills: coral tile, white circle, white chat-bubble. The old
     // gradient-"P" (linearGradient + <text>P</text>) must be gone — the favicon
     // now matches the home-screen / install icons.
-    expect(favBody).toContain('fill="#22d3ee"'); // cyan circle
-    expect(favBody).toContain('fill="#a78bfa"'); // purple bubble
+    expect(favBody).toContain('fill="#D97757"'); // coral tile
+    expect(favBody).toContain('fill="#ffffff"'); // white circle + bubble
     expect(favBody).not.toContain("linearGradient");
     expect(favBody).not.toContain(">P</text>");
   });
@@ -705,7 +705,7 @@ describe("brand mark consistency", () => {
     // tile — the same artwork as /favicon.svg and the install icons.
     expect(html).toContain('class="brand"');
     expect(html).toContain('<div class="logo"><svg');
-    expect(html).toContain('fill="#a78bfa"'); // purple bubble = the robot mark
+    expect(html).toContain('fill="#D97757"'); // coral tile = the robot mark
     expect(html).not.toContain('<div class="logo">P</div>');
   });
 

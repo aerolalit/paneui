@@ -3,40 +3,39 @@
 // off on it at /panes/pan_J5ZUOt_xL7UbZDNZ). Kept in its own module so
 // /home's route handler stays readable; this file is only the look.
 //
-// The CSS uses the dark navy palette + brand gradient from the prototype.
-// Light-mode users get the same dark UI — the SPA's surface colors
-// (--bg / --surface / --ink) are baked dark, matching the prototype's
-// always-dark presentation. The system-page sign-in form below stays
-// on its own light-aware shell.
+// The CSS uses the "Warm Sunset" palette that matches the marketing site
+// (coral #D97757 / amber #E0A23A accents). Light mode is warm-paper
+// (--bg #f7f5f1) like the landing page; dark mode is a warm charcoal
+// re-tint. Both are driven by prefers-color-scheme below.
 
 export const OWNER_SHELL_CSS = `
   :root {
     color-scheme: light dark;
     /* core surface */
-    --bg:        #0a0d14;
-    --bg-2:      #0e1320;
-    --surface:   #131826;
-    --surface-2: #1a2030;
-    --surface-3: #232b3e;
-    --hairline:  #232b3e;
-    --hairline-2: #2f3a51;
+    --bg:        #14110d;
+    --bg-2:      #1b1611;
+    --surface:   #211b14;
+    --surface-2: #2a231a;
+    --surface-3: #342b20;
+    --hairline:  #2a231a;
+    --hairline-2: #3a3025;
 
     /* ink */
-    --ink:        #e8eef9;
-    --ink-dim:    #9aa6bc;
-    --ink-mute:   #6c7990;
+    --ink:        #f3ece2;
+    --ink-dim:    #c2b6a4;
+    --ink-mute:   #968b78;
 
     /* brand */
-    --brand-1:   #93c5fd; /* cool blue */
-    --brand-2:   #c4b5fd; /* lilac */
-    --brand-3:   #5eead4; /* mint */
+    --brand-1:   #f2b49a; /* warm peach */
+    --brand-2:   #f4c98c; /* amber */
+    --brand-3:   #f6d9a6; /* pale gold */
     --brand-grad: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 60%, var(--brand-3) 110%);
 
-    /* accent — brand-1 used directly as text/border/link on the page
-       background. Same as --brand-1 in dark; the light override darkens it
-       so it keeps contrast on the light surface (the gradient stops above
-       stay pastel for dark text on the decorative fills). */
-    --accent: #93c5fd;
+    /* accent — coral, used directly as text/border/link on the page
+       background. The light override swaps in the site coral (#D97757) for
+       contrast on the warm-paper surface; the gradient stops above stay
+       pastel for dark text on the decorative fills. */
+    --accent: #e8906b;
 
     /* status */
     --green:  #6ee7b7;
@@ -65,22 +64,22 @@ export const OWNER_SHELL_CSS = `
      decorative fills behind dark (#07090f) text, so they must stay pastel. */
   @media (prefers-color-scheme: light) {
     :root {
-      --bg:        #f6f7f9;
+      --bg:        #f7f5f1;
       --bg-2:      #ffffff;
       --surface:   #ffffff;
-      --surface-2: #eef1f6;
-      --surface-3: #e2e7ef;
-      --hairline:  #e4e7ee;
-      --hairline-2:#d2d8e3;
-      --ink:       #1a2030;
-      --ink-dim:   #56607a;
-      --ink-mute:  #79839a;
+      --surface-2: #faf8f4;
+      --surface-3: #efece5;
+      --hairline:  #e6e0d6;
+      --hairline-2:#d9d2c5;
+      --ink:       #1a1726;
+      --ink-dim:   #5b5570;
+      --ink-mute:  #8b85a0;
       --green:  #059669;
       --amber:  #b45309;
       --pink:   #e11d48;
       --orange: #ea580c;
       --blue:   #2563eb;
-      --accent: #2f6bed;
+      --accent: #D97757;
       --shadow-soft: 0 8px 30px rgba(17,24,39,0.10);
       --shadow-pop:  0 14px 40px rgba(17,24,39,0.18);
     }
@@ -929,7 +928,7 @@ export const OWNER_SHELL_CSS = `
   }
   .chrome-bad .row1 .tabs { display: flex; gap: 14px; }
   .chrome-bad .row1 .tabs a { color: #5d6577; }
-  .chrome-bad .row1 .tabs a.active { color: #6d5ef0; font-weight: 600; }
+  .chrome-bad .row1 .tabs a.active { color: #D97757; font-weight: 600; }
   .chrome-bad .row2 {
     padding: 12px 16px;
     display: flex; align-items: center; gap: 10px;
@@ -973,8 +972,8 @@ export const OWNER_SHELL_CSS = `
   .chrome-good .icon-mini {
     width: 26px; height: 26px;
     border-radius: 7px;
-    background: linear-gradient(135deg, #93c5fd, #c4b5fd);
-    color: #07090f; font-weight: 700; font-size: 12px;
+    background: linear-gradient(135deg, #D97757, #E0A23A);
+    color: #ffffff; font-weight: 700; font-size: 12px;
     display: flex; align-items: center; justify-content: center;
   }
   .chrome-good .breadcrumb {

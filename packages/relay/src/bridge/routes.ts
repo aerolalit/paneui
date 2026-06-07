@@ -735,51 +735,52 @@ export function renderShell(args: ShellArgs): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14110d" media="(prefers-color-scheme: dark)">
 <title>${htmlEscape(args.title)}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <link rel="apple-touch-icon" sizes="180x180" href="${args.appleTouchIconHref}">
 <style nonce="${args.nonce}">
-  /* Shell-chrome tokens. Dark defaults below are the original hardcoded hex
-     values (kept byte-identical); the light override at the bottom adapts the
-     chrome to the device. Prefixed --pv-* so they can't collide with the
-     iframe'd agent content (a separate document anyway). The brand-logo SVG
-     fills (#0f172a etc.) are artwork and are intentionally NOT tokenized. */
+  /* Shell-chrome tokens — the "Warm Sunset" palette (coral #D97757 accent),
+     matching the marketing site. Dark defaults below are a warm charcoal;
+     the light override at the bottom is warm-paper. Prefixed --pv-* so they
+     can't collide with the iframe'd agent content (a separate document
+     anyway). The brand-logo SVG fills (#D97757 etc.) are artwork and are
+     intentionally NOT tokenized. */
   :root {
     color-scheme: light dark;
-    --pv-bg:         #0b0e14;
-    --pv-bg-elev:    #141a26;
-    --pv-hairline:   #1f2633;
-    --pv-ink:        #d7dee9;
-    --pv-ink-strong: #e7ecf3;
-    --pv-muted:      #8a93a6;
-    --pv-accent:       #a78bfa;
-    --pv-accent-hover: #cdbcff;
+    --pv-bg:         #14110d;
+    --pv-bg-elev:    #211b14;
+    --pv-hairline:   #2a231a;
+    --pv-ink:        #ece3d6;
+    --pv-ink-strong: #f3ece2;
+    --pv-muted:      #a89c89;
+    --pv-accent:       #e8906b;
+    --pv-accent-hover: #f2a684;
     --pv-green: #7CE3B1;
     --pv-amber: #f7c66a;
     --pv-red:   #f07178;
-    --pv-dim:   #5b6477;
+    --pv-dim:   #6b6051;
     /* gradient endpoints for the header / preamble bands */
-    --pv-grad-1: #10141d;
-    --pv-grad-pre-1: #0e1320;
+    --pv-grad-1: #1b1611;
+    --pv-grad-pre-1: #211b14;
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --pv-bg:         #ffffff;
-      --pv-bg-elev:    #f6f7f9;
-      --pv-hairline:   #e4e7ee;
-      --pv-ink:        #1a2030;
-      --pv-ink-strong: #1a2030;
-      --pv-muted:      #56607a;
-      --pv-accent:       #6d5ef0;
-      --pv-accent-hover: #5b4bd8;
+      --pv-bg:         #f7f5f1;
+      --pv-bg-elev:    #ffffff;
+      --pv-hairline:   #e6e0d6;
+      --pv-ink:        #1a1726;
+      --pv-ink-strong: #1a1726;
+      --pv-muted:      #5b5570;
+      --pv-accent:       #D97757;
+      --pv-accent-hover: #c4633f;
       --pv-green: #059669;
       --pv-amber: #b45309;
       --pv-red:   #e11d48;
-      --pv-dim:   #b6bdcc;
-      --pv-grad-1:     #f6f7f9;
-      --pv-grad-pre-1: #eef1f6;
+      --pv-dim:   #c9c0b2;
+      --pv-grad-1:     #efece5;
+      --pv-grad-pre-1: #f1ece2;
     }
   }
   html, body { height: 100%; margin: 0; }
@@ -1070,8 +1071,8 @@ function renderHumanError(copy: ErrorPageCopy): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14110d" media="(prefers-color-scheme: dark)">
 <title>Pane — ${tabTitle}</title>
 <link rel="icon" type="image/svg+xml" href="${BRAND_FAVICON_HREF}">
 <style>
@@ -1079,23 +1080,23 @@ function renderHumanError(copy: ErrorPageCopy): string {
      so dark stays byte-identical and light follows the device. */
   :root {
     color-scheme: light dark;
-    --pv-bg:         #0b0e14;
-    --pv-hairline:   #1f2633;
-    --pv-ink:        #d7dee9;
-    --pv-ink-strong: #e7ecf3;
-    --pv-muted:      #8a93a6;
+    --pv-bg:         #14110d;
+    --pv-hairline:   #2a231a;
+    --pv-ink:        #ece3d6;
+    --pv-ink-strong: #f3ece2;
+    --pv-muted:      #a89c89;
     --pv-green:      #7CE3B1;
-    --pv-grad-1:     #10141d;
+    --pv-grad-1:     #1b1611;
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --pv-bg:         #ffffff;
-      --pv-hairline:   #e4e7ee;
-      --pv-ink:        #1a2030;
-      --pv-ink-strong: #1a2030;
-      --pv-muted:      #56607a;
+      --pv-bg:         #f7f5f1;
+      --pv-hairline:   #e6e0d6;
+      --pv-ink:        #1a1726;
+      --pv-ink-strong: #1a1726;
+      --pv-muted:      #5b5570;
       --pv-green:      #059669;
-      --pv-grad-1:     #f6f7f9;
+      --pv-grad-1:     #efece5;
     }
   }
   html, body { height: 100%; margin: 0; }

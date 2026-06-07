@@ -24,12 +24,12 @@
 
 export const PANE_DEFAULT_CSS = `:root {
   --pane-bg: #ffffff;
-  --pane-fg: #18181b;
-  --pane-muted: #6b7280;
-  --pane-subtle: #f4f4f5;
-  --pane-border: #e4e4e7;
-  --pane-accent: #7c3aed;
-  --pane-accent-hover: #6d28d9;
+  --pane-fg: #1a1726;
+  --pane-muted: #5b5570;
+  --pane-subtle: #f3f0ea;
+  --pane-border: #e6e0d6;
+  --pane-accent: #D97757;
+  --pane-accent-hover: #c4633f;
   --pane-danger: #dc2626;
   --pane-radius: 8px;
   --pane-font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -39,13 +39,13 @@ export const PANE_DEFAULT_CSS = `:root {
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --pane-bg: #0b0e14;
-    --pane-fg: #e7ecf3;
-    --pane-muted: #8a93a6;
-    --pane-subtle: #141a26;
-    --pane-border: #1f2633;
-    --pane-accent: #a78bfa;
-    --pane-accent-hover: #c4b5fd;
+    --pane-bg: #14110d;
+    --pane-fg: #f3ece2;
+    --pane-muted: #a89c89;
+    --pane-subtle: #211b14;
+    --pane-border: #2a231a;
+    --pane-accent: #e8906b;
+    --pane-accent-hover: #f2a684;
     --pane-danger: #f87171;
   }
 }

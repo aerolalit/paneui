@@ -185,8 +185,8 @@ function layout(args: {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#14110d" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -195,17 +195,17 @@ function layout(args: {
 <title>${escapeHtml(args.title)} · pane</title>
 <style nonce="${args.nonce}">
   :root {
-    --bg: #f6f7f9;
+    --bg: #f7f5f1;
     --panel: #ffffff;
-    --fg: #101522;
-    --muted: #5d6577;
-    --rule: #e7e9ef;
-    --accent: #6d5ef0;
-    --accent-hover: #5b4bd8;
-    --accent-soft: #efedfd;
-    --accent-border: #d9d4f7;
-    --accent-ink: #4b3fb0;
-    --code-bg: #f1f2f6;
+    --fg: #1a1726;
+    --muted: #5b5570;
+    --rule: #e6e0d6;
+    --accent: #D97757;
+    --accent-hover: #c4633f;
+    --accent-soft: #fbeee7;
+    --accent-border: #f0d3c5;
+    --accent-ink: #a8482a;
+    --code-bg: #f3f0ea;
     --good: #1f8a4c;
     --good-soft: #e6f4ec;
     --shadow: 0 1px 2px rgba(16,21,34,.04), 0 1px 3px rgba(16,21,34,.06);
@@ -214,17 +214,17 @@ function layout(args: {
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0b0e14;
-      --panel: #11151e;
-      --fg: #e7ecf3;
-      --muted: #8a93a6;
-      --rule: #1f2633;
-      --accent: #a78bfa;
-      --accent-hover: #b9a4ff;
-      --accent-soft: #1a1b30;
-      --accent-border: #2f2c52;
-      --accent-ink: #cdbcff;
-      --code-bg: #141a26;
+      --bg: #14110d;
+      --panel: #211b14;
+      --fg: #f3ece2;
+      --muted: #a89c89;
+      --rule: #2a231a;
+      --accent: #e8906b;
+      --accent-hover: #f2a684;
+      --accent-soft: #2a1f18;
+      --accent-border: #43301f;
+      --accent-ink: #f2a684;
+      --code-bg: #211b14;
       --good: #7CE3B1;
       --good-soft: #11261b;
       --shadow: none;
@@ -252,7 +252,7 @@ function layout(args: {
   header.pane-nav .brand svg { display: block; }
   header.pane-nav .brand .wordmark {
     font-weight: 700; font-size: 16px; letter-spacing: -0.02em;
-    background: linear-gradient(135deg, #93c5fd 0%, #c4b5fd 60%, #5eead4 110%);
+    background: linear-gradient(135deg, #D97757 0%, #E0A23A 100%);
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   header.pane-nav .account { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 0; }
@@ -692,8 +692,8 @@ systemPages.get("/manifest.webmanifest", (c) => {
       scope: "/",
       display: "standalone",
       orientation: "any",
-      background_color: "#0b0e14",
-      theme_color: "#0b0e14",
+      background_color: "#f7f5f1",
+      theme_color: "#f7f5f1",
       categories: ["productivity", "developer"],
       // Raster PNG icons for the install flow. iOS uses the apple-touch-icon
       // <link>; Android/Chrome + desktop installs use these manifest entries
