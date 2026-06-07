@@ -125,7 +125,7 @@ function cookieHeaders(cookie: string): HeadersInit {
 }
 
 describe("/p/:paneId resolver", () => {
-  it("public mode opens anonymously (read-only)", async () => {
+  it("public mode opens anonymously and mints an EMIT-CAPABLE ticket", async () => {
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
     await prisma.pane.update({
@@ -141,17 +141,29 @@ describe("/p/:paneId resolver", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
 
-    // Read-only: the ws-ticket mint (the emit credential) is refused for an
-    // anonymous viewer.
+    // Public is "view + participate": an anonymous visitor now gets a ws-ticket
+    // (was 403) so they can connect AND emit. The emit capability itself is
+    // asserted at the WS layer (handler.e2e.test.ts); here we assert the mint
+    // succeeds and a shared guest participant is lazily created.
     const ticket = await app.fetch(
       new Request(`http://t/p/${paneId}/ws-ticket`, { method: "POST" }),
     );
-    expect(ticket.status).toBe(403);
+    expect(ticket.status).toBe(201);
+    const body = (await ticket.json()) as { ticket?: string };
+    expect(typeof body.ticket).toBe("string");
+
+    const guest = await prisma.participant.findFirst({
+      where: { paneId, identityId: "h_public" },
+    });
+    expect(guest).not.toBeNull();
+    expect(guest?.humanId).toBeNull();
   });
 
-  it("link mode opens anonymously for a stranger (read-only)", async () => {
-    // The new behaviour: `link` (the default) opens /p with no login — same
-    // resolver outcome as public; only discovery (a follow-up) differs.
+  it("link mode opens anonymously and mints a RECEIVE-ONLY ticket", async () => {
+    // The new behaviour: `link` (the default) opens /p with no login. A
+    // read-only viewer must still RECEIVE replay/live updates, so they now get
+    // a ws-ticket too (was 403) — but it is receive-only (canEmit:false). The
+    // receive-only enforcement is asserted at the WS layer.
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
     // Sanity: a freshly seeded pane defaults to `link`.
@@ -169,11 +181,11 @@ describe("/p/:paneId resolver", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
 
-    // Read-only: an anonymous link-mode viewer cannot mint a ws-ticket.
+    // No longer 403 — a read-only viewer needs the socket to receive content.
     const ticket = await app.fetch(
       new Request(`http://t/p/${paneId}/ws-ticket`, { method: "POST" }),
     );
-    expect(ticket.status).toBe(403);
+    expect(ticket.status).toBe(201);
   });
 
   it("invite_only mode: logged-out browser → login redirect", async () => {
@@ -259,7 +271,10 @@ describe("/p/:paneId resolver", () => {
     expect(ticket.status).toBe(201);
   });
 
-  it("invite_only: viewer grant is read-only (ws-ticket refused)", async () => {
+  it("invite_only: viewer grant is read-only but gets a receive-only ticket", async () => {
+    // A viewer grant can now connect (to RECEIVE replay/live updates) — so the
+    // ws-ticket mint succeeds (was 403). The ticket is receive-only; the emit
+    // rejection is enforced at the WS layer (handler.e2e.test.ts).
     const owner = await seedHumanWithCookie("owner@example.com");
     const { paneId } = await seedPane(owner.humanId);
     await prisma.pane.update({
@@ -291,7 +306,25 @@ describe("/p/:paneId resolver", () => {
         headers: { cookie: `${LOGIN_COOKIE_NAME}=${viewer.cookie}` },
       }),
     );
-    expect(ticket.status).toBe(403);
+    expect(ticket.status).toBe(201);
+  });
+
+  it("invite_only non-grantee still gets 404 on ws-ticket (no oracle)", async () => {
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const { paneId } = await seedPane(owner.humanId);
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { accessMode: "invite_only" },
+    });
+    const stranger = await seedHumanWithCookie("stranger@example.com");
+
+    const ticket = await app.fetch(
+      new Request(`http://t/p/${paneId}/ws-ticket`, {
+        method: "POST",
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${stranger.cookie}` },
+      }),
+    );
+    expect(ticket.status).toBe(404);
   });
 
   it("invite_only: owner can open via /p and emit", async () => {
