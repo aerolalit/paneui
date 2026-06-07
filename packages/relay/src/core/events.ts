@@ -238,6 +238,25 @@ export async function writeEvent(
       if (!existing) throw err;
       row = existing;
       deduped = true;
+    } else if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2003"
+    ) {
+      // The pane row was concurrently hard-deleted (or expire-and-swept)
+      // between the caller's findUnique re-read and this insert landing, so
+      // the events_pane_id_fkey foreign key has no parent to point at and
+      // Prisma raises P2003. This is the same race appendSystemEvent already
+      // tolerates (see above): a pane that vanished mid-write is, for the
+      // purposes of an event append, simply gone. Surface it as the standard
+      // `gone` ApiError so both transports treat it as a benign closed-pane
+      // outcome — the WS handler sends a clean error frame (no "ws writeEvent
+      // failed" error log) and the HTTP route returns 410 — instead of a raw
+      // 500 with a stack-trace-laden error log.
+      log.debug("writeEvent skipped: pane no longer exists", {
+        paneId: pane.id,
+        type: input.type,
+      });
+      throw errors.gone();
     } else {
       throw err;
     }

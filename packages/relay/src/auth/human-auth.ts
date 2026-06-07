@@ -13,6 +13,7 @@
 // timestamp moves.
 
 import type { Context, MiddlewareHandler } from "hono";
+import { Prisma } from "@prisma/client";
 import type { Human as HumanRow, PrismaClient } from "@prisma/client";
 import {
   buildClearCookieHeader,
@@ -60,12 +61,28 @@ async function resolveLoginCookie(
       where: { id: login.id },
       data: { lastSeenAt: new Date() },
     })
-    .catch((err: unknown) =>
+    .catch((err: unknown) => {
+      // Best-effort fire-and-forget bookkeeping. The login row can be
+      // concurrently deleted (logout, account/human hard-delete, or a
+      // test tearing down its fixtures) between the findUnique above and
+      // this async update landing — Prisma then raises P2025 "record not
+      // found". That is a legitimate no-op, not a failure: there is no
+      // lastSeenAt to stamp on a row that no longer exists. Swallow it at
+      // debug; surface anything else as a warning.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2025"
+      ) {
+        log.debug("Login.lastSeenAt update skipped: login no longer exists", {
+          loginId: login.id,
+        });
+        return;
+      }
       log.warn("Login.lastSeenAt update failed", {
         loginId: login.id,
         error: String(err),
-      }),
-    );
+      });
+    });
 
   return login.human;
 }
