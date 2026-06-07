@@ -20,6 +20,8 @@ import {
 } from "../../auth/cookie.js";
 import { makeDevProvider } from "../../auth/providers/dev.js";
 import { makeNoneProvider } from "../../auth/providers/none.js";
+import { seedPaneRow } from "../../test-helpers/seed.js";
+import { hashKey, keyPrefix } from "../../keys.js";
 
 let testDb: TestDb;
 let prisma: PrismaClient;
@@ -91,6 +93,44 @@ async function seedLoggedInHuman(email = "alice@example.com"): Promise<{
 
 function withCookie(cookie: string): RequestInit {
   return { headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` } };
+}
+
+// Seed a pane owned by a fresh (other) human with a given accessMode — used to
+// exercise the Explore gallery, which is cross-owner and lists only "public"
+// panes ("link"/"invite_only" are excluded from discovery).
+async function seedPane(opts: {
+  title: string;
+  accessMode: "public" | "link" | "invite_only";
+  ownerName?: string;
+}): Promise<string> {
+  const apiKey = "pane_" + randomBytes(16).toString("hex");
+  const owner = await prisma.human.create({
+    data: {
+      email: `${randomBytes(4).toString("hex")}@example.com`,
+      name: opts.ownerName ?? null,
+      verifiedAt: new Date(),
+    },
+  });
+  const agent = await prisma.agent.create({
+    data: {
+      name: `agent-${randomBytes(4).toString("hex")}`,
+      keyHash: hashKey(apiKey),
+      keyPrefix: keyPrefix(apiKey),
+      ownerHumanId: owner.id,
+      claimedAt: new Date(),
+    },
+  });
+  const { paneId } = await seedPaneRow(prisma, {
+    agentId: agent.id,
+    status: "open",
+    expiresAt: new Date(Date.now() + 3_600_000),
+    title: opts.title,
+  });
+  await prisma.pane.update({
+    where: { id: paneId },
+    data: { ownerHumanId: owner.id, accessMode: opts.accessMode },
+  });
+  return paneId;
 }
 
 describe("GET / (public landing)", () => {
@@ -405,7 +445,7 @@ describe("PWA assets", () => {
 });
 
 describe("Owner-shell SPA at /home", () => {
-  it("renders the prototype-style shell with sidebar nav + all four views", async () => {
+  it("renders the prototype-style shell with sidebar nav + all five views", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
@@ -418,6 +458,7 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('class="logo"');
     expect(html).toContain('data-view="home"');
     expect(html).toContain('data-view="panes"');
+    expect(html).toContain('data-view="explore"');
     expect(html).toContain('data-view="store"');
     expect(html).toContain('data-view="mine"');
     expect(html).not.toContain('data-view="trash"');
@@ -461,6 +502,42 @@ describe("Owner-shell SPA at /home", () => {
     const html = await res.text();
     expect(html).toContain(">Discover<");
     expect(html).toContain('id="apps-discover"');
+  });
+
+  it("Explore view renders an empty state when there are no public panes", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    expect(html).toContain('id="explore-list"');
+    expect(html).toContain("No public panes yet");
+  });
+
+  it("Explore lists public panes from OTHER owners; link/invite panes stay hidden", async () => {
+    await seedPane({
+      title: "Community Retro Board",
+      accessMode: "public",
+      ownerName: "Mallory",
+    });
+    // A "link" pane is shareable by URL but must NOT be discoverable here.
+    await seedPane({ title: "Unlisted Link Pane", accessMode: "link" });
+    // An "invite_only" pane is fully gated — also never listed.
+    await seedPane({ title: "Invite Only Pane", accessMode: "invite_only" });
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // The public pane (owned by a different human) appears, attributed to its
+    // sharer, and links the read-only /p/:id viewer — not the owner-gated
+    // /panes/:id path.
+    expect(html).toContain("Community Retro Board");
+    expect(html).toContain("by Mallory");
+    expect(html).toContain('data-href="/p/');
+    // Non-public panes never leak into the gallery.
+    expect(html).not.toContain("Unlisted Link Pane");
+    expect(html).not.toContain("Invite Only Pane");
   });
 
   it("My Templates view renders Yours + Installed grids", async () => {

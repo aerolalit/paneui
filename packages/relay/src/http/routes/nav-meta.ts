@@ -21,6 +21,7 @@
 export type NavKey =
   | "home"
   | "panes"
+  | "explore"
   | "store"
   | "templates"
   | "agents"
@@ -34,6 +35,7 @@ export type NavKey =
 export const NAV_LABELS: Record<NavKey, string> = {
   home: "Home",
   panes: "Panes",
+  explore: "Explore",
   store: "Template store",
   templates: "My templates",
   agents: "My agents",
@@ -47,6 +49,10 @@ export const NAV_LABELS: Record<NavKey, string> = {
 export const NAV_GLYPHS: Record<NavKey, string> = {
   home: `<path d="M3 12L12 3l9 9"/><path d="M5 10v10h14V10"/>`,
   panes: `<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>`,
+  // Compass — "explore the community's public panes". Distinct from the
+  // storefront (Template store) and the panes rectangle so the three nav
+  // destinations never read as the same icon.
+  explore: `<circle cx="12" cy="12" r="9"/><polygon points="15.5 8.5 11 11 8.5 15.5 13 13 15.5 8.5"/>`,
   // Storefront/awning — distinct from the templates grid so the two never
   // read as the same destination again.
   store: `<path d="M3 3h18l-1.5 5H4.5L3 3z"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M9 12h6"/>`,

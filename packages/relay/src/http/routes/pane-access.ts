@@ -11,23 +11,34 @@
 //   POST /p/:paneId/ws-ticket short-lived WS upgrade ticket (emit-capable
 //                             callers only: owner + participant-role grant)
 //
-// Resolver order (mirrors the approved design §access-resolution):
+// Resolver order (mirrors the approved three-mode design):
 //   1. valid participant token for this pane → allow(token role)
 //        — N/A on this cookie mount (no token in the URL); the /s/:token
 //          mount owns the token path. Kept here as a comment so the ordering
-//          maps 1:1 to the design.
-//   2. pane.isPublic                         → allow(viewer, READ-ONLY)
-//   3. NOT logged in                         → login redirect (prompt first,
-//        for ANY pane id, so the prompt is identical whether or not the pane
-//        exists — no existence oracle)
-//   4. logged-in human is owner OR has a grant → allow(owner|grant role)
-//   5. logged-in, no grant                   → 404 (no oracle; never 403)
+//          maps 1:1 to the design. CRITICAL: accessMode NEVER gates the token
+//          path — a token works in every mode until explicitly revoked.
+//   2. accessMode === "public" → allow EMIT-CAPABLE for anyone (anon OK). The
+//        product decision: a public pane is "view + participate" — an
+//        anonymous visitor can both read AND submit. Anonymous emits are
+//        stamped with a shared per-pane guest identity (PUBLIC_IDENTITY_ID)
+//        and rate-limited (see ws/handler.ts) since they are an abuse surface.
+//   3. accessMode === "link"   → allow READ-ONLY for anyone (anon OK). Anyone
+//        with the URL can view but not emit; emit needs a token/grant. Diverges
+//        from "public" both at this resolver (read-only vs participate) and at
+//        the future discovery surface (a "public" pane may be listed; "link"
+//        never is).
+//   4. accessMode === "invite_only" (the gated path):
+//        a. NOT logged in                          → login redirect (prompt
+//             first, for ANY pane id, so the prompt is identical whether or
+//             not the pane exists — no existence oracle)
+//        b. logged-in human is owner OR has a grant → allow(owner|grant role)
+//        c. logged-in, no grant                    → 404 (no oracle; never 403)
 //
 // On any allow, a logged-in human's open is recorded for Recents (best-
-// effort). Public-anonymous and `viewer`-grant access are READ-ONLY: the
-// ws-ticket route refuses them, and they never receive a participant token,
-// so the page can never emit an event. Emit needs a participant token or a
-// `participant`-role grant (owner included).
+// effort). EVERY allowed viewer is handed a WS ticket so they can RECEIVE the
+// event/record replay + live updates — but the ticket's `canEmit` flag gates
+// emit: emit-capable for public visitors, owners, and participant grants;
+// receive-only for link-mode anon and `viewer`-grants.
 
 import { Hono, type Context } from "hono";
 import type { PrismaClient } from "@prisma/client";
@@ -44,6 +55,7 @@ import { recordView } from "../../bridge/recents.js";
 import { computeAgentPresence } from "../../bridge/routes.js";
 import {
   getOrCreateIdentityParticipant,
+  getOrCreatePublicGuestParticipant,
   granteeIdentityId,
   OWNER_IDENTITY_ID,
 } from "./identity-participant.js";
@@ -55,11 +67,20 @@ const paneAccess = new Hono<AppEnv>();
 
 // The resolved access decision for a /p/:paneId request.
 type Access =
-  // Serve the pane. `role` gates emit: "participant" (owner or participant
-  // grant) can mint a ws-ticket; "viewer" (public-anon or viewer grant) is
-  // read-only. `humanId` is the logged-in human (null for public-anon).
-  | { kind: "allow"; role: "participant" | "viewer"; humanId: string | null }
-  // Bounce to /login carrying the return URL (not-logged-in, non-public pane).
+  // Serve the pane. `canEmit` is the emit capability stamped onto the WS
+  // ticket: a `participant`/owner grant and an anonymous PUBLIC visitor are
+  // emit-capable; a `viewer` grant and a link-mode anon visitor are
+  // receive-only. `humanId` is the logged-in human (null for anon). `isPublic`
+  // marks an anonymous-allowed public open, so the ws-ticket route knows to
+  // bind an anonymous emit to the shared public-guest identity.
+  | {
+      kind: "allow";
+      role: "participant" | "viewer";
+      humanId: string | null;
+      canEmit: boolean;
+      isPublic: boolean;
+    }
+  // Bounce to /login carrying the return URL (not-logged-in, invite_only pane).
   | { kind: "login" }
   // Indistinguishable from "pane does not exist" — no existence oracle.
   | { kind: "not_found" };
@@ -85,7 +106,7 @@ async function resolveHumanFromCookie(
 // The pane fields the resolver + serving path need. Loaded once per request.
 type LoadedPane = ServeablePane & {
   ownerHumanId: string | null;
-  isPublic: boolean;
+  accessMode: string;
   deletedAt: Date | null;
 };
 
@@ -113,19 +134,45 @@ async function resolveAccess(
   // oracle-free.
   const paneExists = pane !== null && pane.deletedAt === null;
 
-  // (2) public pane → read-only viewer, even for anonymous callers. Checked
-  // before login state so a public pane opens without a prompt.
-  if (paneExists && pane!.isPublic) {
-    return { kind: "allow", role: "viewer", humanId: human?.id ?? null };
+  // (2) "public" opens to anyone, including an anonymous caller, and is
+  // EMIT-CAPABLE — a public pane is "view + participate" per the product
+  // decision. Checked before login state so the pane opens immediately. A
+  // logged-in visitor emits under their own identity; an anonymous visitor
+  // emits under the shared per-pane guest identity (the ws-ticket route binds
+  // it). `role: "participant"` so the recents/emit-capability logic treats it
+  // as a contributor.
+  if (paneExists && pane!.accessMode === "public") {
+    return {
+      kind: "allow",
+      role: "participant",
+      humanId: human?.id ?? null,
+      canEmit: true,
+      isPublic: true,
+    };
   }
 
-  // (3) not logged in + not public → prompt to log in. Done for ANY pane id
-  // (existing or not) so the prompt can't be used to probe pane existence.
+  // (3) "link" opens READ-ONLY to anyone, including an anonymous caller — no
+  // login prompt, but no emit either. Anyone with the URL can view; emitting
+  // still requires a token or a participant grant. Any unrecognised stored
+  // value falls through to the gated (invite_only) branch below — fail closed.
+  if (paneExists && pane!.accessMode === "link") {
+    return {
+      kind: "allow",
+      role: "viewer",
+      humanId: human?.id ?? null,
+      canEmit: false,
+      isPublic: false,
+    };
+  }
+
+  // (4) invite_only (and any unknown mode, fail-closed). Not logged in → prompt
+  // to log in. Done for ANY pane id (existing or not) so the prompt can't be
+  // used to probe pane existence.
   if (!human) {
     return { kind: "login" };
   }
 
-  // From here the caller is a logged-in human on a non-public pane.
+  // From here the caller is a logged-in human on an invite_only pane.
   if (!paneExists) {
     // Logged in but the pane is gone/trashed → 404 (same as "no grant").
     return { kind: "not_found" };
@@ -136,7 +183,13 @@ async function resolveAccess(
   // entry point, but /p/:paneId must work for them too — e.g. an expired
   // /s/:token they themselves hold redirects here.)
   if (pane!.ownerHumanId === human.id) {
-    return { kind: "allow", role: "participant", humanId: human.id };
+    return {
+      kind: "allow",
+      role: "participant",
+      humanId: human.id,
+      canEmit: true,
+      isPublic: false,
+    };
   }
 
   // (4) grantee → grant role. Only a bound grant (humanId set on login)
@@ -148,7 +201,14 @@ async function resolveAccess(
   });
   if (grant) {
     const role = grant.role === "viewer" ? "viewer" : "participant";
-    return { kind: "allow", role, humanId: human.id };
+    return {
+      kind: "allow",
+      role,
+      humanId: human.id,
+      // A participant grant emits; a viewer grant is receive-only.
+      canEmit: role === "participant",
+      isPublic: false,
+    };
   }
 
   // (5) logged in, no grant → 404. NEVER 403 — a 403 would confirm the pane
@@ -253,13 +313,17 @@ paneAccess.get("/:paneId/presence", async (c) => {
   return c.body(JSON.stringify(presence));
 });
 
-// POST /p/:paneId/ws-ticket — emit-capable WS upgrade ticket.
+// POST /p/:paneId/ws-ticket — WS upgrade ticket for ANY allowed viewer.
 //
-// READ-ONLY enforcement lives here: only an "allow(participant)" decision
-// (owner or participant-role grant) mints a ticket. A viewer grant, a public-
-// anonymous open, or a logged-out caller is refused — the page can poll +
-// render but never emit. This is the same trust boundary the /s/:token mint
-// relies on (a token's Participant row carries the emit capability).
+// The WS connection is needed for BOTH receiving (event/record replay + live
+// updates) AND emitting, so EVERY allowed viewer is handed a ticket — otherwise
+// a read-only viewer can never open the socket and the page loops "reconnecting"
+// with no content (the bug this fixes). The ticket's `canEmit` flag carries the
+// trust boundary the old 403 used to enforce: emit-capable for owners,
+// participant grants, and public-pane visitors (anonymous included); receive-
+// only for link-mode anon and `viewer`-grants. The WS handler rejects an emit
+// frame from a receive-only connection (see ws/handler.ts), so a read-only
+// viewer still RECEIVES but cannot WRITE.
 paneAccess.post("/:paneId/ws-ticket", async (c) => {
   const prisma = c.get("prisma");
   const paneId = c.req.param("paneId");
@@ -280,33 +344,38 @@ paneAccess.post("/:paneId/ws-ticket", async (c) => {
     throw errors.gone();
   }
 
-  // Read-only callers cannot emit. A viewer grant / public-anon / a caller
-  // with no resolved human all land here. 403 is correct: the resource exists
-  // and is being served read-only to this caller; it's the *emit* action that
-  // is refused, which is not an existence oracle (they can already see the
-  // pane).
-  if (access.role !== "participant" || !access.humanId) {
-    throw errors.forbidden(
-      "read_only",
-      "this pane is read-only for you; emitting page events requires participant access",
+  // Resolve the author the connection writes/joins as, and the ticket's emit
+  // capability:
+  //  - logged-in human → their identity slot (owner slot, or per-human grant
+  //    slot). Used for both emit-capable and receive-only logged-in viewers so
+  //    presence/joined events carry a coherent identity.
+  //  - anonymous public visitor → the shared per-pane guest identity. Only the
+  //    `public` mode reaches here anonymously with canEmit:true; link-mode anon
+  //    is canEmit:false but still needs an author for its receive-only socket,
+  //    so it shares the same guest slot (it just can't write).
+  let author: Author;
+  if (access.humanId) {
+    const identityId =
+      pane!.ownerHumanId === access.humanId
+        ? OWNER_IDENTITY_ID
+        : granteeIdentityId(access.humanId);
+    const participant = await getOrCreateIdentityParticipant(
+      prisma,
+      pane!.id,
+      access.humanId,
+      identityId,
     );
+    author = { kind: "human", id: participant.identityId };
+  } else {
+    // Anonymous viewer (public participate, or link-mode read-only). Bind to
+    // the shared guest identity so an anonymous public emit has an author the
+    // event writer accepts, and a read-only anon socket still has a stable
+    // author for its join/leave presence events.
+    const guest = await getOrCreatePublicGuestParticipant(prisma, pane!.id);
+    author = { kind: "human", id: guest.identityId };
   }
 
-  // Owner uses the reserved owner identity slot; a participant grantee uses a
-  // per-human grant slot. Both go through the shared lazy-mint so the audit
-  // log stays coherent and the (paneId, identityId) constraint dedups.
-  const identityId =
-    pane!.ownerHumanId === access.humanId
-      ? OWNER_IDENTITY_ID
-      : granteeIdentityId(access.humanId);
-  const participant = await getOrCreateIdentityParticipant(
-    prisma,
-    pane!.id,
-    access.humanId,
-    identityId,
-  );
-  const author: Author = { kind: "human", id: participant.identityId };
-  const ticket = issueTicket(author, pane!.id);
+  const ticket = issueTicket(author, pane!.id, { canEmit: access.canEmit });
   return c.json(
     {
       ticket,

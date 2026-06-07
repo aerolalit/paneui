@@ -136,11 +136,11 @@ describe("GET /v1/my-panes/:id/grants", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       pane_id: string;
-      is_public: boolean;
+      access_mode: string;
       items: unknown[];
     };
     expect(body.pane_id).toBe(paneId);
-    expect(body.is_public).toBe(false);
+    expect(body.access_mode).toBe("link");
     expect(body.items).toEqual([]);
   });
 
@@ -297,46 +297,36 @@ describe("DELETE /v1/my-panes/:id/grants/:gid", () => {
 });
 
 describe("PATCH /v1/my-panes/:id/visibility", () => {
-  it("flips the pane to public and back", async () => {
+  it("sets the pane to public, invite_only, and link", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const paneId = await seedOwnedPane(humanId);
 
-    const on = await app.fetch(
-      new Request(`http://t/v1/my-panes/${paneId}/visibility`, {
-        method: "PATCH",
-        headers: mutationHeaders(cookie),
-        body: JSON.stringify({ is_public: true }),
-      }),
-    );
-    expect(on.status).toBe(200);
-    expect((await on.json()) as { is_public: boolean }).toMatchObject({
-      is_public: true,
-    });
-    expect(
-      (await prisma.pane.findUnique({ where: { id: paneId } }))?.isPublic,
-    ).toBe(true);
-
-    const off = await app.fetch(
-      new Request(`http://t/v1/my-panes/${paneId}/visibility`, {
-        method: "PATCH",
-        headers: mutationHeaders(cookie),
-        body: JSON.stringify({ is_public: false }),
-      }),
-    );
-    expect(off.status).toBe(200);
-    expect(
-      (await prisma.pane.findUnique({ where: { id: paneId } }))?.isPublic,
-    ).toBe(false);
+    for (const mode of ["public", "invite_only", "link"] as const) {
+      const res = await app.fetch(
+        new Request(`http://t/v1/my-panes/${paneId}/visibility`, {
+          method: "PATCH",
+          headers: mutationHeaders(cookie),
+          body: JSON.stringify({ access_mode: mode }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()) as { access_mode: string }).toMatchObject({
+        access_mode: mode,
+      });
+      expect(
+        (await prisma.pane.findUnique({ where: { id: paneId } }))?.accessMode,
+      ).toBe(mode);
+    }
   });
 
-  it("rejects a non-boolean body (400)", async () => {
+  it("rejects an invalid access_mode (400)", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     const paneId = await seedOwnedPane(humanId);
     const res = await app.fetch(
       new Request(`http://t/v1/my-panes/${paneId}/visibility`, {
         method: "PATCH",
         headers: mutationHeaders(cookie),
-        body: JSON.stringify({ is_public: "yes" }),
+        body: JSON.stringify({ access_mode: "everyone" }),
       }),
     );
     expect(res.status).toBe(400);
@@ -350,7 +340,7 @@ describe("PATCH /v1/my-panes/:id/visibility", () => {
       new Request(`http://t/v1/my-panes/${paneId}/visibility`, {
         method: "PATCH",
         headers: mutationHeaders(other.cookie),
-        body: JSON.stringify({ is_public: true }),
+        body: JSON.stringify({ access_mode: "public" }),
       }),
     );
     expect(res.status).toBe(404);
@@ -367,7 +357,7 @@ describe("PATCH /v1/my-panes/:id/visibility", () => {
           origin: "https://evil.example.com",
           ...cookieHeader(cookie),
         },
-        body: JSON.stringify({ is_public: true }),
+        body: JSON.stringify({ access_mode: "public" }),
       }),
     );
     expect(res.status).toBe(403);

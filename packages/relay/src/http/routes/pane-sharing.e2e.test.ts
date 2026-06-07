@@ -141,29 +141,43 @@ function agentHeaders(key: string): HeadersInit {
 }
 
 describe("PATCH /v1/panes/:id/visibility", () => {
-  it("toggles isPublic for the owning agent", async () => {
+  it("sets accessMode for the owning agent (all three modes)", async () => {
+    const { agentKey, paneId } = await seedPane();
+    for (const mode of ["invite_only", "link", "public"] as const) {
+      const res = await app.fetch(
+        new Request(`http://t/v1/panes/${paneId}/visibility`, {
+          method: "PATCH",
+          headers: agentHeaders(agentKey),
+          body: JSON.stringify({ access_mode: mode }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.access_mode).toBe(mode);
+      const row = await prisma.pane.findUnique({ where: { id: paneId } });
+      expect(row?.accessMode).toBe(mode);
+    }
+  });
+
+  it("rejects an invalid access_mode (400)", async () => {
+    const { agentKey, paneId } = await seedPane();
+    const res = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}/visibility`, {
+        method: "PATCH",
+        headers: agentHeaders(agentKey),
+        body: JSON.stringify({ access_mode: "everyone" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a missing access_mode (400)", async () => {
     const { agentKey, paneId } = await seedPane();
     const res = await app.fetch(
       new Request(`http://t/v1/panes/${paneId}/visibility`, {
         method: "PATCH",
         headers: agentHeaders(agentKey),
         body: JSON.stringify({ is_public: true }),
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.is_public).toBe(true);
-    const row = await prisma.pane.findUnique({ where: { id: paneId } });
-    expect(row?.isPublic).toBe(true);
-  });
-
-  it("rejects an invalid body (400)", async () => {
-    const { agentKey, paneId } = await seedPane();
-    const res = await app.fetch(
-      new Request(`http://t/v1/panes/${paneId}/visibility`, {
-        method: "PATCH",
-        headers: agentHeaders(agentKey),
-        body: JSON.stringify({ is_public: "yes" }),
       }),
     );
     expect(res.status).toBe(400);
@@ -175,13 +189,14 @@ describe("PATCH /v1/panes/:id/visibility", () => {
       new Request(`http://t/v1/panes/${paneId}/visibility`, {
         method: "PATCH",
         headers: agentHeaders(otherAgentKey),
-        body: JSON.stringify({ is_public: true }),
+        body: JSON.stringify({ access_mode: "public" }),
       }),
     );
     // Cross-human pane is forbidden (403) per assertPaneInScope.
     expect([403, 404]).toContain(res.status);
     const row = await prisma.pane.findUnique({ where: { id: paneId } });
-    expect(row?.isPublic).toBe(false);
+    // Untouched — still the default.
+    expect(row?.accessMode).toBe("link");
   });
 });
 
@@ -210,7 +225,7 @@ describe("grants CRUD", () => {
       }),
     );
     const listed = await list.json();
-    expect(listed.is_public).toBe(false);
+    expect(listed.access_mode).toBe("link");
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0].invite_email).toBe("bob@example.com");
   });

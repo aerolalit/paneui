@@ -102,6 +102,32 @@ interface PaneRef {
   hasIconImage: boolean;
 }
 
+/** A pane somebody has marked public (Pane.accessMode === "public"). Shown in
+ *  the Explore view — a community gallery of read-only-viewable panes from ANY
+ *  owner, not just the logged-in human's. Distinct from PaneRef: it carries the sharer's
+ *  handle + a viewer count, and deliberately omits favorite/template-filter
+ *  affordances (those mutate the viewer's own library, which makes no sense for
+ *  someone else's pane). */
+interface PublicPaneRef {
+  id: string;
+  title: string;
+  /** True when the pane is open and not past its TTL — the "live" pill. */
+  isLive: boolean;
+  createdAt: Date;
+  /** Display name of whoever shared it ("@alice", an agent name, or a
+   *  fallback). Never an email — friendlyName() strips the domain. */
+  sharedBy: string;
+  /** Distinct humans who have opened it (HumanPaneView ledger count). */
+  viewerCount: number;
+  /** Effective emoji icon (pane override else template's), or null. The
+   *  Explore row uses the gradient monogram fallback when null — it never
+   *  links the owner-gated /panes/:id/icon image, which a non-owner viewer
+   *  couldn't load anyway. */
+  iconEmoji: string | null;
+  /** Template display name, for the row's secondary line. */
+  templateName: string | null;
+}
+
 interface ShellData {
   /** Templates owned by one of the human's claimed agents (live only). */
   ownedTemplates: TemplateRef[];
@@ -117,6 +143,8 @@ interface ShellData {
   /** Subset of `panes` the human has starred. Home Favorites strip
    *  renders these as openable pane cards. */
   favoritePanes: PaneRef[];
+  /** Public panes from ANY owner — the Explore community gallery. */
+  publicPanes: PublicPaneRef[];
 }
 
 async function loadShellData(
@@ -149,6 +177,7 @@ async function loadShellData(
     publicCatalogRaw,
     panesRaw,
     favoriteRows,
+    publicPanesRaw,
   ] = await Promise.all([
     claimedAgentIds.length === 0
       ? Promise.resolve([])
@@ -246,6 +275,35 @@ async function loadShellData(
       orderBy: { addedAt: "desc" },
       select: { paneId: true },
     }),
+    // Explore — public panes from EVERY owner (the gallery), not scoped to the
+    // logged-in human. accessMode "public" is the discovery gate: per the
+    // Pane.accessMode contract, only "public" panes may be LISTED — "link"
+    // panes are shareable by URL but deliberately not discoverable, and
+    // "invite_only" is gated entirely. deletedAt filters trashed rows. Newest
+    // first, capped — this is a browse surface, not a full index.
+    prisma.pane.findMany({
+      where: { accessMode: "public", deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 60,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        createdAt: true,
+        expiresAt: true,
+        iconEmoji: true,
+        // Who shared it — prefer the owning human's name, fall back to the
+        // creating agent's name. Email is only used via friendlyName() so the
+        // raw address never reaches the page.
+        ownerHuman: { select: { name: true, email: true } },
+        agent: { select: { name: true } },
+        templateVersion: {
+          select: { template: { select: { name: true, slug: true } } },
+        },
+        // Distinct-viewer count from the HumanPaneView ledger.
+        _count: { select: { views: true } },
+      },
+    }),
   ]);
 
   // Pane counts per template id — drives the "X panes →" chip on tiles
@@ -326,6 +384,27 @@ async function loadShellData(
   });
   const favoritePanes = panes.filter((p) => p.isFavorite);
 
+  const now = Date.now();
+  const publicPanes: PublicPaneRef[] = publicPanesRaw.map((p) => {
+    const ownerName = p.ownerHuman?.name?.trim();
+    const sharedBy =
+      (ownerName && ownerName.length > 0 ? ownerName : null) ??
+      (p.ownerHuman?.email ? friendlyName(p.ownerHuman.email) : null) ??
+      (p.agent?.name?.trim() || null) ??
+      "someone";
+    const tpl = p.templateVersion?.template ?? null;
+    return {
+      id: p.id,
+      title: p.title,
+      isLive: p.status === "open" && p.expiresAt.getTime() > now,
+      createdAt: p.createdAt,
+      sharedBy,
+      viewerCount: p._count.views,
+      iconEmoji: p.iconEmoji,
+      templateName: tpl?.name ?? tpl?.slug ?? null,
+    };
+  });
+
   return {
     ownedTemplates,
     installs: liveInstalls.map((i) => ({
@@ -335,6 +414,7 @@ async function loadShellData(
     publicCatalog,
     panes,
     favoritePanes,
+    publicPanes,
   };
 }
 
@@ -427,6 +507,13 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--accent);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--accent);cursor:pointer;">Template store</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
+  // Explore list — public panes from the whole community.
+  const publicPanesCount = data.publicPanes.length;
+  const publicPanesHtml =
+    publicPanesCount === 0
+      ? `<li class="empty-strip">No public panes yet. Mark one of <a data-go="panes" style="color:var(--accent);cursor:pointer;">your panes</a> public to share it here.</li>`
+      : data.publicPanes.map((p) => publicPaneRow(p)).join("");
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -461,6 +548,11 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="icon">${spaIco("panes", 18)}</span>
         <span class="label">${NAV_LABELS.panes}</span>
         <span class="count">${panesCount}</span>
+      </button></li>
+      <li><button data-view="explore">
+        <span class="icon">${spaIco("explore", 18)}</span>
+        <span class="label">${NAV_LABELS.explore}</span>
+        <span class="count">${publicPanesCount}</span>
       </button></li>
       <li><button data-view="store">
         <span class="icon">${spaIco("store", 18)}</span>
@@ -567,6 +659,20 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <button id="pane-filter-clear" type="button">Clear</button>
       </div>
       <ul class="panes-list" id="panes-list">${panesHtml}</ul>
+    </section>
+
+    <section class="view" data-view="explore">
+      <div class="view-head">
+        <div>
+          <h1>Explore</h1>
+          <div class="sub">Public panes shared by the community. Click one to open it live (read-only).</div>
+        </div>
+      </div>
+      <div class="search">
+        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
+        <input id="explore-search" placeholder="Search public panes…" autocomplete="off" />
+      </div>
+      <ul class="panes-list" id="explore-list">${publicPanesHtml}</ul>
     </section>
 
     <section class="view" data-view="store">
@@ -699,8 +805,9 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <h3>General access</h3>
       <div class="share-access">
         <select id="share-visibility" aria-label="General access">
-          <option value="restricted">Restricted — only invited people</option>
-          <option value="public">Public — anyone with the link</option>
+          <option value="invite_only">Invite only</option>
+          <option value="link">Anyone with the link</option>
+          <option value="public">Public</option>
         </select>
         <button id="share-visibility-toggle" type="button" class="btn"></button>
         <div class="share-access-note" id="share-access-note"></div>
@@ -945,6 +1052,35 @@ function paneRow(p: PaneRef): string {
     <button class="menu-btn" title="More" aria-label="More" data-noopen="1" data-pane-menu="${escapeHtml(p.id)}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>
     </button>
+  </li>`;
+}
+
+// Explore-view row for a public pane. Reuses the .pane-row component but:
+//  - opens /p/:id (the public read-only viewer) — works for ANY viewer,
+//    unlike /panes/:id which 404s for non-owners;
+//  - drops the favorite/share/menu controls (they mutate the viewer's own
+//    library/sharing, meaningless for someone else's pane), so the grid is a
+//    simpler icon + info + status (overridden inline);
+//  - never links the owner-gated icon image — emoji or gradient monogram only.
+function publicPaneRow(p: PublicPaneRef): string {
+  const tplName = p.templateName ?? p.title ?? "Untitled template";
+  const inner = iconTileInner({
+    emoji: p.iconEmoji,
+    seedId: p.id,
+    label: tplName,
+  });
+  const rel = relativeDate(p.createdAt);
+  const viewers = p.viewerCount === 1 ? "1 viewer" : `${p.viewerCount} viewers`;
+  const meta = `by ${escapeHtml(p.sharedBy)} · ${escapeHtml(viewers)} · ${escapeHtml(rel)}`;
+  const statusCls = p.isLive ? "live" : "closed";
+  const statusText = p.isLive ? "live" : "ended";
+  return `<li class="pane-row public" data-pane-id="${escapeHtml(p.id)}" data-href="/p/${encodeURIComponent(p.id)}" style="grid-template-columns:44px 1fr auto;">
+    <div class="icon">${inner}</div>
+    <div class="info">
+      <div class="title">${escapeHtml(p.title)}</div>
+      <div class="meta">${meta}</div>
+    </div>
+    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
   </li>`;
 }
 
@@ -1264,7 +1400,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'store', 'mine', 'settings'];
+  const VIEWS = ['home', 'panes', 'explore', 'store', 'mine', 'settings'];
   function activate(view) {
     // Back-compat: prior builds used the hashes "#apps" / "#templates" /
     // "#trash". Remap them so old links / browser-back state still land
@@ -1867,6 +2003,7 @@ const SHELL_JS = `
   bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
   bindSearch('store-search', ['#apps-discover .app-tile-wrap']);
   bindSearch('mine-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap']);
+  bindSearch('explore-search', ['#explore-list .pane-row']);
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
   // distinct Home section. Graceful when empty (the section stays hidden) and
@@ -1971,30 +2108,44 @@ const SHELL_JS = `
 
     function paneUrl(id) { return location.origin + '/p/' + encodeURIComponent(id); }
 
-    function setAccessNote(isPublic) {
-      if (!accessNote) return;
-      accessNote.textContent = isPublic
-        ? 'Anyone with the link can open this pane without signing in.'
-        : 'Only people you invite can open this pane.';
+    // Track the last known access mode so the quick-action button and the
+    // copy-link hint can branch on it without re-reading the <select>.
+    let currentMode = 'link';
+
+    // Coerce any value to one of the three known modes; unknown → 'link'.
+    function normMode(m) {
+      return (m === 'invite_only' || m === 'link' || m === 'public') ? m : 'link';
     }
 
-    // The quick-action toggle next to the dropdown. When the pane is
-    // restricted it offers "Make public" (primary, globe icon); when public it
-    // offers "Make restricted" (secondary). The icon goes in its own span so
-    // the label can be set with textContent (no innerHTML on dynamic text).
-    function setToggleButton(isPublic) {
+    function setAccessNote(mode) {
+      if (!accessNote) return;
+      accessNote.textContent =
+        mode === 'invite_only'
+          ? 'Only invited people can open this pane.'
+          : mode === 'public'
+            ? 'Anyone can open this; it may be listed publicly.'
+            : 'Anyone with the link can open this, no sign-in.';
+    }
+
+    // The quick-action button next to the dropdown. Under the 3-mode model it
+    // quick-sets Public: when the pane is NOT public it offers "Make public"
+    // (primary, globe icon); when already public it becomes a secondary "Make
+    // invite only" so the button is never a dead end. The dropdown remains the
+    // full 3-way control. The icon goes in its own span so the label can be set
+    // with textContent (no innerHTML on dynamic text).
+    function setToggleButton(mode) {
       if (!visToggle) return;
       visToggle.textContent = '';
-      if (isPublic) {
+      if (mode === 'public') {
         visToggle.classList.remove('primary');
         const label = document.createElement('span');
-        label.textContent = 'Make restricted';
+        label.textContent = 'Make invite only';
         visToggle.appendChild(label);
-        visToggle.setAttribute('aria-label', 'Make this pane restricted');
+        visToggle.setAttribute('aria-label', 'Make this pane invite only');
       } else {
         visToggle.classList.add('primary');
         const icon = document.createElement('span');
-        // Globe — a public/anyone-with-the-link affordance.
+        // Globe — a public/anyone-can-open affordance.
         icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
         const label = document.createElement('span');
         label.textContent = 'Make public';
@@ -2004,22 +2155,26 @@ const SHELL_JS = `
       }
     }
 
-    // Single source of truth for reflecting a visibility value across the whole
+    // Single source of truth for reflecting an access mode across the whole
     // section: dropdown selection, helper note, and the quick-action button.
-    function reflectVisibility(isPublic) {
-      visEl.value = isPublic ? 'public' : 'restricted';
-      setAccessNote(isPublic);
-      setToggleButton(isPublic);
+    function reflectVisibility(mode) {
+      const m = normMode(mode);
+      currentMode = m;
+      visEl.value = m;
+      setAccessNote(m);
+      setToggleButton(m);
+      updateLinkHint();
     }
 
-    // Apply a visibility change: PATCH the pane, then reflect it in the UI.
+    // Apply an access-mode change: PATCH the pane, then reflect it in the UI.
     // Both the dropdown's change handler and the button's click handler call
     // this, so there is exactly one request + state-update path. Disables the
     // select + button while in flight; on failure shows the dialog's inline
     // error and reverts the UI to the previous value.
-    async function applyVisibility(isPublic) {
+    async function applyVisibility(mode) {
       if (!currentPaneId) return;
-      const prev = !isPublic;
+      const next = normMode(mode);
+      const prev = currentMode;
       clearErr();
       visEl.disabled = true;
       if (visToggle) visToggle.disabled = true;
@@ -2027,14 +2182,14 @@ const SHELL_JS = `
         const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/visibility', {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ is_public: isPublic }),
+          body: JSON.stringify({ access_mode: next }),
         });
         if (!res.ok) {
           showErr('Could not change access: ' + (await readErr(res)));
           reflectVisibility(prev); // revert
           return;
         }
-        reflectVisibility(isPublic);
+        reflectVisibility(next);
       } catch (e) {
         showErr('Network error — try again.');
         reflectVisibility(prev);
@@ -2104,7 +2259,7 @@ const SHELL_JS = `
         if (!res.ok) { showErr('Could not load sharing: ' + (await readErr(res))); return; }
         const body = await res.json();
         renderGrants(Array.isArray(body.items) ? body.items : []);
-        reflectVisibility(!!body.is_public);
+        reflectVisibility(body.access_mode);
       } catch (e) {
         showErr('Network error loading sharing.');
       }
@@ -2184,23 +2339,43 @@ const SHELL_JS = `
       }
     });
 
-    // Visibility — the dropdown and the quick-action button both route
-    // through applyVisibility() so they stay in sync and share one request +
+    // Visibility — the dropdown (full 3-way control) and the quick-action
+    // button (quick-set Public ↔ Invite only) both route through
+    // applyVisibility() so they stay in sync and share one request +
     // state-update path.
     visEl.addEventListener('change', () => {
-      applyVisibility(visEl.value === 'public');
+      applyVisibility(visEl.value);
     });
     if (visToggle) {
       visToggle.addEventListener('click', () => {
-        // Toggle relative to the current dropdown state.
-        applyVisibility(visEl.value !== 'public');
+        // Quick-set: if not already public, go public; otherwise go invite_only.
+        applyVisibility(currentMode === 'public' ? 'invite_only' : 'public');
       });
     }
 
-    // Copy link — default is the immediate-view /s/<token> link (no login).
-    // We mint it lazily on first click via the share-link route, then cache it
-    // for the dialog's lifetime. When the pane is public we also note the
-    // /p/:paneId identity-share link in the hint.
+    // Update the copy-link hint to match the current access mode. Called by
+    // reflectVisibility (so the hint reacts to mode changes) and after a copy.
+    //   - link:        the token /s link is primary (immediate view, no login).
+    //   - public:      surface the /p/:paneId link (anyone, no login).
+    //   - invite_only: the /p/:paneId link (login required for invitees).
+    function updateLinkHint() {
+      if (!linkHint || !currentPaneId) return;
+      if (currentMode === 'public') {
+        linkHint.textContent = 'Public link: ' + paneUrl(currentPaneId) + ' — anyone can open it, no sign-in.';
+      } else if (currentMode === 'invite_only') {
+        linkHint.textContent = 'Invite-only link: ' + paneUrl(currentPaneId) + ' — invited people sign in to open it.';
+      } else {
+        // link mode — the copy button mints/copies the token /s link.
+        linkHint.textContent = shareToken
+          ? 'Immediate-view link copied — anyone with it can open the pane.'
+          : 'Copy link gives an immediate-view /s link — anyone with it can open the pane, no sign-in.';
+      }
+    }
+
+    // Copy link — for link mode the immediate-view /s/<token> link (no login),
+    // minted lazily on first click via the share-link route and cached for the
+    // dialog's lifetime. For public and invite_only the pane-id /p link is the
+    // right thing to share, so we copy that directly (no token mint).
     async function copy(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -2225,22 +2400,26 @@ const SHELL_JS = `
       copyBtn.disabled = true;
       const orig = copyBtn.textContent;
       try {
-        if (!shareToken) {
-          const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/share-link', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' }, body: '{}',
-          });
-          if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
-          const body = await res.json();
-          shareToken = body.url;
+        let toCopy;
+        if (currentMode === 'public' || currentMode === 'invite_only') {
+          // The pane-id /p link is the shareable URL for these modes.
+          toCopy = paneUrl(currentPaneId);
+        } else {
+          // link mode — mint (lazily) and copy the immediate-view /s token link.
+          if (!shareToken) {
+            const res = await fetch('/v1/my-panes/' + encodeURIComponent(currentPaneId) + '/share-link', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' }, body: '{}',
+            });
+            if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
+            const body = await res.json();
+            shareToken = body.url;
+          }
+          toCopy = shareToken;
         }
-        const ok = await copy(shareToken);
+        const ok = await copy(toCopy);
         copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
-        if (linkHint) {
-          linkHint.textContent = visEl.value === 'public'
-            ? 'Immediate-view link copied. Signed-in people can also use ' + paneUrl(currentPaneId)
-            : 'Immediate-view link copied — anyone with it can open the pane.';
-        }
+        updateLinkHint();
         setTimeout(() => { copyBtn.textContent = orig; }, 1400);
       } catch (e) {
         showErr('Network error — try again.');

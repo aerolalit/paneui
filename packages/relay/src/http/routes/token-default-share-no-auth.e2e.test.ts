@@ -3,10 +3,11 @@
 //   A pane's DEFAULT share — the `/s/<token>` link an agent hands a human —
 //   must serve the pane shell IMMEDIATELY, with NO login / cookie / auth.
 //
-// The identity-sharing feature (#436: `isPublic` + invitation grants +
-// `/p/:paneId`) layered a *second*, identity-gated way to view a pane on top
-// of this. That feature must NOT regress the original capability-token path:
-// the token in the URL IS the credential, independent of pane visibility.
+// The identity-sharing feature (`accessMode` invite_only|link|public +
+// invitation grants + `/p/:paneId`) layered a *second*, identity-gated way to
+// view a pane on top of this. That feature must NOT regress the original
+// capability-token path: the token in the URL IS the credential, independent
+// of the pane's /p access mode (accessMode never gates /s/<token>).
 //
 // This test drives the real create flow (`POST /v1/panes`) end-to-end so it
 // also pins the *shape* of the handed-over link (`<publicUrl>/s/<token>`),
@@ -143,28 +144,32 @@ describe("default /s/<token> share serves immediately with no auth", () => {
     expect(html).toContain(`src="/s/${token}/content"`);
   });
 
-  it("the token path 200s regardless of isPublic — visibility is independent of the token", async () => {
+  it("the token path 200s regardless of accessMode — the token link is independent of the /p access mode", async () => {
     const apiKey = await seedAgent();
     const { pane_id, tokens } = await createPane(apiKey);
     const token = tokens.humans[0]!;
 
-    // Sanity: a freshly created pane is NON-public (the #436 default). The
-    // token-share guarantee must hold for exactly this case.
+    // Sanity: a freshly created pane defaults to `link`. The token-share
+    // guarantee (rule 1) must hold for exactly this case.
     const fresh = await prisma.pane.findUniqueOrThrow({
       where: { id: pane_id },
-      select: { isPublic: true },
+      select: { accessMode: true },
     });
-    expect(fresh.isPublic).toBe(false);
+    expect(fresh.accessMode).toBe("link");
 
-    // Non-public pane: /s/<token> still serves the shell with no auth.
+    // Default pane: /s/<token> still serves the shell with no auth.
     expect((await app.fetch(new Request(`http://t/s/${token}`))).status).toBe(
       200,
     );
 
-    // Flip isPublic on and off — the capability-token path is unaffected by
-    // visibility either way, because the token itself is the credential.
-    for (const isPublic of [true, false]) {
-      await prisma.pane.update({ where: { id: pane_id }, data: { isPublic } });
+    // Cycle through ALL three modes — including invite_only, the most
+    // restrictive — and assert the capability-token path is unaffected. The
+    // token IS the credential; accessMode never gates /s/<token>.
+    for (const accessMode of ["public", "link", "invite_only"] as const) {
+      await prisma.pane.update({
+        where: { id: pane_id },
+        data: { accessMode },
+      });
       const res = await app.fetch(new Request(`http://t/s/${token}`));
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/html");

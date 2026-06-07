@@ -42,6 +42,7 @@ import {
   removeConnection,
 } from "./presence.js";
 import { redeemTicket } from "./ticket.js";
+import { PUBLIC_IDENTITY_ID } from "../http/routes/identity-participant.js";
 import { log } from "../log.js";
 import type { Author } from "../types.js";
 import type { SerializedEvent } from "../types.js";
@@ -70,6 +71,16 @@ const STREAM_RX = /^\/v1\/panes\/([^/]+)\/stream(\?.*)?$/;
 // reconnect cases (a few hundred new comments since last seen) without
 // streaming a 50k-row collection over WS in one shot.
 const MAX_RECORDS_REPLAY_BATCH = 1_000;
+
+// Abuse guard — cap on emits a SINGLE anonymous-public WS connection may make
+// over its lifetime. A public pane is "view + participate" for anonymous
+// visitors, which is a spam surface (all anonymous emits share one synthetic
+// guest identity and so can't be individually attributed). This bounds how
+// much one socket can write before it must reconnect (and re-pass the per-IP
+// upgrade rate limit in checkWsUpgradeRateLimit). Conservative but functional;
+// a legitimate human filling in a public form emits a handful of times. See
+// the TODO in handleConnection re: a complementary per-IP emit limit.
+const MAX_ANON_PUBLIC_EMITS_PER_CONNECTION = 60;
 
 // #295 — parsed record-replay subscription for a connection. Empty
 // `collections` = no record traffic on this connection (the default if
@@ -366,6 +377,11 @@ async function handleUpgrade(
     let author: Author;
     let pane: PaneWithTemplateVersion;
     let participant: Participant | null = null;
+    // Emit capability for this connection. The token + agent paths are always
+    // emit-capable (a real bearer token carries the emit right). The ticket
+    // path reads the flag the ws-ticket route stamped: receive-only for a
+    // read-only viewer (link-mode anon, viewer-grant), emit-capable otherwise.
+    let canEmit = true;
 
     if (cred.kind === "ticket") {
       // The ticket replaces the AUTHENTICATION step only: redeeming it yields
@@ -380,7 +396,8 @@ async function handleUpgrade(
         });
         return;
       }
-      author = redeemed;
+      author = redeemed.author;
+      canEmit = redeemed.canEmit;
       const s = await prisma.pane.findUnique({
         where: { id: paneId },
         include: { templateVersion: true },
@@ -516,6 +533,7 @@ async function handleUpgrade(
     const localSubs = recordSubscriptions;
     const localTplSubs = templateRecordSubscriptions;
     const templateId = pane.templateVersion.templateId;
+    const localCanEmit = canEmit;
     wss.handleUpgrade(req, socket, head, (ws) => {
       void handleConnection(
         ws,
@@ -526,6 +544,7 @@ async function handleUpgrade(
         localSubs,
         localTplSubs,
         templateId,
+        localCanEmit,
       );
     });
   } catch (err) {
@@ -632,9 +651,23 @@ async function handleConnection(
   recordSubs: RecordSubscriptions | null,
   templateRecordSubs: RecordSubscriptions | null,
   templateId: string,
+  canEmit: boolean,
 ): Promise<void> {
   const { prisma } = deps;
   const openedAt = Date.now();
+  // Per-connection emit counter for the anonymous-public abuse guard. An
+  // anonymous public visitor shares one synthetic guest identity, so an emit
+  // bound to PUBLIC_IDENTITY_ID can't be attributed to a real human — it is a
+  // spam surface. We cap how many emits a SINGLE anonymous-public connection
+  // can make. Conservative + functional; logged when it trips.
+  // TODO(#abuse): pair this with a per-IP WS emit limit (the upgrade path
+  // already buckets per-IP via checkWsUpgradeRateLimit; an emit-frequency
+  // limit keyed on the same IP would catch an attacker spraying many short
+  // connections rather than one long one). Per-connection cap ships first
+  // because it needs no shared state across sockets.
+  const isAnonPublicEmitter =
+    canEmit && author.kind === "human" && author.id === PUBLIC_IDENTITY_ID;
+  let anonEmitCount = 0;
   // Heartbeat bookkeeping: a fresh socket starts alive, and every pong the peer
   // sends (browsers answer the server ping automatically) re-arms it. The
   // heartbeat interval in attachWs() flips this to false on each ping and
@@ -839,7 +872,27 @@ async function handleConnection(
       });
       return;
     }
-    await handleFrame(ws, deps, paneId, author, msg);
+    await handleFrame(ws, deps, paneId, author, msg, {
+      canEmit,
+      // Anonymous-public abuse guard. Returns true when this connection has
+      // exceeded its per-connection emit budget — handleFrame then rejects the
+      // frame as a rate-limit error rather than persisting it. Only counts
+      // anonymous-public emitters; an owner/participant/agent is never capped
+      // here (they have their own per-pane event cap in writeEvent).
+      overEmitRateLimit: () => {
+        if (!isAnonPublicEmitter) return false;
+        anonEmitCount += 1;
+        if (anonEmitCount > MAX_ANON_PUBLIC_EMITS_PER_CONNECTION) {
+          log.info("ws anon-public emit rate limit tripped", {
+            paneId,
+            authorId: author.id,
+            count: anonEmitCount,
+          });
+          return true;
+        }
+        return false;
+      },
+    });
   });
 
   ws.on("close", (code: number, reason: Buffer) => {
@@ -898,6 +951,7 @@ async function handleFrame(
   paneId: string,
   author: Author,
   msg: unknown,
+  gate: { canEmit: boolean; overEmitRateLimit: () => boolean },
 ): Promise<void> {
   const { config, prisma } = deps;
   if (!msg || typeof msg !== "object") {
@@ -926,6 +980,26 @@ async function handleFrame(
     f.correlation_id.length <= MAX_CORRELATION_ID_LENGTH
       ? f.correlation_id
       : null;
+
+  // Receive-only connections (link-mode anon, viewer-grants) may consume the
+  // replay + live stream but MUST NOT emit. Reject the frame with an error
+  // (carrying the correlation_id so the iframe's pane.emit() rejects as a
+  // failed promise) rather than closing the socket — the viewer keeps
+  // receiving. This is the WS-side half of the read-only trust boundary the
+  // ws-ticket route stamps via `canEmit`.
+  if (!gate.canEmit) {
+    sendJson(ws, {
+      error: serializeApiError(
+        errors.forbidden(
+          "read_only",
+          "this pane is read-only for you; emitting page events requires participant access",
+        ),
+      ),
+      ...(cid ? { correlation_id: cid } : {}),
+    });
+    return;
+  }
+
   if (
     typeof f.type !== "string" ||
     f.type.length === 0 ||
@@ -935,6 +1009,23 @@ async function handleFrame(
       error: serializeApiError(
         errors.invalidRequest(
           "type must be a non-empty string within 64 chars",
+        ),
+      ),
+      ...(cid ? { correlation_id: cid } : {}),
+    });
+    return;
+  }
+
+  // Anonymous-public emit rate limit. A valid emit attempt (type present) from
+  // an over-budget anonymous-public connection is rejected before any DB work.
+  // Other emitters (owner/participant/agent) are never capped here. Returns a
+  // 429-shaped error frame with the correlation_id so the iframe's emit()
+  // rejects gracefully; the socket stays open so the visitor keeps receiving.
+  if (gate.overEmitRateLimit()) {
+    sendJson(ws, {
+      error: serializeApiError(
+        errors.tooManyRequests(
+          "emit rate limit exceeded for anonymous public contributions; slow down",
         ),
       ),
       ...(cid ? { correlation_id: cid } : {}),

@@ -15,8 +15,18 @@ import { normalizeEmail } from "../../auth/magic-link.js";
 
 // ----- validation (shared by both surfaces) -----
 
+// The three pane-id (`/p/:paneId`) access modes. Stored as a plain string on
+// Pane.accessMode (portable across SQLite + Postgres) and validated here:
+//   - "invite_only" — only invited emails (after login) may open /p.
+//   - "link" (DEFAULT) — anyone with the /p URL opens it read-only, no login.
+//   - "public" — anyone opens it read-only, no login (discovery is a follow-up).
+// This governs ONLY the pane-id path; token (/s/<token>) sharing is unchanged
+// and never gated by accessMode.
+export const ACCESS_MODES = ["invite_only", "link", "public"] as const;
+export type AccessMode = (typeof ACCESS_MODES)[number];
+
 export const visibilityBody = z.object({
-  is_public: z.boolean(),
+  access_mode: z.enum(ACCESS_MODES),
 });
 
 export const createGrantBody = z.object({
@@ -63,27 +73,27 @@ function toGrantDTO(g: {
 
 // ----- operations (operate on an ALREADY-AUTHORIZED pane) -----
 
-/** Flip a pane's public visibility. The caller has already verified access. */
+/** Set a pane's access mode. The caller has already verified access. */
 export async function setVisibility(
   prisma: PrismaClient,
   paneId: string,
-  isPublic: boolean,
+  accessMode: AccessMode,
 ): Promise<void> {
   await prisma.pane.update({
     where: { id: paneId },
-    data: { isPublic },
+    data: { accessMode },
   });
 }
 
-/** List every grant on a pane plus its current visibility, oldest first. */
+/** List every grant on a pane plus its current access mode, oldest first. */
 export async function listGrantsAndVisibility(
   prisma: PrismaClient,
   paneId: string,
-): Promise<{ isPublic: boolean; grants: GrantDTO[] }> {
+): Promise<{ accessMode: AccessMode; grants: GrantDTO[] }> {
   const [pane, grants] = await Promise.all([
     prisma.pane.findUnique({
       where: { id: paneId },
-      select: { isPublic: true },
+      select: { accessMode: true },
     }),
     prisma.paneGrant.findMany({
       where: { paneId },
@@ -92,9 +102,19 @@ export async function listGrantsAndVisibility(
     }),
   ]);
   return {
-    isPublic: pane?.isPublic ?? false,
+    accessMode: normalizeAccessMode(pane?.accessMode),
     grants: grants.map(toGrantDTO),
   };
+}
+
+/** Coerce a stored access_mode string to a known AccessMode, defaulting to
+ *  "link" (the schema default) for an unset/unrecognised value. */
+export function normalizeAccessMode(
+  value: string | null | undefined,
+): AccessMode {
+  return (ACCESS_MODES as readonly string[]).includes(value ?? "")
+    ? (value as AccessMode)
+    : "link";
 }
 
 /**
