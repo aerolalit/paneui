@@ -123,4 +123,75 @@ describe("paneAppleTouchIcon", () => {
     const res = await paneAppleTouchIcon(store, prisma, "att_2");
     expect(res.etag).toBe(ROBOT_ETAG);
   });
+
+  it("renders an emoji icon onto the pane's gradient tile when there is no image", async () => {
+    const prisma = {} as unknown as PrismaClient;
+    const res = await paneAppleTouchIcon(
+      undefined,
+      prisma,
+      null,
+      "📊",
+      "pan_a",
+    );
+    // Not the robot — a real composited tile, keyed by code point + hue.
+    expect(res.etag).not.toBe(ROBOT_ETAG);
+    expect(res.etag).toContain("emoji-1f4ca-");
+    expect(Array.from(res.png.slice(0, 4))).toEqual(PNG_MAGIC);
+    const meta = await sharp(Buffer.from(res.png)).metadata();
+    expect(meta.width).toBe(180);
+    expect(meta.height).toBe(180);
+  });
+
+  it("derives the same gradient hue from the seed across calls (stable ETag)", async () => {
+    const a = await paneAppleTouchIcon(
+      undefined,
+      {} as PrismaClient,
+      null,
+      "🗳️",
+      "pan_x",
+    );
+    const b = await paneAppleTouchIcon(
+      undefined,
+      {} as PrismaClient,
+      null,
+      "🗳️",
+      "pan_x",
+    );
+    expect(a.etag).toBe(b.etag);
+    // Variation-selector (U+FE0F) is stripped → twemoji basename has no -fe0f.
+    expect(a.etag).toContain("emoji-1f5f3-");
+  });
+
+  it("prefers the image icon over the emoji when both are present", async () => {
+    const srcPng = await makePng(48, 48, { r: 0, g: 200, b: 0 });
+    const store = {
+      get: async () => Readable.from(srcPng),
+    } as unknown as AttachmentStore;
+    const prisma = {
+      attachment: {
+        findUnique: async () => ({
+          id: "att_3",
+          status: "ready",
+          deletedAt: null,
+          storageKey: "attachment_att_3",
+          sha256: "feed",
+          encryptionEnvelope: null,
+          mime: "image/png",
+        }),
+      },
+    } as unknown as PrismaClient;
+    const res = await paneAppleTouchIcon(store, prisma, "att_3", "📊", "pan_a");
+    expect(res.etag).toBe('"atc2-feed"'); // image won, not the emoji tile
+  });
+
+  it("falls back to the robot for a non-emoji / unknown glyph string", async () => {
+    const res = await paneAppleTouchIcon(
+      undefined,
+      {} as PrismaClient,
+      null,
+      "xyz",
+      "pan_a",
+    );
+    expect(res.etag).toBe(ROBOT_ETAG);
+  });
 });

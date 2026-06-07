@@ -458,26 +458,37 @@ bridge.get("/:token/icon.png", async (c) => {
   // expose anything the binding is meant to protect.
   const { pane } = await loadByToken(prisma, token, { enforceBinding: false });
 
-  // Effective IMAGE icon: pane override → template fallback. (loadByToken's pane
-  // row carries the pane's own iconAttachmentId; the template's lives one join
-  // away, fetched only when the pane has no override.)
+  // Effective icon, pane override → template fallback, for BOTH the image and
+  // the emoji (the resolver prefers image, then emoji, then the robot — same
+  // precedence as the in-app tile). loadByToken's pane row carries the pane's
+  // own iconAttachmentId + iconEmoji; the template's live one join away, fetched
+  // only when the pane leaves one of them unset.
   let effective = pane.iconAttachmentId;
-  if (!effective) {
+  let effectiveEmoji = pane.iconEmoji;
+  if (!effective || !effectiveEmoji) {
     const withTpl = await prisma.pane.findUnique({
       where: { id: pane.id },
       select: {
         templateVersion: {
-          select: { template: { select: { iconAttachmentId: true } } },
+          select: {
+            template: {
+              select: { iconAttachmentId: true, iconEmoji: true },
+            },
+          },
         },
       },
     });
-    effective = withTpl?.templateVersion?.template?.iconAttachmentId ?? null;
+    const tpl = withTpl?.templateVersion?.template;
+    if (!effective) effective = tpl?.iconAttachmentId ?? null;
+    if (!effectiveEmoji) effectiveEmoji = tpl?.iconEmoji ?? null;
   }
 
   const { png, etag } = await paneAppleTouchIcon(
     c.get("blobStore"),
     prisma,
     effective,
+    effectiveEmoji,
+    pane.id,
   );
 
   c.header("ETag", etag);

@@ -57,6 +57,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@prisma/instrumentation": "^7.8.0",
+    "@twemoji/svg": "^15.0.0",
     "ajv": "^8.20.0",
     "better-sqlite3": "^12.10.0",
     "hono": "^4.12.23",
