@@ -409,6 +409,26 @@ export const OWNER_SHELL_CSS = `
   }
   .greet-sub { color: var(--ink-mute); font-size: 13px; margin-bottom: 22px; }
 
+  /* First-run "connect your first agent" nudge — shown on /home only while
+     the human has zero claimed agents. Links to /get-started. */
+  .gs-nudge {
+    display: flex; align-items: center; gap: 14px;
+    margin: 4px 0 22px; padding: 14px 16px;
+    border: 1px solid var(--accent); border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    color: var(--ink); transition: background .15s ease, transform .12s ease;
+  }
+  .gs-nudge:hover { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); transform: translateY(-1px); }
+  .gs-nudge-icon { flex: none; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; }
+  .gs-nudge-icon svg { width: 20px; height: 20px; }
+  .gs-nudge-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .gs-nudge-text b { font-size: 14.5px; font-weight: 650; }
+  .gs-nudge-text span { color: var(--ink-dim); font-size: 13px; }
+  .gs-nudge-cta { margin-left: auto; flex: none; color: var(--accent); font-weight: 650; font-size: 13.5px; }
+  @media (max-width: 560px) {
+    .gs-nudge-cta { display: none; }
+  }
+
   .section { margin-top: 28px; }
   .section-head {
     display: flex; align-items: baseline; justify-content: space-between;
