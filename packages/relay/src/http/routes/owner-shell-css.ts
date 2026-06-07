@@ -649,7 +649,7 @@ export const OWNER_SHELL_CSS = `
     vertical-align: middle;
   }
   .pane-row .menu-btn {
-    width: 28px; height: 28px;
+    width: 40px; height: 40px;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 8px;
