@@ -1170,10 +1170,14 @@ const EXTRA_CSS = `
     color: var(--accent); border-color: rgba(147, 197, 253, 0.4);
   }
 
-  /* Star toggle on each pane row — sits before the triple-dots menu. */
+  /* Star toggle on each pane row — sits before the triple-dots menu.
+     min 40×40 hit target: the bare 14px SVG would otherwise collapse to
+     ~26×26, small enough on mobile that a slightly-off tap lands on the
+     row and the row's click handler opens the pane. */
   .pane-row .row-star {
     background: transparent; border: none; color: var(--ink-mute);
     cursor: pointer; padding: 6px; border-radius: 6px;
+    min-width: 40px; min-height: 40px;
     display: inline-flex; align-items: center; justify-content: center;
     transition: color 120ms, transform 120ms;
   }
@@ -1278,10 +1282,12 @@ const EXTRA_CSS = `
     min-width: 160px;
   }
   #name-input:focus { outline: none; border-color: var(--accent); }
-  /* Share button on each pane row — sits between the star and the menu. */
+  /* Share button on each pane row — sits between the star and the menu.
+     Same 40×40 min hit target as .row-star for the same reason. */
   .pane-row .row-share {
     background: transparent; border: none; color: var(--ink-mute);
     cursor: pointer; padding: 6px; border-radius: 6px;
+    min-width: 40px; min-height: 40px;
     display: inline-flex; align-items: center; justify-content: center;
     transition: color 120ms, transform 120ms;
   }
