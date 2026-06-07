@@ -1,9 +1,9 @@
 # Pane
 
-> Apps are built for everyone; panes are built for you. Your agent builds a
-> pane (the exact form, dashboard, or tool you need) and Pane hosts it by URL,
-> no GUI host app needed on either side. You use it; your agent reads, queries,
-> and acts on the data it produces. Open-core, MIT licensed.
+> Build and host your own personal software. Your agent builds the tool,
+> dashboard, or artifact you need and Pane hosts it by URL, no GUI host app
+> needed on either side. You use it; your agent reads, queries, and acts on
+> the data it produces. Open-core, MIT licensed.
 
 Pane is for agents that live outside a GUI host app: cron jobs, Slack /
 Telegram bots, CI, headless servers. The agent only makes outbound calls to
@@ -30,4 +30,4 @@ a small relay, with no host app, no inbound port, and no public address of its o
 ## Optional
 
 - [Protocol spec](https://github.com/aerolalit/paneui/blob/main/docs/SPEC.md): Sessions, events, the round-trip contract.
-- [Landing site](https://paneui.com): Interactive demos showing the four communication patterns — human-in-the-loop, multi-turn loop, live stream, one-way handoff.
+- [Landing site](https://paneui.com): Minimal overview of Pane with install commands and links to the agent skill, source, and self-hosting docs.
