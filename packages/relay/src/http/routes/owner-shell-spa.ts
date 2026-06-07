@@ -518,7 +518,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   // Panes list.
   const panesHtml =
     data.panes.length === 0
-      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--accent);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--accent);cursor:pointer;">Template store</a>.</li>`
+      ? `<li class="empty-strip">No live panes. Launch one from <a data-go="templates" style="color:var(--accent);cursor:pointer;">Templates</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
   // Explore list — public panes from the whole community.
@@ -568,14 +568,13 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="label">${NAV_LABELS.explore}</span>
         <span class="count">${publicPanesCount}</span>
       </button></li>
-      <li><button data-view="store">
-        <span class="icon">${spaIco("store", 18)}</span>
-        <span class="label">${NAV_LABELS.store}</span>
-        <span class="count">${data.publicCatalog.length}</span>
-      </button></li>
-      <li><button data-view="mine">
+      <!-- Templates: your library + the public store, merged into one tab with
+           a Yours/Store segmented control inside the view (was two tabs). The
+           grid icon reads as "collection of templates"; the count is your
+           library size. -->
+      <li><button data-view="templates">
         <span class="icon">${spaIco("templates", 18)}</span>
-        <span class="label">${NAV_LABELS.templates}</span>
+        <span class="label">Templates</span>
         <span class="count">${tplLibraryCount}</span>
       </button></li>
     </ul>
@@ -690,39 +689,41 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <ul class="panes-list" id="explore-list">${publicPanesHtml}</ul>
     </section>
 
-    <section class="view" data-view="store">
+    <!-- Templates — your library and the public store under one view, switched
+         by the Yours/Store segmented control. The two segments keep their own
+         grids (and grid ids) so the launch/install/search logic is unchanged;
+         only their containers are toggled. The Store segment is the former
+         "Template store" view; the Yours segment is the former "My templates".
+         data-default-seg lets the client open on Store when the library is
+         empty (nothing of your own to show yet). -->
+    <section class="view" data-view="templates" data-default-seg="${tplLibraryCount === 0 ? "store" : "yours"}">
       <div class="view-head">
         <div>
-          <h1>Template store</h1>
-          <div class="sub">Public templates anyone can install. Click a tile to add it to your library and launch.</div>
+          <h1>Templates</h1>
+          <div class="sub">Your library and the public store. Click a tile to launch.</div>
         </div>
+      </div>
+      <div class="seg" role="tablist" id="templates-seg" aria-label="Templates scope">
+        <button class="seg-btn" type="button" data-seg="yours" role="tab" aria-selected="true">Yours <span class="count">${tplLibraryCount}</span></button>
+        <button class="seg-btn" type="button" data-seg="store" role="tab" aria-selected="false">Store <span class="count">${data.publicCatalog.length}</span></button>
       </div>
       <div class="search">
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="store-search" placeholder="Search the Template store…" autocomplete="off" />
+        <input id="templates-search" placeholder="Search templates…" autocomplete="off" />
       </div>
 
-      <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
-      <div class="apps-grid" id="apps-discover">${discoverHtml}</div>
-    </section>
+      <div class="seg-panel" data-seg-panel="yours">
+        <div class="cat-row"><h3>Yours</h3><span class="count">${data.ownedTemplates.length}</span></div>
+        <div class="apps-grid" id="apps-mine">${minesHtml}</div>
 
-    <section class="view" data-view="mine">
-      <div class="view-head">
-        <div>
-          <h1>My templates</h1>
-          <div class="sub">Templates you own or have installed. Click to launch.</div>
-        </div>
-      </div>
-      <div class="search">
-        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="mine-search" placeholder="Search your templates…" autocomplete="off" />
+        <div class="cat-row"><h3>Installed from store</h3><span class="count">${data.installs.length}</span></div>
+        <div class="apps-grid" id="apps-installed">${installedHtml}</div>
       </div>
 
-      <div class="cat-row"><h3>Yours</h3><span class="count">${data.ownedTemplates.length}</span></div>
-      <div class="apps-grid" id="apps-mine">${minesHtml}</div>
-
-      <div class="cat-row"><h3>Installed from store</h3><span class="count">${data.installs.length}</span></div>
-      <div class="apps-grid" id="apps-installed">${installedHtml}</div>
+      <div class="seg-panel" data-seg-panel="store" hidden>
+        <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
+        <div class="apps-grid" id="apps-discover">${discoverHtml}</div>
+      </div>
     </section>
 
     <section class="view" data-view="settings">
@@ -1421,34 +1422,74 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'explore', 'store', 'mine', 'settings'];
-  function activate(view) {
-    // Back-compat: prior builds used the hashes "#apps" / "#templates" /
-    // "#trash". Remap them so old links / browser-back state still land
-    // somewhere sensible.
-    if (view === 'apps' || view === 'templates') view = 'mine';
+  const VIEWS = ['home', 'panes', 'explore', 'templates', 'settings'];
+
+  // The Templates view has two segments (Yours / Store). Each maps to its own
+  // hash so deep links + browser back/forward land on the right scope, and so
+  // the legacy "#store" / "#mine" links keep working: '#templates' / '#mine' /
+  // '#apps' → Yours; '#store' → Store.
+  function setSegment(seg) {
+    const s = seg === 'store' ? 'store' : 'yours';
+    document.querySelectorAll('#templates-seg .seg-btn').forEach((b) => {
+      b.setAttribute('aria-selected', String(b.getAttribute('data-seg') === s));
+    });
+    document.querySelectorAll('[data-seg-panel]').forEach((p) => {
+      p.hidden = p.getAttribute('data-seg-panel') !== s;
+    });
+    return s;
+  }
+
+  function activate(view, explicitSeg) {
+    // Normalise legacy / aliased hashes onto the current view+segment model.
+    // The Template store and My templates tabs merged into one Templates view;
+    // '#store' opens it on the Store segment, '#mine' / '#apps' / the old
+    // '#templates' on Yours. '#trash' was retired into Home. explicitSeg, when
+    // given (the segment buttons), forces the scope regardless of the default.
+    let seg = explicitSeg || null;
+    if (view === 'store') { view = 'templates'; seg = seg || 'store'; }
+    else if (view === 'mine' || view === 'apps' || view === 'templates') {
+      view = 'templates';
+      if (!seg) {
+        // No explicit segment → honour the server's default (Store when the
+        // library is empty, else Yours).
+        const sec = document.querySelector('.view[data-view="templates"]');
+        seg = (sec && sec.getAttribute('data-default-seg')) === 'store' ? 'store' : 'yours';
+      }
+    }
     if (view === 'trash') view = 'home';
     if (!VIEWS.includes(view)) view = 'home';
+
     document.querySelectorAll('.view').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-view') === view);
     });
     document.querySelectorAll('#nav-items button').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-view') === view);
     });
-    if ('#' + view !== location.hash) {
-      history.replaceState(null, '', '#' + view);
+
+    // Resolve the hash: Templates reflects its segment ('#store' for Store,
+    // '#templates' for Yours); every other view is just '#<view>'.
+    let hash = view;
+    if (view === 'templates') hash = setSegment(seg) === 'store' ? 'store' : 'templates';
+    if ('#' + hash !== location.hash) {
+      history.replaceState(null, '', '#' + hash);
     }
     // Scroll the active view back to the top so a re-activation feels fresh.
     document.querySelector('.main').scrollTop = 0;
   }
   function viewFromHash() {
     const h = (location.hash || '').replace(/^#/, '');
-    return VIEWS.includes(h) ? h : 'home';
+    // Pass aliases through to activate(), which normalises them.
+    const known = VIEWS.concat(['store', 'mine', 'apps', 'trash']);
+    return known.includes(h) ? h : 'home';
   }
 
   // Nav clicks
   document.querySelectorAll('#nav-items button[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => activate(btn.getAttribute('data-view')));
+  });
+  // Segment switch within the Templates view — force the chosen scope.
+  document.querySelectorAll('#templates-seg .seg-btn').forEach((btn) => {
+    btn.addEventListener('click', () => activate('templates', btn.getAttribute('data-seg')));
   });
   // Cross-view links (e.g. "View all →" on Home)
   document.addEventListener('click', (ev) => {
@@ -1991,7 +2032,7 @@ const SHELL_JS = `
           // Remove every tile referencing this template from the DOM,
           // and decrement the My templates count chip.
           document.querySelectorAll('.app-tile-wrap[data-template-id="' + CSS.escape(tid) + '"]').forEach((el) => el.remove());
-          const navCount = document.querySelector('#nav-items button[data-view="mine"] .count');
+          const navCount = document.querySelector('#nav-items button[data-view="templates"] .count');
           if (navCount) {
             const n = parseInt(navCount.textContent || '0', 10);
             if (!isNaN(n) && n > 0) navCount.textContent = String(n - 1);
@@ -2022,8 +2063,10 @@ const SHELL_JS = `
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { input.value = ''; apply(); } });
   }
   bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
-  bindSearch('store-search', ['#apps-discover .app-tile-wrap']);
-  bindSearch('mine-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap']);
+  // One search for the merged Templates view. It filters all three grids; only
+  // the active segment's panel is visible, so filtering the hidden one is a
+  // harmless no-op and the box keeps working across a segment switch.
+  bindSearch('templates-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
   bindSearch('explore-search', ['#explore-list .pane-row']);
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
