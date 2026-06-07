@@ -231,10 +231,12 @@ ownerShell.get("/:id", async (c) => {
       agentLastUsedAt,
       title: pane.title,
       preamble: pane.preamble,
-      // Slim account bar (brand + presence + email + sign out). The brand
+      // Slim account bar (brand + presence + Share + sign out). The brand
       // logo links back to /home; system-page tabs are intentionally omitted
-      // here so the pane viewer stays a focused single-pane surface.
-      topNav: { email: human.email },
+      // here so the pane viewer stays a focused single-pane surface. canShare
+      // is true: this mount is owner-only (loadOwnedPane asserts ownership), so
+      // the Share button is safe to surface here and nowhere else.
+      topNav: { canShare: true },
       // Owner mount keeps the static robot home-screen icon. The per-pane icon
       // route (/s/<token>/icon.png) is token-authed; an owner equivalent would
       // be cookie-gated, and iOS may fetch apple-touch-icon without the cookie,

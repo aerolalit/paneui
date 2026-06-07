@@ -157,7 +157,7 @@ describe("GET /panes/:id", () => {
 
   it("renders the slim account bar without system-page tabs", async () => {
     // The pane viewer is a focused single-pane surface: it shows the account
-    // bar (brand + presence + email + sign out) but intentionally omits the
+    // bar (brand + presence + Share + sign out) but intentionally omits the
     // Home / My panes / My templates / ... tab strip. The brand logo links
     // back to /home, so the owner still has a way out.
     const { cookie, paneId } = await seedOwnedPane();
@@ -173,8 +173,11 @@ describe("GET /panes/:id", () => {
     expect(html).not.toContain('href="/settings"');
     // The brand still links back to /home — the way out.
     expect(html).toContain('href="/home"');
-    // Owner's email + sign out are shown in the account block.
-    expect(html).toContain("alice@example.com");
+    // The owner's email is no longer shown in the account block; a Share button
+    // (which opens the in-page share dialog) replaces it. Sign out stays.
+    expect(html).not.toContain("alice@example.com");
+    expect(html).toContain('id="top-nav-share"');
+    expect(html).toContain('id="share-modal"');
     expect(html).toContain('id="top-nav-signout"');
     // Presence pills live in the top nav (connection + agent status). The
     // standalone dark header (class="brand-name") is gone.

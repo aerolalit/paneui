@@ -649,12 +649,17 @@ export interface ShellArgs {
   // iframe — HTML-escaped at render. Null when the agent didn't pass one.
   preamble: string | null;
   // Optional top-nav block — the slim account bar (brand + presence pills +
-  // email + sign out) rendered above the iframe for a logged-in pane owner.
-  // No system-page tabs: a pane viewer is a focused, single-pane surface, so
-  // it carries only "where am I / what's the relay doing / who am I" chrome.
-  // The capability-token mount (/s/<token>) leaves this null — anonymous
-  // callers get no account bar at all.
-  topNav: { email: string } | null;
+  // a Share button + sign out) rendered above the iframe for a logged-in pane
+  // owner. No system-page tabs: a pane viewer is a focused, single-pane
+  // surface, so it carries only "where am I / what's the relay doing / what
+  // can I do here" chrome. The capability-token mount (/s/<token>) leaves this
+  // null — anonymous callers and non-owner participants get no account bar at
+  // all, so the Share affordance is inherently owner-only.
+  //
+  // `canShare` gates the Share button. It's true for an owner viewing their
+  // own pane (the only caller that sets topNav today); modelled explicitly so
+  // a future non-owner top-nav variant can opt out of sharing.
+  topNav: { canShare: boolean } | null;
   // Href for the iOS home-screen icon (apple-touch-icon). The /s/<token> mount
   // points at this pane's own icon route (`/s/<token>/icon.png` — the pane's
   // effective image icon, else the robot default); the owner mount keeps the
@@ -665,11 +670,22 @@ export interface ShellArgs {
 
 function renderTopNav(args: ShellArgs): string {
   if (!args.topNav) return "";
-  const { email } = args.topNav;
+  const { canShare } = args.topNav;
   // Presence pills live in the SAME bar as the brand + account — one row for
   // "where am I" (brand) and "what is the relay doing" (presence) beside the
-  // email, so the eye picks up both states without scanning vertically.
+  // account actions, so the eye picks up both states without scanning
+  // vertically.
   const closedLabel = args.isClosed ? "pane closed" : "no agent yet";
+  // Share button — owner-only by construction (topNav is non-null only on the
+  // owner mount). Opens the in-page share dialog (see renderShareModal +
+  // shareModalScript). Icon + label so it reads at a glance on desktop;
+  // the label collapses on narrow viewports via .top-nav-share .label.
+  const shareBtn = canShare
+    ? `<button id="top-nav-share" class="top-nav-share" type="button" aria-haspopup="dialog" aria-label="Share this pane">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        <span class="label">Share</span>
+      </button>`
+    : "";
   return `<div class="top-nav">
   <div class="top-nav-bar">
     <a class="top-nav-brand" href="/home" aria-label="pane home">
@@ -701,11 +717,305 @@ function renderTopNav(args: ShellArgs): string {
       </span>
     </div>
     <div class="top-nav-account">
-      <span class="top-nav-email" title="${htmlEscape(email)}">${htmlEscape(email)}</span>
+      ${shareBtn}
       <button id="top-nav-signout" class="top-nav-signout" type="button">Sign out</button>
     </div>
   </div>
 </div>`;
+}
+
+// The in-page Share dialog markup — a Google-Docs-style People + General-access
+// panel, ported from the owner dashboard's share modal so the two read as a set
+// and stay behaviourally identical. Rendered (and driven by shareModalScript)
+// only for the owner — see renderTopNav's `canShare` gate. All dynamic grant /
+// email data is injected client-side with textContent, never innerHTML.
+function renderShareModal(): string {
+  return `<div class="share-modal" id="share-modal" hidden>
+  <div class="share-backdrop" data-share-close></div>
+  <div class="share-card" role="dialog" aria-modal="true" aria-labelledby="share-title">
+    <button class="share-x" data-share-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="share-head">
+      <h2 id="share-title">Share</h2>
+      <div class="share-sub" id="share-pane-title"></div>
+    </div>
+    <div class="share-err" id="share-err" hidden></div>
+    <div class="share-sec">
+      <h3>People</h3>
+      <form class="share-invite" id="share-invite-form">
+        <input id="share-email" type="email" placeholder="Add people by email" autocomplete="off" inputmode="email" aria-label="Email to invite" />
+        <select id="share-role" aria-label="Role for the invited person">
+          <option value="participant">Participant</option>
+          <option value="viewer">Viewer</option>
+        </select>
+        <button id="share-invite-btn" type="submit" class="btn primary small">Invite</button>
+      </form>
+      <ul class="share-grants" id="share-grants"></ul>
+    </div>
+    <div class="share-sec">
+      <h3>General access</h3>
+      <div class="share-access">
+        <select id="share-visibility" aria-label="General access">
+          <option value="invite_only">Invite only</option>
+          <option value="link">Anyone with the link</option>
+          <option value="public">Public</option>
+        </select>
+        <button id="share-visibility-toggle" type="button" class="btn"></button>
+        <div class="share-access-note" id="share-access-note"></div>
+      </div>
+    </div>
+    <div class="share-foot">
+      <button id="share-copy-link" type="button" class="btn">Copy link</button>
+      <div class="share-link-hint" id="share-link-hint"></div>
+    </div>
+  </div>
+</div>`;
+}
+
+// Client logic for the Share dialog. Backed by the cookie-authed
+// /v1/my-panes/:id/{grants,visibility,share-link} routes (the owner-shell page
+// carries the pane_login cookie; fetches are same-origin so the owner-shell
+// CSP's `connect-src 'self'` covers them). Ported from the dashboard SPA's
+// share modal; the only behavioural change is the open trigger — the SPA opens
+// from per-row buttons via `data-pane-share`, whereas here the pane id is fixed
+// (this is a single-pane surface) so the top-nav Share button opens it directly.
+function shareModalScript(
+  paneId: string,
+  title: string,
+  nonce: string,
+): string {
+  // Inject the server-known pane id + title as JS string literals. JSON.stringify
+  // quotes/escapes them; the `<` replacement closes the one `</script>` breakout
+  // the HTML script-data state machine cares about.
+  const esc = (s: string) => JSON.stringify(s).replace(/</g, "\\u003c");
+  return `<script nonce="${nonce}">
+  (function () {
+    var PANE_ID = ${esc(paneId)};
+    var PANE_TITLE = ${esc(title)};
+    var shareBtn = document.getElementById('top-nav-share');
+    var modal = document.getElementById('share-modal');
+    var card = modal && modal.querySelector('.share-card');
+    var subEl = document.getElementById('share-pane-title');
+    var errEl = document.getElementById('share-err');
+    var inviteForm = document.getElementById('share-invite-form');
+    var emailEl = document.getElementById('share-email');
+    var roleEl = document.getElementById('share-role');
+    var inviteBtn = document.getElementById('share-invite-btn');
+    var grantsEl = document.getElementById('share-grants');
+    var visEl = document.getElementById('share-visibility');
+    var visToggle = document.getElementById('share-visibility-toggle');
+    var accessNote = document.getElementById('share-access-note');
+    var copyBtn = document.getElementById('share-copy-link');
+    var linkHint = document.getElementById('share-link-hint');
+    if (!shareBtn || !modal || !card || !inviteForm || !emailEl || !roleEl || !grantsEl || !visEl || !copyBtn) return;
+
+    var lastFocus = null;
+    var shareToken = null; // minted lazily on first "Copy link"
+
+    function showErr(msg) { if (!errEl) return; errEl.textContent = msg; errEl.hidden = false; }
+    function clearErr() { if (errEl) { errEl.hidden = true; errEl.textContent = ''; } }
+    async function readErr(res) {
+      var body = await res.json().catch(function () { return {}; });
+      return (body && body.error && body.error.message) || ('HTTP ' + res.status);
+    }
+    function paneUrl(id) { return location.origin + '/p/' + encodeURIComponent(id); }
+
+    var currentMode = 'link';
+    function normMode(m) { return (m === 'invite_only' || m === 'link' || m === 'public') ? m : 'link'; }
+    function setAccessNote(mode) {
+      if (!accessNote) return;
+      accessNote.textContent =
+        mode === 'invite_only' ? 'Only invited people can open this pane.'
+        : mode === 'public' ? 'Anyone can open this; it may be listed publicly.'
+        : 'Anyone with the link can open this, no sign-in.';
+    }
+    function setToggleButton(mode) {
+      if (!visToggle) return;
+      visToggle.textContent = '';
+      if (mode === 'public') {
+        visToggle.classList.remove('primary');
+        var l1 = document.createElement('span'); l1.textContent = 'Make invite only';
+        visToggle.appendChild(l1);
+        visToggle.setAttribute('aria-label', 'Make this pane invite only');
+      } else {
+        visToggle.classList.add('primary');
+        var icon = document.createElement('span');
+        icon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+        var l2 = document.createElement('span'); l2.textContent = 'Make public';
+        visToggle.appendChild(icon); visToggle.appendChild(l2);
+        visToggle.setAttribute('aria-label', 'Make this pane public');
+      }
+    }
+    function reflectVisibility(mode) {
+      var m = normMode(mode);
+      currentMode = m; visEl.value = m;
+      setAccessNote(m); setToggleButton(m); updateLinkHint();
+    }
+    async function applyVisibility(mode) {
+      var next = normMode(mode); var prev = currentMode;
+      clearErr(); visEl.disabled = true; if (visToggle) visToggle.disabled = true;
+      try {
+        var res = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/visibility', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ access_mode: next }),
+        });
+        if (!res.ok) { showErr('Could not change access: ' + (await readErr(res))); reflectVisibility(prev); return; }
+        reflectVisibility(next);
+      } catch (e) { showErr('Network error — try again.'); reflectVisibility(prev); }
+      finally { visEl.disabled = false; if (visToggle) visToggle.disabled = false; }
+    }
+    function renderGrants(items) {
+      grantsEl.textContent = '';
+      if (!items.length) {
+        var empty = document.createElement('li');
+        empty.className = 'share-grants-empty';
+        empty.textContent = 'No one invited yet.';
+        grantsEl.appendChild(empty); return;
+      }
+      for (var i = 0; i < items.length; i++) {
+        var g = items[i];
+        var li = document.createElement('li');
+        li.className = 'share-grant'; li.setAttribute('data-grant-id', g.id);
+        var who = document.createElement('div'); who.className = 'who';
+        var email = document.createElement('div'); email.className = 'email';
+        email.textContent = g.invite_email || g.human_id || 'unknown';
+        var role = document.createElement('div'); role.className = 'role';
+        role.textContent = (g.role === 'viewer' ? 'Viewer' : 'Participant');
+        who.appendChild(email); who.appendChild(role); li.appendChild(who);
+        if (!g.accepted_at) {
+          var pending = document.createElement('span');
+          pending.className = 'pending'; pending.textContent = 'pending';
+          li.appendChild(pending);
+        }
+        var revoke = document.createElement('button');
+        revoke.className = 'revoke'; revoke.type = 'button'; revoke.title = 'Remove';
+        revoke.setAttribute('aria-label', 'Remove ' + email.textContent);
+        revoke.setAttribute('data-revoke-grant', g.id);
+        revoke.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        li.appendChild(revoke); grantsEl.appendChild(li);
+      }
+    }
+    async function openShare() {
+      shareToken = null; clearErr();
+      if (subEl) subEl.textContent = PANE_TITLE || PANE_ID;
+      grantsEl.textContent = '';
+      if (linkHint) linkHint.textContent = '';
+      copyBtn.textContent = 'Copy link';
+      lastFocus = document.activeElement;
+      modal.hidden = false;
+      try {
+        var res = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/grants', { credentials: 'same-origin' });
+        if (!res.ok) { showErr('Could not load sharing: ' + (await readErr(res))); return; }
+        var body = await res.json();
+        renderGrants(Array.isArray(body.items) ? body.items : []);
+        reflectVisibility(body.access_mode);
+      } catch (e) { showErr('Network error loading sharing.'); }
+      emailEl.focus();
+    }
+    function closeShare() {
+      modal.hidden = true;
+      if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    }
+    shareBtn.addEventListener('click', function (ev) { ev.preventDefault(); openShare(); });
+
+    inviteForm.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var email = (emailEl.value || '').trim();
+      if (!email) { emailEl.focus(); return; }
+      clearErr(); inviteBtn.disabled = true;
+      try {
+        var res = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/grants', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: email, role: roleEl.value }),
+        });
+        if (!res.ok) { showErr('Invite failed: ' + (await readErr(res))); return; }
+        var listRes = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/grants', { credentials: 'same-origin' });
+        if (listRes.ok) { var body = await listRes.json(); renderGrants(Array.isArray(body.items) ? body.items : []); }
+        emailEl.value = ''; emailEl.focus();
+      } catch (e) { showErr('Network error — try again.'); }
+      finally { inviteBtn.disabled = false; }
+    });
+
+    grantsEl.addEventListener('click', async function (ev) {
+      var btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-revoke-grant]');
+      if (!btn) return;
+      var gid = btn.getAttribute('data-revoke-grant');
+      if (!gid) return;
+      clearErr(); btn.disabled = true;
+      try {
+        var res = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/grants/' + encodeURIComponent(gid), { method: 'DELETE', credentials: 'same-origin' });
+        if (!res.ok && res.status !== 204) { showErr('Remove failed: ' + (await readErr(res))); btn.disabled = false; return; }
+        var row = grantsEl.querySelector('[data-grant-id="' + CSS.escape(gid) + '"]');
+        if (row) row.remove();
+        if (!grantsEl.querySelector('.share-grant')) renderGrants([]);
+      } catch (e) { showErr('Network error — try again.'); btn.disabled = false; }
+    });
+
+    visEl.addEventListener('change', function () { applyVisibility(visEl.value); });
+    if (visToggle) {
+      visToggle.addEventListener('click', function () {
+        applyVisibility(currentMode === 'public' ? 'invite_only' : 'public');
+      });
+    }
+
+    function updateLinkHint() {
+      if (!linkHint) return;
+      if (currentMode === 'public') {
+        linkHint.textContent = 'Public link: ' + paneUrl(PANE_ID) + ' — anyone can open it, no sign-in.';
+      } else if (currentMode === 'invite_only') {
+        linkHint.textContent = 'Invite-only link: ' + paneUrl(PANE_ID) + ' — invited people sign in to open it.';
+      } else {
+        linkHint.textContent = shareToken
+          ? 'Immediate-view link copied — anyone with it can open the pane.'
+          : 'Copy link gives an immediate-view /s link — anyone with it can open the pane, no sign-in.';
+      }
+    }
+    async function copy(text) {
+      try { await navigator.clipboard.writeText(text); return true; }
+      catch (e) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        var ok = false; try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+        document.body.removeChild(ta); return ok;
+      }
+    }
+    copyBtn.addEventListener('click', async function () {
+      clearErr(); copyBtn.disabled = true;
+      var orig = copyBtn.textContent;
+      try {
+        var toCopy;
+        if (currentMode === 'public' || currentMode === 'invite_only') {
+          toCopy = paneUrl(PANE_ID);
+        } else {
+          if (!shareToken) {
+            var res = await fetch('/v1/my-panes/' + encodeURIComponent(PANE_ID) + '/share-link', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' }, body: '{}',
+            });
+            if (!res.ok) { showErr('Could not create link: ' + (await readErr(res))); return; }
+            var body = await res.json(); shareToken = body.url;
+          }
+          toCopy = shareToken;
+        }
+        var ok = await copy(toCopy);
+        copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+        updateLinkHint();
+        setTimeout(function () { copyBtn.textContent = orig; }, 1400);
+      } catch (e) { showErr('Network error — try again.'); }
+      finally { copyBtn.disabled = false; }
+    });
+
+    var closers = modal.querySelectorAll('[data-share-close]');
+    for (var j = 0; j < closers.length; j++) closers[j].addEventListener('click', closeShare);
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !modal.hidden) { ev.preventDefault(); closeShare(); }
+    });
+  })();
+</script>`;
 }
 
 export function renderShell(args: ShellArgs): string {
@@ -860,12 +1170,19 @@ export function renderShell(args: ShellArgs): string {
      so we ellipsis-truncate the .info span before the pill itself collapses. */
   @media (max-width: 540px) {
     .top-nav-presence .info { display: none; }
-    .top-nav-email { max-width: 22vw; }
+    /* Collapse the Share button to its icon when space is tight. */
+    .top-nav-share .label { display: none; }
   }
-  .top-nav-email {
-    color: var(--pv-muted); font-size: 12px; max-width: 28vw;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Share button in the account block — accent-tinted so it reads as the
+     primary action of the bar, next to the quieter Sign out. */
+  .top-nav-share {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    background: transparent; border: 1px solid var(--pv-hairline);
+    color: var(--pv-ink); font: inherit; font-size: 12px;
+    padding: 5px 10px; border-radius: 7px; cursor: pointer;
   }
+  .top-nav-share svg { display: block; }
+  .top-nav-share:hover { border-color: var(--pv-accent); color: var(--pv-accent-hover); }
   .top-nav-signout {
     background: transparent; border: 1px solid var(--pv-hairline); color: var(--pv-muted);
     font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px;
@@ -888,6 +1205,106 @@ export function renderShell(args: ShellArgs): string {
     flex: none; color: var(--pv-accent); margin-top: 1px;
   }
   .preamble-text { flex: 1; min-width: 0; }
+  /* Share dialog — ported from the owner dashboard's share modal, remapped to
+     the shell's --pv-* palette so it reads as part of the pane chrome. */
+  .share-modal {
+    position: fixed; inset: 0; z-index: 1200;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .share-modal[hidden] { display: none; }
+  .share-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(8, 6, 4, 0.55); backdrop-filter: blur(2px);
+  }
+  .share-card {
+    position: relative; z-index: 1; width: 100%; max-width: 460px;
+    max-height: calc(100vh - 40px); overflow-y: auto;
+    background: var(--pv-bg-elev); color: var(--pv-ink);
+    border: 1px solid var(--pv-hairline); border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); padding: 22px;
+  }
+  .share-x {
+    position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; color: var(--pv-muted);
+    cursor: pointer; border-radius: 8px;
+  }
+  .share-x:hover { color: var(--pv-ink); background: var(--pv-bg); }
+  .share-head h2 { margin: 0 28px 2px 0; font-size: 18px; }
+  .share-sub {
+    color: var(--pv-muted); font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .share-err {
+    margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(240, 113, 120, 0.12); border: 1px solid rgba(240, 113, 120, 0.35);
+    color: var(--pv-red); font-size: 12.5px;
+  }
+  .share-err[hidden] { display: none; }
+  .share-sec { margin-top: 18px; }
+  .share-sec h3 {
+    margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--pv-muted); font-weight: 600;
+  }
+  .share-invite { display: flex; gap: 6px; align-items: stretch; }
+  .share-invite input {
+    flex: 1 1 auto; min-width: 0;
+    background: var(--pv-bg); border: 1px solid var(--pv-hairline);
+    border-radius: 8px; padding: 7px 10px; color: var(--pv-ink);
+    font-size: 13px; font-family: inherit;
+  }
+  .share-invite input:focus { outline: none; border-color: var(--pv-accent); }
+  .share-invite select, #share-visibility {
+    background: var(--pv-bg); border: 1px solid var(--pv-hairline);
+    border-radius: 8px; padding: 7px 8px; color: var(--pv-ink);
+    font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  .share-grants { list-style: none; margin: 10px 0 0; padding: 0; }
+  .share-grant {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 0; border-top: 1px solid var(--pv-hairline);
+  }
+  .share-grant .who { flex: 1 1 auto; min-width: 0; }
+  .share-grant .email {
+    font-size: 13px; color: var(--pv-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .share-grant .role { font-size: 11px; color: var(--pv-muted); }
+  .share-grant .pending {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.03em;
+    padding: 2px 6px; border-radius: 999px; color: var(--pv-muted);
+    background: var(--pv-bg); border: 1px solid var(--pv-hairline);
+  }
+  .share-grant .revoke {
+    background: transparent; border: none; color: var(--pv-muted);
+    cursor: pointer; padding: 4px; border-radius: 6px; line-height: 0;
+  }
+  .share-grant .revoke:hover { color: var(--pv-red); }
+  .share-grants-empty { color: var(--pv-muted); font-size: 12.5px; padding: 8px 0 0; }
+  .share-access { display: flex; flex-direction: column; gap: 8px; }
+  #share-visibility { width: 100%; }
+  #share-visibility-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
+  #share-visibility-toggle svg { display: block; }
+  .share-access-note { color: var(--pv-muted); font-size: 12px; }
+  .share-foot {
+    margin-top: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .share-link-hint { color: var(--pv-muted); font-size: 12px; flex: 1 1 160px; }
+  /* .btn — scoped to the share dialog so it can't collide with the iframe's
+     own content. Mirrors the dashboard's button styling on the --pv-* palette. */
+  .share-modal .btn {
+    background: var(--pv-bg); border: 1px solid var(--pv-hairline);
+    border-radius: 8px; color: var(--pv-muted); padding: 6px 12px;
+    font-size: 12.5px; font-family: inherit; cursor: pointer;
+    transition: color 100ms, border-color 100ms;
+  }
+  .share-modal .btn:hover { color: var(--pv-ink); border-color: var(--pv-accent); }
+  .share-modal .btn.primary {
+    background: var(--pv-accent); color: #1a120c; border-color: transparent; font-weight: 600;
+  }
+  .share-modal .btn.primary:hover { filter: brightness(1.08); color: #1a120c; }
+  .share-modal .btn.small { padding: 6px 10px; }
+  .share-modal .btn[disabled] { opacity: 0.55; cursor: default; }
 </style>
 </head>
 <body>
@@ -962,7 +1379,7 @@ ${
         // `allow-popups` and `allow-same-origin` remain omitted, so the framed
         // document itself still runs at an opaque origin and can't spawn windows.
         `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
-  }
+  }${args.topNav?.canShare ? `\n${renderShareModal()}` : ""}
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>${
     args.topNav
@@ -973,6 +1390,10 @@ ${
     location.href = "/login";
   });
 </script>`
+      : ""
+  }${
+    args.topNav?.canShare
+      ? `\n${shareModalScript(args.paneId, args.title, args.nonce)}`
       : ""
   }
 </body>
