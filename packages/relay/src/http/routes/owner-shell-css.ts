@@ -622,7 +622,10 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    grid-template-columns: 44px 1fr auto auto auto;
+    /* icon | info | status | star | share | menu — six cells. Keep this column
+       count in sync with paneRow()'s children: a missing track pushes the last
+       action (the ⋯ menu) onto an implicit second row. */
+    grid-template-columns: 44px 1fr auto auto auto auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;
