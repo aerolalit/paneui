@@ -640,6 +640,15 @@ export const OWNER_SHELL_CSS = `
   .pane-row .status.open    { background: rgba(110, 231, 183, 0.1); color: var(--green); }
   .pane-row .status.closed  { background: var(--surface-2); color: var(--ink-mute); }
   .pane-row .status.expiring { background: rgba(252, 211, 77, 0.1); color: var(--amber); }
+  /* Explore (public-pane) rows surface a positive "live" pill — unlike the
+     Panes list, where an open pane is the unremarkable default and gets no
+     pill. A small leading dot reinforces the live state. */
+  .pane-row .status.live { background: rgba(110, 231, 183, 0.1); color: var(--green); }
+  .pane-row .status.live::before {
+    content: ''; display: inline-block; width: 6px; height: 6px;
+    border-radius: 999px; background: currentColor; margin-right: 5px;
+    vertical-align: middle;
+  }
   .pane-row .menu-btn {
     width: 28px; height: 28px;
     background: transparent;

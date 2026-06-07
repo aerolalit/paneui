@@ -102,6 +102,32 @@ interface PaneRef {
   hasIconImage: boolean;
 }
 
+/** A pane somebody has marked public (Pane.accessMode === "public"). Shown in
+ *  the Explore view — a community gallery of read-only-viewable panes from ANY
+ *  owner, not just the logged-in human's. Distinct from PaneRef: it carries the sharer's
+ *  handle + a viewer count, and deliberately omits favorite/template-filter
+ *  affordances (those mutate the viewer's own library, which makes no sense for
+ *  someone else's pane). */
+interface PublicPaneRef {
+  id: string;
+  title: string;
+  /** True when the pane is open and not past its TTL — the "live" pill. */
+  isLive: boolean;
+  createdAt: Date;
+  /** Display name of whoever shared it ("@alice", an agent name, or a
+   *  fallback). Never an email — friendlyName() strips the domain. */
+  sharedBy: string;
+  /** Distinct humans who have opened it (HumanPaneView ledger count). */
+  viewerCount: number;
+  /** Effective emoji icon (pane override else template's), or null. The
+   *  Explore row uses the gradient monogram fallback when null — it never
+   *  links the owner-gated /panes/:id/icon image, which a non-owner viewer
+   *  couldn't load anyway. */
+  iconEmoji: string | null;
+  /** Template display name, for the row's secondary line. */
+  templateName: string | null;
+}
+
 interface ShellData {
   /** Templates owned by one of the human's claimed agents (live only). */
   ownedTemplates: TemplateRef[];
@@ -117,6 +143,8 @@ interface ShellData {
   /** Subset of `panes` the human has starred. Home Favorites strip
    *  renders these as openable pane cards. */
   favoritePanes: PaneRef[];
+  /** Public panes from ANY owner — the Explore community gallery. */
+  publicPanes: PublicPaneRef[];
 }
 
 async function loadShellData(
@@ -149,6 +177,7 @@ async function loadShellData(
     publicCatalogRaw,
     panesRaw,
     favoriteRows,
+    publicPanesRaw,
   ] = await Promise.all([
     claimedAgentIds.length === 0
       ? Promise.resolve([])
@@ -246,6 +275,35 @@ async function loadShellData(
       orderBy: { addedAt: "desc" },
       select: { paneId: true },
     }),
+    // Explore — public panes from EVERY owner (the gallery), not scoped to the
+    // logged-in human. accessMode "public" is the discovery gate: per the
+    // Pane.accessMode contract, only "public" panes may be LISTED — "link"
+    // panes are shareable by URL but deliberately not discoverable, and
+    // "invite_only" is gated entirely. deletedAt filters trashed rows. Newest
+    // first, capped — this is a browse surface, not a full index.
+    prisma.pane.findMany({
+      where: { accessMode: "public", deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 60,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        createdAt: true,
+        expiresAt: true,
+        iconEmoji: true,
+        // Who shared it — prefer the owning human's name, fall back to the
+        // creating agent's name. Email is only used via friendlyName() so the
+        // raw address never reaches the page.
+        ownerHuman: { select: { name: true, email: true } },
+        agent: { select: { name: true } },
+        templateVersion: {
+          select: { template: { select: { name: true, slug: true } } },
+        },
+        // Distinct-viewer count from the HumanPaneView ledger.
+        _count: { select: { views: true } },
+      },
+    }),
   ]);
 
   // Pane counts per template id — drives the "X panes →" chip on tiles
@@ -326,6 +384,27 @@ async function loadShellData(
   });
   const favoritePanes = panes.filter((p) => p.isFavorite);
 
+  const now = Date.now();
+  const publicPanes: PublicPaneRef[] = publicPanesRaw.map((p) => {
+    const ownerName = p.ownerHuman?.name?.trim();
+    const sharedBy =
+      (ownerName && ownerName.length > 0 ? ownerName : null) ??
+      (p.ownerHuman?.email ? friendlyName(p.ownerHuman.email) : null) ??
+      (p.agent?.name?.trim() || null) ??
+      "someone";
+    const tpl = p.templateVersion?.template ?? null;
+    return {
+      id: p.id,
+      title: p.title,
+      isLive: p.status === "open" && p.expiresAt.getTime() > now,
+      createdAt: p.createdAt,
+      sharedBy,
+      viewerCount: p._count.views,
+      iconEmoji: p.iconEmoji,
+      templateName: tpl?.name ?? tpl?.slug ?? null,
+    };
+  });
+
   return {
     ownedTemplates,
     installs: liveInstalls.map((i) => ({
@@ -335,6 +414,7 @@ async function loadShellData(
     publicCatalog,
     panes,
     favoritePanes,
+    publicPanes,
   };
 }
 
@@ -427,6 +507,13 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       ? `<li class="empty-strip">No live panes. Launch one from <a data-go="mine" style="color:var(--accent);cursor:pointer;">My templates</a> or the <a data-go="store" style="color:var(--accent);cursor:pointer;">Template store</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
+  // Explore list — public panes from the whole community.
+  const publicPanesCount = data.publicPanes.length;
+  const publicPanesHtml =
+    publicPanesCount === 0
+      ? `<li class="empty-strip">No public panes yet. Mark one of <a data-go="panes" style="color:var(--accent);cursor:pointer;">your panes</a> public to share it here.</li>`
+      : data.publicPanes.map((p) => publicPaneRow(p)).join("");
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -461,6 +548,11 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="icon">${spaIco("panes", 18)}</span>
         <span class="label">${NAV_LABELS.panes}</span>
         <span class="count">${panesCount}</span>
+      </button></li>
+      <li><button data-view="explore">
+        <span class="icon">${spaIco("explore", 18)}</span>
+        <span class="label">${NAV_LABELS.explore}</span>
+        <span class="count">${publicPanesCount}</span>
       </button></li>
       <li><button data-view="store">
         <span class="icon">${spaIco("store", 18)}</span>
@@ -567,6 +659,20 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <button id="pane-filter-clear" type="button">Clear</button>
       </div>
       <ul class="panes-list" id="panes-list">${panesHtml}</ul>
+    </section>
+
+    <section class="view" data-view="explore">
+      <div class="view-head">
+        <div>
+          <h1>Explore</h1>
+          <div class="sub">Public panes shared by the community. Click one to open it live (read-only).</div>
+        </div>
+      </div>
+      <div class="search">
+        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
+        <input id="explore-search" placeholder="Search public panes…" autocomplete="off" />
+      </div>
+      <ul class="panes-list" id="explore-list">${publicPanesHtml}</ul>
     </section>
 
     <section class="view" data-view="store">
@@ -949,6 +1055,35 @@ function paneRow(p: PaneRef): string {
   </li>`;
 }
 
+// Explore-view row for a public pane. Reuses the .pane-row component but:
+//  - opens /p/:id (the public read-only viewer) — works for ANY viewer,
+//    unlike /panes/:id which 404s for non-owners;
+//  - drops the favorite/share/menu controls (they mutate the viewer's own
+//    library/sharing, meaningless for someone else's pane), so the grid is a
+//    simpler icon + info + status (overridden inline);
+//  - never links the owner-gated icon image — emoji or gradient monogram only.
+function publicPaneRow(p: PublicPaneRef): string {
+  const tplName = p.templateName ?? p.title ?? "Untitled template";
+  const inner = iconTileInner({
+    emoji: p.iconEmoji,
+    seedId: p.id,
+    label: tplName,
+  });
+  const rel = relativeDate(p.createdAt);
+  const viewers = p.viewerCount === 1 ? "1 viewer" : `${p.viewerCount} viewers`;
+  const meta = `by ${escapeHtml(p.sharedBy)} · ${escapeHtml(viewers)} · ${escapeHtml(rel)}`;
+  const statusCls = p.isLive ? "live" : "closed";
+  const statusText = p.isLive ? "live" : "ended";
+  return `<li class="pane-row public" data-pane-id="${escapeHtml(p.id)}" data-href="/p/${encodeURIComponent(p.id)}" style="grid-template-columns:44px 1fr auto;">
+    <div class="icon">${inner}</div>
+    <div class="info">
+      <div class="title">${escapeHtml(p.title)}</div>
+      <div class="meta">${meta}</div>
+    </div>
+    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
+  </li>`;
+}
+
 // ----- helpers -----
 
 function dedupTemplates<T extends { id: string }>(arr: T[]): T[] {
@@ -1265,7 +1400,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'store', 'mine', 'settings'];
+  const VIEWS = ['home', 'panes', 'explore', 'store', 'mine', 'settings'];
   function activate(view) {
     // Back-compat: prior builds used the hashes "#apps" / "#templates" /
     // "#trash". Remap them so old links / browser-back state still land
@@ -1868,6 +2003,7 @@ const SHELL_JS = `
   bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
   bindSearch('store-search', ['#apps-discover .app-tile-wrap']);
   bindSearch('mine-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap']);
+  bindSearch('explore-search', ['#explore-list .pane-row']);
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
   // distinct Home section. Graceful when empty (the section stays hidden) and
