@@ -17,17 +17,17 @@ import type { PrismaClient } from "@prisma/client";
 import type { AttachmentStore } from "../../attachments/store.js";
 import { APP_ICON_180_PNG } from "../../app-icon.js";
 
-// 180×180 is the canonical apple-touch-icon size. The tile navy matches the
+// 180×180 is the canonical apple-touch-icon size. The tile coral matches the
 // brand mark's own background (brand.ts), so a contained icon sits on the same
 // field as the robot default and iOS masks the square to a squircle cleanly.
 const TILE = 180;
-const TILE_BG = "#0f172a";
+const TILE_BG = "#D97757";
 
 // ETag for the robot fallback — its bytes are build-time-constant. Bump the
 // version tag if APP_ICON_180_PNG or the composite logic changes so cached
 // clients re-fetch.
-const ROBOT_ETAG = '"atc-robot-v1"';
-const RENDER_VERSION = "atc1";
+const ROBOT_ETAG = '"atc-robot-v2"';
+const RENDER_VERSION = "atc2";
 
 export interface AppleTouchIcon {
   png: Uint8Array;
