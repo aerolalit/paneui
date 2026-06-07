@@ -212,6 +212,33 @@ export interface MintParticipantResponse {
   created_at: string;
 }
 
+/** One break flagged by the schema-compat gate when upgrading a pane to a
+ *  template version whose schema narrows the current one. */
+export interface UpgradeBreak {
+  /** JSON-pointer-ish path to the offending schema location. */
+  path: string;
+  /** Human-readable description of why the change is incompatible. */
+  message: string;
+}
+
+/** Response from POST /v1/panes/:id/upgrade — the result of re-pinning a live
+ *  pane to another version of the same template (#267). */
+export interface UpgradePaneResponse {
+  pane_id: string;
+  /** The version id the pane now points at. */
+  template_version_id: string;
+  /** Denormalised integer version number the pane now points at. */
+  template_version: number;
+  /** `false` when the pane was already on the target version (idempotent
+   *  no-op); `true` when the re-pin was applied. */
+  upgraded: boolean;
+  /** Schema-compat breaks detected against the target version. Empty on a
+   *  clean upgrade; populated (and applied anyway) on `compat: "force"`. */
+  breaks: UpgradeBreak[];
+  /** The compat mode the upgrade ran under. */
+  compat: "strict" | "force";
+}
+
 /** One immutable version of an template's content. */
 export interface TemplateVersion {
   id: string;

@@ -22,6 +22,7 @@ import type {
   PanesPage,
   TasteInfo,
   TrashListResponse,
+  UpgradePaneResponse,
 } from "./types.js";
 import type { ListPanesQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
@@ -914,6 +915,41 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<MintParticipantResponse>(r);
+  }
+
+  /**
+   * POST /v1/panes/:id/upgrade — re-pin a live pane to another version of the
+   * SAME template (#267), swapping its HTML and schemas in place without
+   * minting a new pane (the human keeps the same URL). Events already on disk
+   * are never rewritten — each carries the template version it was authored
+   * under (#268).
+   *
+   * `opts.template_version` defaults to the template head's latest version.
+   * `opts.compat` defaults to `"strict"`: the relay refuses with a 422
+   * `schema_incompatible_upgrade` (its `details.breaks` lists the offending
+   * paths) when the target schema narrows the current one — i.e. when events
+   * written under the old schema would no longer validate. Pass `"force"` to
+   * apply the upgrade anyway, accepting that old events may no longer match
+   * the new schema.
+   *
+   * Returns `{ upgraded: false }` (idempotent no-op) when the pane is already
+   * on the target version.
+   */
+  async upgradePane(
+    paneId: string,
+    opts: { template_version?: number; compat?: "strict" | "force" } = {},
+  ): Promise<UpgradePaneResponse> {
+    const body: Record<string, unknown> = {};
+    if (opts.template_version !== undefined)
+      body["template_version"] = opts.template_version;
+    if (opts.compat !== undefined) body["compat"] = opts.compat;
+    const r = await this.call(
+      "POST",
+      `/v1/panes/${encodeURIComponent(paneId)}/upgrade`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<UpgradePaneResponse>(r);
   }
 
   /**
