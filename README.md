@@ -153,3 +153,5 @@ expectations. Security vulnerabilities: please report them privately — see
 - [`docs/architecture/`](docs/architecture/): per-phase implementation docs (Prisma models, endpoints, the pane runtime, the CLI)
 - Prior art / landscape: MCP Apps (`blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/`), mcp-ui (`github.com/MCP-UI-Org/mcp-ui`), AG-UI (`copilotkit.ai`), A2UI (Google), Thesys C1
 - Motivating read: Thariq, "Using Claude Code: The Unreasonable Effectiveness of HTML" (`simonwillison.net/2026/May/8/unreasonable-effectiveness-of-html/`)
+
+<!-- preview e2e test — safe to delete -->
