@@ -56,6 +56,21 @@ const schema = z.object({
     .int()
     .positive()
     .default(900),
+  // Dedicated, stricter per-IP limit for ANONYMOUS / public record mutations
+  // (POST/PATCH/DELETE on /v1/panes/:id/records/:collection by a caller with
+  // no agent/participant token and no login cookie — i.e. a public-pane guest).
+  // Anonymous public writes are a spam surface (one shared `h_public` author,
+  // no real human to attribute to), so they get a tighter bucket than the
+  // general RATE_LIMIT. Authenticated writes (agent / participant / owner /
+  // grantee) are NOT subject to this — they remain under the general limiter
+  // only. Mirrors the WS per-connection anonymous-emit cap (ws/handler.ts).
+  // =0 disables it (unlimited anonymous writes — not recommended).
+  ANON_RECORD_WRITE_RATE_LIMIT: z.coerce.number().int().min(0).default(20),
+  ANON_RECORD_WRITE_RATE_WINDOW_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60),
   // Comma-separated list of proxy IPs the relay sits directly behind. Only
   // when the socket peer is one of these is the `X-Forwarded-For` header
   // honored (taking the last untrusted hop). Empty = never trust XFF.

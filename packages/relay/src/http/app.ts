@@ -86,6 +86,16 @@ export function buildApp(
     config.MAGIC_LINK_RATE_WINDOW_SECONDS * 1000,
   );
 
+  // Stricter per-IP limiter for ANONYMOUS / public record mutations
+  // (POST/PATCH/DELETE on /v1/panes/:id/records/:collection by a guest with no
+  // token + no login cookie). Owned by this app instance like the limiters
+  // above. Only the records auth middleware consumes it, and only for an
+  // anonymous public writer; authenticated writes are exempt.
+  const anonRecordWriteLimiter = createRateLimiter(
+    config.ANON_RECORD_WRITE_RATE_LIMIT,
+    config.ANON_RECORD_WRITE_RATE_WINDOW_SECONDS * 1000,
+  );
+
   // Fall back to an app-owned general limiter when the caller did not inject a
   // shared one (HTTP-only tests). The relay always injects the shared instance.
   const effectiveGeneralLimiter =
@@ -112,6 +122,7 @@ export function buildApp(
     c.set("registerLimiter", registerLimiter);
     c.set("magicLinkLimiter", magicLinkLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
+    c.set("anonRecordWriteLimiter", anonRecordWriteLimiter);
     if (blobStore) c.set("blobStore", blobStore);
     if (effectiveBlobRevokeCache)
       c.set("blobRevokeCache", effectiveBlobRevokeCache);

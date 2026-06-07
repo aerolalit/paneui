@@ -1426,6 +1426,12 @@ interface SerializedEvent {
           res = await fetch(url, {
             method,
             headers,
+            // In session/public (cookie) mode there is no Authorization header —
+            // the records API authorizes via the login cookie / public access
+            // (#449). Send credentials so the cookie actually rides along, the
+            // same as the ws-ticket mint + attachment fetches above. Harmless in
+            // token mode (the relay reads the Bearer header, not the cookie).
+            credentials: "same-origin",
             body: payload !== null ? JSON.stringify(payload) : undefined,
           });
         } catch (e) {

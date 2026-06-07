@@ -11,7 +11,16 @@ import type { PrismaClient } from "@prisma/client";
 import { setupTestDb, type TestDb } from "../../test-helpers/db.js";
 import { createPrismaClient } from "../../db.js";
 import { loadConfig } from "../../config.js";
-import { hashKey, keyPrefix } from "../../keys.js";
+import {
+  hashKey,
+  keyPrefix,
+  generateHumanParticipantToken,
+} from "../../keys.js";
+import {
+  generateLoginCookie,
+  hashLoginCookie,
+  LOGIN_COOKIE_NAME,
+} from "../../auth/cookie.js";
 import { buildApp } from "../app.js";
 
 let testDb: TestDb;
@@ -201,7 +210,10 @@ describe("POST /v1/panes/:id/records/:collection", () => {
     expect(body.error.code).toBe("record_collection_not_found");
   });
 
-  it("rejects unauthenticated request with 401", async () => {
+  it("rejects an unauthenticated write to a default (link-mode) pane with 403 read_only", async () => {
+    // Post-#449: a no-auth request is no longer a blanket 401 — it falls into
+    // the cookie/public access model. A freshly seeded pane defaults to `link`
+    // (read-only for anon), so an anonymous WRITE is rejected as read_only.
     const { agentId } = await seedAgent();
     const paneId = await seedPaneWithRecords(agentId);
     const res = await app.fetch(
@@ -211,7 +223,9 @@ describe("POST /v1/panes/:id/records/:collection", () => {
         body: JSON.stringify({ data: { body: "x" } }),
       }),
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("read_only");
   });
 
   it("rejects an agent that doesn't own the pane with 403/404", async () => {
@@ -498,7 +512,11 @@ describe("records router fallback handlers", () => {
     expect(res.status).toBe(404);
   });
 
-  it("regression: POST with no auth still returns 401, not 405", async () => {
+  it("regression: POST with no auth resolves to access-control (403 read_only), not 405", async () => {
+    // The participants-human wildcard footgun was that an unhandled/unauthed
+    // request bubbled to a misleading 401. The fallback handlers + recordsAuth
+    // ensure an authn/authz outcome wins over method-not-allowed. A no-auth
+    // POST to a default link pane is now a clean 403 read_only — never 405.
     const { agentId } = await seedAgent();
     const paneId = await seedPaneWithRecords(agentId);
     const res = await app.fetch(
@@ -508,7 +526,10 @@ describe("records router fallback handlers", () => {
         body: JSON.stringify({ data: { title: "x", done: false } }),
       }),
     );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(405);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("read_only");
   });
 });
 
@@ -585,5 +606,343 @@ describe("F-08: trashed pane refuses records via dualAuth", () => {
     expect(read.status).toBe(200);
     const body = (await read.json()) as { records: { key: string }[] };
     expect(body.records.map((r) => r.key)).toContain("ok1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #449 — cookie / public records auth. Before this, the records HTTP API was
+// guarded by a token-only `dualAuth`, so an OWNER opening their own pane at
+// /panes/:id (cookie) and any PUBLIC-pane visitor 401'd. recordsAuth now
+// authorizes cookie/public callers via the SAME access model as /p + the WS
+// emit path (#445): owner / participant-grant emit; viewer-grant + link-mode
+// anon are read-only; public guests emit; invite_only non-grantees 404.
+// ---------------------------------------------------------------------------
+
+async function seedHumanWithCookie(
+  email: string,
+): Promise<{ humanId: string; cookie: string }> {
+  const human = await prisma.human.create({
+    data: { email, verifiedAt: new Date() },
+  });
+  const cookie = generateLoginCookie();
+  await prisma.login.create({
+    data: {
+      humanId: human.id,
+      cookieHash: hashLoginCookie(cookie),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+  return { humanId: human.id, cookie };
+}
+
+// A pane WITH the records schema AND a human owner, so cookie-auth paths
+// (owner / grantee / public) resolve. accessMode defaults to "link".
+async function seedOwnedPaneWithRecords(
+  agentId: string,
+  ownerHumanId: string,
+): Promise<string> {
+  const template = await prisma.template.create({
+    data: { ownerId: agentId, name: "Owned Records", latestVersion: 1 },
+  });
+  const version = await prisma.templateVersion.create({
+    data: {
+      templateId: template.id,
+      version: 1,
+      templateType: "html-inline",
+      templateSource: "<html></html>",
+      recordSchema,
+    },
+  });
+  const pane = await prisma.pane.create({
+    data: {
+      id: `pan_${randomBytes(8).toString("hex")}`,
+      agentId,
+      ownerHumanId,
+      templateVersionId: version.id,
+      title: "owned records pane",
+      expiresAt: new Date(Date.now() + 3600_000),
+    },
+  });
+  return pane.id;
+}
+
+function setAccessMode(paneId: string, mode: string): Promise<unknown> {
+  return prisma.pane.update({
+    where: { id: paneId },
+    data: { accessMode: mode },
+  });
+}
+
+function cookieJsonHeaders(cookie: string): Record<string, string> {
+  return {
+    cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+    "content-type": "application/json",
+  };
+}
+
+function fetchJson(
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body?: unknown,
+): Promise<Response> {
+  return app.fetch(
+    new Request(`http://t${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+  );
+}
+
+describe("#449 records cookie/public auth", () => {
+  it("owner via cookie can POST/PATCH/DELETE records on their own pane (was 401)", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    const h = cookieJsonHeaders(owner.cookie);
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      h,
+      { record_key: "c1", data: { body: "hi" } },
+    );
+    expect(post.status).toBe(201);
+
+    const patch = await fetchJson(
+      "PATCH",
+      `/v1/panes/${paneId}/records/comments/c1`,
+      h,
+      { data: { body: "edited" } },
+    );
+    expect(patch.status).toBe(200);
+
+    const del = await fetchJson(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments/c1`,
+      h,
+    );
+    expect(del.status).toBe(204);
+
+    // The author was stamped to the owner identity slot.
+    const ownerParticipant = await prisma.participant.findFirst({
+      where: { paneId, identityId: "h_owner" },
+    });
+    expect(ownerParticipant?.humanId).toBe(owner.humanId);
+  });
+
+  it("public pane: anonymous can GET and POST; write stamped to the guest identity; persists", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "public");
+
+    const get = await fetchJson("GET", `/v1/panes/${paneId}/records/comments`, {
+      accept: "application/json",
+    });
+    expect(get.status).toBe(200);
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      { "content-type": "application/json" },
+      { record_key: "guest1", data: { body: "anon hello" } },
+    );
+    expect(post.status).toBe(201);
+
+    // Stamped to the shared guest identity, and the row persists.
+    const guest = await prisma.participant.findFirst({
+      where: { paneId, identityId: "h_public" },
+    });
+    expect(guest).not.toBeNull();
+    expect(guest?.humanId).toBeNull();
+
+    const reread = await fetchJson(
+      "GET",
+      `/v1/panes/${paneId}/records/comments`,
+      { accept: "application/json" },
+    );
+    const body = (await reread.json()) as {
+      records: { key: string; author: { kind: string; id: string } }[];
+    };
+    const row = body.records.find((r) => r.key === "guest1");
+    expect(row).toBeDefined();
+    // Anonymous public write is stamped to the shared guest identity.
+    expect(row?.author.id).toBe("h_public");
+  });
+
+  it("link-mode anon: can GET records but POST → 403 read_only", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    // default accessMode is "link" — assert it explicitly.
+    const fresh = await prisma.pane.findUniqueOrThrow({
+      where: { id: paneId },
+      select: { accessMode: true },
+    });
+    expect(fresh.accessMode).toBe("link");
+
+    const get = await fetchJson("GET", `/v1/panes/${paneId}/records/comments`, {
+      accept: "application/json",
+    });
+    expect(get.status).toBe(200);
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      { "content-type": "application/json" },
+      { data: { body: "nope" } },
+    );
+    expect(post.status).toBe(403);
+    const body = (await post.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("read_only");
+  });
+
+  it("viewer grant (cookie): can GET but POST → 403 read_only", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "invite_only");
+    const viewer = await seedHumanWithCookie("viewer@example.com");
+    await prisma.paneGrant.create({
+      data: {
+        paneId,
+        humanId: viewer.humanId,
+        inviteEmail: "viewer@example.com",
+        role: "viewer",
+        invitedBy: owner.humanId,
+        acceptedAt: new Date(),
+      },
+    });
+
+    const get = await fetchJson("GET", `/v1/panes/${paneId}/records/comments`, {
+      cookie: `${LOGIN_COOKIE_NAME}=${viewer.cookie}`,
+    });
+    expect(get.status).toBe(200);
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      cookieJsonHeaders(viewer.cookie),
+      { data: { body: "no" } },
+    );
+    expect(post.status).toBe(403);
+    const body = (await post.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("read_only");
+  });
+
+  it("invite_only non-grantee → 404 on records (no oracle, NOT 403)", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "invite_only");
+    const stranger = await seedHumanWithCookie("stranger@example.com");
+
+    const get = await fetchJson("GET", `/v1/panes/${paneId}/records/comments`, {
+      cookie: `${LOGIN_COOKIE_NAME}=${stranger.cookie}`,
+    });
+    expect(get.status).toBe(404);
+    expect(get.status).not.toBe(403);
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      cookieJsonHeaders(stranger.cookie),
+      { data: { body: "x" } },
+    );
+    expect(post.status).toBe(404);
+  });
+
+  it("invite_only participant grant (cookie) can write", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "invite_only");
+    const bob = await seedHumanWithCookie("bob@example.com");
+    await prisma.paneGrant.create({
+      data: {
+        paneId,
+        humanId: bob.humanId,
+        inviteEmail: "bob@example.com",
+        role: "participant",
+        invitedBy: owner.humanId,
+        acceptedAt: new Date(),
+      },
+    });
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      cookieJsonHeaders(bob.cookie),
+      { record_key: "bob1", data: { body: "from bob" } },
+    );
+    expect(post.status).toBe(201);
+
+    // Author stamped to the grantee slot.
+    const granteeParticipant = await prisma.participant.findFirst({
+      where: { paneId, identityId: `h_grant_${bob.humanId}` },
+    });
+    expect(granteeParticipant?.humanId).toBe(bob.humanId);
+  });
+
+  it("participant TOKEN path still writes records (no regression)", async () => {
+    const { agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    // An UNBOUND participant token (no humanId) — F-02 binding does not apply,
+    // so it works with just the bearer, exactly as before #449.
+    const token = generateHumanParticipantToken();
+    await prisma.participant.create({
+      data: {
+        paneId,
+        kind: "human",
+        identityId: "h_0",
+        tokenHash: hashKey(token),
+        tokenPrefix: keyPrefix(token),
+      },
+    });
+
+    const post = await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      { record_key: "tok1", data: { body: "via token" } },
+    );
+    expect(post.status).toBe(201);
+  });
+
+  it("anonymous public writes beyond the per-IP cap are rejected with 429", async () => {
+    // Tighten the limit to make the test fast + deterministic.
+    const limitedApp = buildApp(
+      loadConfig({
+        DATABASE_URL: testDb.dbUrl,
+        PUBLIC_URL: "http://localhost:3000",
+        ANON_RECORD_WRITE_RATE_LIMIT: "3",
+        ANON_RECORD_WRITE_RATE_WINDOW_SECONDS: "60",
+      }),
+      prisma,
+    );
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "public");
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const res = await limitedApp.fetch(
+        new Request(`http://t/v1/panes/${paneId}/records/comments`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ data: { body: `spam-${i}` } }),
+        }),
+      );
+      statuses.push(res.status);
+    }
+    // First 3 succeed (201), the rest are throttled (429).
+    expect(statuses.filter((s) => s === 201).length).toBe(3);
+    expect(statuses).toContain(429);
   });
 });
