@@ -32,6 +32,7 @@ import { runState, stateHelp } from "./commands/state.js";
 import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
+import { runUpgrade, upgradeHelp } from "./commands/upgrade.js";
 import { runParticipant, participantHelp } from "./commands/participant.js";
 import { runShare, shareHelp } from "./commands/share.js";
 import { runTemplate, artifactHelp } from "./commands/template.js";
@@ -67,6 +68,9 @@ Pane commands (operate on the core noun — a live UI channel):
   send <id>         Emit an agent event into a pane.
   watch <id>        Stream a pane's events as JSON-lines on stdout.
   delete <id>       Close/delete a pane (DELETE /v1/panes/:id).
+  upgrade <id>      Re-pin a live pane to another version of its template —
+                    swap design + content in place, same URL (--template-version
+                    <n>, --force to override the schema-compat gate).
   participant       Manage participant URLs on an existing pane
     <list|new|revoke> (list | mint a fresh URL | revoke one URL).
   share <id>        Share a pane by identity: invite humans by email
@@ -153,6 +157,8 @@ const BOOLEAN_FLAGS = new Set([
   "link",
   "invite-only",
   "list",
+  // `pane upgrade --force`: override the strict schema-compat gate.
+  "force",
 ]);
 
 async function main(): Promise<void> {
@@ -195,6 +201,7 @@ async function main(): Promise<void> {
     send: sendHelp,
     watch: watchHelp,
     delete: deleteHelp,
+    upgrade: upgradeHelp,
     participant: participantHelp,
     share: shareHelp,
     // Other noun groups.
@@ -253,6 +260,9 @@ async function main(): Promise<void> {
       break;
     case "delete":
       await runDelete(args);
+      break;
+    case "upgrade":
+      await runUpgrade(args);
       break;
     case "participant":
       await runParticipant(args);

@@ -181,6 +181,11 @@ A **template** is a reusable UI template: the HTML, an optional event schema,
 and an optional input schema. A **pane** is one _use_ of a template — one
 context, one human, one event log, one TTL. Many panes per template.
 
+A pane is pinned to the template version it was created with. To change a
+live pane's design or content, you don't edit the running pane — you append a
+new template version and re-pin the pane to it with `pane upgrade` (see the
+`pane upgrade` command below); the human keeps the same URL.
+
 The reusable template is the unit you should think in. **Start every task with
 `pane template list`** (or `pane template search <keywords>`) to see what
 already exists — a previous run may have authored exactly the UI you need. The
@@ -709,6 +714,50 @@ pane delete pan_xxxx
 Closes the pane and tears it down (`DELETE /v1/panes/:id`). Idempotent —
 re-deleting an already-closed pane is a no-op. Use it to clean up a pane
 you are done with rather than waiting for its TTL to expire.
+
+### `pane upgrade <id>` — change a live pane's design + content in place (#267)
+
+A pane is pinned to one template version for its whole life — `pane create`
+captures the latest version at creation time and never moves. So when a human
+asks you to "update this pane with a new design / new content", you do **not**
+edit the running pane's HTML directly (there's no such operation) and you do
+**not** have to throw the pane away. Instead:
+
+1. Append a new template version with the new HTML and/or schemas:
+   ```sh
+   pane template version <id|slug> --template ./v2.html --event-schema ./v2-schema.json
+   #   -> { template_id, version: 2 }
+   ```
+2. Re-pin the live pane to it — same pane, same URL:
+   ```sh
+   pane upgrade pan_xxxx                          # -> latest version
+   pane upgrade pan_xxxx --template-version 2     # -> a specific version
+   pane upgrade pan_xxxx --force                  # override the compat gate
+   ```
+   Prints `{ pane_id, template_version_id, template_version, upgraded, breaks,
+   compat }`. `upgraded:false` means the pane was already on that version
+   (idempotent no-op).
+
+This swaps both the HTML (design) and the event/input/record schemas (content
+contract) at once. It only moves a pane between versions of the **same**
+template — pointing it at a different template is conceptually a different
+pane, so create a new one for that.
+
+**The schema-compat gate.** By default (`strict`) the relay refuses the
+upgrade with `schema_incompatible_upgrade` (a 422 whose `details.breaks`
+lists the offending paths) when the new version *narrows* the schema —
+a removed collection, a newly-required field, a tightened type — because
+events already written under the old schema would no longer validate. Adding
+optional fields, new collections, or loosening bounds is compatible and
+passes. Pass `--force` to apply a narrowing upgrade anyway, accepting that
+old events may no longer match. Events on disk are never rewritten — each
+keeps the version it was authored under (#268), so prior history still
+renders.
+
+**Live-reload caveat.** The re-pin takes effect on the relay immediately and
+emits a `system.template.updated` event, but an already-open pane tab is **not**
+force-reloaded in this release — the new version renders the next time the URL
+is loaded. If the human is looking at the pane right now, ask them to refresh.
 
 ### `pane list` — enumerate your panes
 

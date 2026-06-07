@@ -99,6 +99,8 @@ export type {
   PaneSummary,
   PanesPage,
   MintParticipantResponse,
+  UpgradeBreak,
+  UpgradePaneResponse,
   TrashedPaneEntry,
   TrashedTemplateEntry,
   TrashListResponse,
