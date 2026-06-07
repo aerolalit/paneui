@@ -53,15 +53,32 @@ export function createPrismaClient(databaseUrl: string): PrismaClient {
     // rows.
     const u = new URL(databaseUrl);
     const schema = u.searchParams.get("schema");
-    // Strip the `schema` query param from the URL before passing it to pg
-    // — it's a Prisma-specific convention, not a standard pg connection
-    // parameter, and leaving it in the URL would be harmless on most pg
-    // versions but isn't worth the ambiguity.
+    // Honour `?connection_limit=<n>` as the max pool size. Under the Prisma 7
+    // driver adapter the pg.Pool — not Prisma's engine — owns connection
+    // management, and pg.Pool defaults to max=10. The standard Prisma URL knob
+    // for this is `connection_limit`, which the pg driver itself ignores, so
+    // we read it here and map it onto pg.Pool's `max`. This is what bounds the
+    // parallel-fork e2e suite (see test-helpers/db.ts) so N concurrent files ×
+    // their pools stay under Postgres's max_connections; it also lets a hosted
+    // deployment size the relay's own pool via the URL.
+    const connLimitRaw = u.searchParams.get("connection_limit");
+    const connLimit =
+      connLimitRaw !== null && Number.isInteger(Number(connLimitRaw))
+        ? Number(connLimitRaw)
+        : undefined;
+    // Strip Prisma-specific query params before handing the URL to pg —
+    // `schema` and `connection_limit` are Prisma conventions, not standard pg
+    // connection parameters, and leaving them in the URL isn't worth the
+    // ambiguity.
     u.searchParams.delete("schema");
+    u.searchParams.delete("connection_limit");
     const cleanUrl = u.toString();
     const poolConfig: pg.PoolConfig = { connectionString: cleanUrl };
     if (schema) {
       poolConfig.options = `-c search_path="${schema}"`;
+    }
+    if (connLimit !== undefined && connLimit > 0) {
+      poolConfig.max = connLimit;
     }
     return new PrismaClient({
       adapter: new PrismaPg(

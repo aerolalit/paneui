@@ -36,8 +36,15 @@ export type Engine = "sqlite" | "postgresql";
 // wraps a fresh pg.Pool per call so the admin connection is independent of
 // the namespaced ones the test files own.
 function pgAdminClient(url: string): PrismaClient {
+  // Cap the admin pool at 2 connections. These clients only run a single
+  // CREATE/DROP SCHEMA statement and then $disconnect, but under the parallel
+  // forks pool many can be alive briefly at once (every test file opens one at
+  // setup and another at cleanup). pg.Pool defaults to max=10, so leaving it
+  // unbounded lets a burst of admin clients alone consume dozens of Postgres
+  // connection slots and starve the per-schema test clients. 2 is ample for a
+  // one-shot DDL statement.
   return new PrismaClient({
-    adapter: new PrismaPg(new pg.Pool({ connectionString: url })),
+    adapter: new PrismaPg(new pg.Pool({ connectionString: url, max: 2 })),
   });
 }
 
@@ -281,6 +288,19 @@ export async function setupTestDb(): Promise<TestDb> {
   const schemaName = `t_${randomBytes(8).toString("hex")}`;
   const u = new URL(base);
   u.searchParams.set("schema", schemaName);
+  // Bound each test file's PrismaClient connection pool. Under vitest's forks
+  // pool the e2e files run in parallel, and each file builds its own
+  // PrismaClient (createPrismaClient(testDb.dbUrl)) against this one Postgres.
+  // Prisma's pg pool defaults to (num_cpus * 2 + 1) connections per client,
+  // so on a multi-core CI runner N parallel files could each open ~17+
+  // connections and blow past Postgres's default max_connections=100 —
+  // surfacing as "Failed to start forks worker" + scattered unrelated
+  // failures. Postgres ignores Prisma's `connection_limit` query param, so we
+  // also set pool size directly on the pg.Pool in createPrismaClient (max),
+  // but we carry it on the URL too as a single source of truth that the
+  // client reads. 5 is plenty for a single test file's serial-ish workload
+  // and keeps maxForks (see vitest.config.ts) × 5 well under 100.
+  u.searchParams.set("connection_limit", "5");
   const dbUrl = u.toString();
 
   // We need a one-shot connection on the BASE url to CREATE SCHEMA, then the
@@ -297,9 +317,32 @@ export async function setupTestDb(): Promise<TestDb> {
       // TRUNCATE ... CASCADE is faster than per-row deleteMany on PG and
       // resets the SERIAL sequence on Event.id, which keeps per-test
       // assertions about event ids stable.
-      await p.$executeRawUnsafe(
-        `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "pane_records", "record_collections", "panes", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
-      );
+      //
+      // Deadlock retry: TRUNCATE takes ACCESS EXCLUSIVE locks and, with
+      // CASCADE, touches FK-related tables. When the e2e files run in
+      // parallel (vitest forks pool) several beforeEach hooks fire their
+      // TRUNCATE at once; even though each file owns a private schema,
+      // Postgres can still detect a deadlock on shared lock-acquisition
+      // ordering and abort one transaction with SQLSTATE 40P01. That is a
+      // transient, retryable condition — the loser just needs to run again
+      // once the winner releases its locks. Retry a few times with a tiny
+      // backoff before giving up. (This was the dominant single-test e2e
+      // flake on Postgres; sqlite never hits it.)
+      const MAX_ATTEMPTS = 5;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await p.$executeRawUnsafe(
+            `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "pane_records", "record_collections", "panes", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
+          );
+          return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const isDeadlock =
+            /40P01/.test(msg) || /deadlock detected/i.test(msg);
+          if (!isDeadlock || attempt >= MAX_ATTEMPTS) throw err;
+          await new Promise((r) => setTimeout(r, 25 * attempt));
+        }
+      }
     },
     cleanup: async () => {
       const cleanupAdmin = pgAdminClient(base);

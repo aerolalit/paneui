@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { Prisma } from "@prisma/client";
 import type { Agent, Participant, PrismaClient } from "@prisma/client";
 import { hashKey } from "../keys.js";
 import { log } from "../log.js";
@@ -95,12 +96,27 @@ export const requireAgent: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const agent = resolved.agent;
   prisma.agent
     .update({ where: { id: agent.id }, data: { lastUsedAt: new Date() } })
-    .catch((err: unknown) =>
+    .catch((err: unknown) => {
+      // Best-effort fire-and-forget bookkeeping. The agent row can be
+      // concurrently deleted (revocation cleanup, account hard-delete, or
+      // a test tearing down its fixtures) between resolveBearer above and
+      // this async update landing — Prisma then raises P2025 "record not
+      // found". That is a legitimate no-op, not a failure. Swallow it at
+      // debug; surface anything else as a warning.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2025"
+      ) {
+        log.debug("lastUsedAt update skipped: agent no longer exists", {
+          agentId: agent.id,
+        });
+        return;
+      }
       log.warn("lastUsedAt update failed", {
         agentId: agent.id,
         error: String(err),
-      }),
-    );
+      });
+    });
   c.set("agent", agent);
   c.set("author", { kind: "agent", id: agent.id });
   await next();
