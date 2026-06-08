@@ -353,6 +353,28 @@ self.get("/recents", async (c) => {
   });
 });
 
+// DELETE /v1/self/recents/:paneId
+//
+// "Hide from recents" — drops this human's view-ledger row for the pane so it
+// no longer surfaces in the Home "Recently viewed" feed. The pane itself is
+// untouched (this is not a delete), and opening it again re-records a view and
+// brings it back. Available for any pane the human has viewed, owned or not.
+//
+// Idempotent: deleteMany returns count 0 when there's no row (already hidden /
+// never viewed), so we always return 204 without leaking whether the pane id
+// or view existed.
+self.delete("/recents/:paneId", async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const paneId = c.req.param("paneId");
+  if (!paneId) throw errors.invalidRequest("missing pane id");
+
+  await prisma.humanPaneView.deleteMany({
+    where: { humanId: human.id, paneId },
+  });
+  return c.body(null, 204);
+});
+
 self.patch("/profile", async (c) => {
   const prisma = c.get("prisma");
   const human = c.get("human");

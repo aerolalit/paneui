@@ -439,3 +439,74 @@ describe("GET /v1/self/recents", () => {
     expect(item.owned).toBe(false);
   });
 });
+
+describe("DELETE /v1/self/recents/:paneId (hide from recents)", () => {
+  it("requires a login cookie", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/self/recents/pan_whatever", {
+        method: "DELETE",
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("forgets the view row so the pane drops out of recents", async () => {
+    const { cookie, paneId } = await seedPane();
+
+    // Record a view, confirm it shows.
+    await app.fetch(
+      new Request(`http://t/panes/${paneId}`, {
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          accept: "text/html",
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const before = await (
+      await app.fetch(
+        new Request("http://t/v1/self/recents", {
+          headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+        }),
+      )
+    ).json();
+    expect(
+      before.items.some((i: { pane_id: string }) => i.pane_id === paneId),
+    ).toBe(true);
+
+    // Hide it.
+    const hide = await app.fetch(
+      new Request(`http://t/v1/self/recents/${paneId}`, {
+        method: "DELETE",
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+      }),
+    );
+    expect(hide.status).toBe(204);
+
+    // Gone from recents; the pane itself is untouched.
+    const after = await (
+      await app.fetch(
+        new Request("http://t/v1/self/recents", {
+          headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+        }),
+      )
+    ).json();
+    expect(
+      after.items.some((i: { pane_id: string }) => i.pane_id === paneId),
+    ).toBe(false);
+    expect(
+      await prisma.pane.findUnique({ where: { id: paneId } }),
+    ).not.toBeNull();
+  });
+
+  it("is idempotent — 204 when there is no view row to hide", async () => {
+    const { cookie, paneId } = await seedPane();
+    const res = await app.fetch(
+      new Request(`http://t/v1/self/recents/${paneId}`, {
+        method: "DELETE",
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+      }),
+    );
+    expect(res.status).toBe(204);
+  });
+});

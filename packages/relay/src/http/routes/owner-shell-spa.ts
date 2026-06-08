@@ -2397,6 +2397,7 @@ const SHELL_JS = `
       const pop = document.createElement('div');
       pop.className = 'pane-menu-pop';
       pop.innerHTML = '<button data-act="open">Open</button><button data-act="copy">Copy URL</button>'
+        + '<button data-act="hide">Hide</button>'
         + (owned ? '<button data-act="delete" class="danger">Delete</button>' : '');
       document.body.appendChild(pop);
       const rect = btn.getBoundingClientRect();
@@ -2406,6 +2407,13 @@ const SHELL_JS = `
         pop.style.top = (rect.top - pop.offsetHeight - 4) + 'px';
       }
       recentMenu = pop;
+      // Drop the card from the Recents strip without a reload, hiding the whole
+      // section once it was the last one. Shared by delete + hide.
+      function dropCard() {
+        const card = list.querySelector('.recent-card[data-pane-id="' + (window.CSS && CSS.escape ? CSS.escape(paneId) : paneId) + '"]');
+        if (card) card.remove();
+        if (!list.querySelector('.recent-card')) section.hidden = true;
+      }
       pop.addEventListener('click', async (mev) => {
         const t = mev.target instanceof HTMLElement && mev.target.closest('button[data-act]');
         if (!t) return;
@@ -2422,6 +2430,26 @@ const SHELL_JS = `
             prompt('Copy this URL:', url);
             closeRecentMenu();
           }
+        } else if (act === 'hide') {
+          // Non-destructive — just forgets the view-ledger row. The pane is
+          // untouched and re-appears here if opened again, so no confirm.
+          t.disabled = true;
+          try {
+            const res = await fetch('/v1/self/recents/' + encodeURIComponent(paneId), {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            if (!res.ok && res.status !== 204) {
+              const body = await res.json().catch(() => ({}));
+              alert('Could not hide: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+              t.disabled = false;
+              return;
+            }
+            closeRecentMenu();
+            dropCard();
+          } catch {
+            alert('Network error — try again.');
+            t.disabled = false;
+          }
         } else if (act === 'delete') {
           if (!confirm('Move this pane to trash?')) return;
           t.disabled = true;
@@ -2437,9 +2465,7 @@ const SHELL_JS = `
             }
             closeRecentMenu();
             // Drop the card so Recents reflects the trashed pane without a reload.
-            const card = list.querySelector('.recent-card[data-pane-id="' + (window.CSS && CSS.escape ? CSS.escape(paneId) : paneId) + '"]');
-            if (card) card.remove();
-            if (!list.querySelector('.recent-card')) section.hidden = true;
+            dropCard();
           } catch {
             alert('Network error — try again.');
             t.disabled = false;
