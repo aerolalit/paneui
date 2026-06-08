@@ -464,15 +464,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           .map((p) => favPaneTile(p))
           .join("");
 
-  // Recents strip from panes.
-  const recentsHtml =
-    data.panes.length === 0
-      ? `<div class="empty-strip">No open panes. Launch one from the Templates view.</div>`
-      : data.panes
-          .slice(0, 8)
-          .map((p) => recentCard(p))
-          .join("");
-
   // Home "All templates" grid — owned + installed deduped (by id).
   // Compose a set of "owned" ids so the home grid can tag the matching
   // tile as owned (it appears in both lists; the owned tile wins).
@@ -629,19 +620,13 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <div class="favs" id="favs">${favsHtml}</div>
       </div>
 
-      <div class="section">
-        <div class="section-head">
-          <h2>Open panes</h2>
-          <a data-go="panes">View all →</a>
-        </div>
-        <div class="recents" id="recents">${recentsHtml}</div>
-      </div>
-
       <!-- Recently viewed — panes this human has OPENED (any mount), sourced
-           from the HumanPaneView ledger via GET /v1/self/recents. Distinct from
-           "Open panes" above (which lists panes the human owns/joined): a pane
-           can appear here without being owned. Hidden until the fetch resolves
-           with at least one row; stays out of the way when empty. -->
+           from the HumanPaneView ledger via GET /v1/self/recents. This is the
+           Home-only pane strip: it can include panes the human doesn't own, so
+           it's distinct from the Panes tab (owned/joined panes, with its own
+           full list + filters). The redundant "Open panes" preview that just
+           mirrored the top of the Panes tab was removed. Hidden until the fetch
+           resolves with at least one row; stays out of the way when empty. -->
       <div class="section" id="recently-viewed-section" hidden>
         <div class="section-head">
           <h2>Recently viewed</h2>
@@ -1000,28 +985,6 @@ function appTile(
     </button>
     ${paneCountChip}
   </div>`;
-}
-
-function recentCard(p: PaneRef): string {
-  // templateName is null for legacy inline templates; fall back to the pane's
-  // own title (always present), never to the raw cuid id.
-  const tplName = p.templateName ?? p.title ?? "Untitled template";
-  const hue = paneHue(p.id);
-  const initials = paneInitials(tplName);
-  const rel = relativeDate(p.createdAt);
-  // Recents always fell back to a gradient glyph (they never carried an image /
-  // emoji icon). Layer a lazy preview iframe on top of that glyph — same as the
-  // big tiles. The gradient thumb stays as the background so transparent
-  // artifacts still read; the version tag stays above the iframe.
-  return `<a class="recent-card" href="/panes/${encodeURIComponent(p.id)}">
-    <div class="thumb" style="background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);">
-      <span class="glyph">${escapeHtml(initials)}</span>
-      <iframe class="tile-preview" src="/panes/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
-      ${p.templateVersion > 0 ? `<span class="tag">v${p.templateVersion}</span>` : ""}
-    </div>
-    <div class="title">${escapeHtml(p.title)}</div>
-    <div class="meta"><span>${escapeHtml(tplName)}</span><span>${escapeHtml(rel)}</span></div>
-  </a>`;
 }
 
 function paneRow(p: PaneRef): string {
@@ -2062,7 +2025,7 @@ const SHELL_JS = `
     input.addEventListener('input', apply);
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { input.value = ''; apply(); } });
   }
-  bindSearch('home-search', ['#favs .fav-tile', '#recents .recent-card', '#home-apps .app-tile-wrap']);
+  bindSearch('home-search', ['#favs .fav-tile', '#recently-viewed .recent-card', '#home-apps .app-tile-wrap']);
   // One search for the merged Templates view. It filters all three grids; only
   // the active segment's panel is visible, so filtering the hidden one is a
   // harmless no-op and the box keeps working across a segment switch.
@@ -2109,7 +2072,7 @@ const SHELL_JS = `
           glyph.textContent = initials(title);
           thumb.appendChild(glyph);
           // Layer a lazy preview iframe on top of the gradient glyph — same
-          // shape as the server-rendered recentCard for the open-panes strip.
+          // shape as the server-rendered pane tiles elsewhere on Home.
           // Without this, closed/old panes in the ledger only show the
           // gradient + initials and never the real HTML.
           const previewFrame = document.createElement('iframe');

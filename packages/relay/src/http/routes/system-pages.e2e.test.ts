@@ -493,18 +493,23 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain("Alice");
   });
 
-  it("Home view server-renders favorites + recents + all-templates with empty states", async () => {
+  it("Home view server-renders favorites + all-templates with empty states", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain(">Favorites<");
-    expect(html).toContain(">Open panes<");
     expect(html).toContain(">All templates<");
     expect(html).toContain("No favorites yet");
-    expect(html).toContain("No open panes");
     expect(html).toContain("Your library is empty");
+    // The redundant "Open panes" preview (a top-of-the-Panes-tab mirror) was
+    // removed from Home; the Panes tab owns that list now.
+    expect(html).not.toContain(">Open panes<");
+    expect(html).not.toContain("No open panes");
+    // "Recently viewed" stays — it's the Home-only strip (can include
+    // non-owned panes), populated client-side, hidden until it has rows.
+    expect(html).toContain('id="recently-viewed-section"');
   });
 
   it("Template Store view renders the Discover grid", async () => {
