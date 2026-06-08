@@ -714,7 +714,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <div class="section">
         <div class="section-head">
           <h2>Favorites</h2>
-          <a data-go="mine">Edit</a>
+          <a data-go="panes">Manage</a>
         </div>
         <div class="favs" id="favs">${favsHtml}</div>
       </div>
