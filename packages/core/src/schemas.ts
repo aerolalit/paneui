@@ -40,6 +40,9 @@ const inlineArtifactSchema = z.object({
   // createArtifactSchema below).
   name: z.string().min(1),
   slug: z.string().min(1).optional(),
+  // Tags for the auto-created template (and inherited by the pane). Same shape
+  // as createArtifactSchema.tags.
+  tags: z.array(z.string().min(1).max(50)).max(20).optional(),
   source: z.string().min(1),
   type: artifactTypeSchema,
   // Optional: omit for a view-only one-off (a report/dashboard the human only
@@ -92,6 +95,9 @@ export const createPaneSchema = z.object({
   ttl: z.number().int().positive().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   callback: callbackSchema.optional(),
+  // Per-pane filter tags. Merged (deduped) with the template's tags at create
+  // time and snapshotted onto the pane. Each ≤50 chars, ≤20 per pane.
+  tags: z.array(z.string().min(1).max(50)).max(20).optional(),
   // Tab title for the human's browser. Optional on the wire because the relay
   // also accepts the implicit fallback: the reference form falls back to the
   // existing Template.name, and the inline form now carries its own `name`

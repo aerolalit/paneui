@@ -329,6 +329,7 @@ panes.get("/", requireAgent, async (c) => {
       // row" in a single list response when ?include_deleted=true.
       deleted_at: s.deletedAt?.toISOString() ?? null,
       has_callback: s.callbackUrl !== null,
+      tags: normalizeTags(s.tags),
     };
   });
 
@@ -370,6 +371,7 @@ panes.post("/", requireAgent, async (c) => {
     context_key,
     icon_emoji,
     icon_attachment_id,
+    tags: paneTagsFromBody,
   } = parsed.data;
 
   const resolvedPreamble = validateSessionPreamble(preamble);
@@ -389,6 +391,9 @@ panes.post("/", requireAgent, async (c) => {
   // pane pins. Either path ends with a concrete template_version_id.
   let templateVersionId: string;
   let templateId: string;
+  // Tags inherited from the template (reference form) or the inline template
+  // definition. Merged with the per-pane tags below into the pane's snapshot.
+  let templateTags: string[] = [];
   // The pinned version's input_schema, if it declares one. Null = the version
   // has no input contract, so `input_data` (if any) is accepted unvalidated.
   let inputSchema: unknown = null;
@@ -417,6 +422,7 @@ panes.post("/", requireAgent, async (c) => {
     if (!version) throw errors.artifactVersionNotFound();
     templateVersionId = version.id;
     templateId = head.id;
+    templateTags = normalizeTags(head.tags);
     inputSchema = version.inputSchema;
     artifactName = head.name;
   } else {
@@ -426,6 +432,7 @@ panes.post("/", requireAgent, async (c) => {
     const inline = template as {
       name: string;
       slug?: string;
+      tags?: string[];
       source: string;
       type: "html-inline" | "html-ref";
       event_schema?: unknown;
@@ -484,6 +491,7 @@ panes.post("/", requireAgent, async (c) => {
       validateRecordSchemaShape(inline.record_schema);
     }
 
+    templateTags = normalizeTags(inline.tags);
     let created;
     try {
       created = await prisma.$transaction(async (tx) => {
@@ -493,6 +501,9 @@ panes.post("/", requireAgent, async (c) => {
             name: inline.name,
             slug: inline.slug ?? null,
             latestVersion: 1,
+            tags: templateTags.length
+              ? (templateTags as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
           },
         });
         const version = await tx.templateVersion.create({
@@ -708,6 +719,10 @@ panes.post("/", requireAgent, async (c) => {
     }
   }
 
+  // Pane filter tags = template tags ∪ per-pane tags, deduped (case-sensitive,
+  // order-preserving — template tags first).
+  const paneTags = mergeTags(templateTags, normalizeTags(paneTagsFromBody));
+
   const paneId = generatePaneId();
   const humanTokens: string[] = Array.from({ length: requestedHumans }, () =>
     generateHumanParticipantToken(),
@@ -744,6 +759,10 @@ panes.post("/", requireAgent, async (c) => {
         // Per-pane icon override (NULL = inherit the template's icon).
         iconEmoji: icon_emoji ?? null,
         iconAttachmentId: icon_attachment_id ?? null,
+        // Snapshot tags = the template's tags ∪ any per-pane tags, deduped.
+        tags: paneTags.length
+          ? (paneTags as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
         expiresAt,
         metadata: metadata
           ? (metadata as Prisma.InputJsonValue)
@@ -875,10 +894,39 @@ panes.post("/", requireAgent, async (c) => {
       expires_at: expiresAt.toISOString(),
       title: resolvedTitle,
       context_key: dedupKey,
+      tags: paneTags,
     },
     201,
   );
 });
+
+// Normalize a tags value (Prisma Json from the DB, or a string[] from the
+// request) into a clean string[] — strings only, trimmed, empties dropped.
+export function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== "string") continue;
+    const t = v.trim();
+    if (t.length > 0) out.push(t);
+  }
+  return out;
+}
+
+// Merge tag lists, order-preserving and deduped (first occurrence wins, so
+// template tags lead).
+export function mergeTags(...lists: string[][]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const t of list) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
 
 // Mint a short-lived, single-use WebSocket upgrade ticket.
 //
@@ -931,6 +979,7 @@ panes.get("/:id", requireAgent, async (c) => {
     template_version_id: pane.templateVersionId,
     template_version: pane.templateVersion.version,
     title: pane.title,
+    tags: normalizeTags(pane.tags),
     metadata: pane.metadata,
     input_data: pane.inputData,
     created_at: pane.createdAt.toISOString(),
