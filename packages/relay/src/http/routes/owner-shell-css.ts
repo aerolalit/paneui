@@ -570,24 +570,26 @@ export const OWNER_SHELL_CSS = `
     color: var(--ink);
     padding: 1px 6px; border-radius: 4px;
   }
-  /* Overlays on a recent card's thumb: visibility badge (top-left) and the ⋯
-     menu (top-right). Both stay visible (no hover-reveal) so they work on
-     touch; the dark chip keeps them legible over any preview. z-index keeps
-     them above the .tile-preview iframe (z-index: 1) — without it an opaque
-     loaded preview paints over the badges and they vanish on some cards. */
+  /* Overlays on a recent card's thumb: visibility badge + ⋯ menu, grouped at
+     the bottom-right corner. Both stay visible (no hover-reveal) so they work
+     on touch; the dark chip keeps them legible over any preview.
+     z-index sits above the .tile-preview iframe (z-index: 1) so an opaque
+     loaded preview never paints over them, and pointer-events: auto guarantees
+     clicks land on the controls rather than passing to the preview behind. */
   .recent-card .thumb .recent-vis,
   .recent-card .thumb .recent-menu-btn {
-    position: absolute; top: 6px; z-index: 2;
+    position: absolute; bottom: 6px; z-index: 3;
     width: 22px; height: 22px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
     border-radius: 6px;
     background: rgba(0,0,0,0.5); color: #fff;
+    pointer-events: auto;
   }
-  .recent-card .thumb .recent-vis { left: 6px; }
   .recent-card .thumb .recent-menu-btn {
     right: 6px; border: none; cursor: pointer;
     transition: background 120ms;
   }
+  .recent-card .thumb .recent-vis { right: 34px; }
   .recent-card .thumb .recent-menu-btn:hover { background: rgba(0,0,0,0.72); }
   .recent-card .thumb .recent-vis svg,
   .recent-card .thumb .recent-menu-btn svg { display: block; }
