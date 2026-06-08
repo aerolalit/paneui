@@ -650,8 +650,9 @@ describe("Owner-shell SPA at /home", () => {
     );
     const html = await res.text();
     expect(html).toContain('class="pane-row"');
-    // Each pane row carries a Share affordance that opens the Share dialog.
-    expect(html).toContain("data-pane-share=");
+    // The per-row Share button was removed — sharing lives in the pane shell's
+    // top bar now, and dropping it gives the title more room.
+    expect(html).not.toContain("data-pane-share=");
     // F-15: the SPA escaper encodes single quotes (' -> &#39;), so a title
     // with an apostrophe renders in its encoded form — the raw apostrophe
     // must NOT appear inside the title text.

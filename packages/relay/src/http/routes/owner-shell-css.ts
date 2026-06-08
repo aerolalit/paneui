@@ -659,10 +659,12 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    /* icon | info | status | star | share | menu — six cells. Keep this column
+    /* icon | info | visibility | star | menu — five cells. Keep this column
        count in sync with paneRow()'s children: a missing track pushes the last
-       action (the ⋯ menu) onto an implicit second row. */
-    grid-template-columns: 44px 1fr auto auto auto auto;
+       action (the ⋯ menu) onto an implicit second row. (Share was dropped from
+       the row — it lives in the pane shell's top bar now, which frees width
+       for the title.) */
+    grid-template-columns: 44px 1fr auto auto auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;
