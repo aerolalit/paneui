@@ -720,7 +720,18 @@ panes.post("/", requireAgent, async (c) => {
   }
 
   // Pane filter tags = template tags ∪ per-pane tags, deduped (case-sensitive,
-  // order-preserving — template tags first).
+  // order-preserving — template tags first). Reject the reserved
+  // favorite/favorites on the agent-supplied per-pane + inline tags (template
+  // tags are already cleaned at template-create time).
+  for (const t of normalizeTags(paneTagsFromBody).concat(templateTags)) {
+    if (t.toLowerCase() === "favorite" || t.toLowerCase() === "favorites") {
+      throw errors.invalidRequest(
+        `'${t}' is a reserved tag`,
+        undefined,
+        "'favorite'/'favorites' are reserved — favoriting is per-human (the star), not a tag",
+      );
+    }
+  }
   const paneTags = mergeTags(templateTags, normalizeTags(paneTagsFromBody));
 
   const paneId = generatePaneId();

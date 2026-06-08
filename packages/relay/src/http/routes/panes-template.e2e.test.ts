@@ -1096,3 +1096,23 @@ describe("POST /v1/panes — tags", () => {
     expect(tooMany.status).toBe(400);
   });
 });
+
+describe("POST /v1/panes — reserved tags", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("rejects a reserved per-pane tag (400)", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/panes", apiKey, {
+      template: {
+        name: "Inline",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      tags: ["favorites"],
+    });
+    expect(res.status).toBe(400);
+  });
+});

@@ -95,6 +95,49 @@ function tagsToJson(
   return tags ? (tags as unknown as Prisma.InputJsonValue) : Prisma.JsonNull;
 }
 
+// `favorite`/`favorites` are reserved: favoriting is per-human state (the
+// star), not a per-pane/template tag. Matches the pane-edit endpoint.
+const RESERVED_TAGS = new Set(["favorite", "favorites"]);
+
+// Clean a template's tag input: trim, drop empties, dedupe (order-preserving),
+// reject reserved names and over-long/too-many tags. Throws invalidRequest on
+// a bad tag. The Zod schema accepts any string[]; the policy lives here so it's
+// shared by create + patch.
+function cleanTemplateTags(tags: string[] | undefined): string[] {
+  if (!tags) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of tags) {
+    const t = v.trim();
+    if (!t) continue;
+    if (t.length > 50) {
+      throw errors.invalidRequest(
+        "a tag exceeds 50 characters",
+        undefined,
+        "each tag must be 1–50 characters",
+      );
+    }
+    if (RESERVED_TAGS.has(t.toLowerCase())) {
+      throw errors.invalidRequest(
+        `'${t}' is a reserved tag`,
+        undefined,
+        "'favorite'/'favorites' are reserved — use the star to favorite a pane",
+      );
+    }
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  if (out.length > 20) {
+    throw errors.invalidRequest(
+      "too many tags",
+      undefined,
+      "at most 20 tags per template",
+    );
+  }
+  return out;
+}
+
 // Lean summary shape for list/search — head metadata only, no source attachment.
 function summarize(a: {
   id: string;
@@ -195,13 +238,20 @@ templates.post("/", async (c) => {
   let template;
   try {
     template = await prisma.$transaction(async (tx) => {
+      // Clean the supplied tags; fall back to the slug so a named, slugged
+      // template is never untagged (keeps every derived pane filterable). A
+      // slugless, tagless template stays untagged — we don't fabricate a tag
+      // from the free-form name.
+      const cleanedTags = cleanTemplateTags(tags);
+      const effectiveTags =
+        cleanedTags.length > 0 ? cleanedTags : slug ? [slug] : [];
       const head = await tx.template.create({
         data: {
           ownerId: agent.id,
           name,
           slug: slug ?? null,
           description: description ?? null,
-          tags: tagsToJson(tags),
+          tags: tagsToJson(effectiveTags.length ? effectiveTags : undefined),
           latestVersion: 1,
           // Icon emoji is validated by the Zod schema (single grapheme).
           // Image icons are set post-create via PATCH once the attachment
@@ -495,7 +545,12 @@ templates.patch("/:id", async (c) => {
   if (name !== undefined) data.name = name;
   if (slug !== undefined) data.slug = slug;
   if (description !== undefined) data.description = description;
-  if (tags !== undefined) data.tags = tags as unknown as Prisma.InputJsonValue;
+  if (tags !== undefined) {
+    const cleaned = cleanTemplateTags(tags);
+    data.tags = cleaned.length
+      ? (cleaned as unknown as Prisma.InputJsonValue)
+      : Prisma.JsonNull;
+  }
 
   // Icon emoji: validated by the Zod schema (single grapheme). `null` clears.
   if (icon_emoji !== undefined) data.iconEmoji = icon_emoji;

@@ -123,6 +123,39 @@ describe("/v1/templates", () => {
     expect(body.version).toBe(1);
   });
 
+  it("rejects the reserved 'favorite'/'favorites' tags (400)", async () => {
+    const apiKey = await seedAgent();
+    for (const reserved of ["favorite", "Favorites"]) {
+      const res = await createArtifact(apiKey, { tags: [reserved] });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("falls back to the slug as a tag when none are supplied", async () => {
+    const apiKey = await seedAgent();
+    const res = await createArtifact(apiKey, {
+      tags: undefined,
+      slug: "livia-bot",
+    });
+    expect(res.status).toBe(201);
+    const { template_id } = (await res.json()) as { template_id: string };
+    const get = await req("GET", `/v1/templates/${template_id}`, apiKey);
+    const body = (await get.json()) as { tags: string[] | null };
+    expect(body.tags).toEqual(["livia-bot"]);
+  });
+
+  it("dedupes + trims supplied tags", async () => {
+    const apiKey = await seedAgent();
+    const res = await createArtifact(apiKey, {
+      tags: ["  livia ", "pr-review", "livia"],
+    });
+    expect(res.status).toBe(201);
+    const { template_id } = (await res.json()) as { template_id: string };
+    const get = await req("GET", `/v1/templates/${template_id}`, apiKey);
+    const body = (await get.json()) as { tags: string[] };
+    expect(body.tags).toEqual(["livia", "pr-review"]);
+  });
+
   it("rejects html-ref templates with 400", async () => {
     const apiKey = await seedAgent();
     const res = await createArtifact(apiKey, {
