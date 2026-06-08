@@ -1,11 +1,13 @@
 ---
 name: pane
 description: >-
-  Hand a human a rich interactive UI by URL and get a structured answer back,
-  from any agent — cron job, chat bot, CI, headless server. Use when a question
-  is too rich for a text reply (a form, a picker, a doc-review view, a
-  dashboard) and you need the human's answer as structured data. Drives the
-  `pane` CLI: create a pane, deliver the URL, watch for the result.
+  Hand a human a rich interactive UI by URL and get structured data back, from
+  any agent — cron job, chat bot, CI, headless server. Pane has two primitives:
+  **events** (journaled interactions — forms, approvals, surveys, pickers) and
+  **records** (mutable collections — todo lists, shopping lists, checklists,
+  kanban boards, comment threads, inventories). Use when a question is too rich
+  for a text reply. Drives the `pane` CLI: create a pane, deliver the URL,
+  watch for the result.
 ---
 
 <!-- pane skill v0.0.14 -->
@@ -21,6 +23,48 @@ interactions come back to you as structured events.
 Use `pane` when the human's answer is genuinely too rich for text — a form to
 fill, options to rank, a document to mark up, a dashboard to act on. For a plain
 question, just ask in text; `pane` only wins on the rich slice.
+
+## Events or records — pick the primitive first
+
+Pane has **two** data primitives. Pick before you design the schema or write
+HTML; they shape the page totally differently.
+
+- **Event** = an append-only journaled fact ("this happened"). One-shot
+  interactions: form submission, approval, survey answer, picker, doc review.
+- **Record** = a row in a mutable, queryable collection ("this exists, here is
+  its current value"). Multi-item applications: todo list, shopping list,
+  checklist, packing list, expense log, inventory, kanban board, comment thread.
+
+| Use a **record**                          | Use an **event**                              |
+|-------------------------------------------|-----------------------------------------------|
+| Current value matters; history doesn't    | History is the point (audit, replay, feed)    |
+| Partial-row mutations / edits / deletes   | Immutable facts, no retraction                |
+| Can grow past ~100 rows; paginated reads  | Dozens of writes total per pane               |
+| The page shows a *collection* of items    | The page captures one discrete interaction    |
+
+**Tiebreaker.** If there is more than one mutable item on screen and the
+current state matters more than the history of edits, default to **records**.
+The first thing a developer or agent tries (a todo list, a shopping list, a
+checklist) is almost always records — not events.
+
+Full records reference (schema, page-side API, conflicts, CLI) is in
+**Records** further down. **Read it before designing the schema**, not after.
+
+## Page-side API at a glance
+
+Inside the iframe, `window.pane` has these surfaces. Skim once so you don't
+invent things that don't exist or miss things that do.
+
+| Surface                                                              | Use it when                                |
+|----------------------------------------------------------------------|--------------------------------------------|
+| `pane.emit(type, data)`                                              | Event-shaped pane — page emits an event.   |
+| `pane.records.snapshot / on / create / upsert / update / delete`     | Record-shaped pane — read and mutate rows. |
+| `pane.state.events`                                                  | Replay every event so far on this pane.    |
+| `pane.inputData`                                                     | Read the agent-supplied seed data.         |
+| `pane.downloadBlob(id)`                                              | Render an attachment the agent uploaded.   |
+
+Each surface is documented in detail further down (`The schema`, `Records`,
+`Attachments`). Use this table as the index, not as the spec.
 
 ## Setup
 
@@ -1172,8 +1216,12 @@ Records are a **separate data shape from events**. Where events are an
 append-only journal ("Alice posted", "Bob clicked"), records are a mutable
 per-pane collection (posts, comments, reactions, line items in a form)
 keyed by stable `record_key`. Templates that look like *applications* —
-comment threads, kanban boards, form collections — should use records.
-One-shot interactions stay on events.
+todo lists, shopping lists, checklists, packing lists, expense logs,
+inventories, kanban boards, comment threads, form collections — should use
+records. These are the obvious first things a developer or agent tries to
+build on pane, and every one of them is records-shaped, not events-shaped.
+One-shot interactions (a form submission, an approval, a survey answer) stay
+on events.
 
 ### When to reach for which
 
