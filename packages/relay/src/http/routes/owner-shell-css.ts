@@ -570,6 +570,25 @@ export const OWNER_SHELL_CSS = `
     color: var(--ink);
     padding: 1px 6px; border-radius: 4px;
   }
+  /* Overlays on a recent card's thumb: visibility badge (top-left) and the ⋯
+     menu (top-right). Both stay visible (no hover-reveal) so they work on
+     touch; the dark chip keeps them legible over any preview. */
+  .recent-card .thumb .recent-vis,
+  .recent-card .thumb .recent-menu-btn {
+    position: absolute; top: 6px;
+    width: 22px; height: 22px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.5); color: #fff;
+  }
+  .recent-card .thumb .recent-vis { left: 6px; }
+  .recent-card .thumb .recent-menu-btn {
+    right: 6px; border: none; cursor: pointer;
+    transition: background 120ms;
+  }
+  .recent-card .thumb .recent-menu-btn:hover { background: rgba(0,0,0,0.72); }
+  .recent-card .thumb .recent-vis svg,
+  .recent-card .thumb .recent-menu-btn svg { display: block; }
   .recent-card .title { font-weight: 600; font-size: 13.5px; }
   .recent-card .meta {
     display: flex; justify-content: space-between;

@@ -2037,6 +2037,72 @@ const SHELL_JS = `
       if (w.length === 1) return w[0].slice(0, 2).toUpperCase();
       return (w[0][0] + w[1][0]).toUpperCase();
     }
+    // Visibility icon (lock / link / globe) for a card's access mode — mirrors
+    // the server-rendered visibilityCell() used on the Panes tab.
+    function visInner(mode) {
+      if (mode === 'public') return '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>';
+      if (mode === 'invite_only') return '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>';
+      return '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>';
+    }
+    function visLabel(mode) {
+      return mode === 'public' ? 'Public'
+        : mode === 'invite_only' ? 'Invite only'
+        : 'Anyone with the link';
+    }
+
+    // A small ⋯ menu per card — Open + Copy URL. Recents can include panes the
+    // human doesn't own, so we deliberately omit Delete (owners use the Panes
+    // tab for that). Reuses the .pane-menu-pop styling; the pop lives on
+    // document.body so the thumb's overflow:hidden can't clip it.
+    let recentMenu = null;
+    function closeRecentMenu() { if (recentMenu) { recentMenu.remove(); recentMenu = null; } }
+    function openRecentMenu(btn, paneId) {
+      closeRecentMenu();
+      const url = location.origin + '/panes/' + encodeURIComponent(paneId);
+      const pop = document.createElement('div');
+      pop.className = 'pane-menu-pop';
+      pop.innerHTML = '<button data-act="open">Open</button><button data-act="copy">Copy URL</button>';
+      document.body.appendChild(pop);
+      const rect = btn.getBoundingClientRect();
+      pop.style.top = (rect.bottom + 4) + 'px';
+      pop.style.left = Math.max(8, rect.right - pop.offsetWidth) + 'px';
+      if (rect.bottom + pop.offsetHeight > window.innerHeight - 8) {
+        pop.style.top = (rect.top - pop.offsetHeight - 4) + 'px';
+      }
+      recentMenu = pop;
+      pop.addEventListener('click', async (mev) => {
+        const t = mev.target instanceof HTMLElement && mev.target.closest('button[data-act]');
+        if (!t) return;
+        mev.stopPropagation();
+        const act = t.getAttribute('data-act');
+        if (act === 'open') {
+          location.href = '/panes/' + encodeURIComponent(paneId);
+        } else if (act === 'copy') {
+          try {
+            await navigator.clipboard.writeText(url);
+            t.textContent = 'Copied!';
+            setTimeout(closeRecentMenu, 600);
+          } catch {
+            prompt('Copy this URL:', url);
+            closeRecentMenu();
+          }
+        }
+      });
+    }
+    document.addEventListener('click', (ev) => {
+      if (recentMenu && ev.target instanceof Node && !recentMenu.contains(ev.target)) closeRecentMenu();
+    });
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeRecentMenu(); });
+
+    // Card click → open the pane, unless a no-open control (the ⋯ menu) was hit.
+    function navTo(ev) {
+      if (ev.target instanceof HTMLElement && ev.target.closest('[data-noopen]')) return;
+      const c = ev.target instanceof HTMLElement && ev.target.closest('.recent-card[data-href]');
+      if (c) location.href = c.getAttribute('data-href');
+    }
+    list.addEventListener('click', navTo);
+    list.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') navTo(ev); });
+
     fetch('/v1/self/recents', { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
@@ -2045,9 +2111,11 @@ const SHELL_JS = `
         for (const it of items.slice(0, 12)) {
           const title = it.title || it.pane_id;
           const h = hue(it.pane_id);
-          const card = document.createElement('a');
+          const card = document.createElement('div');
           card.className = 'recent-card';
-          card.href = '/panes/' + encodeURIComponent(it.pane_id);
+          card.setAttribute('data-href', '/panes/' + encodeURIComponent(it.pane_id));
+          card.setAttribute('role', 'link');
+          card.setAttribute('tabindex', '0');
           const thumb = document.createElement('div');
           thumb.className = 'thumb';
           thumb.style.background =
@@ -2069,6 +2137,22 @@ const SHELL_JS = `
           previewFrame.setAttribute('tabindex', '-1');
           previewFrame.setAttribute('aria-hidden', 'true');
           thumb.appendChild(previewFrame);
+          // Visibility badge (top-left) + ⋯ menu (top-right) overlaid on the thumb.
+          const vis = document.createElement('span');
+          vis.className = 'recent-vis';
+          vis.title = visLabel(it.access_mode);
+          vis.setAttribute('aria-label', vis.title);
+          vis.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + visInner(it.access_mode) + '</svg>';
+          thumb.appendChild(vis);
+          const menuBtn = document.createElement('button');
+          menuBtn.className = 'recent-menu-btn';
+          menuBtn.type = 'button';
+          menuBtn.setAttribute('data-noopen', '1');
+          menuBtn.title = 'More';
+          menuBtn.setAttribute('aria-label', 'More');
+          menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>';
+          menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openRecentMenu(menuBtn, it.pane_id); });
+          thumb.appendChild(menuBtn);
           const titleEl = document.createElement('div');
           titleEl.className = 'title';
           titleEl.textContent = title;

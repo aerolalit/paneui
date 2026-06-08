@@ -268,6 +268,7 @@ self.get("/recents", async (c) => {
         select: {
           id: true,
           title: true,
+          accessMode: true,
           templateVersion: {
             select: { templateId: true, id: true },
           },
@@ -280,6 +281,9 @@ self.get("/recents", async (c) => {
     items: views.map((v) => ({
       pane_id: v.pane.id,
       title: v.pane.title,
+      // Access mode (invite_only | link | public) — drives the visibility
+      // icon on the Home "Recently viewed" cards.
+      access_mode: v.pane.accessMode,
       template_id: v.pane.templateVersion.templateId,
       template_version_id: v.pane.templateVersion.id,
       last_viewed_at: v.lastViewedAt.toISOString(),
