@@ -8,7 +8,7 @@ description: >-
   `pane` CLI: create a pane, deliver the URL, watch for the result.
 ---
 
-<!-- pane skill v0.0.13 -->
+<!-- pane skill v0.0.14 -->
 
 # pane
 
