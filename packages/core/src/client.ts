@@ -320,6 +320,7 @@ export class PaneClient {
       metadata: req.metadata,
       callback: req.callback,
       context_key: req.context_key,
+      tags: req.tags,
       icon_emoji: req.icon_emoji,
       icon_attachment_id: req.icon_attachment_id,
     });

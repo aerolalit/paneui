@@ -121,6 +121,25 @@ describe("create — inline template form", () => {
     expect("slug" in req.template).toBe(false);
   });
 
+  it("parses --tags (comma-separated, trimmed, empties dropped) into req.tags", async () => {
+    await run([
+      "--template-id",
+      "pr-review",
+      "--tags",
+      " cp-backend , pr-review ,, ",
+    ]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { tags?: string[] };
+    expect(req.tags).toEqual(["cp-backend", "pr-review"]);
+  });
+
+  it("omits tags when --tags is not given", async () => {
+    await run(["--template-id", "pr-review"]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect("tags" in req).toBe(false);
+  });
+
   it("accepts --input-data on the inline path", async () => {
     await run([
       "--template",
