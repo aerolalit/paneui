@@ -161,6 +161,17 @@ Options:
                       report/dashboard the human only views — no page/agent
                       events).
 
+                      Pane has TWO data primitives — pick the right one before
+                      designing the schema. Events (this flag) are an
+                      append-only journal: forms, approvals, surveys, pickers,
+                      doc reviews. RECORDS are a mutable collection: todo
+                      lists, shopping lists, checklists, kanban boards,
+                      comment threads, inventories. If the page shows more
+                      than one mutable item and the current state matters
+                      more than the history of edits, you want records — see
+                      the "Records" section of \`pane skill show\` and the
+                      \`pane template-records\` / \`pane records\` commands.
+
                       Shape — an object with an "events" map, keyed by event
                       type. Each entry declares who may emit it and the JSON
                       Schema for its payload:
