@@ -1270,7 +1270,30 @@ participant delete their own rows without granting blanket delete to all
 participants. Collection names match `^[a-z][a-z0-9_-]{0,63}$`.
 
 Pass `record_schema` to `pane template create` (or the inline form on
-`pane create`) alongside `event_schema` / `input_schema`.
+`pane create`) alongside `event_schema` / `input_schema`. The
+`--record-schema` flag takes a file path or inline JSON, same shape as
+`--event-schema`:
+
+```sh
+# Author the reusable template once. Omit --event-schema if the page
+# never emits events (records-only template); include both if it does.
+pane template create --name "Todo list" --slug todos \
+  --template ./todos.html \
+  --record-schema ./todos-records.yaml
+
+# Later, instance it — no schema flags on the reference form; the
+# pinned template version carries them.
+pane create --template-id todos --ttl 600
+
+# Iterate by appending a new version (existing panes stay pinned):
+pane template version todos \
+  --template ./todos.html \
+  --record-schema ./todos-records-v2.yaml
+```
+
+On the inline (one-off) form of `pane create`, `--record-schema` rides
+inside the inline template alongside `--event-schema`. `--record-schema`
+is rejected with `--template-id` — the pinned version owns the schema.
 
 ### Reading + writing records from the page
 
