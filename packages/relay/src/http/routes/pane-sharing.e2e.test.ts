@@ -364,5 +364,78 @@ describe("GET /v1/self/recents", () => {
     expect(typeof body.items[0].last_viewed_at).toBe("string");
     // access_mode drives the visibility icon on the Home recently-viewed cards.
     expect(body.items[0].access_mode).toBe("link");
+    // owned gates the Delete action in the recents ⋯ menu — true here since the
+    // viewing human owns the seeded pane.
+    expect(body.items[0].owned).toBe(true);
+  });
+
+  it("reports owned=false for a viewed pane the human does not own", async () => {
+    const { cookie } = await seedPane();
+
+    // A second human + agent own a separate, link-shared pane (not Alice's).
+    const otherHuman = await prisma.human.create({
+      data: { email: "bob@example.com", verifiedAt: new Date() },
+    });
+    const otherAgent = await prisma.agent.create({
+      data: {
+        keyHash: hashKey(generateApiKey()),
+        keyPrefix: keyPrefix(generateApiKey()),
+        name: "bob-agent",
+        ownerHumanId: otherHuman.id,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: {
+        name: "T2",
+        ownerId: otherAgent.id,
+        slug: "t2-" + randomBytes(4).toString("hex"),
+      },
+    });
+    const tv = await prisma.templateVersion.create({
+      data: {
+        templateId: tpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<p>hi</p>",
+        eventSchema: { events: {} },
+      },
+    });
+    const otherPaneId = generatePaneId();
+    await prisma.pane.create({
+      data: {
+        id: otherPaneId,
+        agentId: otherAgent.id,
+        ownerHumanId: otherHuman.id,
+        templateVersionId: tv.id,
+        title: "Bob Pane",
+        status: "open",
+        accessMode: "link",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+
+    // Alice opens it via the public link mount — records a view for her.
+    await app.fetch(
+      new Request(`http://t/p/${otherPaneId}`, {
+        headers: {
+          cookie: `${LOGIN_COOKIE_NAME}=${cookie}`,
+          accept: "text/html",
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+
+    const after = await app.fetch(
+      new Request("http://t/v1/self/recents", {
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+      }),
+    );
+    const body = await after.json();
+    const item = body.items.find(
+      (i: { pane_id: string }) => i.pane_id === otherPaneId,
+    );
+    expect(item).toBeDefined();
+    expect(item.owned).toBe(false);
   });
 });
