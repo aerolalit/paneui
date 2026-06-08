@@ -464,26 +464,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           .map((p) => favPaneTile(p))
           .join("");
 
-  // Home "All templates" grid — owned + installed deduped (by id).
-  // Compose a set of "owned" ids so the home grid can tag the matching
-  // tile as owned (it appears in both lists; the owned tile wins).
-  const ownedIds = new Set(data.ownedTemplates.map((t) => t.id));
-  const homeAllTemplates = dedupTemplates([
-    ...data.ownedTemplates,
-    ...data.installs.map((i) => i.template),
-  ]);
-  const homeAppsHtml =
-    homeAllTemplates.length === 0
-      ? `<div class="empty-strip" style="grid-column:1/-1;">Your library is empty. Install one from the catalog or run <code>pane template create</code>.</div>`
-      : homeAllTemplates
-          .map((t) =>
-            appTile(t, {
-              launchable: true,
-              menu: ownedIds.has(t.id) ? "owned" : "installed",
-            }),
-          )
-          .join("");
-
   // Templates view grids.
   const minesHtml =
     data.ownedTemplates.length === 0
@@ -609,7 +589,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       ${firstAgentNudge}
       <div class="search" style="margin-top: 12px;">
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
-        <input id="home-search" placeholder="Search templates, panes, anything…" autocomplete="off" />
+        <input id="home-search" placeholder="Search favorites and recent panes…" autocomplete="off" />
       </div>
 
       <div class="section">
@@ -634,13 +614,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <div class="recents" id="recently-viewed"></div>
       </div>
 
-      <div class="section">
-        <div class="section-head">
-          <h2>All templates</h2>
-          <a data-go="store">Browse Template store →</a>
-        </div>
-        <div class="apps-grid" id="home-apps">${homeAppsHtml}</div>
-      </div>
     </section>
 
     <section class="view" data-view="panes">
@@ -1064,17 +1037,6 @@ function publicPaneRow(p: PublicPaneRef): string {
 }
 
 // ----- helpers -----
-
-function dedupTemplates<T extends { id: string }>(arr: T[]): T[] {
-  const seen = new Set<string>();
-  const out: T[] = [];
-  for (const t of arr) {
-    if (seen.has(t.id)) continue;
-    seen.add(t.id);
-    out.push(t);
-  }
-  return out;
-}
 
 function escapeHtml(s: string): string {
   return s
@@ -2025,7 +1987,7 @@ const SHELL_JS = `
     input.addEventListener('input', apply);
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { input.value = ''; apply(); } });
   }
-  bindSearch('home-search', ['#favs .fav-tile', '#recently-viewed .recent-card', '#home-apps .app-tile-wrap']);
+  bindSearch('home-search', ['#favs .fav-tile', '#recently-viewed .recent-card']);
   // One search for the merged Templates view. It filters all three grids; only
   // the active segment's panel is visible, so filtering the hidden one is a
   // harmless no-op and the box keeps working across a segment switch.
