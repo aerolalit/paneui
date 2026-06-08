@@ -98,6 +98,8 @@ interface PaneRef {
   /** Access mode: "invite_only" | "link" | "public". Drives the row's
    *  visibility icon. */
   accessMode: string;
+  /** Filter tags (template snapshot + per-pane extras). Drives the tag chips. */
+  tags: string[];
   templateId: string | null;
   templateVersion: number;
   templateName: string | null;
@@ -292,6 +294,9 @@ async function loadShellData(
         // Access mode (invite_only | link | public) — drives the visibility
         // icon on each pane row.
         accessMode: true,
+        // Filter tags (snapshot from the template + per-pane extras) — drive
+        // the Panes-tab tag chips.
+        tags: true,
         // Per-pane icon override (NULL = inherit the template's icon).
         iconEmoji: true,
         iconAttachmentId: true,
@@ -429,6 +434,9 @@ async function loadShellData(
       createdAt: p.createdAt,
       expiresAt: p.expiresAt,
       accessMode: p.accessMode,
+      tags: Array.isArray(p.tags)
+        ? p.tags.filter((t): t is string => typeof t === "string")
+        : [],
       templateId: tpl?.id ?? null,
       templateVersion: p.templateVersion?.version ?? 0,
       templateName: tpl?.name ?? tpl?.slug ?? null,
@@ -574,6 +582,33 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       ? `<li class="empty-strip">No live panes. Launch one from <a data-go="templates" style="color:var(--accent);cursor:pointer;">Templates</a>.</li>`
       : data.panes.map((p) => paneRow(p)).join("");
 
+  // Tag vocabulary across the human's panes, for the Panes-tab chip filter.
+  // Sorted by frequency (most-used first) then alphabetically so the common
+  // tags lead the (scrollable) chip row.
+  const tagFreq = new Map<string, number>();
+  for (const p of data.panes)
+    for (const t of p.tags) tagFreq.set(t, (tagFreq.get(t) ?? 0) + 1);
+  const sortedTags = [...tagFreq.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([t]) => t);
+  const hasFavorites = data.panes.some((p) => p.isFavorite);
+  // chips: All + (★ Favorites if any) + each tag. data-chip carries the filter
+  // key; the reserved "__fav__" maps to the per-human favorite state.
+  const paneChipsHtml =
+    sortedTags.length === 0 && !hasFavorites
+      ? ""
+      : `<div class="chip-row" id="panes-chips" role="group" aria-label="Filter panes by tag">
+        <button class="chip on" type="button" data-chip="__all__">All</button>${
+          hasFavorites
+            ? `<button class="chip" type="button" data-chip="__fav__">★ Favorites</button>`
+            : ""
+        }${sortedTags
+          .map(
+            (t) =>
+              `<button class="chip" type="button" data-chip="${escapeHtml(t)}">${escapeHtml(t)}</button>`,
+          )
+          .join("")}</div>`;
+
   // Explore list — public panes from the whole community.
   const publicPanesCount = data.publicPanes.length;
   const publicPanesHtml =
@@ -711,6 +746,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
         <input id="panes-search" placeholder="Search your panes…" autocomplete="off" />
       </div>
+      ${paneChipsHtml}
       <!-- Filter banner shown when the user arrives here from a template
            tile's "X panes →" chip. Hidden by default; populated + revealed
            by JS. -->
@@ -1131,11 +1167,20 @@ function paneRow(p: PaneRef): string {
   const starPath = p.isFavorite
     ? `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="currentColor"/>`
     : `<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77 5.82 21l1.18-6.88-5-4.87 6.91-1.01L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>`;
-  return `<li class="pane-row" data-pane-id="${escapeHtml(p.id)}" data-href="/panes/${encodeURIComponent(p.id)}"${tplAttr}>
+  // data-tags carries the row's tags as JSON so the chip filter can read them
+  // exactly (tags are free-form, so no fragile delimiter). data-fav lets the
+  // ★ Favorites chip filter without re-reading the star.
+  const tagsHtml = p.tags.length
+    ? `<div class="row-tags">${p.tags
+        .map((t) => `<span class="row-tag">${escapeHtml(t)}</span>`)
+        .join("")}</div>`
+    : "";
+  return `<li class="pane-row" data-pane-id="${escapeHtml(p.id)}" data-href="/panes/${encodeURIComponent(p.id)}"${tplAttr} data-fav="${p.isFavorite ? "1" : "0"}" data-tags="${escapeHtml(JSON.stringify(p.tags))}">
     <div class="icon">${inner}</div>
     <div class="info">
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
+      ${tagsHtml}
     </div>
     ${visibilityCell(p.accessMode)}
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
@@ -1458,6 +1503,30 @@ const EXTRA_CSS = `
     padding: 4px 8px; color: var(--ink); font: inherit; font-size: 13px; min-width: 140px;
   }
   .agt-rename-form input:focus { outline: none; border-color: var(--accent); }
+
+  /* Panes-tab tag filter — a scrollable chip row (one shared horizontal
+     scrollbar) above the list, plus the small tag pills on each row. */
+  .chip-row {
+    display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto;
+    padding: 4px 2px 10px; margin: 0 -2px; scrollbar-width: thin;
+  }
+  .chip {
+    flex: 0 0 auto; cursor: pointer;
+    font-size: 12.5px; font-weight: 600; font-family: inherit;
+    padding: 5px 12px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    color: var(--ink-mute); transition: color 100ms, background 100ms, border-color 100ms;
+  }
+  .chip:hover { color: var(--ink); }
+  .chip.on {
+    background: var(--accent); color: #1a120c; border-color: transparent;
+  }
+  .pane-row .row-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .pane-row .row-tag {
+    font-size: 10.5px; color: var(--ink-mute);
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: 999px; padding: 1px 8px;
+  }
 
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
@@ -2118,7 +2187,54 @@ const SHELL_JS = `
   // harmless no-op and the box keeps working across a segment switch.
   bindSearch('templates-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
   bindSearch('explore-search', ['#explore-list .pane-row']);
-  bindSearch('panes-search', ['#panes-list .pane-row']);
+  // Panes tab — combined search + tag-chip filter. A row shows iff it matches
+  // the search text AND every selected chip (AND semantics). "All" clears the
+  // chip selection; "__fav__" is the reserved Favorites pseudo-tag.
+  (function () {
+    const list = document.getElementById('panes-list');
+    const search = document.getElementById('panes-search');
+    const chips = document.getElementById('panes-chips');
+    if (!list) return;
+    const selected = new Set();
+    function rowTags(row) {
+      try { return JSON.parse(row.getAttribute('data-tags') || '[]'); }
+      catch (e) { return []; }
+    }
+    function apply() {
+      const q = (search && search.value.trim().toLowerCase()) || '';
+      list.querySelectorAll('.pane-row').forEach((row) => {
+        let show = q.length === 0 || (row.textContent || '').toLowerCase().includes(q);
+        if (show && selected.size) {
+          const tags = rowTags(row);
+          const fav = row.getAttribute('data-fav') === '1';
+          for (const sel of selected) {
+            if (sel === '__fav__') { if (!fav) { show = false; break; } }
+            else if (tags.indexOf(sel) === -1) { show = false; break; }
+          }
+        }
+        row.style.display = show ? '' : 'none';
+      });
+    }
+    if (search) {
+      search.addEventListener('input', apply);
+      search.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { search.value = ''; apply(); } });
+    }
+    if (chips) {
+      chips.addEventListener('click', (ev) => {
+        const btn = ev.target instanceof HTMLElement && ev.target.closest('button[data-chip]');
+        if (!btn) return;
+        const key = btn.getAttribute('data-chip');
+        if (key === '__all__') selected.clear();
+        else if (selected.has(key)) selected.delete(key);
+        else selected.add(key);
+        chips.querySelectorAll('button[data-chip]').forEach((b) => {
+          const k = b.getAttribute('data-chip');
+          b.classList.toggle('on', k === '__all__' ? selected.size === 0 : selected.has(k));
+        });
+        apply();
+      });
+    }
+  })();
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
   // distinct Home section. Graceful when empty (the section stays hidden) and

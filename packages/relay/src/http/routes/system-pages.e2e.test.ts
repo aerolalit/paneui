@@ -656,6 +656,53 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('id="panes-search"');
   });
 
+  it("renders tag chips + per-row tag pills for tagged panes", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agent = await prisma.agent.create({
+      data: {
+        name: "claimed",
+        keyHash: "t".repeat(64),
+        keyPrefix: "t",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const tpl = await prisma.template.create({
+      data: { ownerId: agent.id, name: "RT", latestVersion: 1 },
+    });
+    const version = await prisma.templateVersion.create({
+      data: {
+        templateId: tpl.id,
+        version: 1,
+        templateType: "html-inline",
+        templateSource: "<html></html>",
+      },
+    });
+    await prisma.pane.create({
+      data: {
+        id: `pan_${randomBytes(8).toString("hex")}`,
+        agentId: agent.id,
+        ownerHumanId: humanId,
+        templateVersionId: version.id,
+        title: "Tagged pane",
+        expiresAt: new Date(Date.now() + 3600_000),
+        tags: ["livia", "pr-review"],
+      },
+    });
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
+    const html = await res.text();
+    // The chip row + an "All" chip + a chip per tag.
+    expect(html).toContain('id="panes-chips"');
+    expect(html).toContain('data-chip="__all__"');
+    expect(html).toContain('data-chip="livia"');
+    expect(html).toContain('data-chip="pr-review"');
+    // The row carries its tags (for the filter) + renders pills.
+    expect(html).toContain("data-tags=");
+    expect(html).toContain('class="row-tag"');
+  });
+
   it("renders the Recently-viewed section", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
