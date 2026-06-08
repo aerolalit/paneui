@@ -522,6 +522,12 @@ describe("Owner-shell SPA at /home", () => {
     const html = await res.text();
     expect(html).toContain(">Discover<");
     expect(html).toContain('id="apps-discover"');
+    // The store template detail sheet (App-Store-style) + its catalog payload
+    // ship with the page; a catalog tile opens the sheet instead of installing
+    // on the spot.
+    expect(html).toContain('id="tpl-detail-modal"');
+    expect(html).toContain('id="catalog-detail"');
+    expect(html).toContain('id="tpl-detail-action"');
   });
 
   it("Explore view renders an empty state when there are no public panes", async () => {
