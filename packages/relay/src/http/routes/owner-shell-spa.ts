@@ -1527,6 +1527,27 @@ const EXTRA_CSS = `
     background: var(--surface-2); border: 1px solid var(--hairline);
     border-radius: 999px; padding: 1px 8px;
   }
+  /* Inline per-pane tag editor (row ⋯ → Edit tags). */
+  .tag-editor { margin-top: 8px; }
+  .tag-editor .te-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tag-editor .te-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--ink);
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: 999px; padding: 2px 4px 2px 9px;
+  }
+  .tag-editor .te-x {
+    background: transparent; border: none; color: var(--ink-mute);
+    cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 999px;
+  }
+  .tag-editor .te-x:hover { color: var(--pink, #fb7185); }
+  .tag-editor .te-input {
+    flex: 1 1 100px; min-width: 90px;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px;
+    padding: 3px 8px; color: var(--ink); font: inherit; font-size: 12px;
+  }
+  .tag-editor .te-input:focus { outline: none; border-color: var(--accent); }
+  .tag-editor .te-actions { display: flex; gap: 6px; margin-top: 8px; }
 
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
@@ -2000,6 +2021,94 @@ const SHELL_JS = `
   function closeMenu() {
     if (openMenu) { openMenu.remove(); openMenu = null; }
   }
+
+  // Inline per-pane tag editor (owner edits) — opened from the row ⋯ menu.
+  // Removable chips + an add input; Save PATCHes /v1/my-panes/:id/tags and
+  // re-renders the row's pills + data-tags so the chip filter sees the change.
+  function openTagEditor(row) {
+    if (!row || row.querySelector('.tag-editor')) return;
+    const info = row.querySelector('.info');
+    if (!info) return;
+    const paneId = row.getAttribute('data-pane-id');
+    let tags;
+    try { tags = JSON.parse(row.getAttribute('data-tags') || '[]'); }
+    catch (e) { tags = []; }
+    tags = Array.isArray(tags) ? tags.slice() : [];
+    const existing = row.querySelector('.row-tags');
+    if (existing) existing.style.display = 'none';
+
+    const editor = document.createElement('div');
+    editor.className = 'tag-editor';
+    editor.setAttribute('data-noopen', '1');
+    const chipWrap = document.createElement('div');
+    chipWrap.className = 'te-chips';
+    function makeChip(t) {
+      const c = document.createElement('span');
+      c.className = 'te-chip';
+      const label = document.createElement('span');
+      label.textContent = t;
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'te-x'; x.textContent = '×';
+      x.setAttribute('aria-label', 'Remove ' + t);
+      x.addEventListener('click', () => { tags = tags.filter((v) => v !== t); c.remove(); });
+      c.appendChild(label); c.appendChild(x);
+      return c;
+    }
+    tags.forEach((t) => chipWrap.appendChild(makeChip(t)));
+    const input = document.createElement('input');
+    input.type = 'text'; input.placeholder = 'Add tag…'; input.maxLength = 50;
+    input.className = 'te-input';
+    function addPending() {
+      const t = input.value.trim();
+      if (t && tags.indexOf(t) === -1) { tags.push(t); chipWrap.insertBefore(makeChip(t), input); }
+      input.value = '';
+    }
+    input.addEventListener('keydown', (k) => {
+      if (k.key === 'Enter') { k.preventDefault(); addPending(); }
+      else if (k.key === 'Escape') { done(); }
+    });
+    chipWrap.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'te-actions';
+    const save = document.createElement('button');
+    save.type = 'button'; save.className = 'btn primary small'; save.textContent = 'Save';
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'btn small'; cancel.textContent = 'Cancel';
+    actions.appendChild(save); actions.appendChild(cancel);
+    editor.appendChild(chipWrap); editor.appendChild(actions);
+    info.appendChild(editor);
+    input.focus();
+
+    function done() { editor.remove(); if (existing) existing.style.display = ''; }
+    cancel.addEventListener('click', done);
+    save.addEventListener('click', async () => {
+      addPending();
+      save.disabled = true; save.textContent = 'Saving…';
+      try {
+        const res = await fetch('/v1/my-panes/' + encodeURIComponent(paneId) + '/tags', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tags: tags }),
+        });
+        if (!res.ok) {
+          const b = await res.json().catch(() => ({}));
+          alert('Save failed: ' + ((b.error && b.error.message) || ('HTTP ' + res.status)));
+          save.disabled = false; save.textContent = 'Save'; return;
+        }
+        const body = await res.json();
+        const next = Array.isArray(body.tags) ? body.tags : [];
+        row.setAttribute('data-tags', JSON.stringify(next));
+        let rt = row.querySelector('.row-tags');
+        if (!rt) { rt = document.createElement('div'); rt.className = 'row-tags'; info.appendChild(rt); }
+        rt.textContent = '';
+        next.forEach((t) => { const s = document.createElement('span'); s.className = 'row-tag'; s.textContent = t; rt.appendChild(s); });
+        rt.style.display = next.length ? '' : 'none';
+        done();
+      } catch (e) { alert('Network error — try again.'); save.disabled = false; save.textContent = 'Save'; }
+    });
+  }
+
   document.addEventListener('click', (ev) => {
     if (openMenu && ev.target instanceof Node && !openMenu.contains(ev.target)) closeMenu();
   });
@@ -2017,6 +2126,7 @@ const SHELL_JS = `
     pop.innerHTML =
       '<button data-act="open">Open</button>' +
       '<button data-act="copy">Copy URL</button>' +
+      '<button data-act="tags">Edit tags</button>' +
       '<button data-act="delete" class="danger">Delete</button>';
     document.body.appendChild(pop);
     // Position the pop-up below the trigger, flipping above if it'd run
@@ -2037,6 +2147,10 @@ const SHELL_JS = `
       const url = location.origin + '/panes/' + encodeURIComponent(paneId);
       if (act === 'open') {
         location.href = '/panes/' + encodeURIComponent(paneId);
+      } else if (act === 'tags') {
+        closeMenu();
+        const row = document.querySelector('.pane-row[data-pane-id="' + (window.CSS && CSS.escape ? CSS.escape(paneId) : paneId) + '"]');
+        if (row) openTagEditor(row);
       } else if (act === 'copy') {
         try {
           await navigator.clipboard.writeText(url);

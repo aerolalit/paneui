@@ -406,3 +406,85 @@ describe("POST /v1/my-panes/:id/share-link", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("PATCH /v1/my-panes/:id/tags (owner edits)", () => {
+  it("401s without a cookie", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/my-panes/pan_x/tags", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", origin: SELF_ORIGIN },
+        body: JSON.stringify({ tags: ["x"] }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("sets the pane's tags (trimmed + deduped), returns them", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const paneId = await seedOwnedPane(humanId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-panes/${paneId}/tags`, {
+        method: "PATCH",
+        headers: mutationHeaders(cookie),
+        body: JSON.stringify({ tags: ["  livia  ", "pr-review", "livia"] }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tags: string[] };
+    expect(body.tags).toEqual(["livia", "pr-review"]);
+    const row = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(row!.tags).toEqual(["livia", "pr-review"]);
+  });
+
+  it("rejects the reserved 'favorite'/'favorites' tags (400)", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const paneId = await seedOwnedPane(humanId);
+    for (const reserved of ["favorite", "Favorites"]) {
+      const res = await app.fetch(
+        new Request(`http://t/v1/my-panes/${paneId}/tags`, {
+          method: "PATCH",
+          headers: mutationHeaders(cookie),
+          body: JSON.stringify({ tags: [reserved] }),
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("rejects > 20 tags or an over-long tag (400)", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const paneId = await seedOwnedPane(humanId);
+    const tooMany = await app.fetch(
+      new Request(`http://t/v1/my-panes/${paneId}/tags`, {
+        method: "PATCH",
+        headers: mutationHeaders(cookie),
+        body: JSON.stringify({
+          tags: Array.from({ length: 21 }, (_, i) => "t" + i),
+        }),
+      }),
+    );
+    expect(tooMany.status).toBe(400);
+    const tooLong = await app.fetch(
+      new Request(`http://t/v1/my-panes/${paneId}/tags`, {
+        method: "PATCH",
+        headers: mutationHeaders(cookie),
+        body: JSON.stringify({ tags: ["x".repeat(51)] }),
+      }),
+    );
+    expect(tooLong.status).toBe(400);
+  });
+
+  it("404s for a pane the human doesn't own (no oracle)", async () => {
+    const stranger = await seedLoggedInHuman("bob@example.com");
+    const { humanId } = await seedLoggedInHuman();
+    const paneId = await seedOwnedPane(humanId);
+    const res = await app.fetch(
+      new Request(`http://t/v1/my-panes/${paneId}/tags`, {
+        method: "PATCH",
+        headers: mutationHeaders(stranger.cookie),
+        body: JSON.stringify({ tags: ["mine-now"] }),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+});
