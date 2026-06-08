@@ -194,6 +194,62 @@ self.post("/agents/:id/revoke-key", async (c) => {
   });
 });
 
+// PATCH /v1/self/agents/:id
+// Body: { name: string }   Response: { agent_id, name }
+//
+// Rename an agent the human owns. Unlike Human.name (which is optional and
+// clearable), Agent.name is required, so the body rejects empty/blank names.
+// Trimmed, max 80 chars, no control characters — mirrors the human-profile
+// name rules.
+//
+// Authz: requireHuman (above) + the agent must be claimed by THIS human; a
+// 404 (not 403) is returned for an unclaimed-or-other-human agent so the route
+// isn't an ownership oracle. Revoked agents can still be renamed — a label
+// change doesn't reactivate the credential.
+const renameAgentBody = z.object({
+  name: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : v),
+    z
+      .string()
+      .min(1, "name must not be empty")
+      .max(80)
+      .refine((s) => !hasControlChar(s), {
+        message: "name must not contain control characters",
+      }),
+  ),
+});
+
+self.patch("/agents/:id", async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+
+  const parsed = renameAgentBody.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid agent rename",
+      parsed.error.flatten(),
+      "send { name: string } — trimmed, 1–80 chars, no control characters",
+    );
+  }
+
+  const agent = await prisma.agent.findFirst({
+    where: { id, ownerHumanId: human.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!agent) throw errors.notFound();
+
+  const updated = await prisma.agent.update({
+    where: { id: agent.id },
+    data: { name: parsed.data.name },
+    select: { id: true, name: true },
+  });
+
+  return c.json({ agent_id: updated.id, name: updated.name });
+});
+
 // True if the string contains any C0/C1 control character
 // (U+0000–U+001F, U+007F–U+009F). Implemented with charCodeAt rather than a
 // regex literal so no raw control bytes need to live in this source file.
