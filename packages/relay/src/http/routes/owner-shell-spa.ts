@@ -157,6 +157,20 @@ interface ShellData {
   /** True once the human has claimed at least one agent. Drives the
    *  first-run "connect your first agent" nudge on Home. */
   hasClaimedAgents: boolean;
+  /** The human's claimed agents (non-trashed), for the Agents view. */
+  agents: AgentRow[];
+}
+
+interface AgentRow {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  /** ISO date (YYYY-MM-DD) the agent was claimed, or null. */
+  claimedAt: string | null;
+  /** Relative "last used" string ("never" when unused). */
+  lastUsed: string;
+  /** True when the agent's key has been revoked (still listed, inert). */
+  revoked: boolean;
 }
 
 async function loadShellData(
@@ -168,7 +182,15 @@ async function loadShellData(
   // section under My templates.
   const claimedAgents = await prisma.agent.findMany({
     where: { ownerHumanId: human.id, deletedAt: null },
-    select: { id: true },
+    orderBy: { claimedAt: { sort: "desc", nulls: "last" } },
+    select: {
+      id: true,
+      name: true,
+      keyPrefix: true,
+      claimedAt: true,
+      lastUsedAt: true,
+      revokedAt: true,
+    },
   });
   const claimedAgentIds = claimedAgents.map((a) => a.id);
 
@@ -449,6 +471,14 @@ async function loadShellData(
     favoritePanes,
     publicPanes,
     hasClaimedAgents: claimedAgents.length > 0,
+    agents: claimedAgents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      keyPrefix: a.keyPrefix,
+      claimedAt: a.claimedAt ? a.claimedAt.toISOString().slice(0, 10) : null,
+      lastUsed: a.lastUsedAt ? relativeDate(a.lastUsedAt) : "never",
+      revoked: a.revokedAt !== null,
+    })),
   };
 }
 
@@ -600,6 +630,14 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="label">Templates</span>
         <span class="count">${tplLibraryCount}</span>
       </button></li>
+      <!-- Agents: claimed agents + claim/rotate/revoke/rename. Moved here from
+           the standalone /my-agents page (which now redirects in) so it shares
+           the SPA chrome. -->
+      <li><button data-view="agents">
+        <span class="icon">${spaIco("agents", 18)}</span>
+        <span class="label">Agents</span>
+        <span class="count">${data.agents.length}</span>
+      </button></li>
     </ul>
     <div class="me" id="me">
       <div class="avatar">${escapeHtml(avatarLetter)}</div>
@@ -617,10 +655,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       <!-- The action links. Inline icon row on desktop; popover sheet on mobile.
            Same DOM nodes both ways — a single #signout, no duplication. -->
       <div class="acct-links" id="acct-links" role="menu">
-        <a class="acct-link" href="/my-agents" role="menuitem" title="${NAV_LABELS.agents}" aria-label="${NAV_LABELS.agents}">
-          <span class="ico">${spaIco("agents", 16)}</span>
-          <span class="txt">${NAV_LABELS.agents}</span>
-        </a>
         <a class="acct-link" href="#settings" data-go="settings" role="menuitem" title="${NAV_LABELS.settings}" aria-label="${NAV_LABELS.settings}">
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
@@ -738,6 +772,36 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <div class="cat-row"><h3>Discover</h3><span class="count">${data.publicCatalog.length}</span></div>
         <div class="apps-grid" id="apps-discover">${discoverHtml}</div>
       </div>
+    </section>
+
+    <section class="view" data-view="agents">
+      <div class="view-head">
+        <div>
+          <h1>Agents</h1>
+          <div class="sub">Agents bound to you via the claim flow. Claiming records ownership — each agent's API key still works after it.</div>
+        </div>
+      </div>
+      <div class="agt-claim">
+        <div class="agt-claim-row">
+          <h3>Claim a new agent</h3>
+          <button id="agt-gen-code" class="btn primary small" type="button">Generate claim code</button>
+        </div>
+        <p class="agt-hint">Generate a one-time code, then run <code>pane agent claim &lt;code&gt;</code> on the agent.</p>
+        <div id="agt-code-out" class="agt-reveal" hidden>
+          <div class="agt-reveal-label">Your code</div>
+          <div class="agt-reveal-row">
+            <code id="agt-code-value" class="agt-code"></code>
+            <button id="agt-copy-code" type="button" class="btn small">Copy</button>
+          </div>
+          <div class="agt-reveal-foot">Expires in <span id="agt-code-ttl"></span>. Copy now — you won't see it again.</div>
+        </div>
+      </div>
+      <div class="cat-row"><h3>Claimed</h3><span class="count">${data.agents.length}</span></div>
+      ${
+        data.agents.length === 0
+          ? `<div class="empty-strip">No claimed agents yet. Generate a code above, then run <code>pane agent claim &lt;code&gt;</code> on the agent's machine.</div>`
+          : `<ul class="agt-list">${data.agents.map(agentRowHtml).join("")}</ul>`
+      }
     </section>
 
     <section class="view" data-view="settings">
@@ -1064,6 +1128,38 @@ function visibilityCell(accessMode: string): string {
   return `<div class="vis" title="${escapeHtml(v.label)}" aria-label="${escapeHtml(v.label)}">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${v.svg}</svg>
     </div>`;
+}
+
+function agentRowHtml(a: AgentRow): string {
+  const status = a.revoked
+    ? `<span class="pill muted">Revoked</span>`
+    : `<span class="pill good">Active</span>`;
+  // Rotate + revoke are only meaningful on a live (non-revoked) agent — a
+  // revoked key can't be rotated and revocation is permanent.
+  const actions = a.revoked
+    ? ""
+    : `<button class="btn small" type="button" data-act="rotate" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}">Regenerate key</button>
+        <button class="btn small agt-danger" type="button" data-act="revoke" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}">Revoke</button>`;
+  return `<li class="agt-row" data-agent-id="${escapeHtml(a.id)}">
+    <div class="agt-main">
+      <div class="agt-name-row">
+        <span class="agt-name" data-agent-name>${escapeHtml(a.name)}</span>
+        <button class="agt-rename" type="button" data-act="rename" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" title="Rename" aria-label="Rename agent">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </button>
+      </div>
+      <div class="agt-meta"><code>${escapeHtml(a.keyPrefix)}…</code> · claimed ${a.claimedAt ? escapeHtml(a.claimedAt) : "—"} · last used ${escapeHtml(a.lastUsed)}</div>
+      <div class="agt-reveal agt-rotate-out" hidden>
+        <div class="agt-reveal-label">New API key</div>
+        <div class="agt-reveal-row">
+          <code class="agt-code agt-rotate-value"></code>
+          <button class="btn small agt-rotate-copy" type="button">Copy</button>
+        </div>
+        <div class="agt-reveal-foot">Won't be shown again. Run <code>pane agent set-key &lt;key&gt;</code> on the agent's machine (or set <code>PANE_API_KEY</code>).</div>
+      </div>
+    </div>
+    <div class="agt-actions">${status}${actions}</div>
+  </li>`;
 }
 
 function paneRow(p: PaneRef): string {
@@ -1474,6 +1570,48 @@ const EXTRA_CSS = `
   }
   .tpl-desc:empty { display: none; }
 
+  /* Agents view — claim card, claimed list, one-time-secret reveal boxes. */
+  .agt-claim {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 12px; padding: 16px; margin-top: 4px;
+  }
+  .agt-claim-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .agt-claim-row h3 { margin: 0; font-size: 15px; }
+  .agt-hint { color: var(--ink-mute); font-size: 13px; margin: 8px 0 0; }
+  .agt-hint code, .agt-meta code, .agt-reveal-foot code { font-family: var(--mono); }
+  .agt-reveal {
+    margin-top: 12px; padding: 12px; border-radius: 10px;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+  }
+  .agt-reveal-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-mute); }
+  .agt-reveal-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+  .agt-code { font-family: var(--mono); font-size: 13px; color: var(--ink); word-break: break-all; flex: 1 1 auto; }
+  .agt-reveal-foot { font-size: 11.5px; color: var(--ink-mute); }
+  .agt-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .agt-row {
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 12px 14px; display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+  }
+  .agt-main { flex: 1 1 240px; min-width: 0; }
+  .agt-name-row { display: flex; align-items: center; gap: 6px; }
+  .agt-name { font-weight: 600; font-size: 14px; }
+  .agt-rename {
+    background: transparent; border: none; color: var(--ink-mute); cursor: pointer;
+    padding: 3px; border-radius: 6px; line-height: 0;
+  }
+  .agt-rename:hover { color: var(--accent); }
+  .agt-rename svg { display: block; }
+  .agt-meta { color: var(--ink-mute); font-size: 12px; margin-top: 2px; }
+  .agt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .agt-danger { color: var(--pink, #fb7185); }
+  .agt-danger:hover { border-color: var(--pink, #fb7185); }
+  .agt-rename-form { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .agt-rename-form input {
+    background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 6px;
+    padding: 4px 8px; color: var(--ink); font: inherit; font-size: 13px; min-width: 140px;
+  }
+  .agt-rename-form input:focus { outline: none; border-color: var(--accent); }
+
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
   [hidden] { display: none !important; }
@@ -1495,7 +1633,7 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'explore', 'templates', 'settings'];
+  const VIEWS = ['home', 'panes', 'explore', 'templates', 'agents', 'settings'];
 
   // The Templates view has two segments (Yours / Store). Each maps to its own
   // hash so deep links + browser back/forward land on the right scope, and so
@@ -2400,6 +2538,160 @@ const SHELL_JS = `
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !modal.hidden) close(); });
 
     window.openTemplateDetail = open;
+  })();
+
+  // Agents view — claim a new agent (one-time code), rotate / revoke a key
+  // (one-time-secret disclosure for the new key), and rename inline. Ported
+  // from the old standalone /my-agents page so it shares the SPA chrome.
+  (function () {
+    const view = document.querySelector('.view[data-view="agents"]');
+    if (!view) return;
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text); return true;
+        }
+      } catch (e) { /* fall through */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta); return ok;
+      } catch (e) { return false; }
+    }
+    function flashCopy(btn, ok) {
+      const orig = btn.textContent;
+      btn.textContent = ok ? 'Copied!' : 'Copy failed';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+    async function errText(res) {
+      try { const b = await res.json(); if (b && b.error && b.error.message) return b.error.message; } catch (e) { /* */ }
+      return 'HTTP ' + res.status;
+    }
+
+    // Generate claim code.
+    const genBtn = document.getElementById('agt-gen-code');
+    if (genBtn) {
+      genBtn.addEventListener('click', async () => {
+        genBtn.disabled = true;
+        const orig = genBtn.textContent;
+        genBtn.textContent = 'Generating…';
+        try {
+          const res = await fetch('/v1/self/claim-codes', { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) { alert('Failed to generate code: ' + (await errText(res))); return; }
+          const b = await res.json();
+          const val = document.getElementById('agt-code-value');
+          const ttl = document.getElementById('agt-code-ttl');
+          if (val) val.textContent = b.code;
+          if (ttl) ttl.textContent = Math.max(0, Math.round((new Date(b.expires_at).getTime() - Date.now()) / 60000)) + ' min';
+          const out = document.getElementById('agt-code-out');
+          if (out) out.hidden = false;
+        } catch (e) { alert('Network error — try again.'); }
+        finally { genBtn.disabled = false; genBtn.textContent = orig; }
+      });
+    }
+    const copyCodeBtn = document.getElementById('agt-copy-code');
+    if (copyCodeBtn) {
+      copyCodeBtn.addEventListener('click', async () => {
+        const val = document.getElementById('agt-code-value');
+        const code = (val && val.textContent) || '';
+        if (code) flashCopy(copyCodeBtn, await copyText(code));
+      });
+    }
+
+    // Row actions (rename / rotate / revoke / copy new key) — delegated.
+    view.addEventListener('click', async (ev) => {
+      const t = ev.target instanceof HTMLElement ? ev.target : null;
+      if (!t) return;
+      const btn = t.closest('button[data-act], button.agt-rotate-copy');
+      if (!btn) return;
+      const row = btn.closest('.agt-row[data-agent-id]');
+      if (!row) return;
+      const id = row.getAttribute('data-agent-id');
+
+      if (btn.classList.contains('agt-rotate-copy')) {
+        const v = row.querySelector('.agt-rotate-value');
+        const code = (v && v.textContent) || '';
+        if (code) flashCopy(btn, await copyText(code));
+        return;
+      }
+      const act = btn.getAttribute('data-act');
+      const name = btn.getAttribute('data-name') || 'this agent';
+
+      if (act === 'rename') {
+        const nameEl = row.querySelector('[data-agent-name]');
+        if (!nameEl || row.querySelector('.agt-rename-form')) return;
+        const current = nameEl.textContent || '';
+        const form = document.createElement('span');
+        form.className = 'agt-rename-form';
+        const input = document.createElement('input');
+        input.type = 'text'; input.maxLength = 80; input.value = current;
+        const save = document.createElement('button');
+        save.type = 'button'; save.className = 'btn primary small'; save.textContent = 'Save';
+        const cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = 'btn small'; cancel.textContent = 'Cancel';
+        form.appendChild(input); form.appendChild(save); form.appendChild(cancel);
+        nameEl.hidden = true; btn.hidden = true;
+        nameEl.parentNode.insertBefore(form, nameEl.nextSibling);
+        input.focus(); input.select();
+        function done() { form.remove(); nameEl.hidden = false; btn.hidden = false; }
+        cancel.addEventListener('click', done);
+        input.addEventListener('keydown', (k) => { if (k.key === 'Escape') done(); if (k.key === 'Enter') save.click(); });
+        save.addEventListener('click', async () => {
+          const next = input.value.trim();
+          if (!next || next === current) { done(); return; }
+          save.disabled = true; save.textContent = 'Saving…';
+          try {
+            const res = await fetch('/v1/self/agents/' + encodeURIComponent(id), {
+              method: 'PATCH', credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ name: next }),
+            });
+            if (!res.ok) { alert('Rename failed: ' + (await errText(res))); save.disabled = false; save.textContent = 'Save'; return; }
+            const b = await res.json();
+            nameEl.textContent = b.name;
+            // Keep the action buttons' data-name in sync for confirm prompts.
+            row.querySelectorAll('[data-name]').forEach((el) => el.setAttribute('data-name', b.name));
+            done();
+          } catch (e) { alert('Network error — try again.'); save.disabled = false; save.textContent = 'Save'; }
+        });
+        return;
+      }
+
+      if (act === 'rotate') {
+        if (!confirm('Regenerate the API key for ' + name + '?\\n\\nThe current key stops working immediately. You will see the new key once.')) return;
+        btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Regenerating…';
+        try {
+          const res = await fetch('/v1/self/agents/' + encodeURIComponent(id) + '/rotate-key', { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) { alert("Couldn't regenerate key: " + (await errText(res))); btn.disabled = false; btn.textContent = orig; return; }
+          const b = await res.json();
+          const reveal = row.querySelector('.agt-rotate-out');
+          const valEl = row.querySelector('.agt-rotate-value');
+          if (valEl) valEl.textContent = b.api_key;
+          if (reveal) reveal.hidden = false;
+          btn.remove();
+        } catch (e) { alert('Network error — try again.'); btn.disabled = false; btn.textContent = orig; }
+        return;
+      }
+
+      if (act === 'revoke') {
+        if (!confirm('Revoke the API key for ' + name + '?\\n\\nThe key stops working immediately and revocation is permanent. Claim a fresh agent if you need this one again.')) return;
+        btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Revoking…';
+        try {
+          const res = await fetch('/v1/self/agents/' + encodeURIComponent(id) + '/revoke-key', { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) { alert("Couldn't revoke key: " + (await errText(res))); btn.disabled = false; btn.textContent = orig; return; }
+          const pill = row.querySelector('.pill');
+          if (pill) { pill.className = 'pill muted'; pill.textContent = 'Revoked'; }
+          const rotate = row.querySelector("button[data-act='rotate']");
+          if (rotate) rotate.remove();
+          btn.remove();
+        } catch (e) { alert('Network error — try again.'); btn.disabled = false; btn.textContent = orig; }
+        return;
+      }
+    });
   })();
 
   // Share dialog — People + General access, backed by the cookie-authed

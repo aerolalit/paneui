@@ -286,35 +286,9 @@ describe("F-18 — Content-Security-Policy on system pages", () => {
     },
   );
 
-  it("sets a nonce CSP on authenticated pages (/my-agents) and nonces every inline block", async () => {
-    const { cookie } = await seedLoggedInHuman();
-    const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
-    );
-    expect(res.status).toBe(200);
-    const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toMatch(/script-src 'nonce-[^']+'/);
-    expect(csp).toMatch(/style-src 'nonce-[^']+'/);
-    expect(csp).not.toContain("'unsafe-inline'");
-    expect(csp).toContain("frame-ancestors 'none'");
-
-    const html = await res.text();
-    // The page still emits its inline behaviour scripts — now nonce'd, not
-    // 'unsafe-inline'. The nonce must match or the script won't execute.
-    expect(html).toContain('id="gen-code"');
-    const sNonce = scriptNonce(csp);
-    expect(sNonce).toBeTruthy();
-    const inlineTags = [...html.matchAll(/<(script|style)(\s[^>]*)?>/g)].filter(
-      (m) => !/type="application\/json"/.test(m[2] ?? ""),
-    );
-    expect(inlineTags.length).toBeGreaterThan(0);
-    for (const tag of inlineTags) {
-      expect(tag[0]).toContain(`nonce="${sNonce}"`);
-    }
-    // No inline style="…" attribute survives — those are blocked under the
-    // nonce-only style-src and were migrated to classes.
-    expect(html).not.toMatch(/\sstyle="/);
-  });
+  // (The legacy /my-agents authenticated-page CSP test was removed when that
+  // page moved into the SPA and now 302-redirects; /home below covers the
+  // SPA's nonce CSP.)
 
   it("nonces the /home SPA script (dropping script-src 'unsafe-inline')", async () => {
     const { cookie } = await seedLoggedInHuman();
@@ -357,7 +331,7 @@ describe("F-18 — Content-Security-Policy on system pages", () => {
 });
 
 describe("logged-out access to gated pages", () => {
-  it.each(["/home", "/my-agents"])(
+  it.each(["/home"])(
     "%s shows the sign-in prompt to logged-out callers",
     async (path) => {
       const res = await app.fetch(new Request(`http://t${path}`));
@@ -366,6 +340,12 @@ describe("logged-out access to gated pages", () => {
       expect(html).toContain("Sign in to see this page");
     },
   );
+
+  it("/my-agents redirects into the SPA (which then gates auth)", async () => {
+    const res = await app.fetch(new Request("http://t/my-agents"));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/home#agents");
+  });
 });
 
 describe("PWA assets", () => {
@@ -476,13 +456,11 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('id="templates-search"');
     expect(html).not.toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
-    // Footer utility links must stay reachable from the shell. /my-agents is
-    // where the claim-code generator lives — it has no data-view (full-page
-    // nav), so it regressed out of the SPA once already. They live in the
-    // account menu (inline on desktop, a popover behind the "Account" tab on
-    // mobile); assert both the links and the menu scaffolding are present.
-    expect(html).toContain('href="/my-agents"');
-    // Settings is now an in-app SPA view (#settings), not a full-page nav.
+    // Agents is now a primary in-SPA tab (was the standalone /my-agents page);
+    // its account-menu link is gone, replaced by the sidebar tab + view.
+    expect(html).toContain('data-view="agents"');
+    expect(html).not.toContain('href="/my-agents"');
+    // Settings is still an in-app SPA view (#settings), in the account menu.
     expect(html).toContain('href="#settings"');
     expect(html).toContain('id="acct-tab"');
     expect(html).toContain('id="acct-links"');
@@ -748,21 +726,29 @@ describe("brand mark consistency", () => {
   });
 });
 
-describe("GET /my-agents (signed in)", () => {
-  it("renders the empty state with the claim-new button", async () => {
+describe("Agents (moved into the SPA; /my-agents redirects)", () => {
+  it("redirects /my-agents into the SPA agents view", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/my-agents", withCookie(cookie)),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/home#agents");
+  });
+
+  it("renders the agents view empty state + claim-new button in /home", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request("http://t/home", withCookie(cookie)),
+    );
     const html = await res.text();
-    expect(html).toContain('class="empty-state"');
+    expect(html).toContain('data-view="agents"');
     expect(html).toContain("No claimed agents yet");
     expect(html).toContain("pane agent claim");
     expect(html).toContain("Generate claim code");
   });
 
-  it("lists the human's claimed agents", async () => {
+  it("lists the human's claimed agents with rename + rotate affordances", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     await prisma.agent.create({
       data: {
@@ -775,24 +761,22 @@ describe("GET /my-agents (signed in)", () => {
       },
     });
     const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
+      new Request("http://t/home", withCookie(cookie)),
     );
-    expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("CodeReviewer");
-    // The agent row now surfaces the keyPrefix, the relative
-    // last-used time, and a Regenerate-key button.
     expect(html).toContain("pane_abc123");
     expect(html).toContain("last used today");
     expect(html).toContain("Regenerate key");
     expect(html).toContain('data-act="rotate"');
+    expect(html).toContain('data-act="rename"');
   });
 
   it("hides the Regenerate-key button on revoked agents", async () => {
     const { humanId, cookie } = await seedLoggedInHuman();
     await prisma.agent.create({
       data: {
-        name: "Revoked",
+        name: "RevokedBot",
         keyHash: "y".repeat(64),
         keyPrefix: "pane_xyz",
         ownerHumanId: humanId,
@@ -801,12 +785,13 @@ describe("GET /my-agents (signed in)", () => {
       },
     });
     const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
+      new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
-    expect(html).toContain("Revoked");
-    // No rotate affordance on a revoked agent — rotation doesn't unrevoke.
+    expect(html).toContain("RevokedBot");
+    // No rotate/revoke affordance on a revoked agent.
     expect(html).not.toContain('data-act="rotate"');
+    expect(html).not.toContain('data-act="revoke"');
   });
 
   it("shows 'last used never' when an agent hasn't authenticated yet", async () => {
@@ -822,7 +807,7 @@ describe("GET /my-agents (signed in)", () => {
       },
     });
     const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
+      new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
     expect(html).toContain("last used never");
@@ -848,53 +833,6 @@ describe("GET /settings (signed in)", () => {
     expect(html).toContain('data-view="settings"');
     expect(html).toContain("alice@example.com");
     expect(html).toContain("Sign out of this device");
-  });
-});
-
-// The legacy system-pages chrome (rendered on standalone pages like /settings
-// and /my-agents) must use the SAME nav labels and icons as the owner-shell
-// SPA — they share NAV_LABELS / NAV_GLYPHS in nav-meta.ts. These assertions
-// lock that in so the two navs can't drift back apart.
-describe("owner nav consistency (system-pages chrome)", () => {
-  it("renders the canonical sentence-case labels, no retired tabs", async () => {
-    const { cookie } = await seedLoggedInHuman();
-    // /my-agents is still a standalone system page (renders the legacy chrome);
-    // /settings now redirects into the SPA, so assert the chrome on /my-agents.
-    const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
-    );
-    const html = await res.text();
-    // Canonical labels (match the SPA sidebar exactly).
-    for (const label of [
-      "Home",
-      "Panes",
-      "Template store",
-      "My templates",
-      "My agents",
-      "Settings",
-    ]) {
-      expect(html).toContain(`>${label}</span>`);
-    }
-    // Retired / old-style labels must be gone.
-    expect(html).not.toContain("My panes");
-    expect(html).not.toContain("My Templates"); // title-case variant retired
-    expect(html).not.toContain(">Trash<");
-    expect(html).not.toContain("/trash");
-  });
-
-  it("uses the shared canonical icons (storefront for store, grid for templates)", async () => {
-    const { cookie } = await seedLoggedInHuman();
-    const res = await app.fetch(
-      new Request("http://t/my-agents", withCookie(cookie)),
-    );
-    const html = await res.text();
-    // Storefront awning path = Template store (NOT the 2x2 grid it used to
-    // share with My templates).
-    expect(html).toContain(`d="M3 3h18l-1.5 5H4.5L3 3z"`);
-    // The old document-style My templates icon must be gone.
-    expect(html).not.toContain(`d="M4 5h13l3 3v11`);
-    // The old person-style My agents icon must be gone (now a robot).
-    expect(html).not.toContain(`d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"`);
   });
 });
 
