@@ -708,6 +708,13 @@ export const OWNER_SHELL_CSS = `
     border-radius: 999px; background: currentColor; margin-right: 5px;
     vertical-align: middle;
   }
+  /* Visibility icon cell on a pane row (lock / link / globe). Muted so it
+     reads as metadata, not an action; the title attr names the access mode. */
+  .pane-row .vis {
+    color: var(--ink-mute);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pane-row .vis svg { display: block; }
   .pane-row .menu-btn {
     width: 40px; height: 40px;
     background: transparent;

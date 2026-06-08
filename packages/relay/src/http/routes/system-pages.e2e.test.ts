@@ -657,10 +657,14 @@ describe("Owner-shell SPA at /home", () => {
     // must NOT appear inside the title text.
     expect(html).toContain("Yesterday&#39;s pane");
     expect(html).not.toContain("Yesterday's pane");
-    // Open is the default state, so open rows render no status pill (just an
-    // empty cell) — only the exceptional "closed" state is flagged.
+    // Pane rows no longer surface open/closed status — that's noise on a list
+    // that's effectively all-live (closed panes are swept). Each row instead
+    // shows a visibility icon for its access mode.
     expect(html).not.toContain(">open<");
-    expect(html).toContain(">closed<");
+    expect(html).not.toContain(">closed<");
+    expect(html).toContain('class="vis"');
+    // The Panes view has a search box now.
+    expect(html).toContain('id="panes-search"');
   });
 
   it("renders the Share dialog scaffolding + Recently-viewed section", async () => {

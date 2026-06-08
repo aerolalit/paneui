@@ -89,6 +89,9 @@ interface PaneRef {
   status: string;
   createdAt: Date;
   expiresAt: Date;
+  /** Access mode: "invite_only" | "link" | "public". Drives the row's
+   *  visibility icon. */
+  accessMode: string;
   templateId: string | null;
   templateVersion: number;
   templateName: string | null;
@@ -253,6 +256,9 @@ async function loadShellData(
         status: true,
         createdAt: true,
         expiresAt: true,
+        // Access mode (invite_only | link | public) — drives the visibility
+        // icon on each pane row.
+        accessMode: true,
         // Per-pane icon override (NULL = inherit the template's icon).
         iconEmoji: true,
         iconAttachmentId: true,
@@ -377,6 +383,7 @@ async function loadShellData(
       status: p.status,
       createdAt: p.createdAt,
       expiresAt: p.expiresAt,
+      accessMode: p.accessMode,
       templateId: tpl?.id ?? null,
       templateVersion: p.templateVersion?.version ?? 0,
       templateName: tpl?.name ?? tpl?.slug ?? null,
@@ -622,6 +629,10 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <h1>Panes</h1>
           <div class="sub">Live sessions you own or joined. Click to open.</div>
         </div>
+      </div>
+      <div class="search">
+        <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
+        <input id="panes-search" placeholder="Search your panes…" autocomplete="off" />
       </div>
       <!-- Filter banner shown when the user arrives here from a template
            tile's "X panes →" chip. Hidden by default; populated + revealed
@@ -960,6 +971,31 @@ function appTile(
   </div>`;
 }
 
+// Visibility icon for a pane row — lock (invite-only), link (anyone with the
+// link), or globe (public). Access mode persists per pane so every row gets
+// one; we intentionally don't surface open/closed status here (closed panes
+// are swept, so the list is effectively all-live).
+function visibilityCell(accessMode: string): string {
+  const ICONS: Record<string, { label: string; svg: string }> = {
+    invite_only: {
+      label: "Invite only",
+      svg: `<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
+    },
+    link: {
+      label: "Anyone with the link",
+      svg: `<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>`,
+    },
+    public: {
+      label: "Public",
+      svg: `<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>`,
+    },
+  };
+  const v = ICONS[accessMode] ?? ICONS["link"]!;
+  return `<div class="vis" title="${escapeHtml(v.label)}" aria-label="${escapeHtml(v.label)}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${v.svg}</svg>
+    </div>`;
+}
+
 function paneRow(p: PaneRef): string {
   // templateName is null for legacy inline templates; fall back to the pane's
   // own title (always present), never to the raw cuid id.
@@ -973,13 +1009,6 @@ function paneRow(p: PaneRef): string {
     label: tplName,
   });
   const rel = relativeDate(p.createdAt);
-  const isOpen = p.status === "open" && p.expiresAt.getTime() > Date.now();
-  // Open is the default, expected state for every row in this list ("Live
-  // sessions … Click to open"), so a green OPEN pill on every line is just
-  // noise that eats the title's width. Only flag the exception — a closed
-  // pane — and leave the cell empty otherwise so the title reclaims the space.
-  const statusCls = isOpen ? "" : "closed";
-  const statusText = isOpen ? "" : "closed";
   const tplAttr = p.templateId
     ? ` data-template-id="${escapeHtml(p.templateId)}"`
     : "";
@@ -994,7 +1023,7 @@ function paneRow(p: PaneRef): string {
       <div class="title">${escapeHtml(p.title)}</div>
       <div class="meta">${escapeHtml(p.id)} · ${escapeHtml(tplName)} · ${escapeHtml(rel)}</div>
     </div>
-    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
+    ${visibilityCell(p.accessMode)}
     <button class="${starCls}" data-noopen="1" data-pane-fav-toggle="${escapeHtml(p.id)}" data-fav-on="${p.isFavorite ? "1" : "0"}" title="${escapeHtml(starLabel)}" aria-label="${escapeHtml(starLabel)}">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${starPath}</svg>
     </button>
@@ -1993,6 +2022,7 @@ const SHELL_JS = `
   // harmless no-op and the box keeps working across a segment switch.
   bindSearch('templates-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
   bindSearch('explore-search', ['#explore-list .pane-row']);
+  bindSearch('panes-search', ['#panes-list .pane-row']);
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
   // distinct Home section. Graceful when empty (the section stays hidden) and
