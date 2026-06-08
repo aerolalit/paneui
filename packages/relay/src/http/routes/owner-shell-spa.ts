@@ -77,6 +77,16 @@ interface TemplateRef {
    *  list. Powers the copy-paste agent instructions shown when a human taps
    *  an agent-init tile. Empty for non-agent-init templates. */
   agentInitFields: Array<{ name: string; type: string }>;
+  /** Author-supplied prose description. Surfaced on the store detail modal.
+   *  Only populated for catalog (store) refs; null elsewhere. */
+  description: string | null;
+  /** Free-form tags. Surfaced on the store detail modal. */
+  tags: string[];
+  /** Latest version number. Surfaced on the store detail modal. */
+  version: number;
+  /** How many humans have installed this template. Surfaced on the store
+   *  detail modal. */
+  installCount: number;
 }
 
 interface PaneRef {
@@ -229,6 +239,11 @@ async function loadShellData(
         publishedAt: true,
         iconEmoji: true,
         iconAttachmentId: true,
+        // Detail-page fields — surfaced in the store template detail modal.
+        description: true,
+        tags: true,
+        latestVersion: true,
+        installCount: true,
         ...latestVersionInclude,
       },
     }),
@@ -329,6 +344,12 @@ async function loadShellData(
     iconEmoji: string | null;
     iconAttachmentId: string | null;
     versions: Array<{ inputSchema: unknown }>;
+    // Detail-page fields — only the public-catalog query selects these; other
+    // callers (owned / installed) omit them and get the defaults below.
+    description?: string | null;
+    tags?: unknown;
+    latestVersion?: number;
+    installCount?: number;
   }): TemplateRef {
     return {
       id: t.id,
@@ -340,6 +361,12 @@ async function loadShellData(
       isPublished: t.publishedAt !== null,
       iconEmoji: t.iconEmoji,
       hasIconImage: t.iconAttachmentId !== null,
+      description: t.description ?? null,
+      tags: Array.isArray(t.tags)
+        ? t.tags.filter((x): x is string => typeof x === "string")
+        : [],
+      version: t.latestVersion ?? 0,
+      installCount: t.installCount ?? 0,
     };
   }
   // Usage-maturity list gate — the "Yours" grid is the author's OWN authored
@@ -488,6 +515,28 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       : data.publicCatalog
           .map((t) => appTile(t, { launchable: false, install: true }))
           .join("");
+
+  // Per-template detail payload for the store detail modal (App-Store-style:
+  // tapping a catalog tile opens this instead of installing on the spot). Keyed
+  // by template id; only public-catalog templates carry the detail fields. The
+  // `<` escape closes the one `</script>` breakout the HTML parser cares about.
+  const catalogDetailJson = JSON.stringify(
+    Object.fromEntries(
+      data.publicCatalog.map((t) => [
+        t.id,
+        {
+          name: t.name,
+          description: t.description,
+          tags: t.tags,
+          version: t.version,
+          installCount: t.installCount,
+          isAgentInit: t.isAgentInit,
+          iconEmoji: t.iconEmoji,
+          hasIconImage: t.hasIconImage,
+        },
+      ]),
+    ),
+  ).replace(/</g, "\\u003c");
 
   // Panes list.
   const panesHtml =
@@ -801,6 +850,31 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
     </div>
   </div>
 </div>
+
+<!-- Store template detail — an App-Store-style sheet. A catalog tile opens this
+     (instead of installing on the spot); the primary button installs + opens.
+     Populated client-side from #catalog-detail; all text via textContent. -->
+<div class="tpl-modal" id="tpl-detail-modal" hidden>
+  <div class="tpl-backdrop" data-tpl-close></div>
+  <div class="tpl-card" role="dialog" aria-modal="true" aria-labelledby="tpl-detail-name">
+    <button class="tpl-x" data-tpl-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="tpl-head">
+      <div class="tpl-icon" id="tpl-detail-icon" aria-hidden="true"></div>
+      <div class="tpl-head-text">
+        <h2 id="tpl-detail-name"></h2>
+        <div class="tpl-meta" id="tpl-detail-meta"></div>
+      </div>
+      <button class="btn primary" id="tpl-detail-action" type="button">Install &amp; Open</button>
+    </div>
+    <div class="tpl-err" id="tpl-detail-err" hidden></div>
+    <div class="tpl-tags" id="tpl-detail-tags"></div>
+    <div class="tpl-preview"><iframe id="tpl-detail-preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe></div>
+    <p class="tpl-desc" id="tpl-detail-desc"></p>
+  </div>
+</div>
+<script type="application/json" id="catalog-detail">${catalogDetailJson}</script>
 
 <script nonce="${nonce}">${SHELL_JS}</script>
 </body>
@@ -1348,6 +1422,58 @@ const EXTRA_CSS = `
   .share-link-hint { color: var(--ink-mute); font-size: 12px; flex: 1 1 160px; }
   .share-modal .btn[disabled] { opacity: 0.55; cursor: default; }
 
+  /* Store template detail — App-Store-style sheet. */
+  .tpl-modal {
+    position: fixed; inset: 0; z-index: 1300;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .tpl-backdrop { position: absolute; inset: 0; background: rgba(4, 6, 10, 0.66); backdrop-filter: blur(2px); }
+  .tpl-card {
+    position: relative; z-index: 1; width: 100%; max-width: 540px;
+    max-height: calc(100vh - 40px); overflow-y: auto;
+    background: var(--bg-2, #11151f); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 16px;
+    box-shadow: var(--shadow-pop, 0 24px 64px rgba(0,0,0,0.5)); padding: 22px;
+  }
+  .tpl-x {
+    position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; color: var(--ink-mute); cursor: pointer; border-radius: 8px;
+  }
+  .tpl-x:hover { color: var(--ink); background: var(--surface-2); }
+  .tpl-head { display: flex; align-items: center; gap: 14px; margin-right: 28px; }
+  .tpl-icon {
+    flex: none; width: 60px; height: 60px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; background: var(--surface-2); overflow: hidden;
+  }
+  .tpl-icon img { width: 100%; height: 100%; object-fit: cover; }
+  .tpl-head-text { flex: 1 1 auto; min-width: 0; }
+  .tpl-head-text h2 { margin: 0 0 3px; font-size: 19px; overflow: hidden; text-overflow: ellipsis; }
+  .tpl-meta { color: var(--ink-mute); font-size: 12.5px; font-family: var(--mono); }
+  .tpl-head .btn.primary { flex: none; }
+  .tpl-err {
+    margin-top: 12px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(251,113,133,0.12); border: 1px solid rgba(251,113,133,0.35);
+    color: var(--pink, #fb7185); font-size: 12.5px;
+  }
+  .tpl-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  .tpl-tags .tpl-tag {
+    font-size: 11px; color: var(--ink-mute);
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .tpl-preview {
+    margin-top: 14px; height: 220px; border-radius: 12px; overflow: hidden;
+    border: 1px solid var(--hairline); background: #fff;
+  }
+  .tpl-preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .tpl-desc {
+    margin: 14px 0 0; color: var(--ink); font-size: 13.5px; line-height: 1.5;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .tpl-desc:empty { display: none; }
+
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
   [hidden] { display: none !important; }
@@ -1768,6 +1894,13 @@ const SHELL_JS = `
       return;
     }
     const needsInstall = tile.getAttribute('data-needs-install') === '1';
+    // Store (catalog) tile → open the App-Store-style detail sheet instead of
+    // installing on the spot. The sheet's primary button runs install + open.
+    // Owned/installed tiles (needsInstall === false) keep launching directly.
+    if (needsInstall && window.openTemplateDetail) {
+      window.openTemplateDetail(id);
+      return;
+    }
     const labelEl = tile.querySelector('.label');
     const origLabel = labelEl ? labelEl.textContent : '';
     function reset() {
@@ -1776,21 +1909,6 @@ const SHELL_JS = `
     }
     tile.disabled = true;
     try {
-      if (needsInstall) {
-        if (labelEl) labelEl.textContent = 'Installing…';
-        const ins = await fetch('/v1/templates/' + encodeURIComponent(id) + '/install', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          credentials: 'same-origin',
-          body: '{}',
-        });
-        if (!ins.ok) {
-          reset();
-          const body = await ins.json().catch(() => ({}));
-          alert('Install failed: ' + ((body.error && body.error.message) || ('HTTP ' + ins.status)));
-          return;
-        }
-      }
       if (labelEl) labelEl.textContent = 'Launching…';
       const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
         method: 'POST',
@@ -2163,6 +2281,125 @@ const SHELL_JS = `
         section.hidden = false;
       })
       .catch(() => { /* leave hidden — recents are non-essential */ });
+  })();
+
+  // Store template detail sheet — opened from a catalog tile via
+  // window.openTemplateDetail(id). Renders from the #catalog-detail JSON; the
+  // primary button installs the template then opens a fresh pane.
+  (function () {
+    const modal = document.getElementById('tpl-detail-modal');
+    if (!modal) return;
+    const iconEl = document.getElementById('tpl-detail-icon');
+    const nameEl = document.getElementById('tpl-detail-name');
+    const metaEl = document.getElementById('tpl-detail-meta');
+    const tagsEl = document.getElementById('tpl-detail-tags');
+    const descEl = document.getElementById('tpl-detail-desc');
+    const previewEl = document.getElementById('tpl-detail-preview');
+    const actionBtn = document.getElementById('tpl-detail-action');
+    const errEl = document.getElementById('tpl-detail-err');
+    if (!iconEl || !nameEl || !metaEl || !tagsEl || !descEl || !previewEl || !actionBtn) return;
+    let catalog = {};
+    try {
+      const el = document.getElementById('catalog-detail');
+      catalog = el ? JSON.parse(el.textContent || '{}') : {};
+    } catch (e) { catalog = {}; }
+    let currentId = null;
+    let lastFocus = null;
+
+    function showErr(m) { if (errEl) { errEl.textContent = m; errEl.hidden = false; } }
+    function clearErr() { if (errEl) { errEl.hidden = true; errEl.textContent = ''; } }
+    function initials(name) {
+      const t = (name || '').trim();
+      if (!t) return '?';
+      const w = t.split(/[\\s_\\-/.]+/).filter((x) => /[A-Za-z0-9]/.test(x));
+      if (!w.length) return t.slice(0, 2).toUpperCase();
+      if (w.length === 1) return w[0].slice(0, 2).toUpperCase();
+      return (w[0][0] + w[1][0]).toUpperCase();
+    }
+
+    async function installAndOpen(id) {
+      clearErr();
+      actionBtn.disabled = true;
+      const orig = actionBtn.textContent;
+      actionBtn.textContent = 'Installing…';
+      try {
+        const ins = await fetch('/v1/templates/' + encodeURIComponent(id) + '/install', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin', body: '{}',
+        });
+        if (!ins.ok) {
+          const b = await ins.json().catch(() => ({}));
+          showErr('Install failed: ' + ((b.error && b.error.message) || ('HTTP ' + ins.status)));
+          actionBtn.disabled = false; actionBtn.textContent = orig; return;
+        }
+        actionBtn.textContent = 'Opening…';
+        const res = await fetch('/v1/my-templates/' + encodeURIComponent(id) + '/launch', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          const b = await res.json().catch(() => ({}));
+          showErr('Open failed: ' + ((b.error && b.error.message) || ('HTTP ' + res.status)));
+          actionBtn.disabled = false; actionBtn.textContent = orig; return;
+        }
+        const b = await res.json();
+        const url = b.urls && b.urls.humans && b.urls.humans[0];
+        if (url) location.href = url;
+      } catch (e) {
+        showErr('Network error — try again.');
+        actionBtn.disabled = false; actionBtn.textContent = orig;
+      }
+    }
+
+    function open(id) {
+      const d = catalog[id];
+      if (!d) { installAndOpen(id); return; }
+      currentId = id;
+      clearErr();
+      nameEl.textContent = d.name || id;
+      const n = d.installCount || 0;
+      metaEl.textContent = 'v' + (d.version || 1) + ' · ' + (n === 1 ? '1 install' : n + ' installs');
+      iconEl.textContent = '';
+      if (d.hasIconImage) {
+        const img = document.createElement('img');
+        img.src = '/templates/' + encodeURIComponent(id) + '/icon';
+        img.alt = '';
+        iconEl.appendChild(img);
+      } else {
+        iconEl.textContent = d.iconEmoji || initials(d.name || id);
+      }
+      tagsEl.textContent = '';
+      (Array.isArray(d.tags) ? d.tags : []).slice(0, 8).forEach((tag) => {
+        const s = document.createElement('span');
+        s.className = 'tpl-tag';
+        s.textContent = tag;
+        tagsEl.appendChild(s);
+      });
+      descEl.textContent = d.description || '';
+      previewEl.src = '/templates/' + encodeURIComponent(id) + '/preview';
+      // Agent-init templates can't be cold-launched by a human — disable the
+      // action and explain, mirroring the tile behaviour.
+      actionBtn.textContent = d.isAgentInit ? 'Agent-init only' : 'Install & Open';
+      actionBtn.disabled = !!d.isAgentInit;
+      if (d.isAgentInit) {
+        showErr('This template needs an agent to seed its inputs before it runs — it can\\'t be opened directly from here.');
+      }
+      lastFocus = document.activeElement;
+      modal.hidden = false;
+    }
+
+    function close() {
+      modal.hidden = true;
+      previewEl.src = 'about:blank';
+      currentId = null;
+      if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    }
+
+    actionBtn.addEventListener('click', () => { if (currentId) installAndOpen(currentId); });
+    modal.querySelectorAll('[data-tpl-close]').forEach((el) => el.addEventListener('click', close));
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !modal.hidden) close(); });
+
+    window.openTemplateDetail = open;
   })();
 
   // Share dialog — People + General access, backed by the cookie-authed
