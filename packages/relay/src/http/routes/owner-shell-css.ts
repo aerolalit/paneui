@@ -476,10 +476,9 @@ export const OWNER_SHELL_CSS = `
   /* Favorites strip (horizontal scroll) */
   .favs {
     display: flex; gap: 12px;
-    overflow-x: auto;
+    flex-wrap: wrap;
     padding: 4px 2px 12px;
     margin: 0 -2px;
-    scrollbar-width: thin;
   }
   .fav-tile {
     flex: 0 0 96px;
@@ -520,14 +519,13 @@ export const OWNER_SHELL_CSS = `
 
   /* Recent panes — horizontal scroll cards */
   .recents {
-    display: flex; gap: 14px;
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
     padding: 4px 2px 12px;
     margin: 0 -2px;
-    scrollbar-width: thin;
   }
   .recent-card {
-    flex: 0 0 280px;
     background: var(--surface);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-card);
