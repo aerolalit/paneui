@@ -193,6 +193,54 @@ describe("template create", () => {
     expect("event_schema" in req).toBe(false);
     expect(req).toMatchObject({ name: "X", type: "html-inline" });
   });
+
+  // --record-schema declares the template's per-pane record collections
+  // (#476). Optional; absent = event-only template.
+  it("parses --record-schema as a JSON object and forwards it as record_schema", async () => {
+    const recordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      "x-pane-collections": {
+        todos: {
+          schema: { $ref: "#/$defs/Todo" },
+          write: ["page"],
+          delete: ["author"],
+        },
+      },
+    };
+    await run([
+      "create",
+      "--name",
+      "Todo list",
+      "--template",
+      "<html></html>",
+      "--record-schema",
+      JSON.stringify(recordSchema),
+    ]);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect(req["record_schema"]).toEqual(recordSchema);
+  });
+
+  it("rejects a non-object --record-schema (array/primitive)", async () => {
+    await run([
+      "create",
+      "--name",
+      "X",
+      "--template",
+      "<html></html>",
+      "--record-schema",
+      "[]",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--record-schema must be a JSON object");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("omits record_schema when --record-schema is absent (event-only template)", async () => {
+    await run(["create", "--name", "X", "--template", "<html></html>"]);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    // record_schema must be ABSENT, not set to undefined.
+    expect("record_schema" in req).toBe(false);
+  });
 });
 
 describe("template version", () => {
@@ -230,6 +278,39 @@ describe("template version", () => {
     // event_schema must be ABSENT, not set to undefined.
     expect("event_schema" in req).toBe(false);
     expect(req).toMatchObject({ type: "html-inline" });
+  });
+
+  // --record-schema on `template version` lets an author introduce (or
+  // change) the record collections on a new version (#476). Pinned older
+  // versions keep whatever schema they had.
+  it("forwards --record-schema as record_schema on the new version", async () => {
+    const recordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      "x-pane-collections": {
+        comments: {
+          schema: { $ref: "#/$defs/Comment" },
+          write: ["page"],
+          delete: ["author"],
+        },
+      },
+    };
+    await run([
+      "version",
+      "pr-review",
+      "--template",
+      "<html>v2</html>",
+      "--record-schema",
+      JSON.stringify(recordSchema),
+    ]);
+    expect(calls[0]!.method).toBe("createArtifactVersion");
+    const req = calls[0]!.args[1] as Record<string, unknown>;
+    expect(req["record_schema"]).toEqual(recordSchema);
+  });
+
+  it("omits record_schema on the new version when --record-schema is absent", async () => {
+    await run(["version", "pr-review", "--template", "<html>v2</html>"]);
+    const req = calls[0]!.args[1] as Record<string, unknown>;
+    expect("record_schema" in req).toBe(false);
   });
 });
 

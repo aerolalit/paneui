@@ -34,6 +34,7 @@ const CREATE_FLAGS = [
   "template-type",
   "event-schema",
   "input-schema",
+  "record-schema",
   "icon-emoji",
 ];
 const SET_ICON_FLAGS = ["template-id", "emoji", "image"];
@@ -43,6 +44,7 @@ const VERSION_FLAGS = [
   "template-type",
   "event-schema",
   "input-schema",
+  "record-schema",
 ];
 const UPDATE_FLAGS = ["name", "slug", "description", "tags"];
 const NO_FLAGS: string[] = [];
@@ -85,7 +87,8 @@ Subcommands:
   pane template create --name <n> --template <path|inline>
                        [--event-schema <path|json>] [--slug <s>]
                        [--description <d>] [--tags <t1,t2>]
-                       [--input-schema <path|json>] [--template-type <t>]
+                       [--input-schema <path|json>]
+                       [--record-schema <path|json>] [--template-type <t>]
                        [--icon-emoji <emoji>]
       Creates a named template. Prints { template_id, slug, version }.
       --icon-emoji sets a single-emoji icon at create time; use 'set-icon'
@@ -93,7 +96,8 @@ Subcommands:
 
   pane template version <id|slug> --template <path|inline>
                         [--event-schema <path|json>]
-                        [--input-schema <path|json>] [--template-type <t>]
+                        [--input-schema <path|json>]
+                        [--record-schema <path|json>] [--template-type <t>]
       Appends a new immutable version. Prints { template_id, version }.
 
   pane template update <id|slug> [--name <n>] [--slug <s>]
@@ -164,13 +168,13 @@ Options:
                       Pane has TWO data primitives — pick the right one before
                       designing the schema. Events (this flag) are an
                       append-only journal: forms, approvals, surveys, pickers,
-                      doc reviews. RECORDS are a mutable collection: todo
-                      lists, shopping lists, checklists, kanban boards,
-                      comment threads, inventories. If the page shows more
-                      than one mutable item and the current state matters
-                      more than the history of edits, you want records — see
-                      the "Records" section of \`pane skill show\` and the
-                      \`pane template-records\` / \`pane records\` commands.
+                      doc reviews. RECORDS (--record-schema, below) are a
+                      mutable collection: todo lists, shopping lists,
+                      checklists, kanban boards, comment threads, inventories.
+                      If the page shows more than one mutable item and the
+                      current state matters more than the history of edits,
+                      you want records. See the "Records" section of
+                      \`pane skill show\` for the decision table.
 
                       Shape — an object with an "events" map, keyed by event
                       type. Each entry declares who may emit it and the JSON
@@ -192,6 +196,39 @@ Options:
                       emit against it. See docs/SPEC.md for the full grammar.
   --input-schema <v>  JSON Schema for this template's per-pane input_data —
                       a file path, or inline JSON. Optional.
+  --record-schema <v> JSON Schema 2020-12 document declaring this template's
+                      per-pane record collections — a file path, or inline
+                      JSON. Optional; omit for an event-only template (no
+                      mutable collections).
+
+                      Shape — a JSON Schema doc with an "x-pane-collections"
+                      extension mapping collection names to { schema, write,
+                      delete } entries. \`write\` is a non-empty subset of
+                      {agent, page}; \`delete\` is a non-empty subset of
+                      {agent, page, author}.
+                          {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "$defs": {
+                              "Todo": {
+                                "type": "object",
+                                "properties": {
+                                  "text": { "type": "string" },
+                                  "done": { "type": "boolean" }
+                                },
+                                "required": ["text"]
+                              }
+                            },
+                            "x-pane-collections": {
+                              "todos": {
+                                "schema": { "$ref": "#/$defs/Todo" },
+                                "write":  ["page", "agent"],
+                                "delete": ["author"]
+                              }
+                            }
+                          }
+                      The relay validates the document and rejects anything
+                      malformed at create time. See 'pane skill show' (the
+                      "Records" section) for the full grammar.
   --icon-emoji <e>    Single-emoji icon for the template (create only).
   --template-type <t> "html-inline" (default) or "html-ref".
   --url <url>         Relay base URL (overrides PANE_URL).
@@ -258,6 +295,30 @@ function resolveInputSchema(
   }
 }
 
+/**
+ * Resolve the optional --record-schema — file path or inline JSON. Must be an
+ * object (a JSON Schema 2020-12 document with an `x-pane-collections`
+ * extension). Absent → returns `undefined` so the caller omits `record_schema`
+ * from the request entirely (template has no record collections). The relay
+ * runs the full shape + collection validation; this helper only does the
+ * obvious "is it an object" pre-check so a typo surfaces locally.
+ */
+function resolveRecordSchema(
+  args: ParsedArgs,
+): Record<string, unknown> | undefined {
+  const raw = args.flags.get("record-schema");
+  if (raw === undefined) return undefined;
+  try {
+    const v = resolveJson(raw, "--record-schema");
+    if (v === null || typeof v !== "object" || Array.isArray(v)) {
+      fail("--record-schema must be a JSON object", "invalid_args");
+    }
+    return v as Record<string, unknown>;
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e), "invalid_args");
+  }
+}
+
 /** Parse a comma-separated --tags flag into a string array. */
 function resolveTags(args: ParsedArgs): string[] | undefined {
   const raw = args.flags.get("tags");
@@ -279,6 +340,7 @@ async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   const source = resolveSource(args, type);
   const eventSchema = resolveEventSchema(args);
   const inputSchema = resolveInputSchema(args);
+  const recordSchema = resolveRecordSchema(args);
   const tags = resolveTags(args);
   const slug = args.flags.get("slug");
   const description = args.flags.get("description");
@@ -295,6 +357,10 @@ async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   if (description !== undefined) candidate["description"] = description;
   if (tags !== undefined) candidate["tags"] = tags;
   if (inputSchema !== undefined) candidate["input_schema"] = inputSchema;
+  // record_schema is OMITTED entirely when --record-schema is absent — a
+  // template with no record collections (event-only). Setting it to
+  // `undefined` would still add the key.
+  if (recordSchema !== undefined) candidate["record_schema"] = recordSchema;
   const iconEmoji = args.flags.get("icon-emoji");
   if (iconEmoji !== undefined) candidate["icon_emoji"] = iconEmoji;
 
@@ -339,6 +405,7 @@ async function runTemplateVersion(args: ParsedArgs): Promise<void> {
   const source = resolveSource(args, type);
   const eventSchema = resolveEventSchema(args);
   const inputSchema = resolveInputSchema(args);
+  const recordSchema = resolveRecordSchema(args);
 
   const candidate: Record<string, unknown> = {
     source,
@@ -348,6 +415,10 @@ async function runTemplateVersion(args: ParsedArgs): Promise<void> {
   // version. Setting it to `undefined` would still add the key.
   if (eventSchema !== undefined) candidate["event_schema"] = eventSchema;
   if (inputSchema !== undefined) candidate["input_schema"] = inputSchema;
+  // record_schema is OMITTED entirely when --record-schema is absent — same
+  // rationale as event_schema above. Including the key as undefined would
+  // serialise as null and read as "intentionally cleared" on the wire.
+  if (recordSchema !== undefined) candidate["record_schema"] = recordSchema;
 
   const parsed = createArtifactVersionSchema.safeParse(candidate);
   if (!parsed.success) {
