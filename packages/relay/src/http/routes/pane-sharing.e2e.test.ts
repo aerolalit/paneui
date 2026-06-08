@@ -362,5 +362,7 @@ describe("GET /v1/self/recents", () => {
     expect(body.items[0].pane_id).toBe(paneId);
     expect(body.items[0].title).toBe("Test Pane");
     expect(typeof body.items[0].last_viewed_at).toBe("string");
+    // access_mode drives the visibility icon on the Home recently-viewed cards.
+    expect(body.items[0].access_mode).toBe("link");
   });
 });
