@@ -505,14 +505,9 @@ function layout(args: {
   .trec-data { flex: 1 1 240px; min-width: 200px; font-family: "SF Mono",Menlo,Consolas,monospace; font-size: 13px; }
   .meta-dim { color: var(--muted); }
 
-  /* GET /my-agents — claimed agents */
-  .agents-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .agents-head h1 { margin: 0; }
-  .agents-toggle { padding: 6px 14px; font-size: 13px; }
-  .agents-lede { color: var(--muted); font-size: 14.5px; }
-  .agents-claim-row { justify-content: space-between; margin-bottom: 6px; }
-  .agents-claim-row h2 { margin: 0; }
-  .agents-claim-hint { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  /* One-time-secret reveal box — used by /get-started's claim-code flow. (The
+     /my-agents page that also used these moved into the SPA; its .agents-*
+     styles were removed with it.) */
   .reveal-box { background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 10px; padding: 14px 16px; }
   .reveal-box.tight { padding: 12px 14px; margin-top: 10px; }
   .reveal-label { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
@@ -521,9 +516,6 @@ function layout(args: {
   .reveal-code.key { font-size: 14px; word-break: break-all; }
   .reveal-foot { font-size: 13px; color: var(--accent-ink); margin-top: 8px; }
   .btn-sm { padding: 6px 12px; font-size: 13px; min-height: 36px; }
-  .agents-claimed-h { margin-top: 0; }
-  .agent-title-col { min-width: 220px; flex: 1 1 220px; }
-  .agent-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
   /* /get-started onboarding */
   .gs-head h1 { margin: 0 0 6px; }

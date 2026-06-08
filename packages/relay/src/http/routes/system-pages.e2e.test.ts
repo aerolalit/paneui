@@ -456,11 +456,15 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('id="templates-search"');
     expect(html).not.toContain('data-view="trash"');
     expect(html).not.toContain('data-view="chrome"');
-    // Agents is now a primary in-SPA tab (was the standalone /my-agents page);
-    // its account-menu link is gone, replaced by the sidebar tab + view.
+    // Agents is an in-SPA view reached from the account menu (not a primary
+    // sidebar tab, and no longer the standalone /my-agents page).
     expect(html).toContain('data-view="agents"');
+    expect(html).toContain('data-go="agents"');
     expect(html).not.toContain('href="/my-agents"');
-    // Settings is still an in-app SPA view (#settings), in the account menu.
+    // It is NOT a primary sidebar nav button.
+    expect(html).not.toContain('data-view="agents" class');
+    expect(html).not.toContain('<button data-view="agents">');
+    // Settings is also an in-app SPA view (#settings), in the account menu.
     expect(html).toContain('href="#settings"');
     expect(html).toContain('id="acct-tab"');
     expect(html).toContain('id="acct-links"');
@@ -652,21 +656,16 @@ describe("Owner-shell SPA at /home", () => {
     expect(html).toContain('id="panes-search"');
   });
 
-  it("renders the Share dialog scaffolding + Recently-viewed section", async () => {
+  it("renders the Recently-viewed section", async () => {
     const { cookie } = await seedLoggedInHuman();
     const res = await app.fetch(
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
-    // Share dialog is always present (hidden); opened client-side per-pane.
-    expect(html).toContain('id="share-modal"');
-    expect(html).toContain('id="share-title"');
-    expect(html).toContain('id="share-invite-form"');
-    expect(html).toContain('id="share-visibility"');
-    // Quick-action button to make the pane public/restricted without digging
-    // into the dropdown.
-    expect(html).toContain('id="share-visibility-toggle"');
-    expect(html).toContain('id="share-copy-link"');
+    // The SPA's per-pane Share dialog was removed — sharing lives in the pane
+    // shell's top bar now, so the dashboard no longer carries the modal.
+    expect(html).not.toContain('id="share-modal"');
+    expect(html).not.toContain('id="share-invite-form"');
     // Recently-viewed section is rendered (hidden) and hydrated from
     // /v1/self/recents on load.
     expect(html).toContain('id="recently-viewed-section"');
