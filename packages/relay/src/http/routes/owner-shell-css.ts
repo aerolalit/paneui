@@ -659,10 +659,12 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    /* icon | info | status | star | share | menu — six cells. Keep this column
+    /* icon | info | visibility | star | menu — five cells. Keep this column
        count in sync with paneRow()'s children: a missing track pushes the last
-       action (the ⋯ menu) onto an implicit second row. */
-    grid-template-columns: 44px 1fr auto auto auto auto;
+       action (the ⋯ menu) onto an implicit second row. (Share was dropped from
+       the row — it lives in the pane shell's top bar now, which frees width
+       for the title.) */
+    grid-template-columns: 44px 1fr auto auto auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;
@@ -708,6 +710,13 @@ export const OWNER_SHELL_CSS = `
     border-radius: 999px; background: currentColor; margin-right: 5px;
     vertical-align: middle;
   }
+  /* Visibility icon cell on a pane row (lock / link / globe). Muted so it
+     reads as metadata, not an action; the title attr names the access mode. */
+  .pane-row .vis {
+    color: var(--ink-mute);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pane-row .vis svg { display: block; }
   .pane-row .menu-btn {
     width: 40px; height: 40px;
     background: transparent;

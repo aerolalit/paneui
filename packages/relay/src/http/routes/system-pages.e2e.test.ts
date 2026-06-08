@@ -650,17 +650,22 @@ describe("Owner-shell SPA at /home", () => {
     );
     const html = await res.text();
     expect(html).toContain('class="pane-row"');
-    // Each pane row carries a Share affordance that opens the Share dialog.
-    expect(html).toContain("data-pane-share=");
+    // The per-row Share button was removed — sharing lives in the pane shell's
+    // top bar now, and dropping it gives the title more room.
+    expect(html).not.toContain("data-pane-share=");
     // F-15: the SPA escaper encodes single quotes (' -> &#39;), so a title
     // with an apostrophe renders in its encoded form — the raw apostrophe
     // must NOT appear inside the title text.
     expect(html).toContain("Yesterday&#39;s pane");
     expect(html).not.toContain("Yesterday's pane");
-    // Open is the default state, so open rows render no status pill (just an
-    // empty cell) — only the exceptional "closed" state is flagged.
+    // Pane rows no longer surface open/closed status — that's noise on a list
+    // that's effectively all-live (closed panes are swept). Each row instead
+    // shows a visibility icon for its access mode.
     expect(html).not.toContain(">open<");
-    expect(html).toContain(">closed<");
+    expect(html).not.toContain(">closed<");
+    expect(html).toContain('class="vis"');
+    // The Panes view has a search box now.
+    expect(html).toContain('id="panes-search"');
   });
 
   it("renders the Share dialog scaffolding + Recently-viewed section", async () => {
