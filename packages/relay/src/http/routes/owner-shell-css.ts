@@ -572,10 +572,12 @@ export const OWNER_SHELL_CSS = `
   }
   /* Overlays on a recent card's thumb: visibility badge (top-left) and the ⋯
      menu (top-right). Both stay visible (no hover-reveal) so they work on
-     touch; the dark chip keeps them legible over any preview. */
+     touch; the dark chip keeps them legible over any preview. z-index keeps
+     them above the .tile-preview iframe (z-index: 1) — without it an opaque
+     loaded preview paints over the badges and they vanish on some cards. */
   .recent-card .thumb .recent-vis,
   .recent-card .thumb .recent-menu-btn {
-    position: absolute; top: 6px;
+    position: absolute; top: 6px; z-index: 2;
     width: 22px; height: 22px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
     border-radius: 6px;
