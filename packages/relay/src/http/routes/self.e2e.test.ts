@@ -352,6 +352,82 @@ describe("POST /v1/self/agents/:id/rotate-key", () => {
   });
 });
 
+describe("PATCH /v1/self/agents/:id (rename)", () => {
+  async function seedClaimedAgent(
+    humanId: string,
+    name = "claimed",
+  ): Promise<string> {
+    const key = "pane_" + randomBytes(16).toString("hex");
+    const agent = await prisma.agent.create({
+      data: {
+        name,
+        keyHash: hashKey(key),
+        keyPrefix: keyPrefix(key),
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    return agent.id;
+  }
+
+  function patch(agentId: string, cookie: string | null, body: unknown) {
+    return app.fetch(
+      new Request(`http://t/v1/self/agents/${agentId}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          ...(cookie ? { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` } : {}),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("requires a login cookie (401 without one)", async () => {
+    const res = await patch("agt_x", null, { name: "New" });
+    expect(res.status).toBe(401);
+  });
+
+  it("renames an agent the human owns", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agentId = await seedClaimedAgent(humanId, "old-name");
+    const res = await patch(agentId, cookie, { name: "  Renamed Bot  " });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { agent_id: string; name: string };
+    expect(body.agent_id).toBe(agentId);
+    // Trimmed before persisting.
+    expect(body.name).toBe("Renamed Bot");
+    const row = await prisma.agent.findUnique({ where: { id: agentId } });
+    expect(row!.name).toBe("Renamed Bot");
+  });
+
+  it("rejects an empty / blank name (400)", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const agentId = await seedClaimedAgent(humanId);
+    expect((await patch(agentId, cookie, { name: "   " })).status).toBe(400);
+    expect((await patch(agentId, cookie, {})).status).toBe(400);
+  });
+
+  it("404s when the agent isn't claimed by this human (no oracle)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const stranger = await prisma.human.create({
+      data: { email: "bob@example.com", verifiedAt: new Date() },
+    });
+    const agentId = await seedClaimedAgent(stranger.id);
+    const res = await patch(agentId, cookie, { name: "Mine now" });
+    expect(res.status).toBe(404);
+    // Untouched.
+    const row = await prisma.agent.findUnique({ where: { id: agentId } });
+    expect(row!.name).toBe("claimed");
+  });
+
+  it("404s on an unknown agent id", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await patch("agt_nope", cookie, { name: "X" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("POST /v1/self/agents/:id/revoke-key", () => {
   async function seedClaimedAgent(
     humanId: string,
