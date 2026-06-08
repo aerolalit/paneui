@@ -184,6 +184,59 @@ describe("create — inline template form", () => {
     const req = calls[0]!.args[0] as { template: Record<string, unknown> };
     expect("input_schema" in req.template).toBe(false);
   });
+
+  // --record-schema declares the inline template's per-pane record
+  // collections (#476). Optional; absent = event-only one-off. Goes inside
+  // `template`, alongside event_schema / input_schema.
+  it("plumbs --record-schema into template.record_schema (inline JSON)", async () => {
+    const recordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $defs: {
+        Todo: {
+          type: "object",
+          properties: { text: { type: "string" }, done: { type: "boolean" } },
+          required: ["text"],
+        },
+      },
+      "x-pane-collections": {
+        todos: {
+          schema: { $ref: "#/$defs/Todo" },
+          write: ["page", "agent"],
+          delete: ["author"],
+        },
+      },
+    };
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Todo list",
+      "--record-schema",
+      JSON.stringify(recordSchema),
+    ]);
+    expect(calls).toHaveLength(1);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect(req.template["record_schema"]).toEqual(recordSchema);
+  });
+
+  it("rejects a non-object --record-schema (array/primitive)", async () => {
+    await run([
+      "--template",
+      "<html></html>",
+      "--name",
+      "Inline",
+      "--record-schema",
+      "[]",
+    ]);
+    expect(calls).toHaveLength(0);
+    expect(stderr).toMatch(/--record-schema must be a JSON object/);
+  });
+
+  it("omits record_schema entirely when --record-schema isn't passed (event-only one-off)", async () => {
+    await run(["--template", "<html></html>", "--name", "Inline"]);
+    const req = calls[0]!.args[0] as { template: Record<string, unknown> };
+    expect("record_schema" in req.template).toBe(false);
+  });
 });
 
 describe("create — reference template form", () => {
@@ -235,6 +288,23 @@ describe("create — reference template form", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain(
       "--input-schema is incompatible with --template-id",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects --record-schema combined with --template-id (#476)", async () => {
+    // Same reasoning as --input-schema above: the pinned template version
+    // already carries any record_schema. Silent shadowing would be worse
+    // than a fast fail.
+    await run([
+      "--template-id",
+      "pr-review",
+      "--record-schema",
+      '{"x-pane-collections":{"todos":{}}}',
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(
+      "--record-schema is incompatible with --template-id",
     );
     expect(calls).toHaveLength(0);
   });

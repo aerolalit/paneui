@@ -17,6 +17,7 @@ const KNOWN_FLAGS = [
   "version",
   "event-schema",
   "input-schema",
+  "record-schema",
   "title",
   "preamble",
   "input-data",
@@ -63,6 +64,7 @@ const SCHEMA_PATH_TO_FLAG: Record<string, string> = {
   "template.source": "--template",
   "template.event_schema": "--event-schema",
   "template.input_schema": "--input-schema",
+  "template.record_schema": "--record-schema",
 };
 
 function schemaPathToFlag(path: PropertyKey[]): string {
@@ -87,7 +89,8 @@ A pane is one use of an template. Supply the template in ONE of two ways:
     pane create --template-id <id|slug> [--version <n>] [--input-data <v>]
 
   Inline form — a one-off template, defined on this call:
-    pane create --template <path|inline> [--event-schema <path|json>] [options]
+    pane create --template <path|inline> [--event-schema <path|json>]
+                [--record-schema <path|json>] [options]
 
 Exactly one of --template-id / --template must be given.
 
@@ -111,19 +114,19 @@ Template (choose one):
   --event-schema <v>  Inline-form event schema. A .json file, or inline JSON.
                       Optional with --template. Omit for a view-only template
                       (a report/dashboard the human only views — no page/agent
-                      events). Ignored with --template-id.
+                      events). Rejected with --template-id (the schema comes
+                      from the pinned template version there).
 
                       Pane has TWO data primitives — pick the right one before
                       designing the schema. Events (this flag) are an
                       append-only journal: forms, approvals, surveys, pickers,
-                      doc reviews. RECORDS are a mutable collection: todo
-                      lists, shopping lists, checklists, kanban boards,
-                      comment threads, inventories. If the page shows more
-                      than one mutable item and the current state matters
-                      more than the history of edits, you want records, not
-                      events — see the "Records" section of \`pane skill show\`
-                      and the \`pane template-records\` / \`pane records\`
-                      commands.
+                      doc reviews. RECORDS (--record-schema, below) are a
+                      mutable collection: todo lists, shopping lists,
+                      checklists, kanban boards, comment threads, inventories.
+                      If the page shows more than one mutable item and the
+                      current state matters more than the history of edits,
+                      you want records. See the "Records" section of
+                      \`pane skill show\` for the decision table.
 
                       Shape — an object with an "events" map, keyed by event
                       type. Each entry declares who may emit it and the JSON
@@ -152,6 +155,42 @@ Template (choose one):
                       page via window.pane.downloadBlob. Without it, attachment
                       refs in --input-data are silently unreachable. See
                       docs/SPEC.md and #208.
+  --record-schema <v> Inline-form record schema — declares the per-pane
+                      mutable collections this template exposes (todos,
+                      comments, line items, etc.). A .json file, or inline
+                      JSON. Optional with --template; omit for an event-only
+                      one-off. Rejected with --template-id (the schema comes
+                      from the pinned template version there).
+
+                      Shape — a JSON Schema 2020-12 document with an
+                      "x-pane-collections" extension mapping collection names
+                      to { schema, write, delete }. \`write\` is a non-empty
+                      subset of {agent, page}; \`delete\` is a non-empty
+                      subset of {agent, page, author}.
+                          {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "$defs": {
+                              "Todo": {
+                                "type": "object",
+                                "properties": {
+                                  "text": { "type": "string" },
+                                  "done": { "type": "boolean" }
+                                },
+                                "required": ["text"]
+                              }
+                            },
+                            "x-pane-collections": {
+                              "todos": {
+                                "schema": { "$ref": "#/$defs/Todo" },
+                                "write":  ["page", "agent"],
+                                "delete": ["author"]
+                              }
+                            }
+                          }
+                      See 'pane skill show' (the "Records" section) for the
+                      full grammar. Use \`pane records …\` to mutate rows in
+                      a live pane, and \`pane template-records …\` for
+                      template-level (cross-pane) curated rows.
 
 Options:
   --title <text>      Tab title shown to the human (max 80 chars, single
@@ -244,6 +283,12 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
         "invalid_args",
       );
     }
+    if (args.flags.get("record-schema") !== undefined) {
+      fail(
+        "--record-schema is incompatible with --template-id — the record collections come from the pinned template version. Author the schema on the template (`pane template create --record-schema …`) instead.",
+        "invalid_args",
+      );
+    }
     // --name / --slug name the inline form's auto-created template. The
     // reference form inherits the existing Template.name/slug, so they have
     // no meaning here — reject rather than silently ignore.
@@ -282,6 +327,7 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
     //    See #208.
     const schemaVal = args.flags.get("event-schema");
     const inputSchemaVal = args.flags.get("input-schema");
+    const recordSchemaVal = args.flags.get("record-schema");
 
     const templateType = (args.flags.get("template-type") ?? "html-inline") as
       | "html-inline"
@@ -345,6 +391,21 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
           fail("--input-schema must be a JSON object", "invalid_args");
         }
         inlineArtifact["input_schema"] = v;
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e), "invalid_args");
+      }
+    }
+    // --record-schema: declares the inline template's per-pane record
+    // collections. Absent → no collections (event-only one-off). The relay
+    // does the full validation; we only check it parses as an object so a
+    // typo surfaces locally rather than as a generic "expected object".
+    if (recordSchemaVal !== undefined) {
+      try {
+        const v = resolveJson(recordSchemaVal, "--record-schema");
+        if (v === null || typeof v !== "object" || Array.isArray(v)) {
+          fail("--record-schema must be a JSON object", "invalid_args");
+        }
+        inlineArtifact["record_schema"] = v;
       } catch (e) {
         fail(e instanceof Error ? e.message : String(e), "invalid_args");
       }
