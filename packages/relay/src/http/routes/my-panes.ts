@@ -22,6 +22,7 @@
 // shell's same-origin fetches pass while a cross-site POST is refused.
 
 import { Hono, type Context } from "hono";
+import { Prisma } from "@prisma/client";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import { log } from "../../log.js";
@@ -238,6 +239,67 @@ myPanes.patch("/:id/visibility", requireHuman, async (c) => {
 
   await setVisibility(prisma, pane.id, parsed.data.access_mode);
   return c.json({ pane_id: pane.id, access_mode: parsed.data.access_mode });
+});
+
+// `favorite`/`favorites` are reserved: favoriting is per-human state (the
+// star), not a per-pane tag, so an agent or human can't assign them as tags.
+const RESERVED_TAGS = new Set(["favorite", "favorites"]);
+
+// PATCH /v1/my-panes/:id/tags — the owner replaces the pane's filter tags.
+// Body { tags: string[] }: trimmed, deduped, ≤20 × ≤50 chars, no reserved
+// names. This is the human-side edit (a backstop for sloppy/forgetful agent
+// tagging); the pane's tags were originally snapshotted at create time.
+myPanes.patch("/:id/tags", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const pane = await loadOwnedPaneForShare(c);
+
+  const body = (await c.req.json().catch(() => null)) as {
+    tags?: unknown;
+  } | null;
+  if (!body || !Array.isArray(body.tags)) {
+    throw errors.invalidRequest(
+      "invalid tags update",
+      undefined,
+      "send { tags: string[] }",
+    );
+  }
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const v of body.tags) {
+    if (typeof v !== "string") continue;
+    const t = v.trim();
+    if (!t) continue;
+    if (t.length > 50) {
+      throw errors.invalidRequest(
+        "a tag exceeds 50 characters",
+        undefined,
+        "each tag must be 1–50 characters",
+      );
+    }
+    if (RESERVED_TAGS.has(t.toLowerCase())) {
+      throw errors.invalidRequest(
+        `'${t}' is a reserved tag`,
+        undefined,
+        "'favorite'/'favorites' are reserved — use the star to favorite a pane",
+      );
+    }
+    if (seen.has(t)) continue;
+    seen.add(t);
+    tags.push(t);
+  }
+  if (tags.length > 20) {
+    throw errors.invalidRequest(
+      "too many tags",
+      undefined,
+      "at most 20 tags per pane",
+    );
+  }
+
+  await prisma.pane.update({
+    where: { id: pane.id },
+    data: { tags: tags as unknown as Prisma.InputJsonValue },
+  });
+  return c.json({ pane_id: pane.id, tags });
 });
 
 // POST /v1/my-panes/:id/share-link — mint a default anonymous /s/<token>
