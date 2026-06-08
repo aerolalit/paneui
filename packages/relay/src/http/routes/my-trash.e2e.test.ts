@@ -310,37 +310,6 @@ describe("Trash tab removed from the owner-shell SPA (iter2)", () => {
   });
 });
 
-describe("/my-agents show_deleted toggle (#310)", () => {
-  // The /my-agents page is still a standalone route in the SPA migration
-  // — only /home, /my-panes, /my-templates, /template-store, /trash moved
-  // into the SPA. The agents-level toggle stays.
-  it("/my-agents honours ?show_deleted=true", async () => {
-    const { humanId, cookie } = await seedLoggedInHuman();
-    // Seed a trashed agent for this human.
-    const trashedApiKey = "pane_" + randomBytes(16).toString("hex");
-    const trashedAgent = await prisma.agent.create({
-      data: {
-        name: "trashed",
-        keyHash: hashKey(trashedApiKey),
-        keyPrefix: keyPrefix(trashedApiKey),
-        ownerHumanId: humanId,
-        claimedAt: new Date(),
-        deletedAt: new Date(),
-      },
-    });
-
-    const hideRes = await app.fetch(
-      new Request("http://t/my-agents", {
-        headers: { ...withCookie(cookie) },
-      }),
-    );
-    expect(await hideRes.text()).not.toContain(trashedAgent.id);
-
-    const showRes = await app.fetch(
-      new Request("http://t/my-agents?show_deleted=true", {
-        headers: { ...withCookie(cookie) },
-      }),
-    );
-    expect(await showRes.text()).toContain(trashedAgent.id);
-  });
-});
+// The legacy /my-agents ?show_deleted toggle was removed when Agents moved
+// into the SPA — trashed agents are surfaced via /trash now, and /my-agents
+// 302-redirects into the SPA agents view (covered in system-pages.e2e.test.ts).
