@@ -474,11 +474,20 @@ export const OWNER_SHELL_CSS = `
   .section-head a:hover { text-decoration: underline; }
 
   /* Favorites strip (horizontal scroll) */
+  /* Two fixed rows that scroll horizontally together — a 2-row carousel.
+     grid-auto-flow:column fills top-to-bottom then advances a column, so the
+     pair of rows shares one horizontal scrollbar. Tiles keep their original
+     size (grid-auto-columns), not stretched. */
   .favs {
-    display: flex; gap: 12px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-columns: 96px;
+    gap: 12px;
+    overflow-x: auto;
     padding: 4px 2px 12px;
     margin: 0 -2px;
+    scrollbar-width: thin;
   }
   .fav-tile {
     flex: 0 0 96px;
@@ -517,13 +526,19 @@ export const OWNER_SHELL_CSS = `
     border: 2px solid var(--bg);
   }
 
-  /* Recent panes — horizontal scroll cards */
+  /* Recent panes — two fixed rows that scroll horizontally together (same
+     2-row carousel as Favorites). Cards keep their original 280px width via
+     grid-auto-columns instead of stretching to fill. */
   .recents {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    grid-auto-flow: column;
+    grid-template-rows: repeat(2, auto);
+    grid-auto-columns: 280px;
     gap: 14px;
+    overflow-x: auto;
     padding: 4px 2px 12px;
     margin: 0 -2px;
+    scrollbar-width: thin;
   }
   .recent-card {
     background: var(--surface);
