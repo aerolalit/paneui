@@ -26,6 +26,7 @@ const KNOWN_FLAGS = [
   "metadata",
   "callback",
   "context-key",
+  "tags",
   "icon-emoji",
   "icon-attachment-id",
 ];
@@ -228,6 +229,13 @@ Options:
                       meaningful when the calling agent is claimed by a
                       human; omit otherwise. Allowed chars: A-Za-z0-9_:.-,
                       max 256.
+  --tags <t1,t2,...>  Per-pane filter tags (comma-separated). Merged with the
+                      template's tags (deduped) and snapshotted onto the pane;
+                      they drive the human's Panes-tab tag filter. Use for an
+                      instance-specific axis on top of the template's tags —
+                      e.g. a PR-review template tagged \`pr-review\`, with the
+                      repo per pane: \`--tags cp-backend\`. (\`favorite\`/
+                      \`favorites\` are reserved; ≤20 tags, ≤50 chars each.)
   --icon-emoji <e>    Per-pane icon override — a single emoji grapheme. NULL/
                       omitted = inherit the template's icon.
   --icon-attachment-id <id>
@@ -482,6 +490,19 @@ export async function runCreate(args: ParsedArgs): Promise<void> {
   const contextKey = args.flags.get("context-key");
   if (contextKey !== undefined) {
     candidate["context_key"] = contextKey;
+  }
+
+  // --tags — per-pane filter tags, comma-separated. Merged (deduped) with the
+  // template's tags by the relay and snapshotted onto the pane. Useful for an
+  // instance-specific axis (e.g. the repo a PR-review pane is for) on top of
+  // the template's tags. The relay enforces the limits + reserved names.
+  const tagsRaw = args.flags.get("tags");
+  if (tagsRaw !== undefined) {
+    const tags = tagsRaw
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "");
+    if (tags.length > 0) candidate["tags"] = tags;
   }
 
   // Per-pane icon override. Passthrough — the relay validates the emoji

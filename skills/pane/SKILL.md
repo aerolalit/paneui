@@ -299,8 +299,11 @@ Populate, even briefly:
   `input_data` shape it expects. As long as that fits, length doesn't
   matter — overly terse here costs every future reader, overly long here
   costs nothing.
-- **`--tags`** — a few short keywords. `--tags pr,review,code` makes
-  `pane template search "review"` and `… "code"` both find it.
+- **`--tags`** — a few short keywords. They do double duty: they make
+  `pane template search "review"` / `… "code"` find the template, **and** every
+  pane created from it inherits them as **filter tags**, so the human can slice
+  their Panes tab by tag (e.g. show only `livia` panes). See "Tagging panes"
+  below — tag your reusable templates so the panes they spawn are filterable.
 - **`--input-schema`** — optional JSON Schema for the `input_data` the
   template expects. Doubles as documentation: a future you reads it to know
   exactly what shape of data to pass at `pane create` time.
@@ -376,6 +379,35 @@ to the human** over whatever channel you already have (Telegram, Slack, email).
 Keep `pane_id`. `tokens` are per-participant auth already baked into the
 `urls` — you don't normally use them directly; the CLI authenticates with
 `PANE_API_KEY`.
+
+#### Tagging panes (so the human can filter them)
+
+A pane carries **filter tags** — the human's Panes tab has a tag-chip filter
+(All · ★ Favorites · your tags), so good tags let them slice hundreds of panes
+down to "the livia ones" or "PR reviews for cp-backend". **Tag deliberately.**
+
+A pane's tags are snapshotted at create time as the **union of two sources**:
+
+- **Template tags** (`pane template create --tags …`) — inherited by every pane
+  the template spawns. This is the main axis ("what kind": `pr-review`,
+  `standup`). A named template created with a `--slug` but no tags is
+  auto-tagged with its slug, so it's never untagged.
+- **Per-pane tags** (`pane create --tags …`) — an instance-specific axis layered
+  on top. The classic case: one `pr-review` template used across repos, with the
+  repo per pane:
+
+  ```sh
+  pane create --template-id pr-review --tags cp-backend   # → tags: pr-review, cp-backend
+  pane create --template-id pr-review --tags aambackend   # → tags: pr-review, aambackend
+  ```
+
+  The human can then filter to `pr-review` + `cp-backend` (AND) to see exactly
+  PR reviews for that repo.
+
+Rules: each tag ≤50 chars, ≤20 per pane; `favorite`/`favorites` are **reserved**
+(favoriting is the human's per-human star, not a tag). The human can also
+add/remove a pane's tags themselves from the Panes tab — so tagging is a
+best-effort signal, not a contract, but tag well and they won't have to.
 
 ### `pane template` — manage reusable templates
 
