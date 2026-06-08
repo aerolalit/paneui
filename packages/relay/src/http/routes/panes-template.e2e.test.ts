@@ -976,3 +976,123 @@ describe("POST /v1/panes — preamble", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("POST /v1/panes — tags", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  async function taggedTemplate(
+    apiKey: string,
+    tags: string[],
+  ): Promise<string> {
+    const res = await post("/v1/templates", apiKey, {
+      name: "PR Review",
+      slug: "pr-review",
+      source: "<html>v1</html>",
+      type: "html-inline",
+      event_schema: eventSchema,
+      tags,
+    });
+    return ((await res.json()) as { template_id: string }).template_id;
+  }
+
+  async function getTags(paneId: string, apiKey: string): Promise<string[]> {
+    const get = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}`, { headers: bearer(apiKey) }),
+    );
+    return ((await get.json()) as { tags: string[] }).tags;
+  }
+
+  it("inherits the template's tags onto the pane (reference form)", async () => {
+    const apiKey = await seedAgent();
+    const templateId = await taggedTemplate(apiKey, ["pr-review"]);
+    const res = await post("/v1/panes", apiKey, {
+      template: { id: templateId },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { pane_id: string; tags: string[] };
+    expect(body.tags).toEqual(["pr-review"]);
+    expect(await getTags(body.pane_id, apiKey)).toEqual(["pr-review"]);
+  });
+
+  it("merges per-pane tags with the template's, template-first and deduped", async () => {
+    const apiKey = await seedAgent();
+    const templateId = await taggedTemplate(apiKey, ["pr-review"]);
+    const res = await post("/v1/panes", apiKey, {
+      template: { id: templateId },
+      // "pr-review" is a duplicate of the inherited tag; "cp-backend" is new.
+      tags: ["cp-backend", "pr-review"],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { pane_id: string; tags: string[] };
+    expect(body.tags).toEqual(["pr-review", "cp-backend"]);
+    expect(await getTags(body.pane_id, apiKey)).toEqual([
+      "pr-review",
+      "cp-backend",
+    ]);
+  });
+
+  it("tags an inline pane from the inline template + per-pane extras", async () => {
+    const apiKey = await seedAgent();
+    const res = await post("/v1/panes", apiKey, {
+      template: {
+        name: "Inline",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+        tags: ["adhoc"],
+      },
+      tags: ["livia"],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { pane_id: string; tags: string[] };
+    expect(body.tags).toEqual(["adhoc", "livia"]);
+    // The auto-created template carries the inline tags too.
+    const tpl = (await prisma.template.findMany())[0]!;
+    expect(tpl.tags).toEqual(["adhoc"]);
+  });
+
+  it("returns [] for a pane with no tags, and surfaces tags in the list", async () => {
+    const apiKey = await seedAgent();
+    const untagged = await post("/v1/panes", apiKey, {
+      template: {
+        name: "Plain",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+    });
+    const ub = (await untagged.json()) as { pane_id: string; tags: string[] };
+    expect(ub.tags).toEqual([]);
+    expect(await getTags(ub.pane_id, apiKey)).toEqual([]);
+
+    const templateId = await taggedTemplate(apiKey, [
+      "pr-review",
+      "cp-backend",
+    ]);
+    await post("/v1/panes", apiKey, { template: { id: templateId } });
+
+    const list = await app.fetch(
+      new Request("http://t/v1/panes", { headers: bearer(apiKey) }),
+    );
+    const items = ((await list.json()) as { items: { tags: string[] }[] })
+      .items;
+    expect(items.some((i) => i.tags.includes("pr-review"))).toBe(true);
+    expect(items.some((i) => i.tags.length === 0)).toBe(true);
+  });
+
+  it("rejects > 20 tags or an over-long tag (400)", async () => {
+    const apiKey = await seedAgent();
+    const tooMany = await post("/v1/panes", apiKey, {
+      template: {
+        name: "X",
+        type: "html-inline",
+        source: "<html></html>",
+        event_schema: eventSchema,
+      },
+      tags: Array.from({ length: 21 }, (_, i) => "t" + i),
+    });
+    expect(tooMany.status).toBe(400);
+  });
+});

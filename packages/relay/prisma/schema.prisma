@@ -460,6 +460,10 @@ model Pane {
   // never get a ws-ticket; only the owner or a participant grant (or a
   // participant token) can emit.
   accessMode      String        @default("link") @map("access_mode")
+  // Filter tags (JSON string array). Snapshotted at create time = the
+  // template's tags ∪ any per-pane tags the agent passed; owner-editable
+  // later. NULL/absent = untagged. Drives the Panes-tab tag filter.
+  tags            Json?
   // The natural key for "same logical thing" — `"home"`, `"pr:42"`, etc.
   // NULL = ad-hoc pane, no dedup. Used by pane-create to dedupe
   // (template, owner, contextKey) into a single row.
