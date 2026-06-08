@@ -2383,18 +2383,21 @@ const SHELL_JS = `
         : 'Anyone with the link';
     }
 
-    // A small ⋯ menu per card — Open + Copy URL. Recents can include panes the
-    // human doesn't own, so we deliberately omit Delete (owners use the Panes
-    // tab for that). Reuses the .pane-menu-pop styling; the pop lives on
-    // document.body so the thumb's overflow:hidden can't clip it.
+    // A small ⋯ menu per card — Open + Copy URL, plus Delete when the human
+    // owns the pane. Recents can include panes the human only joined, so the
+    // Delete button is gated on the owned flag from /v1/self/recents (the
+    // server also re-checks ownership on DELETE /v1/my-panes/:id). Reuses the
+    // .pane-menu-pop styling; the pop lives on document.body so the thumb's
+    // overflow:hidden can't clip it.
     let recentMenu = null;
     function closeRecentMenu() { if (recentMenu) { recentMenu.remove(); recentMenu = null; } }
-    function openRecentMenu(btn, paneId) {
+    function openRecentMenu(btn, paneId, owned) {
       closeRecentMenu();
       const url = location.origin + '/panes/' + encodeURIComponent(paneId);
       const pop = document.createElement('div');
       pop.className = 'pane-menu-pop';
-      pop.innerHTML = '<button data-act="open">Open</button><button data-act="copy">Copy URL</button>';
+      pop.innerHTML = '<button data-act="open">Open</button><button data-act="copy">Copy URL</button>'
+        + (owned ? '<button data-act="delete" class="danger">Delete</button>' : '');
       document.body.appendChild(pop);
       const rect = btn.getBoundingClientRect();
       pop.style.top = (rect.bottom + 4) + 'px';
@@ -2418,6 +2421,28 @@ const SHELL_JS = `
           } catch {
             prompt('Copy this URL:', url);
             closeRecentMenu();
+          }
+        } else if (act === 'delete') {
+          if (!confirm('Move this pane to trash?')) return;
+          t.disabled = true;
+          try {
+            const res = await fetch('/v1/my-panes/' + encodeURIComponent(paneId), {
+              method: 'DELETE', credentials: 'same-origin',
+            });
+            if (!res.ok && res.status !== 204) {
+              const body = await res.json().catch(() => ({}));
+              alert('Delete failed: ' + ((body.error && body.error.message) || ('HTTP ' + res.status)));
+              t.disabled = false;
+              return;
+            }
+            closeRecentMenu();
+            // Drop the card so Recents reflects the trashed pane without a reload.
+            const card = list.querySelector('.recent-card[data-pane-id="' + (window.CSS && CSS.escape ? CSS.escape(paneId) : paneId) + '"]');
+            if (card) card.remove();
+            if (!list.querySelector('.recent-card')) section.hidden = true;
+          } catch {
+            alert('Network error — try again.');
+            t.disabled = false;
           }
         }
       });
@@ -2447,6 +2472,7 @@ const SHELL_JS = `
           const card = document.createElement('div');
           card.className = 'recent-card';
           card.setAttribute('data-href', '/panes/' + encodeURIComponent(it.pane_id));
+          card.setAttribute('data-pane-id', it.pane_id);
           card.setAttribute('role', 'link');
           card.setAttribute('tabindex', '0');
           const thumb = document.createElement('div');
@@ -2484,7 +2510,7 @@ const SHELL_JS = `
           menuBtn.title = 'More';
           menuBtn.setAttribute('aria-label', 'More');
           menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>';
-          menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openRecentMenu(menuBtn, it.pane_id); });
+          menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openRecentMenu(menuBtn, it.pane_id, !!it.owned); });
           thumb.appendChild(menuBtn);
           const titleEl = document.createElement('div');
           titleEl.className = 'title';

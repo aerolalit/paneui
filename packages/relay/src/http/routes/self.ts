@@ -325,6 +325,7 @@ self.get("/recents", async (c) => {
           id: true,
           title: true,
           accessMode: true,
+          ownerHumanId: true,
           templateVersion: {
             select: { templateId: true, id: true },
           },
@@ -340,6 +341,11 @@ self.get("/recents", async (c) => {
       // Access mode (invite_only | link | public) — drives the visibility
       // icon on the Home "Recently viewed" cards.
       access_mode: v.pane.accessMode,
+      // Whether the current human owns this pane — recents can include panes
+      // the human only joined, so the Home card ⋯ menu shows Delete only when
+      // this is true. We expose a boolean (not the owner id) to avoid leaking
+      // who owns someone else's pane.
+      owned: v.pane.ownerHumanId === human.id,
       template_id: v.pane.templateVersion.templateId,
       template_version_id: v.pane.templateVersion.id,
       last_viewed_at: v.lastViewedAt.toISOString(),
