@@ -160,19 +160,28 @@ blobBridge.get("/:token", async (c) => {
     outputStream = Readable.from(plaintext);
   }
 
-  // 6. Hardened headers — same set as GET /v1/attachments/:id, centralised in
-  // setAttachmentDownloadHeaders. Capability-URL pane is the riskier of the
-  // two (the URL itself IS the credential) so the defences here are
+  // 6. Hardened headers — same base set as GET /v1/attachments/:id via
+  // setAttachmentDownloadHeaders, then CORP is overridden to `cross-origin`
+  // (see the override below for the reasoning). Other defences are
   // non-negotiable: nosniff, raster-only inline disposition (svg →
-  // attachment), no-store, same-origin CORP, no-referrer, plus the framing
-  // defences — CSP `default-src 'none'; sandbox; frame-ancestors 'none'` +
-  // X-Frame-Options: DENY. The CSP closes the same-site framing gap CORP
-  // alone leaves (#202) AND defangs any document that renders. Content-Length
-  // is the PLAINTEXT size (`tok.attachment.size`) regardless of encryption.
+  // attachment), no-store, no-referrer, plus the framing defences — CSP
+  // `default-src 'none'; sandbox; frame-ancestors 'none'` + X-Frame-Options:
+  // DENY. The framing CSP closes the same-site framing gap CORP alone leaves
+  // (#202) AND defangs any document that renders. Content-Length is the
+  // PLAINTEXT size (`tok.attachment.size`) regardless of encryption.
   setAttachmentDownloadHeaders(c, {
     mime: tok.attachment.mime,
     size: tok.attachment.size,
   });
+  // Override the CORP header set by setAttachmentDownloadHeaders. The other
+  // download paths (/v1/attachments/:id, /s/:token/attachments/:id) keep
+  // `same-origin` because they are cookie/participant-token gated. Here the
+  // capability token IN the URL IS the credential — that is the whole point
+  // of a capability URL — so `cross-origin` is correct. Without it the browser
+  // refuses to use the response for an `<img src="/b/...">` tag inside the
+  // opaque-origin pane iframe (CORP blocks no-cors cross-origin reads from
+  // opaque origins, even when the img-src CSP allows the host).
+  c.header("Cross-Origin-Resource-Policy", "cross-origin");
 
   // 7. Audit metadata write. Runs AFTER the body is enqueued so a client
   // cancelling the download still gets credited a use (best-effort
