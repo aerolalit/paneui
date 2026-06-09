@@ -204,6 +204,10 @@ export const OWNER_SHELL_CSS = `
   .nav .me .acct-link:hover { background: var(--surface); color: var(--ink); }
   .nav .me .acct-link .ico { display: inline-flex; }
   .nav .me .acct-link .txt { display: none; }
+  /* Identity header inside the account menu. Desktop already shows the name +
+     email inline in the footer (.who), so it's hidden here; it only appears in
+     the mobile popover sheet (see the media query below). */
+  .nav .me .acct-id { display: none; }
 
   @media (max-width: 639px) {
     /* Fixed bottom bar — same model as the system-pages bottom-tabs nav, so
@@ -276,6 +280,23 @@ export const OWNER_SHELL_CSS = `
       z-index: 50;
     }
     .nav .me.open .acct-links { display: flex; }
+    /* Signed-in identity at the top of the popover sheet. The footer's inline
+       .who is collapsed on mobile, so this is the only place the account email
+       surfaces. A hairline separates it from the action links below. */
+    .nav .me .acct-id {
+      display: block;
+      padding: 6px 12px 10px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .nav .me .acct-id-name {
+      color: var(--ink); font-size: 14px; font-weight: 600; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .nav .me .acct-id-email {
+      color: var(--ink-mute); font-size: 12px; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .nav .me .acct-link {
       width: 100%;
       gap: 12px;
