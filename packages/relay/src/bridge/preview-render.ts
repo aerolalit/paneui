@@ -34,15 +34,18 @@ import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
 //     (entropy + revoke + TTL + status checks);
 //   - `connect-src 'none'` stays, so `fetch`/XHR/WebSocket remain blocked —
 //     only `<img>`/`<video>`/`<audio>` *display* loads are enabled.
-// `data:` and `attachment:` are retained for inline bytes and the legacy
-// protocol slot. Returned as the joined header value.
+// `data:` is retained for small inline bytes. The `attachment:` scheme is NOT
+// in the allowlist: it has no handler (a custom scheme can't be intercepted by
+// a service worker, and the opaque-origin iframe can't register one anyway), so
+// listing it only advertised a path that silently failed. Returned as the
+// joined header value.
 export function buildPaneCsp(imgMediaOrigin: string): string {
   return [
     "default-src 'none'",
     "script-src 'unsafe-inline'",
     "style-src 'unsafe-inline'",
-    `img-src data: attachment: ${imgMediaOrigin}`,
-    `media-src attachment: ${imgMediaOrigin}`,
+    `img-src data: ${imgMediaOrigin}`,
+    `media-src ${imgMediaOrigin}`,
     "font-src data:",
     "connect-src 'none'",
     "base-uri 'none'",

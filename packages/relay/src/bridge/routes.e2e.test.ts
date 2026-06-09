@@ -414,8 +414,10 @@ describe("bridge content GET /s/:token/content", () => {
     const res = await app.fetch(new Request(`http://t/s/${token}/content`));
     const csp = res.headers.get("content-security-policy") ?? "";
     // PUBLIC_URL is http://localhost:3000 in this suite's setup.
-    expect(csp).toContain("img-src data: attachment: http://localhost:3000");
-    expect(csp).toContain("media-src attachment: http://localhost:3000");
+    expect(csp).toContain("img-src data: http://localhost:3000");
+    expect(csp).toContain("media-src http://localhost:3000");
+    // `attachment:` has no handler — it must NOT advertise a dead path.
+    expect(csp).not.toContain("attachment:");
     // The capability token lands in <img src>; keep it out of any Referer.
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
   });

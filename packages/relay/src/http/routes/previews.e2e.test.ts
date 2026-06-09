@@ -197,8 +197,11 @@ const VIEWER_CSP_BITS = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
   "style-src 'unsafe-inline'",
-  "img-src data: attachment:",
-  "media-src attachment:",
+  // PUBLIC_URL is http://localhost:3000 in this suite's setup; the relay
+  // origin is in img-src/media-src for `/b/<token>` capability URLs, and
+  // `attachment:` (no handler) is intentionally absent.
+  "img-src data: http://localhost:3000",
+  "media-src http://localhost:3000",
   "font-src data:",
   "connect-src 'none'",
   "frame-ancestors 'self'",

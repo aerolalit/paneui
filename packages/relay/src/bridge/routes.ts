@@ -550,10 +550,10 @@ bridge.get("/:token/content", async (c) => {
   // Single source of truth for the iframe-content CSP (see buildPaneCsp in
   // preview-render.ts). `img-src`/`media-src` include the relay's own origin so
   // a template can render attachment bytes straight from a `/b/<token>`
-  // capability URL; `data:`/`attachment:` are retained, and `connect-src 'none'`
-  // keeps fetch/XHR blocked. 'unsafe-inline' (no nonce) is required so the
-  // agent's own inline <script> tags inside artifactBody — and the runtime —
-  // execute under the same sandbox.
+  // capability URL; `data:` is retained for small inline bytes, and
+  // `connect-src 'none'` keeps fetch/XHR blocked. 'unsafe-inline' (no nonce) is
+  // required so the agent's own inline <script> tags inside artifactBody — and
+  // the runtime — execute under the same sandbox.
   c.header(
     "Content-Security-Policy",
     buildPaneCsp(paneCspImgOrigin(c.get("config").publicUrl)),

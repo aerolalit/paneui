@@ -61,7 +61,7 @@ invent things that don't exist or miss things that do.
 | `pane.records.snapshot / on / create / upsert / update / delete`     | Record-shaped pane — read and mutate rows. |
 | `pane.state.events`                                                  | Replay every event so far on this pane.    |
 | `pane.inputData`                                                     | Read the agent-supplied seed data.         |
-| `pane.downloadBlob(id)`                                              | Render an attachment the agent uploaded.   |
+| `pane.downloadBlob(id)`                                              | Fetch an attachment's bytes as a `Blob` (parsing / canvas; not `<img>`). |
 
 Each surface is documented in detail further down (`The schema`, `Records`,
 `Attachments`). Use this table as the index, not as the spec.
@@ -1222,6 +1222,13 @@ This is for getting raw bytes into JS — e.g. to hand to a `<canvas>` or
 parse — **not** for `<img>` rendering: the CSP does not allow `blob:`
 object URLs in `img-src`, so `URL.createObjectURL(blob)` as an `<img src>`
 is blocked. For rendering, prefer the capability-URL path above.
+
+> **Migration note.** Earlier versions of this skill showed
+> `img.src = URL.createObjectURL(await pane.downloadBlob(id))`. That
+> pattern never worked — `blob:` is not in `img-src` and it raises a CSP
+> violation. Replace it with the capability-URL `<img src>` above. The
+> `attachment:<id>` scheme is likewise unsupported (no handler) and is no
+> longer in the CSP allowlist; do not use it.
 
 Either way, **the attachment must be referenced from this pane** — the
 capability token is minted by the agent that owns it, and `downloadBlob`'s

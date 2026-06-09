@@ -76,9 +76,11 @@ interface PaneApi {
    * Lazily fetch a attachment's bytes by id. The attachment must be referenced from
    * this pane — either in the agent's initial `inputData` or in an
    * event the agent has emitted. The shell brokers the fetch with the
-   * participant token; the iframe receives a live `Blob` it can render
-   * via `URL.createObjectURL(attachment)` (the iframe CSP allows `attachment:` URLs
-   * in `img-src`).
+   * participant token; the iframe receives a live `Blob` for parsing or
+   * `<canvas>` use. It CANNOT be set as an `<img src>` via
+   * `URL.createObjectURL` — the CSP does not allow `blob:` in `img-src`. To
+   * render an attachment in an `<img>`, mint a `/b/<token>` capability URL
+   * (the relay origin IS allowed in `img-src`).
    *
    * Resolves with the `Blob` on success. Rejects with an `Error` whose
    * `.code` carries the relay's error code (`attachment_ref_not_accessible`,
@@ -434,8 +436,9 @@ declare global {
   // which holds the participant token and brokers a GET to
   // /s/:token/attachments/:attachment_id on the iframe's behalf. The browser's
   // structured-clone of `Blob` means the shell can hand the iframe a live
-  // Blob reference (no base64 round trip). The iframe's CSP allows `attachment:`
-  // URLs in `img-src`, so `URL.createObjectURL(attachment)` renders cleanly.
+  // Blob reference (no base64 round trip) for parsing / canvas use. For `<img>`
+  // rendering use a `/b/<token>` capability URL instead — the CSP allows the
+  // relay origin in `img-src`, but not `blob:`.
   //
   // Follow-up D of #156. Symmetric to uploadBlob.
   function downloadBlob(attachmentId: string): Promise<Blob> {
