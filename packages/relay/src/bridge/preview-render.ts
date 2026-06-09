@@ -13,7 +13,7 @@
 // Trust boundary
 // --------------
 // The artifact HTML and `inputData` are agent-authored and UNTRUSTED — treated
-// with the same sandbox + CSP posture as the live viewer (see PREVIEW_CSP, and
+// with the same sandbox + CSP posture as the live viewer (see buildPaneCsp, and
 // the iframe `sandbox="allow-scripts"` the shell sets). `inputData` is embedded
 // inside an inline `<script>` as JSON with the markup-significant characters
 // escaped, so a value containing `</script>` or `<!--` can't break out of the
@@ -21,22 +21,47 @@
 
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
 
-// Same Content-Security-Policy the live viewer's `/content` route sets, minus
-// nothing — the preview runs the same untrusted artifact body under the same
-// rules. Returned as the joined header value so the preview endpoints and the
-// viewer cannot drift on policy.
-export const PREVIEW_CSP = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  "img-src data: attachment:",
-  "media-src attachment:",
-  "font-src data:",
-  "connect-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'self'",
-].join("; ");
+// The single Content-Security-Policy both the live viewer's `/content` route
+// and the preview endpoints set — built here so the two can never drift on
+// policy. `imgMediaOrigin` is the relay's own public origin (scheme + host +
+// optional port, e.g. `https://relay.paneui.com`); it is added to `img-src`
+// and `media-src` so a template can render attachment bytes directly from a
+// capability URL (`<img src="https://relay.../b/<token>">`) without the
+// postMessage/Blob round-trip. This does NOT widen what the iframe can obtain:
+//   - the iframe is sandboxed WITHOUT `allow-same-origin`, so it has an opaque
+//     origin and carries no `pane_login` cookie — only the capability token in
+//     the URL path authorises the fetch, and `/b/:token` already gatekeeps it
+//     (entropy + revoke + TTL + status checks);
+//   - `connect-src 'none'` stays, so `fetch`/XHR/WebSocket remain blocked —
+//     only `<img>`/`<video>`/`<audio>` *display* loads are enabled.
+// `data:` is retained for small inline bytes. The `attachment:` scheme is NOT
+// in the allowlist: it has no handler (a custom scheme can't be intercepted by
+// a service worker, and the opaque-origin iframe can't register one anyway), so
+// listing it only advertised a path that silently failed. Returned as the
+// joined header value.
+export function buildPaneCsp(imgMediaOrigin: string): string {
+  return [
+    "default-src 'none'",
+    "script-src 'unsafe-inline'",
+    "style-src 'unsafe-inline'",
+    `img-src data: ${imgMediaOrigin}`,
+    `media-src ${imgMediaOrigin}`,
+    "font-src data:",
+    "connect-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'self'",
+  ].join("; ");
+}
+
+// Extract the CSP source-origin (scheme + host + optional port) from the
+// relay's configured public URL. `config.publicUrl` is always set (defaults to
+// `http://localhost:<PORT>`) and validated as a URL, so `new URL(...)` is safe.
+// `'self'` cannot be used in its place: the sandboxed iframe has an opaque
+// origin that never matches `'self'`, so the origin must be named explicitly.
+export function paneCspImgOrigin(publicUrl: string): string {
+  return new URL(publicUrl).origin;
+}
 
 // Embed an arbitrary value as a JS literal inside an inline `<script>`. We
 // serialize to JSON, then neutralise the only sequences an HTML parser treats

@@ -1,15 +1,16 @@
 // GET /s/:participantToken/attachments/:attachment_id — participant-side attachment download.
 //
 // Follow-up D of #156. Symmetric counterpart to the upload bridge (follow-up
-// C). Closes an asymmetry in the agent->iframe story: today, the only way to
-// get attachment bytes into an iframe is to inline the base64-encoded payload on
-// the event itself, because the iframe's CSP is `img-src data: attachment:` and
-// `connect-src 'none'` (no HTTP). That wastes 33% on base64, duplicates the
-// bytes on disk (encrypted attachment store + event row), and replays on every WS
-// reconnect — defeating the whole point of attachment storage. With this route +
-// `window.pane.downloadBlob()` the agent sends just a AttachmentRef on the event,
-// the iframe lazy-fetches the bytes through the shell, and renders them via
-// `URL.createObjectURL(attachment)`.
+// C). Closes an asymmetry in the agent->iframe story: inlining the
+// base64-encoded payload on the event itself wastes 33% on base64, duplicates
+// the bytes on disk (encrypted attachment store + event row), and replays on
+// every WS reconnect — defeating the whole point of attachment storage. With
+// this route + `window.pane.downloadBlob()` the agent sends just an
+// AttachmentRef on the event, the iframe lazy-fetches the bytes through the
+// shell, and renders them via `URL.createObjectURL(attachment)`. (The iframe
+// CSP also allows the relay origin in `img-src`/`media-src` — see buildPaneCsp
+// — so a template can alternatively render bytes straight from a `/b/<token>`
+// capability URL; `connect-src 'none'` still blocks fetch/XHR.)
 //
 // Trust model:
 //   * Auth is the participant token in the path — exactly the bearer used

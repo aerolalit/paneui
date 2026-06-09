@@ -13,6 +13,7 @@ import { participantBindingSatisfied } from "../auth/human-auth.js";
 import { agentCount } from "../ws/presence.js";
 import type { EventSchema } from "../types.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
+import { buildPaneCsp, paneCspImgOrigin } from "./preview-render.js";
 import { paneAppleTouchIcon } from "../http/routes/apple-touch-icon.js";
 import { recordView } from "./recents.js";
 import { log } from "../log.js";
@@ -546,30 +547,20 @@ bridge.get("/:token/content", async (c) => {
     artifactBody = "<!-- template.type=html-ref is not implemented in v1 -->";
   }
 
+  // Single source of truth for the iframe-content CSP (see buildPaneCsp in
+  // preview-render.ts). `img-src`/`media-src` include the relay's own origin so
+  // a template can render attachment bytes straight from a `/b/<token>`
+  // capability URL; `data:` is retained for small inline bytes, and
+  // `connect-src 'none'` keeps fetch/XHR blocked. 'unsafe-inline' (no nonce) is
+  // required so the agent's own inline <script> tags inside artifactBody — and
+  // the runtime — execute under the same sandbox.
   c.header(
     "Content-Security-Policy",
-    [
-      "default-src 'none'",
-      // 'unsafe-inline' only — no nonce. CSP3 browsers ignore 'unsafe-inline'
-      // when a nonce is present, which would block the agent's own inline
-      // <script> tags inside artifactBody. The runtime is just another inline
-      // script under the same sandbox; both are covered by 'unsafe-inline'.
-      "script-src 'unsafe-inline'",
-      "style-src 'unsafe-inline'",
-      "img-src data: attachment:",
-      // Audio / video the agent uploads as attachments and the iframe renders via
-      // <audio src="attachment:…"> or <video src="attachment:…"> after lazy-fetching with
-      // window.pane.downloadBlob(). Without this directive, `media-src` falls
-      // back to `default-src 'none'` and blocks both elements.
-      "media-src attachment:",
-      "font-src data:",
-      "connect-src 'none'",
-      "base-uri 'none'",
-      "form-action 'none'",
-      "frame-ancestors 'self'",
-    ].join("; "),
+    buildPaneCsp(paneCspImgOrigin(c.get("config").publicUrl)),
   );
   c.header("X-Content-Type-Options", "nosniff");
+  // Keep capability tokens in `<img src>` out of any `Referer`.
+  c.header("Referrer-Policy", "no-referrer");
   c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

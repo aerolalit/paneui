@@ -1155,12 +1155,14 @@ describe("/b/<token> — capability URL", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-type")).toBe("image/jpeg");
     expect(res.headers.get("content-disposition")).toBe("inline");
-    expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    // /b/<token> uses cross-origin CORP: the token in the URL IS the
+    // credential, so the browser must be allowed to use the response from
+    // opaque-origin documents (e.g. the sandboxed pane iframe). Framing is
+    // still blocked by CSP frame-ancestors 'none' + X-Frame-Options: DENY.
+    expect(res.headers.get("cross-origin-resource-policy")).toBe(
+      "cross-origin",
+    );
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    // #202: anti-framing. CORP=same-origin only blocks cross-origin
-    // embedders from READING the bytes; a same-site page can still
-    // frame an inline image. CSP frame-ancestors + X-Frame-Options
-    // close that gap.
     expect(res.headers.get("content-security-policy")).toBe(
       "default-src 'none'; sandbox; frame-ancestors 'none'",
     );

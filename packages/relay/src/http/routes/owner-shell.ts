@@ -39,6 +39,7 @@ import {
 } from "./identity-participant.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import { recordView } from "../../bridge/recents.js";
+import { buildPaneCsp, paneCspImgOrigin } from "../../bridge/preview-render.js";
 import { errors } from "../errors.js";
 import { log } from "../../log.js";
 import type { EventSchema, Author } from "../../types.js";
@@ -270,24 +271,17 @@ ownerShell.get("/:id/content", async (c) => {
     artifactBody = "<!-- template.type=html-ref is not implemented in v1 -->";
   }
 
-  // Identical iframe-content CSP to the capability-token mount — the iframe
-  // sandbox is the primary trust boundary; CSP is belt-and-braces.
+  // Identical iframe-content CSP to the capability-token mount (buildPaneCsp,
+  // single source of truth) — the iframe sandbox is the primary trust boundary;
+  // CSP is belt-and-braces. The relay origin in img-src/media-src lets a
+  // template render attachment bytes from a `/b/<token>` capability URL.
   c.header(
     "Content-Security-Policy",
-    [
-      "default-src 'none'",
-      "script-src 'unsafe-inline'",
-      "style-src 'unsafe-inline'",
-      "img-src data: attachment:",
-      "media-src attachment:",
-      "font-src data:",
-      "connect-src 'none'",
-      "base-uri 'none'",
-      "form-action 'none'",
-      "frame-ancestors 'self'",
-    ].join("; "),
+    buildPaneCsp(paneCspImgOrigin(c.get("config").publicUrl)),
   );
   c.header("X-Content-Type-Options", "nosniff");
+  // Keep capability tokens in `<img src>` out of any `Referer`.
+  c.header("Referrer-Policy", "no-referrer");
   c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

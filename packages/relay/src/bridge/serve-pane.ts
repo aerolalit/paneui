@@ -24,6 +24,7 @@ import {
   PERMISSIONS_POLICY,
 } from "./routes.js";
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
+import { buildPaneCsp, paneCspImgOrigin } from "./preview-render.js";
 import type { EventSchema } from "../types.js";
 
 // The minimal pane shape the serving helpers need. Mirrors what every mount
@@ -166,20 +167,12 @@ export function renderPaneContent(c: Context, pane: ServeablePane): Response {
 
   c.header(
     "Content-Security-Policy",
-    [
-      "default-src 'none'",
-      "script-src 'unsafe-inline'",
-      "style-src 'unsafe-inline'",
-      "img-src data: attachment:",
-      "media-src attachment:",
-      "font-src data:",
-      "connect-src 'none'",
-      "base-uri 'none'",
-      "form-action 'none'",
-      "frame-ancestors 'self'",
-    ].join("; "),
+    buildPaneCsp(paneCspImgOrigin(c.get("config").publicUrl)),
   );
   c.header("X-Content-Type-Options", "nosniff");
+  // The body can carry capability URLs (`/b/<token>`) in `<img src>`; keep the
+  // token out of any `Referer` so it can't leak off-origin.
+  c.header("Referrer-Policy", "no-referrer");
   c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");

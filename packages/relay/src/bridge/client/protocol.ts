@@ -157,8 +157,10 @@ export interface DownloadBlobRequestFrame {
 /**
  * The shape of the shell's reply. Discriminated by `ok` (matches the
  * upload-attachment-result frame's pattern). On success, the iframe receives a
- * live `Blob` it can hand to `URL.createObjectURL()` and set as `img.src`
- * — the iframe's CSP allows `attachment:` URLs in `img-src`.
+ * live `Blob` — useful for parsing or handing to a `<canvas>`. Note it CANNOT
+ * be rendered in an `<img>` via `URL.createObjectURL()`: the iframe CSP does
+ * not allow `blob:` in `img-src`. To render, use a `/b/<token>` capability URL
+ * (the relay origin IS in `img-src`).
  */
 export type DownloadBlobResultFrame = {
   __pane: PaneFrameMarker;

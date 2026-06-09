@@ -61,7 +61,7 @@ invent things that don't exist or miss things that do.
 | `pane.records.snapshot / on / create / upsert / update / delete`     | Record-shaped pane — read and mutate rows. |
 | `pane.state.events`                                                  | Replay every event so far on this pane.    |
 | `pane.inputData`                                                     | Read the agent-supplied seed data.         |
-| `pane.downloadBlob(id)`                                              | Render an attachment the agent uploaded.   |
+| `pane.downloadBlob(id)`                                              | Fetch an attachment's bytes as a `Blob` (parsing / canvas; not `<img>`). |
 
 Each surface is documented in detail further down (`The schema`, `Records`,
 `Attachments`). Use this table as the index, not as the spec.
@@ -1162,85 +1162,78 @@ threat model.
 
 The reverse direction — the **agent** has an image (e.g. a chart it
 generated, an attachment downloaded from somewhere, output of an image
-pipeline) and wants the pane to render it. There are two ways:
+pipeline) and wants the pane to render it.
 
-1. **Inline the bytes in the event payload as `data:image/...;base64`.**
-   Don't. The iframe CSP allows it, but: it costs 33% on base64, the
-   bytes get duplicated on disk (encrypted attachment store + event row), the
-   bytes replay over WebSocket on every reconnect, and a 1 MB image
-   won't fit under `MAX_EVENT_DATA_BYTES` (default 64 KB). The whole
-   point of attachment storage is to avoid this.
+**Don't inline the bytes** as `data:image/...;base64` on the event. The
+iframe CSP allows `data:`, but it costs 33% on base64, duplicates the
+bytes on disk (encrypted attachment store + event row), replays over
+WebSocket on every reconnect, and a 1 MB image won't fit under
+`MAX_EVENT_DATA_BYTES` (default 64 KB). The whole point of attachment
+storage is to avoid this. (Tiny inline icons / placeholders as `data:`
+are fine.)
 
-2. **Upload as an attachment, send just the `AttachmentRef` on the event, fetch
-   lazily in the pane.** This is the preferred shape. The pane runs
-   `await window.pane.downloadBlob(attachment_id)` and gets a real browser
-   `Blob` it can render via `URL.createObjectURL(blob)`.
+Instead, **upload the image as an attachment, mint a `/b/<token>`
+capability URL, and point an `<img>` straight at it.** The iframe CSP
+allows the relay's own origin in `img-src`/`media-src`, so the browser
+loads the bytes directly — with HTTP caching and range requests, and no
+postMessage round-trip. The capability token in the URL is the only
+credential (the sandboxed iframe carries no cookie); the relay gatekeeps
+it via `/b/:token` (entropy + revoke + TTL + status), and `connect-src
+'none'` still blocks `fetch`/XHR.
 
-**1. Declare the event with an attachment field (same shape as uploads).**
-
-```json
-{
-  "events": {
-    "image.delivered": {
-      "emittedBy": ["agent"],
-      "payload": {
-        "type": "object",
-        "properties": {
-          "attachment": {
-            "type": "object",
-            "properties": {
-              "attachment_id": { "type": "string", "format": "pane-attachment-id" }
-            },
-            "required": ["attachment_id"]
-          }
-        },
-        "required": ["attachment"]
-      }
-    }
-  }
-}
-```
-
-**2. Agent uploads the bytes and emits a thin event with just the AttachmentRef.**
+**1. Upload the bytes and mint a capability URL.**
 
 ```sh
-# Upload — get back an AttachmentRef bound to the pane.
-REF=$(pane attachment upload --file ./weather-chart.png --scope pane --pane-id "$SID")
-ATTACHMENT_ID=$(echo "$REF" | jq -r .attachment_id)
+# Upload as a pane-scoped attachment (cascade-deletes with the pane).
+ATT_ID=$(pane attachment upload --file ./weather-chart.png \
+  --scope pane --pane-id "$SID" | jq -r .attachment_id)
 
-# Emit an event that only carries the id — no inline bytes.
-pane send "$SID" --type image.delivered \
-  --data "{\"attachment\":{\"attachment_id\":\"$ATTACHMENT_ID\"}}"
+# Mint a /b/<token> URL. TTL defaults to the pane's lifetime for
+# pane-scope attachments; --once self-deletes the token on first GET.
+IMG_URL=$(pane attachment token mint "$ATT_ID" | jq -r .url)
 ```
 
-**3. Inside the template, lazy-fetch the bytes and render.**
+**2. Pass the URL into the pane.**
+
+Either bake it into `input_data` at `pane create` time, or emit it on an
+event the template listens for:
+
+```sh
+pane send "$SID" --type image.delivered --data "{\"url\":\"$IMG_URL\"}"
+```
+
+**3. Render it with a plain `<img>` — no JS bridge needed.**
 
 ```html
 <img id="chart" alt="weather chart">
 <script>
-  window.pane.on("image.delivered", async (ev) => {
-    try {
-      // window.pane.downloadBlob() returns a real browser Blob. The iframe
-      // CSP allows blob: URLs in img-src, so createObjectURL is safe.
-      const blob = await window.pane.downloadBlob(ev.data.attachment.attachment_id);
-      document.getElementById("chart").src = URL.createObjectURL(blob);
-    } catch (e) {
-      // e.code is the relay's error code (e.g. "blob_ref_not_accessible",
-      // "participant_token_invalid"). Branch on it to render a useful
-      // fallback.
-      console.warn("could not fetch image:", e.code || e.message);
-    }
+  // From input_data: <img src> can also be set directly in the template
+  // via your render. From an event:
+  window.pane.on("image.delivered", (ev) => {
+    document.getElementById("chart").src = ev.data.url;
   });
 </script>
 ```
 
-The shell brokers the fetch with the participant token; the bytes are
-decrypted by the relay (when `BLOB_ENCRYPT_AT_REST` is on) and arrive
-as a fresh Blob the iframe can render. **The attachment must be referenced
-from this pane** — either via an event the agent emitted or via the
-pane's initial `inputData`. A participant token cannot enumerate
-arbitrary blobs the agent owns. See `docs/CAPABILITY-URLS.md` for the
-full trust model.
+**Alternative — the `downloadBlob` bridge.** `window.pane.downloadBlob(attachment_id)`
+returns a real browser `Blob` brokered by the shell (which fetches with
+the participant token and decrypts when `BLOB_ENCRYPT_AT_REST` is on).
+This is for getting raw bytes into JS — e.g. to hand to a `<canvas>` or
+parse — **not** for `<img>` rendering: the CSP does not allow `blob:`
+object URLs in `img-src`, so `URL.createObjectURL(blob)` as an `<img src>`
+is blocked. For rendering, prefer the capability-URL path above.
+
+> **Migration note.** Earlier versions of this skill showed
+> `img.src = URL.createObjectURL(await pane.downloadBlob(id))`. That
+> pattern never worked — `blob:` is not in `img-src` and it raises a CSP
+> violation. Replace it with the capability-URL `<img src>` above. The
+> `attachment:<id>` scheme is likewise unsupported (no handler) and is no
+> longer in the CSP allowlist; do not use it.
+
+Either way, **the attachment must be referenced from this pane** — the
+capability token is minted by the agent that owns it, and `downloadBlob`'s
+participant token cannot enumerate arbitrary blobs the agent owns. See
+`docs/CAPABILITY-URLS.md` for the full trust model.
 
 ## Records — per-pane mutable collections (#287)
 

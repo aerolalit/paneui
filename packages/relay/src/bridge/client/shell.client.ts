@@ -982,10 +982,10 @@ interface SerializedEvent {
     // bytes by id. The shell brokers this fetch — the iframe sandbox has
     // `connect-src 'none'` and the cookie / participant token never reach
     // the iframe, so it cannot make the request directly. We fetch, then
-    // post the resulting Blob back via
-    // structured clone — the iframe receives a live Blob it can render
-    // with `URL.createObjectURL` (the iframe CSP allows `attachment:` URLs in
-    // `img-src`). ALWAYS post a reply, even on network failure — otherwise
+    // post the resulting Blob back via structured clone — the iframe receives
+    // a live Blob for parsing / canvas use (NOT `<img>` rendering: the CSP does
+    // not allow `blob:` in `img-src`; render via a `/b/<token>` capability URL
+    // instead). ALWAYS post a reply, even on network failure — otherwise
     // the iframe's promise sits hanging until its 2-minute timeout.
     // Follow-up D of #156. Symmetric to upload-attachment-request.
     if (m.kind === "download-attachment-request") {
