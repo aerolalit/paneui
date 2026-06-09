@@ -7,7 +7,7 @@
 //                               rendered with input_data = null (placeholder)
 //
 // These return the SAME wrapped HTML the live viewer's `/content` serves, under
-// the SAME CSP (see PREVIEW_CSP) — but standalone: no shell, no WebSocket, no
+// the SAME CSP (see buildPaneCsp) — but standalone: no shell, no WebSocket, no
 // postMessage init. The artifact's `inputData` is embedded directly and a
 // minimal inert `window.pane` shim is shipped before it (preview-render.ts).
 //
@@ -32,7 +32,8 @@ import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
 import { errors } from "../errors.js";
 import {
   wrapArtifactForPreview,
-  PREVIEW_CSP,
+  buildPaneCsp,
+  paneCspImgOrigin,
 } from "../../bridge/preview-render.js";
 import { PERMISSIONS_POLICY } from "../../bridge/routes.js";
 
@@ -80,8 +81,12 @@ function sendPreview(
   artifactBody: string,
   inputData: unknown,
 ) {
-  c.header("Content-Security-Policy", PREVIEW_CSP);
+  c.header(
+    "Content-Security-Policy",
+    buildPaneCsp(paneCspImgOrigin(c.get("config").publicUrl)),
+  );
   c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "no-referrer");
   c.header("Permissions-Policy", PERMISSIONS_POLICY);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");
