@@ -680,8 +680,17 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="label">${NAV_LABELS.account}</span>
       </button>
       <!-- The action links. Inline icon row on desktop; popover sheet on mobile.
-           Same DOM nodes both ways — a single #signout, no duplication. -->
+           Sign out lives in Settings (the Session card), not here — duplicating
+           it in this menu was redundant. -->
       <div class="acct-links" id="acct-links" role="menu">
+        <!-- Identity header. On desktop the avatar + name + email already show
+             inline in the footer (.who), so this is hidden there; on mobile the
+             footer identity is collapsed, so the Account popover surfaces the
+             signed-in name + email at the top of the sheet. -->
+        <div class="acct-id" aria-hidden="true">
+          <div class="acct-id-name">${escapeHtml(displayName)}</div>
+          <div class="acct-id-email">${escapeHtml(human.email)}</div>
+        </div>
         <!-- Agents lives in the account menu (not a primary sidebar tab); it
              opens the in-SPA agents view via data-go (no full-page nav). -->
         <a class="acct-link" href="#agents" data-go="agents" role="menuitem" title="${NAV_LABELS.agents}" aria-label="${NAV_LABELS.agents}">
@@ -692,10 +701,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
-        <button class="acct-link" id="signout" type="button" role="menuitem" title="${NAV_LABELS.signout}" aria-label="${NAV_LABELS.signout}">
-          <span class="ico">${spaIco("signout", 16)}</span>
-          <span class="txt">${NAV_LABELS.signout}</span>
-        </button>
       </div>
     </div>
   </aside>
@@ -1633,7 +1638,7 @@ const SHELL_JS = `
 
   // Nav clicks
   document.querySelectorAll('#nav-items button[data-view]').forEach((btn) => {
-    btn.addEventListener('click', () => activate(btn.getAttribute('data-view')));
+    btn.addEventListener('click', () => { haptic(10); activate(btn.getAttribute('data-view')); });
   });
   // Segment switch within the Templates view — force the chosen scope.
   document.querySelectorAll('#templates-seg .seg-btn').forEach((btn) => {
@@ -1649,13 +1654,21 @@ const SHELL_JS = `
   });
   window.addEventListener('hashchange', () => activate(viewFromHash()));
 
-  // Sign out — both the popover item (#signout) and the in-view Settings
-  // button (#settings-signout) revoke this device's login.
+  // Light haptic tap for touch interactions (bottom-bar nav, account menu,
+  // sign-out). navigator.vibrate is Android/Chromium-only and a no-op
+  // elsewhere (iOS Safari, desktop) — progressive enhancement, optional-chained
+  // so it never throws where unsupported.
+  function haptic(ms) {
+    try { navigator.vibrate && navigator.vibrate(ms); } catch {}
+  }
+
+  // Sign out — the in-view Settings button (#settings-signout) revokes this
+  // device's login. (The account menu no longer carries a duplicate item.)
   async function signOut() {
+    haptic(15);
     try { await fetch('/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
     location.href = '/login';
   }
-  document.getElementById('signout')?.addEventListener('click', signOut);
   document.getElementById('settings-signout')?.addEventListener('click', signOut);
 
   // Editable display name (Settings → Account). Opening the pen swaps the
@@ -1734,9 +1747,9 @@ const SHELL_JS = `
   })();
 
   // Account menu (mobile) — the "Account" bottom-bar tab toggles the
-  // .acct-links popover (My agents / Settings / Sign out). On desktop the
-  // trigger is display:none and the links sit inline, so this is a no-op
-  // there. Close on outside-click or Escape.
+  // .acct-links popover (My agents / Settings). On desktop the trigger is
+  // display:none and the links sit inline, so this is a no-op there. Close on
+  // outside-click or Escape.
   (function () {
     const me = document.getElementById('me');
     const tab = document.getElementById('acct-tab');
@@ -1744,6 +1757,7 @@ const SHELL_JS = `
     const close = () => { me.classList.remove('open'); tab.setAttribute('aria-expanded', 'false'); };
     tab.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      haptic(10);
       const open = me.classList.toggle('open');
       tab.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
@@ -1753,7 +1767,7 @@ const SHELL_JS = `
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
     // Tapping any popover item closes the sheet — including the in-app
     // Settings view-switch (data-go), which doesn't navigate away.
-    me.querySelectorAll('.acct-link').forEach((l) => l.addEventListener('click', close));
+    me.querySelectorAll('.acct-link').forEach((l) => l.addEventListener('click', () => { haptic(10); close(); }));
   })();
 
   // Pane-row star toggle — POST/DELETE the pane favorite, swap the icon
