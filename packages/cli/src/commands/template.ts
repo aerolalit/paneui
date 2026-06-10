@@ -35,6 +35,7 @@ const CREATE_FLAGS = [
   "event-schema",
   "input-schema",
   "record-schema",
+  "template-record-schema",
   "icon-emoji",
 ];
 const SET_ICON_FLAGS = ["template-id", "emoji", "image"];
@@ -45,6 +46,7 @@ const VERSION_FLAGS = [
   "event-schema",
   "input-schema",
   "record-schema",
+  "template-record-schema",
 ];
 const UPDATE_FLAGS = ["name", "slug", "description", "tags"];
 const NO_FLAGS: string[] = [];
@@ -88,8 +90,9 @@ Subcommands:
                        [--event-schema <path|json>] [--slug <s>]
                        [--description <d>] [--tags <t1,t2>]
                        [--input-schema <path|json>]
-                       [--record-schema <path|json>] [--template-type <t>]
-                       [--icon-emoji <emoji>]
+                       [--record-schema <path|json>]
+                       [--template-record-schema <path|json>]
+                       [--template-type <t>] [--icon-emoji <emoji>]
       Creates a named template. Prints { template_id, slug, version }.
       --icon-emoji sets a single-emoji icon at create time; use 'set-icon'
       with --image to attach an uploaded image icon afterwards.
@@ -97,7 +100,9 @@ Subcommands:
   pane template version <id|slug> --template <path|inline>
                         [--event-schema <path|json>]
                         [--input-schema <path|json>]
-                        [--record-schema <path|json>] [--template-type <t>]
+                        [--record-schema <path|json>]
+                        [--template-record-schema <path|json>]
+                        [--template-type <t>]
       Appends a new immutable version. Prints { template_id, version }.
 
   pane template update <id|slug> [--name <n>] [--slug <s>]
@@ -229,6 +234,17 @@ Options:
                       The relay validates the document and rejects anything
                       malformed at create time. See 'pane skill show' (the
                       "Records" section) for the full grammar.
+  --template-record-schema <v>
+                      JSON Schema 2020-12 document declaring this template's
+                      TEMPLATE-level record collections — a file path, or
+                      inline JSON. Optional; omit for a template with no
+                      template-level collections. Same "x-pane-collections"
+                      grammar as --record-schema, but the collections it
+                      declares are shared across every pane of the template
+                      (one collection per template) instead of per-pane.
+                      Without it, 'pane template-records upsert' is rejected
+                      with "template declares no template-level record
+                      collections" — set this first to bootstrap the feature.
   --icon-emoji <e>    Single-emoji icon for the template (create only).
   --template-type <t> "html-inline" (default) or "html-ref".
   --url <url>         Relay base URL (overrides PANE_URL).
@@ -319,6 +335,33 @@ function resolveRecordSchema(
   }
 }
 
+/**
+ * Resolve the optional --template-record-schema — file path or inline JSON.
+ * Must be an object (a JSON Schema 2020-12 document with an
+ * `x-pane-collections` extension), same grammar as --record-schema, but
+ * declares TEMPLATE-level (shared across all panes of the template) record
+ * collections rather than per-pane ones. Absent → returns `undefined` so the
+ * caller omits `template_record_schema` from the request entirely (template
+ * has no template-level record collections). The relay runs the full shape +
+ * collection validation; this helper only does the obvious "is it an object"
+ * pre-check so a typo surfaces locally.
+ */
+function resolveTemplateRecordSchema(
+  args: ParsedArgs,
+): Record<string, unknown> | undefined {
+  const raw = args.flags.get("template-record-schema");
+  if (raw === undefined) return undefined;
+  try {
+    const v = resolveJson(raw, "--template-record-schema");
+    if (v === null || typeof v !== "object" || Array.isArray(v)) {
+      fail("--template-record-schema must be a JSON object", "invalid_args");
+    }
+    return v as Record<string, unknown>;
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e), "invalid_args");
+  }
+}
+
 /** Parse a comma-separated --tags flag into a string array. */
 function resolveTags(args: ParsedArgs): string[] | undefined {
   const raw = args.flags.get("tags");
@@ -341,6 +384,7 @@ async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   const eventSchema = resolveEventSchema(args);
   const inputSchema = resolveInputSchema(args);
   const recordSchema = resolveRecordSchema(args);
+  const templateRecordSchema = resolveTemplateRecordSchema(args);
   const tags = resolveTags(args);
   const slug = args.flags.get("slug");
   const description = args.flags.get("description");
@@ -361,6 +405,11 @@ async function runTemplateCreate(args: ParsedArgs): Promise<void> {
   // template with no record collections (event-only). Setting it to
   // `undefined` would still add the key.
   if (recordSchema !== undefined) candidate["record_schema"] = recordSchema;
+  // template_record_schema is OMITTED entirely when --template-record-schema is
+  // absent — a template with no template-level record collections. Setting it
+  // to `undefined` would still add the key.
+  if (templateRecordSchema !== undefined)
+    candidate["template_record_schema"] = templateRecordSchema;
   const iconEmoji = args.flags.get("icon-emoji");
   if (iconEmoji !== undefined) candidate["icon_emoji"] = iconEmoji;
 
@@ -406,6 +455,7 @@ async function runTemplateVersion(args: ParsedArgs): Promise<void> {
   const eventSchema = resolveEventSchema(args);
   const inputSchema = resolveInputSchema(args);
   const recordSchema = resolveRecordSchema(args);
+  const templateRecordSchema = resolveTemplateRecordSchema(args);
 
   const candidate: Record<string, unknown> = {
     source,
@@ -419,6 +469,12 @@ async function runTemplateVersion(args: ParsedArgs): Promise<void> {
   // rationale as event_schema above. Including the key as undefined would
   // serialise as null and read as "intentionally cleared" on the wire.
   if (recordSchema !== undefined) candidate["record_schema"] = recordSchema;
+  // template_record_schema is OMITTED entirely when --template-record-schema is
+  // absent — same rationale as record_schema above. Including the key as
+  // undefined would serialise as null and read as "intentionally cleared" on
+  // the wire.
+  if (templateRecordSchema !== undefined)
+    candidate["template_record_schema"] = templateRecordSchema;
 
   const parsed = createArtifactVersionSchema.safeParse(candidate);
   if (!parsed.success) {

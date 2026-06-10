@@ -701,6 +701,10 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
+        <button class="acct-link" id="notif-btn" type="button" role="menuitem" title="Notifications" aria-label="Notifications">
+          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
+          <span class="txt" id="notif-btn-label">Enable Notifications</span>
+        </button>
       </div>
     </div>
   </aside>
@@ -928,6 +932,9 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   </div>
 </div>
 <script type="application/json" id="catalog-detail">${catalogDetailJson}</script>
+
+<!-- In-app toast container for push notifications arriving while the app is open -->
+<div id="pane-toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <script nonce="${nonce}">${SHELL_JS}</script>
 </body>
@@ -1557,6 +1564,30 @@ const EXTRA_CSS = `
   /* Ensure [hidden] always wins — some flex rules above set display, which
      would otherwise re-show a hidden element. */
   [hidden] { display: none !important; }
+
+  /* In-app notification toasts */
+  #pane-toast-container {
+    position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+  }
+  .pane-toast {
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 10px;
+    padding: 10px 14px; max-width: 320px; pointer-events: all;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    display: flex; align-items: flex-start; gap: 10px;
+    animation: toast-in .18s ease;
+  }
+  .pane-toast-ico { flex-shrink: 0; opacity: .6; margin-top: 2px; }
+  .pane-toast-body { flex: 1; min-width: 0; }
+  .pane-toast-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pane-toast-sub { font-size: 12px; color: var(--ink-mute); margin-top: 2px; }
+  .pane-toast-close { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--ink-mute); font-size: 16px; line-height: 1; padding: 0; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (max-width: 600px) {
+    #pane-toast-container { bottom: 70px; right: 12px; left: 12px; }
+    .pane-toast { max-width: 100%; }
+  }
 `;
 
 // ----- Client-side runtime -----
@@ -2839,5 +2870,158 @@ const SHELL_JS = `
 
   // Initial view selection from the URL hash.
   activate(viewFromHash());
+
+  // ----- Web Push notification subscription -----
+  (function () {
+    var btn = document.getElementById('notif-btn');
+    var lbl = document.getElementById('notif-btn-label');
+    if (!btn || !lbl) return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      btn.style.display = 'none';
+      return;
+    }
+
+    // Whether the human currently has an active push subscription. Browser
+    // permission alone isn't enough — permission stays 'granted' forever once
+    // given, so the off-switch tracks the subscription, not the permission.
+    var subscribed = false;
+
+    function urlB64ToUint8Array(b64) {
+      var pad = '='.repeat((4 - b64.length % 4) % 4);
+      var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+      var arr = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return arr;
+    }
+
+    function showToast(title, body, paneUrl) {
+      var container = document.getElementById('pane-toast-container');
+      if (!container) return;
+      var toast = document.createElement('div');
+      toast.className = 'pane-toast';
+      toast.innerHTML =
+        '<span class="pane-toast-ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>' +
+        '<div class="pane-toast-body">' +
+          '<div class="pane-toast-title">' + (title || 'New pane') + '</div>' +
+          (body ? '<div class="pane-toast-sub">' + body + '</div>' : '') +
+        '</div>' +
+        '<button class="pane-toast-close" aria-label="Dismiss">&times;</button>';
+      var close = toast.querySelector('.pane-toast-close');
+      function dismiss() { toast.remove(); }
+      if (close) close.addEventListener('click', dismiss);
+      if (paneUrl) toast.style.cursor = 'pointer';
+      toast.addEventListener('click', function (e) {
+        if (e.target === close) return;
+        if (paneUrl) window.location.href = paneUrl;
+        dismiss();
+      });
+      container.appendChild(toast);
+      setTimeout(dismiss, 8000);
+    }
+
+    // Listen for messages from the service worker (sent when app is focused).
+    navigator.serviceWorker.addEventListener('message', function (ev) {
+      var d = ev.data;
+      if (d && d.type === 'pane.created') showToast(d.title, d.body, d.paneUrl);
+    });
+
+    // Reflect the current state on the bell: blocked / on (a toggle that turns
+    // off) / off (a toggle that turns on). The label doubles as the action hint
+    // via the title attribute.
+    function render() {
+      if (Notification.permission === 'denied') {
+        lbl.textContent = 'Notifications blocked';
+        btn.disabled = true;
+        btn.title = 'Notifications are blocked in your browser settings';
+      } else if (subscribed) {
+        lbl.textContent = 'Notifications on';
+        btn.disabled = false;
+        btn.title = 'Turn off notifications';
+      } else {
+        lbl.textContent = 'Enable Notifications';
+        btn.disabled = false;
+        btn.title = 'Turn on notifications';
+      }
+    }
+
+    async function subscribeAndSave(reg) {
+      var keyRes = await fetch('/v1/self/push-subscription/vapid-public-key', { credentials: 'same-origin' });
+      if (!keyRes.ok) return;
+      var keyBody = await keyRes.json();
+      var vapidKey = keyBody.vapid_public_key;
+      if (!vapidKey) return;
+      var sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(vapidKey),
+      });
+      var j = sub.toJSON();
+      if (!j.endpoint || !j.keys) return;
+      await fetch('/v1/self/push-subscriptions', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }),
+      });
+      subscribed = true;
+    }
+
+    // Tear down the active subscription: unsubscribe in the browser and drop
+    // the row server-side so nothing else is pushed to this device. Permission
+    // can't be revoked programmatically (it stays 'granted'), so "off" is the
+    // absence of a subscription.
+    async function unsubscribe() {
+      var reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      var sub = reg ? await reg.pushManager.getSubscription() : null;
+      var endpoint = sub ? sub.endpoint : null;
+      if (sub) { try { await sub.unsubscribe(); } catch (e) { /* ignore */ } }
+      if (endpoint) {
+        await fetch('/v1/self/push-subscriptions', {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ endpoint: endpoint }),
+        }).catch(function () { /* best-effort */ });
+      }
+      subscribed = false;
+    }
+
+    btn.addEventListener('click', async function () {
+      if (Notification.permission === 'denied') return;
+      btn.disabled = true;
+      try {
+        if (subscribed) {
+          await unsubscribe();
+        } else {
+          var perm = Notification.permission === 'granted'
+            ? 'granted'
+            : await Notification.requestPermission();
+          if (perm === 'granted') {
+            var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+            await subscribeAndSave(reg);
+          }
+        }
+      } catch (e) {
+        /* fall through to render() to restore a consistent state */
+      }
+      render();
+    });
+
+    // Detect the existing subscription on load and reflect it. We deliberately
+    // do NOT auto-resubscribe when permission is granted but no subscription
+    // exists — that would defeat the off-switch (a user who turned it off would
+    // have it turn back on every reload). The button shows "Enable
+    // Notifications" and the user opts back in explicitly.
+    (async function init() {
+      if (Notification.permission === 'granted') {
+        try {
+          var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+          var existing = await reg.pushManager.getSubscription();
+          subscribed = !!existing;
+        } catch (e) { /* leave subscribed = false */ }
+      }
+      render();
+    })();
+  })();
+
 })();
 `;

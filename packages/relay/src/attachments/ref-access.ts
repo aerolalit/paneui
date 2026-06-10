@@ -46,6 +46,16 @@ type JsonSchema = {
   patternProperties?: Record<string, JsonSchema>;
   additionalProperties?: JsonSchema | boolean;
   items?: JsonSchema | JsonSchema[];
+  // JSON Schema 2020-12 array tuple form. `prefixItems` is the positional
+  // schema list (the 2020-12 replacement for the draft-07 tuple-form
+  // `items: [...]`); `items` then applies to every position past the prefix.
+  // The record validators (core/records.ts / core/template-records.ts) run
+  // an Ajv 2020 instance that honours these, so the walker must too.
+  prefixItems?: JsonSchema[];
+  // draft-07 / 2019-09 "items beyond the tuple" keyword. Kept for symmetry
+  // with `prefixItems` + list-`items` so neither validator dialect can hide
+  // a ref past the positional prefix.
+  additionalItems?: JsonSchema | boolean;
   oneOf?: JsonSchema[];
   anyOf?: JsonSchema[];
   allOf?: JsonSchema[];
@@ -62,7 +72,8 @@ type JsonSchema = {
  *   - nested objects (recurse on `properties`)
  *   - dynamic keys (recurse on `patternProperties` regexes + on
  *     `additionalProperties` for keys not matched by either)
- *   - arrays (recurse on `items`)
+ *   - arrays (recurse on `prefixItems` + `items` (2020-12), tuple-form
+ *     `items` + `additionalItems` (draft-07), and list-form `items`)
  *   - `oneOf` / `anyOf` / `allOf` branches — recurse into every branch
  *     and let the dedup at return collapse repeats. Choosing the "right"
  *     branch would mean re-running validation, which Ajv has already done.
@@ -71,7 +82,12 @@ type JsonSchema = {
  * Out of scope:
  *   - it does NOT re-validate the payload (Ajv has already run)
  *   - it does NOT follow `$ref` — current event/input schemas don't use
- *     intra-document refs. A TODO is left below for the day they do.
+ *     intra-document refs INSIDE a row/payload schema. A TODO is left below
+ *     for the day they do. (Note: record collections DO use a single
+ *     top-level `$ref` into `$defs` to name the row schema, but the relay
+ *     resolves that ref to the concrete row schema before the walker runs —
+ *     see resolveCollection in core/records.ts — so the walker only ever
+ *     sees the dereferenced row schema, never the wrapper `$ref`.)
  *
  * Returns a deduped list of attachment_id strings (insertion order preserved).
  */
@@ -129,17 +145,61 @@ function walk(
     }
   }
 
-  // Array payload — recurse into items.
-  if (Array.isArray(value) && schema.items !== undefined) {
-    if (Array.isArray(schema.items)) {
-      // Tuple form: positional items[i] schema.
+  // Array payload — recurse into items. We support three dialects of array
+  // schema, all of which the relay's validators accept depending on the path:
+  //
+  //   - draft-07 tuple form:   items: [s0, s1, ...]   (positional) + optional
+  //                            additionalItems: s     (every position past the
+  //                            tuple)
+  //   - 2020-12 tuple form:    prefixItems: [s0, ...] (positional) + optional
+  //                            items: s               (every position past the
+  //                            prefix — note `items` flips meaning in 2020-12)
+  //   - list form:             items: s               (one schema for every
+  //                            item, when no prefixItems is present)
+  //
+  // #504: before this branch existed for `prefixItems`, a
+  // `format: pane-attachment-id` ref placed under `prefixItems` was Ajv-validated
+  // by the 2020 record validators but the walker returned [], skipping the
+  // attachment-access gate entirely (same bug class as #200's
+  // patternProperties gap).
+  if (Array.isArray(value)) {
+    const prefix = Array.isArray(schema.prefixItems)
+      ? schema.prefixItems
+      : undefined;
+    // Tuple-form `items` (draft-07) is the legacy positional list; the 2020-12
+    // single-schema `items` is the "rest" schema. Disambiguate by JS type.
+    const tupleItems = Array.isArray(schema.items) ? schema.items : undefined;
+    const restItems =
+      schema.items && !Array.isArray(schema.items)
+        ? (schema.items as JsonSchema)
+        : undefined;
+    // The "additional / rest" schema for positions past the positional prefix.
+    // In 2020-12 that's `items`; in draft-07 it's `additionalItems`. Either
+    // way it must be an object sub-schema (boolean `true`/`false` carries
+    // no sub-schema, so nothing to walk).
+    const additional =
+      restItems ??
+      (schema.additionalItems && typeof schema.additionalItems === "object"
+        ? (schema.additionalItems as JsonSchema)
+        : undefined);
+
+    if (prefix || tupleItems) {
+      // Positional handling. `prefixItems` wins when both are present (a schema
+      // shouldn't declare both, but if it does, 2020-12 prefixItems is the one
+      // the record validator honours).
+      const positional = prefix ?? tupleItems!;
       for (let i = 0; i < value.length; i++) {
-        const itemSchema = schema.items[i];
-        if (itemSchema) walk(itemSchema, value[i], out);
+        const itemSchema = positional[i];
+        if (itemSchema) {
+          walk(itemSchema, value[i], out);
+        } else if (additional) {
+          // Past the positional prefix — apply the rest schema.
+          walk(additional, value[i], out);
+        }
       }
-    } else {
-      // List form: one schema for every item.
-      for (const item of value) walk(schema.items, item, out);
+    } else if (restItems) {
+      // Pure list form: one schema for every item.
+      for (const item of value) walk(restItems, item, out);
     }
   }
 
