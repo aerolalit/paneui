@@ -317,7 +317,7 @@ templates.post("/:id/versions", async (c) => {
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
   // #305 — refuse mutation on a soft-deleted template. Restore-from-trash
   // first (the dedicated route lands in #306).
   if (template.deletedAt !== null) throw errors.softDeleted("template");
@@ -526,7 +526,7 @@ templates.patch("/:id", async (c) => {
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
   // #305 — refuse mutation on a soft-deleted template.
   if (template.deletedAt !== null) throw errors.softDeleted("template");
 
@@ -745,7 +745,7 @@ templates.get("/:id", async (c) => {
     },
     include: { versions: { orderBy: { version: "asc" } } },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
 
   return c.json({
     ...summarize(template),
@@ -776,12 +776,12 @@ templates.get("/:id/versions/:version", async (c) => {
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
 
   const v = await prisma.templateVersion.findUnique({
     where: { templateId_version: { templateId: template.id, version } },
   });
-  if (!v) throw errors.artifactVersionNotFound();
+  if (!v) throw errors.templateVersionNotFound();
 
   return c.json(serializeVersion(v));
 });
@@ -799,7 +799,7 @@ templates.get("/:id/versions/:version", async (c) => {
 //
 // Auth: requireAgent is applied at the route group; the template must
 // also belong to the calling agent. Idempotency: a second DELETE of a
-// just-deleted template returns artifact_not_found (404), matching the
+// just-deleted template returns template_not_found (404), matching the
 // pattern used by other DELETE endpoints elsewhere in the API.
 templates.delete("/:id", async (c) => {
   const prisma = c.get("prisma");
@@ -820,7 +820,7 @@ templates.delete("/:id", async (c) => {
     },
     select: { id: true, name: true, slug: true },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
 
   // Strict-cascade refuse: any pane (open OR closed) that pins one of
   // this template's versions blocks the delete. We count rather than fetch

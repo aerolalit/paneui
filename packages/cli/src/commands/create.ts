@@ -203,7 +203,7 @@ Options:
                       the shell band above the iframe — "who is asking, why".
                       Max 280 chars after trim; a single \\n is allowed for a
                       two-line message; other control chars are rejected. Pass
-                      this whenever the artifact itself doesn't make the
+                      this whenever the pane itself doesn't make the
                       request self-explanatory.
   --input-data <v>    This instance's seed data — a JSON object (file path or
                       inline JSON), validated by the relay against the template
