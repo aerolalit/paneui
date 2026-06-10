@@ -23,6 +23,7 @@ import { generateClaimCode, hashClaimCode } from "../../auth/claim.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 import { errors } from "../errors.js";
 import { requireHuman, type HumanAuthEnv } from "../../auth/human-auth.js";
+import { isPushEnabled } from "../../push.js";
 
 // The friendly display name derived from the email when the human hasn't
 // set an explicit name. Kept byte-identical to owner-shell-spa.ts's
@@ -371,6 +372,97 @@ self.delete("/recents/:paneId", async (c) => {
 
   await prisma.humanPaneView.deleteMany({
     where: { humanId: human.id, paneId },
+  });
+  return c.body(null, 204);
+});
+
+// GET /v1/self/push-subscription/vapid-public-key
+// Returns the VAPID public key the browser needs to subscribe. 404 when push
+// is not configured (VAPID keys absent from env).
+self.get("/push-subscription/vapid-public-key", (c) => {
+  const config = c.get("config");
+  if (!isPushEnabled(config)) throw errors.notFound();
+  return c.json({ vapid_public_key: config.VAPID_PUBLIC_KEY });
+});
+
+const pushSubscriptionBody = z.object({
+  endpoint: z.string().url().max(2048),
+  p256dh: z.string().min(1).max(512),
+  auth: z.string().min(1).max(128),
+});
+
+// POST /v1/self/push-subscriptions
+// Upserts a browser push subscription for the logged-in human. Idempotent:
+// re-submitting an existing endpoint updates the keys (the browser may rotate
+// them). Returns 201 on first save, 200 on update.
+self.post("/push-subscriptions", async (c) => {
+  const config = c.get("config");
+  if (!isPushEnabled(config)) throw errors.notFound();
+
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+
+  const parsed = pushSubscriptionBody.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid push subscription",
+      parsed.error.flatten(),
+      "send { endpoint, p256dh, auth } from PushSubscription.toJSON()",
+    );
+  }
+  const { endpoint, p256dh, auth } = parsed.data;
+
+  const existing = await prisma.pushSubscription.findUnique({
+    where: { endpoint },
+    select: { id: true, humanId: true },
+  });
+
+  if (existing) {
+    if (existing.humanId !== human.id) {
+      // Another human owns this endpoint — shouldn't happen in practice
+      // (each browser generates a unique endpoint per app server key), but
+      // treat it as a conflict and refuse rather than silently re-assign.
+      throw errors.conflict("endpoint is registered to a different account");
+    }
+    await prisma.pushSubscription.update({
+      where: { id: existing.id },
+      data: { p256dh, auth },
+    });
+    return c.json({ saved: true }, 200);
+  }
+
+  await prisma.pushSubscription.create({
+    data: { humanId: human.id, endpoint, p256dh, auth },
+  });
+  return c.json({ saved: true }, 201);
+});
+
+// DELETE /v1/self/push-subscriptions
+// Removes a push subscription. Body: { endpoint }. Idempotent — a missing
+// endpoint returns 204 with no error.
+self.delete("/push-subscriptions", async (c) => {
+  const config = c.get("config");
+  if (!isPushEnabled(config)) throw errors.notFound();
+
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+
+  const body = (await c.req.json().catch(() => null)) as {
+    endpoint?: unknown;
+  } | null;
+  const endpoint = typeof body?.endpoint === "string" ? body.endpoint : null;
+  if (!endpoint) {
+    throw errors.invalidRequest(
+      "endpoint is required",
+      undefined,
+      "send { endpoint: string }",
+    );
+  }
+
+  await prisma.pushSubscription.deleteMany({
+    where: { humanId: human.id, endpoint },
   });
   return c.body(null, 204);
 });

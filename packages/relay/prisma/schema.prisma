@@ -97,8 +97,13 @@ model Human {
 
   // #302 — soft-delete + retention policy.
   //
-  // `deletedAt`: NULL = active. A soft-deleted human cascades to their claimed
-  // agents (Phase 1 hard-delete sweeper handles the cascade — see #304).
+  // `deletedAt`: NULL = active. Deleting a human cascades to their owned
+  // join/auth rows (Login, ClaimCode, HumanTemplateInstall, HumanPaneFavorite —
+  // all `onDelete: Cascade`). It does NOT delete their claimed agents:
+  // Agent.ownerHuman is `onDelete: SetNull`, so the agent survives with a
+  // nulled ownerHumanId. The hard-delete sweeper (#304) reclaims rows past
+  // retention; see #312/#506 re: agent ownership cleanup before account
+  // deletion ships.
   //
   // `tier`: gates retention. 'free' uses HARD_RETENTION_DAYS_FREE (default
   // 30 days); 'paid' uses HARD_RETENTION_DAYS_PAID (default null = never
@@ -113,6 +118,8 @@ model Human {
   tier              String    @default("free") // 'free' | 'paid' | 'system'
   softRetentionDays Int?      @map("soft_retention_days")
   hardRetentionDays Int?      @map("hard_retention_days")
+
+  pushSubscriptions PushSubscription[]
 
   @@index([email])
   @@index([deletedAt])
@@ -878,6 +885,26 @@ model AttachmentToken {
 // the entity but keeps the audit row indefinitely). `entityId` is opaque.
 // Denormalised owner ids make the by-human trash query (#306 /v1/trash)
 // a single index scan.
+// Browser push subscription for Web Push API notifications.
+// One row per (human, browser/device) pair. A human can have multiple rows
+// (phone + laptop + tablet). Endpoint is unique — a browser generates a new
+// one on subscribe and the old one becomes 410 Gone when replaced.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  humanId   String   @map("human_id")
+  human     Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  // The push service URL returned by PushManager.subscribe(). Unique: a
+  // browser device can only have one active subscription per application server.
+  endpoint  String   @unique
+  // Encryption keys from PushSubscription.getKey(). Stored as base64url.
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([humanId])
+  @@map("push_subscriptions")
+}
+
 model DeletionLog {
   id           String    @id @default(cuid())
   // 'pane' | 'template' | 'human' | 'agent' | 'attachment'
