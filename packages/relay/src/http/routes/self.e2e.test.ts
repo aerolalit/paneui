@@ -215,6 +215,120 @@ describe("PATCH /v1/self/profile", () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_request");
   });
+
+  // --- home_template_id pin (#511) ---------------------------------------
+
+  // A template owned by one of this human's claimed agents — i.e. a template
+  // the human can legitimately pin as their home.
+  async function seedOwnedTemplate(humanId: string): Promise<string> {
+    const agentKey = generateApiKey();
+    const agent = await prisma.agent.create({
+      data: {
+        keyHash: hashKey(agentKey),
+        keyPrefix: keyPrefix(agentKey),
+        name: "home-tpl-agent",
+        ownerHumanId: humanId,
+        claimedAt: new Date(),
+      },
+    });
+    const template = await prisma.template.create({
+      data: {
+        name: "Home Template",
+        ownerId: agent.id,
+        slug: "home-tpl-" + randomBytes(4).toString("hex"),
+      },
+    });
+    return template.id;
+  }
+
+  it("sets home_template_id, persists it, and serves it on GET", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const templateId = await seedOwnedTemplate(humanId);
+
+    const res = await patchProfile({ home_template_id: templateId }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { home_template_id: string | null };
+    expect(body.home_template_id).toBe(templateId);
+
+    // Persisted on the row.
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.homeTemplateId).toBe(templateId);
+
+    // Served on the read side.
+    const getRes = await app.fetch(
+      new Request("http://t/v1/self/profile", {
+        headers: { cookie: `${LOGIN_COOKIE_NAME}=${cookie}` },
+      }),
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as {
+      home_template_id: string | null;
+    };
+    expect(getBody.home_template_id).toBe(templateId);
+  });
+
+  it("clears home_template_id on an explicit null", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const templateId = await seedOwnedTemplate(humanId);
+    await patchProfile({ home_template_id: templateId }, cookie);
+
+    const res = await patchProfile({ home_template_id: null }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { home_template_id: string | null };
+    expect(body.home_template_id).toBeNull();
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.homeTemplateId).toBeNull();
+  });
+
+  it("rejects an unknown / unusable home_template_id (404)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await patchProfile(
+      { home_template_id: "tpl_does_not_exist" },
+      cookie,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("template_not_found");
+  });
+
+  it("leaves home_template_id untouched when only name is patched", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const templateId = await seedOwnedTemplate(humanId);
+    await patchProfile({ home_template_id: templateId }, cookie);
+
+    // Patch only the name — the pin must survive.
+    const res = await patchProfile({ name: "Renamed" }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      name: string | null;
+      home_template_id: string | null;
+    };
+    expect(body.name).toBe("Renamed");
+    expect(body.home_template_id).toBe(templateId);
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.homeTemplateId).toBe(templateId);
+    expect(human?.name).toBe("Renamed");
+  });
+
+  it("leaves name untouched when only home_template_id is patched", async () => {
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const templateId = await seedOwnedTemplate(humanId);
+    await patchProfile({ name: "Alice Liddell" }, cookie);
+
+    const res = await patchProfile({ home_template_id: templateId }, cookie);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      name: string | null;
+      home_template_id: string | null;
+    };
+    expect(body.name).toBe("Alice Liddell");
+    expect(body.home_template_id).toBe(templateId);
+
+    const human = await prisma.human.findUnique({ where: { id: humanId } });
+    expect(human?.name).toBe("Alice Liddell");
+  });
 });
 
 describe("POST /v1/self/agents/:id/rotate-key", () => {

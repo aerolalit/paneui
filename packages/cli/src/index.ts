@@ -85,6 +85,9 @@ Other noun groups:
                     Doubles as an end-to-end smoke test of your install.
   template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
+  records           Per-pane mutable collections — todo lists, checklists,
+                    kanban cards, comments (list | get | upsert | update |
+                    delete | watch), keyed by a stable record_key.
   template-records  Owner-curated content scoped to a Template head
                     (list | get | upsert | update | delete), visible to
                     every pane derived from any version of the template.
