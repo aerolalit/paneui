@@ -40,6 +40,7 @@ import {
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
+import { notifyHuman } from "../../push.js";
 
 const panes = new Hono<AuthEnv>();
 
@@ -888,6 +889,16 @@ panes.post("/", requireAgent, async (c) => {
   });
 
   recordSessionCreated();
+
+  // Notify the human owner (if any) that an agent just created a pane.
+  // Fire-and-forget: push delivery must never block the API response.
+  if (ownerHumanId) {
+    void notifyHuman(prisma, config, ownerHumanId, {
+      title: resolvedTitle,
+      body: `Agent created a new pane`,
+      paneUrl: `${config.publicUrl}/panes/${paneId}`,
+    });
+  }
 
   const wsBase = publicWsUrl(config);
   return c.json(

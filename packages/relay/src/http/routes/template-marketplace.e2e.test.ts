@@ -630,6 +630,190 @@ describe("POST /v1/templates/:id/install — upgrade_policy (#267 PR C)", () => 
   });
 });
 
+describe("PATCH /v1/templates/:id/install — policy-only update (#508)", () => {
+  it("requires a login cookie", async () => {
+    const res = await app.fetch(
+      new Request("http://t/v1/templates/x/install", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("404 when the human has no active install", async () => {
+    const owner = await seedAgent();
+    const tmpl = await prisma.template.create({
+      data: { ownerId: owner.id, name: "t", publishedAt: new Date() },
+    });
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${tmpl.id}/install`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("404 when the install was uninstalled", async () => {
+    const owner = await seedAgent();
+    const tmpl = await prisma.template.create({
+      data: { ownerId: owner.id, name: "t", publishedAt: new Date() },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId: tmpl.id,
+        installedVersion: 1,
+        uninstalledAt: new Date(),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${tmpl.id}/install`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an invalid / missing upgrade_policy value (400)", async () => {
+    const owner = await seedAgent();
+    const tmpl = await prisma.template.create({
+      data: { ownerId: owner.id, name: "t", publishedAt: new Date() },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    await prisma.humanTemplateInstall.create({
+      data: { humanId, templateId: tmpl.id, installedVersion: 1 },
+    });
+    for (const bad of [{ upgrade_policy: "yolo" }, {}]) {
+      const res = await app.fetch(
+        new Request(`http://t/v1/templates/${tmpl.id}/install`, {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            ...withCookie(cookie),
+          },
+          body: JSON.stringify(bad),
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("flips policy pin→follow WITHOUT touching installedVersion / installedAt / blocked-state", async () => {
+    const owner = await seedAgent();
+    // Template is on v5, but the human deliberately pinned v2.
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Reviewer",
+        publishedAt: new Date(),
+        latestVersion: 5,
+        installCount: 1,
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const pinnedAt = new Date("2020-01-01T00:00:00.000Z");
+    const blockedAt = new Date("2020-02-02T00:00:00.000Z");
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId: tmpl.id,
+        installedVersion: 2,
+        installedAt: pinnedAt,
+        upgradePolicy: "pin",
+        upgradeBlockedAt: blockedAt,
+        upgradeBlockedReason: { breaks: ["x"] },
+      },
+    });
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${tmpl.id}/install`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      template_id: string;
+      installed_version: number;
+      installed_at: string;
+      upgrade_policy: string;
+    };
+    expect(body.upgrade_policy).toBe("follow");
+    // Response still reflects the pinned version + original install time.
+    expect(body.installed_version).toBe(2);
+    expect(body.installed_at).toBe(pinnedAt.toISOString());
+
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId: tmpl.id } },
+    });
+    expect(install!.upgradePolicy).toBe("follow");
+    // Everything else is untouched — the whole point of #508.
+    expect(install!.installedVersion).toBe(2);
+    expect(install!.installedAt.toISOString()).toBe(pinnedAt.toISOString());
+    expect(install!.upgradeBlockedAt?.toISOString()).toBe(
+      blockedAt.toISOString(),
+    );
+    expect(install!.upgradeBlockedReason).toEqual({ breaks: ["x"] });
+    // install_count must not move.
+    const after = await prisma.template.findUnique({ where: { id: tmpl.id } });
+    expect(after?.installCount).toBe(1);
+  });
+
+  it("CONTRAST: POST /install resets version/timestamp/blocked-state (the destructive path #508 avoids)", async () => {
+    const owner = await seedAgent();
+    const tmpl = await prisma.template.create({
+      data: {
+        ownerId: owner.id,
+        name: "Reviewer",
+        publishedAt: new Date(),
+        latestVersion: 5,
+        installCount: 1,
+      },
+    });
+    const { humanId, cookie } = await seedLoggedInHuman();
+    const pinnedAt = new Date("2020-01-01T00:00:00.000Z");
+    const blockedAt = new Date("2020-02-02T00:00:00.000Z");
+    await prisma.humanTemplateInstall.create({
+      data: {
+        humanId,
+        templateId: tmpl.id,
+        installedVersion: 2,
+        installedAt: pinnedAt,
+        upgradePolicy: "pin",
+        upgradeBlockedAt: blockedAt,
+        upgradeBlockedReason: { breaks: ["x"] },
+      },
+    });
+
+    const res = await app.fetch(
+      new Request(`http://t/v1/templates/${tmpl.id}/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...withCookie(cookie) },
+        body: JSON.stringify({ upgrade_policy: "follow" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    const install = await prisma.humanTemplateInstall.findUnique({
+      where: { humanId_templateId: { humanId, templateId: tmpl.id } },
+    });
+    // POST /install yanks the install onto latest and clears blocked-state.
+    expect(install!.installedVersion).toBe(5);
+    expect(install!.installedAt.toISOString()).not.toBe(pinnedAt.toISOString());
+    expect(install!.upgradeBlockedAt).toBeNull();
+    expect(install!.upgradePolicy).toBe("follow");
+  });
+});
+
 describe("POST /v1/templates/:id/upgrade (human, #267 PR C)", () => {
   it("happy path: re-pins the install to the new version when compatible", async () => {
     const { templateId, ownerAgentId } = await seedPublishedTemplateWithV1({

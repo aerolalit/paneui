@@ -10,7 +10,7 @@ description: >-
   watch for the result.
 ---
 
-<!-- pane skill v0.0.16 -->
+<!-- pane skill v0.0.17 -->
 
 # pane
 
@@ -1319,6 +1319,37 @@ pane template version todos \
 On the inline (one-off) form of `pane create`, `--record-schema` rides
 inside the inline template alongside `--event-schema`. `--record-schema`
 is rejected with `--template-id` — the pinned version owns the schema.
+
+#### Template-level record collections (`--template-record-schema`)
+
+`--record-schema` declares **per-pane** collections — each pane of the
+template gets its own private rows. A template can ALSO declare
+**template-level** collections, which are shared across every pane of the
+template (one set of rows per template, written/read through
+`pane template-records ...`). Declare them with `--template-record-schema`
+on `pane template create` / `pane template version`. It takes a file path
+or inline JSON and uses the exact same `x-pane-collections` grammar as
+`--record-schema`:
+
+```sh
+# Declare a shared, template-level "roster" collection at create time.
+pane template create --name "Team board" --slug team-board \
+  --template ./board.html \
+  --template-record-schema ./roster-records.yaml
+
+# Iterate the declaration on a new version (older versions stay pinned):
+pane template version team-board \
+  --template ./board.html \
+  --template-record-schema ./roster-records-v2.yaml
+```
+
+This flag is the bootstrap step for the template-records feature: until a
+template version declares `template_record_schema`, the
+`pane template-records upsert` / `update` / `delete` verbs are rejected
+with "template declares no template-level record collections." A template
+may declare per-pane (`--record-schema`) and template-level
+(`--template-record-schema`) collections independently — set one, the
+other, both, or neither.
 
 ### Reading + writing records from the page
 
