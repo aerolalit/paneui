@@ -243,6 +243,52 @@ describe("PaneClient template operations", () => {
     );
   });
 
+  it("createArtifact forwards record_schema + template_record_schema on the body", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ template_id: "art_1", version: 1 }),
+      201,
+    );
+    const recordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      "x-pane-collections": {
+        items: { schema: { type: "object" }, write: ["agent", "page"] },
+      },
+    };
+    await c.createArtifact({
+      name: "Todo list",
+      slug: "todos",
+      source: "<html></html>",
+      type: "html-inline",
+      record_schema: recordSchema,
+      template_record_schema: { "x-pane-collections": {} },
+    });
+    const body = seen().body as Record<string, unknown>;
+    // Regression for the dropped-field bug: the client used to build the POST
+    // body from an allowlist that omitted record_schema, so --record-schema
+    // never reached the relay and templates stored record_schema: null.
+    expect(body.record_schema).toEqual(recordSchema);
+    expect(body.template_record_schema).toEqual({ "x-pane-collections": {} });
+  });
+
+  it("createArtifactVersion forwards record_schema on the body", async () => {
+    const { c, seen } = capturingClient(
+      JSON.stringify({ template_id: "art_1", version: 2 }),
+      201,
+    );
+    const recordSchema = {
+      "x-pane-collections": {
+        items: { schema: { type: "object" }, write: ["agent"] },
+      },
+    };
+    await c.createArtifactVersion("todos", {
+      source: "<html>v2</html>",
+      type: "html-inline",
+      record_schema: recordSchema,
+    });
+    const body = seen().body as Record<string, unknown>;
+    expect(body.record_schema).toEqual(recordSchema);
+  });
+
   it("createArtifact omits event_schema for a view-only template", async () => {
     const { c, seen } = capturingClient(
       JSON.stringify({ template_id: "art_1", version: 1 }),

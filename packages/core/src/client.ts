@@ -79,6 +79,12 @@ export interface CreateArtifactRequest {
   type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
+  /** Optional per-pane record collections (JSON Schema 2020-12 + the
+   *  `x-pane-collections` extension). Mirrors `createArtifactSchema`. */
+  record_schema?: unknown;
+  /** Optional template-level record collections (same grammar as
+   *  `record_schema`; stored separately on the template version). */
+  template_record_schema?: unknown;
   /** Optional template icon emoji (a single emoji grapheme). Image icons are
    *  set post-create via `updateArtifact({ icon_attachment_id })`. */
   icon_emoji?: string;
@@ -93,6 +99,11 @@ export interface CreateArtifactVersionRequest {
   type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
+  /** Optional per-pane record collections for this version (JSON Schema
+   *  2020-12 + `x-pane-collections`). Mirrors `createArtifactVersionSchema`. */
+  record_schema?: unknown;
+  /** Optional template-level record collections for this version. */
+  template_record_schema?: unknown;
 }
 
 /**
@@ -651,6 +662,8 @@ export class PaneClient {
       type: req.type,
       event_schema: req.event_schema,
       input_schema: req.input_schema,
+      record_schema: req.record_schema,
+      template_record_schema: req.template_record_schema,
       icon_emoji: req.icon_emoji,
     });
     if (!r.ok) this.fail(r);
@@ -674,6 +687,8 @@ export class PaneClient {
         type: req.type,
         event_schema: req.event_schema,
         input_schema: req.input_schema,
+        record_schema: req.record_schema,
+        template_record_schema: req.template_record_schema,
       },
     );
     if (!r.ok) this.fail(r);
