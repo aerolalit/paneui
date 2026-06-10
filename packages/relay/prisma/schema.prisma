@@ -114,6 +114,8 @@ model Human {
   softRetentionDays Int?      @map("soft_retention_days")
   hardRetentionDays Int?      @map("hard_retention_days")
 
+  pushSubscriptions PushSubscription[]
+
   @@index([email])
   @@index([deletedAt])
   @@map("humans")
@@ -878,6 +880,26 @@ model AttachmentToken {
 // the entity but keeps the audit row indefinitely). `entityId` is opaque.
 // Denormalised owner ids make the by-human trash query (#306 /v1/trash)
 // a single index scan.
+// Browser push subscription for Web Push API notifications.
+// One row per (human, browser/device) pair. A human can have multiple rows
+// (phone + laptop + tablet). Endpoint is unique — a browser generates a new
+// one on subscribe and the old one becomes 410 Gone when replaced.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  humanId   String   @map("human_id")
+  human     Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  // The push service URL returned by PushManager.subscribe(). Unique: a
+  // browser device can only have one active subscription per application server.
+  endpoint  String   @unique
+  // Encryption keys from PushSubscription.getKey(). Stored as base64url.
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([humanId])
+  @@map("push_subscriptions")
+}
+
 model DeletionLog {
   id           String    @id @default(cuid())
   // 'pane' | 'template' | 'human' | 'agent' | 'attachment'
