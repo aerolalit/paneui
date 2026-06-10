@@ -380,6 +380,12 @@ const schema = z.object({
   // The mailto: or https: contact URL sent in the VAPID header. Required by
   // some push services; defaults to a localhost placeholder (fine for dev).
   VAPID_MAILTO: z.string().default("mailto:admin@localhost"),
+  // Per-human push throttle window. The first pane-created notification fires
+  // immediately; any further ones within this many seconds are coalesced into
+  // a single "N new panes" message delivered when the window closes. Prevents a
+  // busy agent from buzzing the human once per pane. Set to 0 to disable
+  // coalescing and deliver every notification immediately.
+  PUSH_COALESCE_WINDOW_SECONDS: z.coerce.number().int().min(0).default(60),
 
   // Lowest @paneui/cli version this relay accepts. When a /v1/* request
   // arrives with `x-pane-cli-version` set to a strictly-lower semver, the

@@ -2881,6 +2881,11 @@ const SHELL_JS = `
       return;
     }
 
+    // Whether the human currently has an active push subscription. Browser
+    // permission alone isn't enough — permission stays 'granted' forever once
+    // given, so the off-switch tracks the subscription, not the permission.
+    var subscribed = false;
+
     function urlB64ToUint8Array(b64) {
       var pad = '='.repeat((4 - b64.length % 4) % 4);
       var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -2920,19 +2925,24 @@ const SHELL_JS = `
       if (d && d.type === 'pane.created') showToast(d.title, d.body, d.paneUrl);
     });
 
-    function updateBtn(perm) {
-      if (perm === 'granted') {
-        lbl.textContent = 'Notifications on';
-        btn.disabled = false;
-      } else if (perm === 'denied') {
+    // Reflect the current state on the bell: blocked / on (a toggle that turns
+    // off) / off (a toggle that turns on). The label doubles as the action hint
+    // via the title attribute.
+    function render() {
+      if (Notification.permission === 'denied') {
         lbl.textContent = 'Notifications blocked';
         btn.disabled = true;
+        btn.title = 'Notifications are blocked in your browser settings';
+      } else if (subscribed) {
+        lbl.textContent = 'Notifications on';
+        btn.disabled = false;
+        btn.title = 'Turn off notifications';
       } else {
         lbl.textContent = 'Enable Notifications';
         btn.disabled = false;
+        btn.title = 'Turn on notifications';
       }
     }
-    updateBtn(Notification.permission);
 
     async function subscribeAndSave(reg) {
       var keyRes = await fetch('/v1/self/push-subscription/vapid-public-key', { credentials: 'same-origin' });
@@ -2952,35 +2962,65 @@ const SHELL_JS = `
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }),
       });
-      updateBtn('granted');
+      subscribed = true;
+    }
+
+    // Tear down the active subscription: unsubscribe in the browser and drop
+    // the row server-side so nothing else is pushed to this device. Permission
+    // can't be revoked programmatically (it stays 'granted'), so "off" is the
+    // absence of a subscription.
+    async function unsubscribe() {
+      var reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      var sub = reg ? await reg.pushManager.getSubscription() : null;
+      var endpoint = sub ? sub.endpoint : null;
+      if (sub) { try { await sub.unsubscribe(); } catch (e) { /* ignore */ } }
+      if (endpoint) {
+        await fetch('/v1/self/push-subscriptions', {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ endpoint: endpoint }),
+        }).catch(function () { /* best-effort */ });
+      }
+      subscribed = false;
     }
 
     btn.addEventListener('click', async function () {
       if (Notification.permission === 'denied') return;
       btn.disabled = true;
       try {
-        var perm = await Notification.requestPermission();
-        updateBtn(perm);
-        if (perm !== 'granted') return;
-        var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-        await subscribeAndSave(reg);
+        if (subscribed) {
+          await unsubscribe();
+        } else {
+          var perm = Notification.permission === 'granted'
+            ? 'granted'
+            : await Notification.requestPermission();
+          if (perm === 'granted') {
+            var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+            await subscribeAndSave(reg);
+          }
+        }
       } catch (e) {
-        updateBtn(Notification.permission);
+        /* fall through to render() to restore a consistent state */
       }
+      render();
     });
 
-    // If already granted, register the SW silently on page load.
-    if (Notification.permission === 'granted') {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function (reg) {
-        return reg.pushManager.getSubscription();
-      }).then(function (existing) {
-        if (!existing) {
-          navigator.serviceWorker.ready.then(function (reg) {
-            subscribeAndSave(reg).catch(function () {});
-          });
-        }
-      }).catch(function () {});
-    }
+    // Detect the existing subscription on load and reflect it. We deliberately
+    // do NOT auto-resubscribe when permission is granted but no subscription
+    // exists — that would defeat the off-switch (a user who turned it off would
+    // have it turn back on every reload). The button shows "Enable
+    // Notifications" and the user opts back in explicitly.
+    (async function init() {
+      if (Notification.permission === 'granted') {
+        try {
+          var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+          var existing = await reg.pushManager.getSubscription();
+          subscribed = !!existing;
+        } catch (e) { /* leave subscribed = false */ }
+      }
+      render();
+    })();
   })();
 
 })();
