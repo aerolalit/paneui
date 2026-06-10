@@ -29,6 +29,7 @@ import { clientIp } from "../rate-limit.js";
 import type { Author } from "../../types.js";
 import {
   deleteRecord,
+  deleteRecordCollection,
   listRecords,
   updateRecord,
   writeRecord,
@@ -387,6 +388,37 @@ records.delete("/:recordKey", async (c) => {
   return c.body(null, 204);
 });
 
+// DELETE /v1/panes/:id/records/:collection
+// Drop a WHOLE collection — all its rows + the collection row (#507).
+// PRIVILEGED: unlike per-record DELETE (gated by the collection's `delete`
+// set, which can include `page`/`author`), dropping a collection is owner-only.
+// recordsAuth already let any EMIT-capable caller through (including a
+// participant/`page` principal), so we re-gate here: allow only the owning
+// AGENT (Bearer token → `agent` set on the context) or the OWNER HUMAN over
+// their own shell (cookie path → author.id === OWNER_IDENTITY_ID). A
+// participant / public-guest / grantee is rejected 403 author_not_allowed.
+records.delete("/", async (c) => {
+  const prisma = c.get("prisma");
+  const pane = c.get("pane") as unknown as PaneWithRecordSchema;
+  const collection = collectionParam(c);
+
+  const isOwningAgent = c.get("agent") !== undefined;
+  const author = c.get("author");
+  const isOwnerHuman =
+    author !== undefined &&
+    author.kind === "human" &&
+    author.id === OWNER_IDENTITY_ID;
+  if (!isOwningAgent && !isOwnerHuman) {
+    throw errors.forbidden(
+      "author_not_allowed",
+      "deleting a whole record collection is restricted to the pane's owning agent; participants may delete individual records but not the collection",
+    );
+  }
+
+  await deleteRecordCollection({ prisma }, pane, collection);
+  return c.body(null, 204);
+});
+
 // Fallback handlers for unsupported verbs on the records subtree.
 //
 // Why these exist: participants-human is mounted at `app.route("/v1/panes",
@@ -409,10 +441,10 @@ records.all("/:recordKey", (c) => {
 });
 
 records.all("/", (c) => {
-  c.header("Allow", "GET, POST");
+  c.header("Allow", "GET, POST, DELETE");
   throw errors.methodNotAllowed(
     `method ${c.req.method} not allowed on this route`,
-    "the records collection endpoint supports GET (list) and POST (create) — see SPEC.md#http-api-v1",
+    "the records collection endpoint supports GET (list), POST (create), and DELETE (drop the whole collection) — see SPEC.md#http-api-v1",
   );
 });
 

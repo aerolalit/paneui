@@ -70,7 +70,7 @@ The core round trip is the foundation; the relay also carries the pieces you nee
 - **Reusable templates + a marketplace.** `pane template create / list / search / show / version` manage named, versioned templates. A human can mark one **public** in the relay's web UI, giving it a listing other humans can browse and **install** into their own account.
 - **Records** — per-pane mutable collections (posts, comments, kanban cards, line items) keyed by stable `record_key`, with optimistic locking and soft-delete. Use records when the *current value* matters and history doesn't; use events when history is the point. Declared with a `record_schema` (JSON Schema 2020-12 + the `x-pane-collections` extension).
 - **Attachments** — upload images/PDFs/audio/video (`pane attachment …`), reference them by id in events, and let the page fetch them lazily or accept uploads back *from* the human. Capability-URL (`/b/<token>`) downloads, MIME sniffing, and EXIF stripping included.
-- **SQL query** — `pane query "<SQL>"` runs read-only Postgres-flavoured SQL scoped to your own panes, records, and events.
+- **SQL query** — `pane query "<SQL>"` runs read-only DuckDB SQL (a PostgreSQL-compatible dialect) scoped to your own panes, records, and events.
 - **Multi-participant panes** — beyond the single auto-minted human URL, an owner can add identity-bound (email-invite) or public/anonymous participants. `pane participant list / new / revoke` manage URLs on a live pane.
 - **Taste & feedback** — `pane taste` remembers a human's presentation preferences across runs so authored UIs stay consistent; `pane feedback` reports issues about pane itself.
 

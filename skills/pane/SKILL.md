@@ -1415,8 +1415,28 @@ pane records upsert <pane-id> comments --data '{"body":"hi"}' --key cmt_1
 pane records list   <pane-id> comments --since 0 --limit 100
 pane records update <pane-id> comments cmt_1 --data '{"body":"edited"}' --if-match 1
 pane records delete <pane-id> comments cmt_1 --if-match 2
+pane records delete-collection <pane-id> comments  # drop the WHOLE collection
 pane records watch  <pane-id>                       # JSON-line stream of deltas
 ```
+
+`delete-collection` removes every row **and** the collection row itself
+(`DELETE /v1/panes/:id/records/:collection`, no `:recordKey`). It is a
+**privileged, owner-only** operation: only the pane's owning agent (or the
+owner human over their own shell) may drop a collection — a participant /
+`page` principal that can write individual rows is rejected with
+`author_not_allowed`. Connected subscribers receive a `record.delete`
+tombstone for each live row, then the rows are hard-deleted via the
+collection's cascade (no sweeper wait). The same shape exists for
+template-level records: `pane template-records delete-collection <template> <name>`.
+
+> **Collection names are immutable — there is no rename.** A collection's
+> `name` is its natural key (`(paneId, name)` / `(templateId, name)`), fixed at
+> first write. To "rename" a typo'd or deprecated collection, drop it with
+> `delete-collection` and write the rows again under the new name (the next
+> write recreates the collection fresh at `seq=1`). A first-class rename is a
+> possible future follow-up — it carries reference/migration semantics for any
+> `input_data` or schema that points at the old name, so it's deliberately out
+> of scope here.
 
 ### Authoring rules of thumb
 

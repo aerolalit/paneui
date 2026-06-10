@@ -111,6 +111,11 @@ export interface DeleteRecordInput {
   ifMatch?: number;
 }
 
+export interface DeleteRecordCollectionResult {
+  /** Number of records (live + tombstoned) removed with the collection. */
+  removed: number;
+}
+
 // -------------------------------------------------------------------------
 // recordSchema resolution + authz
 // -------------------------------------------------------------------------
@@ -765,6 +770,84 @@ export async function deleteRecord(
   });
 
   publish(pane.id, tombstone(result, input.collectionName));
+}
+
+// -------------------------------------------------------------------------
+// Collection delete — drop a whole collection (#507)
+// -------------------------------------------------------------------------
+
+/**
+ * Delete an entire record collection: every row plus the collection row
+ * itself. This is the collection-level analogue of deleteRecord and is a
+ * PRIVILEGED operation — the route layer restricts it to the pane's owning
+ * agent (or the owner human over their own shell). Unlike per-record delete
+ * there is NO per-row `delete`-set check and NO `page`/participant path: a
+ * participant who can write individual rows still cannot drop the collection.
+ *
+ * Broadcast: a `record.delete` tombstone is emitted for every LIVE row (so
+ * open subscribers evict each row through the same `applyDelete` path a
+ * single-record delete uses), then the collection row is removed. The
+ * PaneRecord→RecordCollection FK is `onDelete: Cascade`, so deleting the
+ * collection row hard-deletes all its records (live + already-tombstoned) in
+ * one statement — no orphan rows, and no work left for the tombstone sweeper.
+ *
+ * Recreate-on-write: collection names are the natural key and are NOT
+ * renamable. After a delete the name is free again; the next write to it
+ * re-creates the collection fresh with seq=1 (via writeRecord's upsert).
+ *
+ * 404 (record_collection_not_found) when the name isn't declared in the
+ * template's recordSchema, OR when it's declared but was never written to
+ * (no collection row exists) — there is nothing to delete in either case.
+ */
+export async function deleteRecordCollection(
+  deps: { prisma: PrismaClient },
+  pane: PaneWithRecordSchema,
+  collectionName: string,
+): Promise<DeleteRecordCollectionResult> {
+  const { prisma } = deps;
+  assertPaneOpen(pane);
+
+  resolveCollection(pane, collectionName); // 404s if undeclared in the schema
+
+  // Load the collection row + its live rows, then drop the collection row.
+  // Deleting the collection cascades to every PaneRecord (live + tombstoned).
+  const { removed, tombstones } = await prisma.$transaction(async (tx) => {
+    const col = await tx.recordCollection.findUnique({
+      where: { paneId_name: { paneId: pane.id, name: collectionName } },
+    });
+    if (!col) {
+      // Declared in the schema but never written — no collection row to drop.
+      throw recordCollectionNotFound(
+        collectionName,
+        `collection '${collectionName}' has no rows to delete in this pane (it was never written to)`,
+      );
+    }
+    // Live rows get a tombstone broadcast so connected subscribers evict them.
+    const live = await tx.paneRecord.findMany({
+      where: { collectionId: col.id, deletedAt: null },
+    });
+    const total = await tx.paneRecord.count({
+      where: { collectionId: col.id },
+    });
+    // Cascade delete: removing the collection row removes all its records.
+    await tx.recordCollection.delete({ where: { id: col.id } });
+    return { removed: total, tombstones: live };
+  });
+
+  const deletedAt = new Date().toISOString();
+  for (const row of tombstones) {
+    publish(
+      pane.id,
+      makeRecordDelete(collectionName, {
+        id: row.id,
+        key: row.recordKey,
+        seq: row.seq,
+        deleted_at: deletedAt,
+      }),
+    );
+  }
+
+  return { removed };
 }
 
 // -------------------------------------------------------------------------
