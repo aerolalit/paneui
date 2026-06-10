@@ -42,6 +42,10 @@ import type {
 import type { ValidateFunction } from "ajv";
 import { ApiError, errors } from "../http/errors.js";
 import { publishToTemplate } from "../http/broadcast.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../attachments/ref-access.js";
 import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
 import type { Config } from "../config.js";
@@ -382,6 +386,18 @@ export async function writeTemplateRecord(
     data: input.data,
   });
 
+  // Attachment-ref access gate (#505). Template records may carry
+  // `format: pane-attachment-id` refs; verify the template's owning agent can
+  // access each before persisting. The authz anchor is `template.ownerId`
+  // (the owner agent), matching how per-pane records anchor on `pane.agentId`.
+  // See attachments/ref-access.ts.
+  await assertTemplateRecordBlobsAccessible(
+    prisma,
+    template.ownerId,
+    collection.rowSchema,
+    input.data,
+  );
+
   const recordKey = input.recordKey ?? `trec_${cuidish()}`;
 
   let row: TemplateRecord;
@@ -478,6 +494,15 @@ export async function updateTemplateRecord(
     rowSchema: collection.rowSchema,
     data: input.data,
   });
+
+  // Same attachment-ref access gate as writeTemplateRecord — a PATCH can
+  // introduce new refs. See attachments/ref-access.ts.
+  await assertTemplateRecordBlobsAccessible(
+    prisma,
+    template.ownerId,
+    collection.rowSchema,
+    input.data,
+  );
 
   const updated = await prisma.$transaction(async (tx) => {
     const col = await tx.templateRecordCollection.findUnique({
@@ -601,6 +626,26 @@ export async function deleteTemplateRecord(
       deleted_at: (deleted.deletedAt ?? deleted.updatedAt).toISOString(),
     }),
   );
+}
+
+// -------------------------------------------------------------------------
+// Attachment-ref access gate (#505)
+// -------------------------------------------------------------------------
+
+// Walk a template record's row schema for `format: pane-attachment-id` sites and
+// verify every referenced attachment is accessible to `agentId` (owned, exists,
+// not soft-deleted). Mirrors the per-pane record gate in core/records.ts and
+// the event gate in core/events.ts. No-op when the schema declares no ref sites.
+async function assertTemplateRecordBlobsAccessible(
+  prisma: PrismaClient,
+  agentId: string,
+  rowSchema: object,
+  data: unknown,
+): Promise<void> {
+  const refs = collectBlobRefs(rowSchema, data);
+  if (refs.length > 0) {
+    await assertBlobsAccessibleByAgent(prisma, agentId, refs);
+  }
 }
 
 // -------------------------------------------------------------------------

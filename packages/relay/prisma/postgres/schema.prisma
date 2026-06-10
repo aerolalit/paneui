@@ -90,6 +90,8 @@ model Human {
   softRetentionDays Int?      @map("soft_retention_days")
   hardRetentionDays Int?      @map("hard_retention_days")
 
+  pushSubscriptions PushSubscription[]
+
   @@index([email])
   @@index([deletedAt])
   @@map("humans")
@@ -724,6 +726,26 @@ model AttachmentToken {
   @@index([attachmentId])
   @@index([expiresAt])
   @@map("attachment_tokens")
+}
+
+// Browser push subscription for Web Push API notifications.
+// One row per (human, browser/device) pair. A human can have multiple rows
+// (phone + laptop + tablet). Endpoint is unique — a browser generates a new
+// one on subscribe and the old one becomes 410 Gone when replaced.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  humanId   String   @map("human_id")
+  human     Human    @relation(fields: [humanId], references: [id], onDelete: Cascade)
+  // The push service URL returned by PushManager.subscribe(). Unique: a
+  // browser device can only have one active subscription per application server.
+  endpoint  String   @unique
+  // Encryption keys from PushSubscription.getKey(). Stored as base64url.
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([humanId])
+  @@map("push_subscriptions")
 }
 
 // #302 — deletion audit trail. See sqlite schema for the full design rationale.
