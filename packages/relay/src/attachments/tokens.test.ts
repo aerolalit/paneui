@@ -6,6 +6,7 @@ import {
   generateBlobToken,
   hashBlobToken,
   looksLikeBlobToken,
+  extractBlobTokens,
 } from "./tokens.js";
 
 describe("generateBlobToken", () => {
@@ -66,5 +67,60 @@ describe("looksLikeBlobToken", () => {
 
   it("rejects empty string", () => {
     expect(looksLikeBlobToken("")).toBe(false);
+  });
+});
+
+describe("extractBlobTokens", () => {
+  // A fixed, valid token shape (paneb_ + 32 base64url chars) for assertions.
+  const T1 = "paneb_" + "A".repeat(32);
+  const T2 = "paneb_" + "b".repeat(32);
+
+  it("pulls a token out of a /b/<token> URL string", () => {
+    expect(extractBlobTokens(`https://relay.example/b/${T1}`)).toEqual([T1]);
+  });
+
+  it("walks nested objects and arrays", () => {
+    const input = {
+      hero: `https://r/b/${T1}`,
+      gallery: [{ src: `/b/${T2}` }, { src: `/b/${T1}` }],
+    };
+    // T1 appears twice but is deduped; first-seen order is preserved.
+    expect(extractBlobTokens(input)).toEqual([T1, T2]);
+  });
+
+  it("finds a token embedded in markdown / HTML, not just a bare URL", () => {
+    const md = `![photo](https://r/b/${T1}) and <img src="/b/${T2}">`;
+    expect(extractBlobTokens(md)).toEqual([T1, T2]);
+  });
+
+  it("returns [] when there are no tokens", () => {
+    expect(
+      extractBlobTokens({ a: 1, b: "no tokens here", c: [true, null] }),
+    ).toEqual([]);
+  });
+
+  it("ignores a paneb_ run that is too long to be a token", () => {
+    // 33 base64url chars after the prefix — not a valid 24-byte token.
+    expect(extractBlobTokens(`/b/paneb_${"a".repeat(33)}`)).toEqual([]);
+  });
+
+  it("ignores a paneb_ run glued onto preceding base64url bytes", () => {
+    // `x` immediately before the prefix means this isn't a clean token start.
+    expect(extractBlobTokens(`xpaneb_${"a".repeat(32)}`)).toEqual([]);
+  });
+
+  it("extracts a token that is immediately followed by a query string", () => {
+    expect(extractBlobTokens(`/b/${T1}?download=1`)).toEqual([T1]);
+  });
+
+  it("handles non-object scalars without throwing", () => {
+    expect(extractBlobTokens(null)).toEqual([]);
+    expect(extractBlobTokens(42)).toEqual([]);
+    expect(extractBlobTokens(undefined)).toEqual([]);
+  });
+
+  it("round-trips a freshly generated token", () => {
+    const { token } = generateBlobToken();
+    expect(extractBlobTokens(`/b/${token}`)).toEqual([token]);
   });
 });

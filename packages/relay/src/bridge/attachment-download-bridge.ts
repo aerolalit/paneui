@@ -151,7 +151,13 @@ blobDownloadBridge.get(
         expiresAt: true,
         inputData: true,
         templateVersion: {
-          select: { eventSchema: true, inputSchema: true },
+          select: {
+            eventSchema: true,
+            inputSchema: true,
+            // #505 (B): records may carry attachment refs too. The walker
+            // needs each collection's row schema to resolve a record-only ref.
+            recordSchema: true,
+          },
         },
       },
     });
@@ -270,10 +276,11 @@ blobDownloadBridge.get(
 );
 
 // ---------------------------------------------------------------------------
-// Collect every attachment_id referenced from a pane — either in its initial
-// `inputData` (walked against the template version's `inputSchema`) or in
-// any event's `data` (walked against the event-type's payload schema from
-// the pane's `eventSchema`).
+// Collect every attachment_id referenced from a pane — in its initial
+// `inputData` (walked against the template version's `inputSchema`), in any
+// event's `data` (walked against the event-type's payload schema from the
+// pane's `eventSchema`), OR in any of the pane's records (walked against the
+// owning collection's row schema from the pane's `recordSchema`, #505 B).
 //
 // Pure read; no mutation. The walker is `collectBlobRefs` from PR #164.
 // ---------------------------------------------------------------------------
@@ -283,6 +290,7 @@ type PaneForRefs = {
   templateVersion: {
     eventSchema: unknown;
     inputSchema: unknown;
+    recordSchema?: unknown;
   };
 };
 
@@ -300,7 +308,16 @@ async function collectSessionBlobRefs(
     }
   }
 
-  // 2) events: walk each one against the type's payload schema.
+  // 2) records: walk each record's data against its collection's row schema.
+  //    Without this step (#505 B) an attachment the agent legitimately owns and
+  //    references ONLY from a record can never be served via downloadBlob() —
+  //    it 404s as attachment_ref_not_accessible even though the agent owns it.
+  //    The defense-in-depth owner check downstream (row.ownerId === pane.agentId)
+  //    still guards the bytes, so adding refs here only un-breaks legitimate
+  //    own-attachment reads; it cannot expose another agent's attachment.
+  await collectRecordBlobRefs(prisma, pane, acc);
+
+  // 3) events: walk each one against the type's payload schema.
   const eventSchema = pane.templateVersion
     .eventSchema as unknown as EventSchema | null;
   if (!eventSchema) return acc;
@@ -325,6 +342,72 @@ async function collectSessionBlobRefs(
   }
 
   return acc;
+}
+
+// Walk the pane's records against their collection row-schemas, adding any
+// `format: pane-attachment-id` refs to `acc`. Mirrors the events walk above but
+// keyed on the recordSchema's `x-pane-collections[name].schema.$ref` → `$defs`
+// row schema. Skips silently when the pane declares no record collections.
+async function collectRecordBlobRefs(
+  prisma: PrismaClient,
+  pane: PaneForRefs,
+  acc: Set<string>,
+): Promise<void> {
+  const rowSchemasByCollection = resolveRecordRowSchemas(
+    pane.templateVersion.recordSchema,
+  );
+  // No record collections declared (or recordSchema is null/malformed) → no
+  // record refs possible. Avoid the DB round-trip entirely.
+  if (rowSchemasByCollection.size === 0) return;
+
+  // Pull live + tombstoned record rows for this pane with their collection
+  // name. Tombstones are included for symmetry with the write-side gate (a
+  // soft-deleted record's ref shouldn't suddenly become un-downloadable mid-
+  // tombstone-window), and the downstream owner/status checks still gate bytes.
+  const records = await prisma.paneRecord.findMany({
+    where: { collection: { paneId: pane.id } },
+    select: { data: true, collection: { select: { name: true } } },
+  });
+  for (const rec of records) {
+    const rowSchema = rowSchemasByCollection.get(rec.collection.name);
+    if (!rowSchema) continue;
+    for (const id of collectBlobRefs(rowSchema, rec.data)) acc.add(id);
+  }
+}
+
+// Resolve a pane's recordSchema document into a map of
+// collectionName → dereferenced row schema. Mirrors resolveCollection in
+// core/records.ts but builds the whole map at once (the read path walks every
+// collection, not one named collection) and never throws — a malformed or
+// absent schema simply yields an empty map (read side fails closed: no refs).
+function resolveRecordRowSchemas(recordSchema: unknown): Map<string, object> {
+  const out = new Map<string, object>();
+  if (!recordSchema || typeof recordSchema !== "object") return out;
+  const doc = recordSchema as Record<string, unknown>;
+  const xpc = doc["x-pane-collections"];
+  if (!xpc || typeof xpc !== "object") return out;
+  const defs = doc["$defs"] as Record<string, unknown> | undefined;
+  for (const [name, entryRaw] of Object.entries(
+    xpc as Record<string, unknown>,
+  )) {
+    if (!entryRaw || typeof entryRaw !== "object") continue;
+    const schemaField = (entryRaw as Record<string, unknown>)["schema"] as
+      | { $ref?: string }
+      | undefined;
+    const refRaw = schemaField?.$ref;
+    if (typeof refRaw !== "string") continue;
+    const refMatch = /^#\/\$defs\/([A-Za-z0-9_]+)$/.exec(refRaw);
+    const defName = refMatch?.[1];
+    const rowSchema = defName ? defs?.[defName] : undefined;
+    if (
+      rowSchema &&
+      typeof rowSchema === "object" &&
+      !Array.isArray(rowSchema)
+    ) {
+      out.set(name, rowSchema as object);
+    }
+  }
+  return out;
 }
 
 export default blobDownloadBridge;

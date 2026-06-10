@@ -6,7 +6,7 @@
 // stays pure and framework-free — no Prisma, no Hono, no server deps.
 
 import type { z } from "zod";
-import type { createPaneSchema } from "./schemas.js";
+import type { createPaneSchema, updatePaneSchema } from "./schemas.js";
 
 export type AuthorKind = "human" | "agent" | "system";
 
@@ -237,6 +237,33 @@ export interface UpgradePaneResponse {
   breaks: UpgradeBreak[];
   /** The compat mode the upgrade ran under. */
   compat: "strict" | "force";
+}
+
+/**
+ * Request body for PATCH /v1/panes/:id (#502). Derived from `updatePaneSchema`
+ * so the runtime validator and the static type cannot drift.
+ */
+export type UpdatePaneRequest = z.infer<typeof updatePaneSchema>;
+
+/** Response from PATCH /v1/panes/:id — the full new pane state, matching the
+ *  shape returned by GET /v1/panes/:id so callers can hot-swap their cached
+ *  view without an extra read. */
+export interface UpdatePaneResponse {
+  pane_id: string;
+  status: "open" | "closed";
+  template_id: string;
+  template_version_id: string;
+  template_version: number;
+  title: string;
+  tags: string[];
+  metadata: Record<string, unknown> | null;
+  input_data: Record<string, unknown> | null;
+  created_at: string;
+  expires_at: string;
+  deleted_at: string | null;
+  /** The set of field names that were actually applied by this PATCH. Useful
+   *  for callers that want to confirm a no-op vs. a real change. */
+  updated_fields: string[];
 }
 
 /** One immutable version of an template's content. */

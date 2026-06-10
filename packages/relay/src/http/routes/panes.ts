@@ -5,6 +5,7 @@ import {
   listPanesQuerySchema,
   mintParticipantSchema,
   upgradePaneSchema,
+  updatePaneSchema,
   isRasterImageMime,
 } from "@paneui/core";
 import type { Config } from "../../config.js";
@@ -37,7 +38,9 @@ import {
   assertBlobsAccessibleByAgent,
   collectBlobRefs,
 } from "../../attachments/ref-access.js";
+import { extractBlobTokens, hashBlobToken } from "../../attachments/tokens.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
+import { templateTagsWithFallback } from "../../core/tags.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
 import { notifyHuman } from "../../push.js";
@@ -57,7 +60,7 @@ function publicWsUrl(config: Config): string {
 
 // #283 — assert the caller may act on this pane. A pane is in scope
 // for any agent claimed to the same human as its owning agent. Throws
-// sessionNotFound when the pane is missing or owned by a strictly
+// paneNotFound when the pane is missing or owned by a strictly
 // unrelated agent (no shared human); throws forbidden when the pane
 // belongs to a different human (so the caller knows they hit a real id
 // that just isn't theirs to act on, which is the debugging hint the
@@ -71,7 +74,7 @@ export async function assertPaneInScope<T extends PaneScopeFields>(
   pane: T | null,
   me: { id: string; ownerHumanId: string | null },
 ): Promise<T> {
-  if (!pane) throw errors.sessionNotFound();
+  if (!pane) throw errors.paneNotFound();
   if (pane.agentId === me.id) return pane;
   const scope = await agentScope(prisma, me);
   if (scope.has(pane.agentId)) return pane;
@@ -81,7 +84,7 @@ export async function assertPaneInScope<T extends PaneScopeFields>(
       "this pane belongs to a different human's agents",
     );
   }
-  throw errors.sessionNotFound();
+  throw errors.paneNotFound();
 }
 
 // #259 — mint a kind="agent" Participant for the calling agent on a pane
@@ -413,14 +416,14 @@ panes.post("/", requireAgent, async (c) => {
         OR: [{ id: template.id }, { slug: template.id }],
       },
     });
-    if (!head) throw errors.artifactNotFound();
+    if (!head) throw errors.templateNotFound();
     const wantVersion = template.version ?? head.latestVersion;
     const version = await prisma.templateVersion.findUnique({
       where: {
         templateId_version: { templateId: head.id, version: wantVersion },
       },
     });
-    if (!version) throw errors.artifactVersionNotFound();
+    if (!version) throw errors.templateVersionNotFound();
     templateVersionId = version.id;
     templateId = head.id;
     templateTags = normalizeTags(head.tags);
@@ -492,7 +495,16 @@ panes.post("/", requireAgent, async (c) => {
       validateRecordSchemaShape(inline.record_schema);
     }
 
-    templateTags = normalizeTags(inline.tags);
+    // Same fallback chain as `pane template create` (explicit → slug → name):
+    // the inline form previously stored only the literal tags, so a one-off
+    // pane created with neither --tags nor --slug — the most common path — was
+    // left untagged. Derive a tag from the (required) name so it stays
+    // filterable on the human's Panes tab.
+    templateTags = templateTagsWithFallback(
+      normalizeTags(inline.tags),
+      inline.name,
+      inline.slug,
+    );
     let created;
     try {
       created = await prisma.$transaction(async (tx) => {
@@ -882,6 +894,62 @@ panes.post("/", requireAgent, async (c) => {
     );
   }
 
+  // #501 — attachment-token TTL cascade. An agent can bake a `/b/<token>`
+  // capability URL straight into `input_data` (the photobook pattern). Those
+  // tokens carry their own TTL (24h for agent-scope by default), independent
+  // of the pane's. When the pane outlives the token the page stays up but
+  // `<img src="/b/<token>">` 404s partway through — a silent, delayed
+  // breakage. Here we pull every token embedded in `input_data` and extend
+  // any that would expire before this pane to the pane's own expiry, so a
+  // referenced capability URL lives at least as long as the pane that uses it.
+  //
+  // Scope of this pass:
+  //   - Only the calling agent's own, non-`once`, non-revoked tokens are
+  //     touched (the `attachment.ownerId` + `once`/`revokedAt` filters).
+  //   - `once` tokens are deliberately left alone — they're meant to vanish on
+  //     first GET, and an `<img>` fetch would burn them anyway; extending their
+  //     life would contradict the intent.
+  //   - This intentionally overrides the per-scope mint ceiling (agent-scope
+  //     caps a *caller-requested* TTL at 24h). The cascade is system-initiated
+  //     in response to an explicit pane reference, so that "don't get talked
+  //     into a long override" guard doesn't apply.
+  //
+  // Best-effort: the pane row is already committed, so a failure here must not
+  // fail the create. Log and move on — worst case the agent hits the original
+  // footgun and the token expires early, exactly as it did before this fix.
+  if (input_data) {
+    try {
+      const tokens = extractBlobTokens(input_data);
+      if (tokens.length > 0) {
+        const hashes = tokens.map(hashBlobToken);
+        const bumped = await prisma.attachmentToken.updateMany({
+          where: {
+            tokenHash: { in: hashes },
+            once: false,
+            revokedAt: null,
+            expiresAt: { lt: expiresAt },
+            attachment: { ownerId: agent.id, deletedAt: null },
+          },
+          data: { expiresAt },
+        });
+        if (bumped.count > 0) {
+          log.info("extended attachment token TTL to match pane", {
+            paneId,
+            agentId: agent.id,
+            tokensExtended: bumped.count,
+            expiresAt: expiresAt.toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      log.warn("attachment-token TTL cascade failed; pane created anyway", {
+        paneId,
+        agentId: agent.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // Bump the template's last-used timestamp — search ranks by it.
   await prisma.template.update({
     where: { id: templateId },
@@ -1014,6 +1082,235 @@ panes.get("/:id", requireAgent, async (c) => {
   });
 });
 
+// PATCH /v1/panes/:id — in-place edit of instance-level pane fields (#502).
+//
+// The pane keeps its id, URL, event log, template pin, and createdAt. Only the
+// fields the caller supplies are touched; everything else is left as-is.
+// Replaces the recreate-with-new-input-data workaround so a TTL bump or a
+// title edit no longer rotates the human's URL.
+//
+// Validation mirrors POST /v1/panes piece-for-piece (input_data revalidated
+// against the pinned template version's input_schema, blob refs access-checked,
+// icon attachments must be ready raster images, etc.) so the edit cannot
+// introduce a state the original create wouldn't have allowed.
+//
+// `system.pane.updated` is appended with the SET of changed field names (not
+// their values) so the audit trail records "what kind of edit" without
+// echoing potentially-sensitive title/preamble/input_data back into the event
+// stream.
+panes.patch("/:id", requireAgent, async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
+  const id = c.req.param("id");
+  const me = c.get("agent");
+
+  const raw = await c.req.json().catch(() => null);
+  const parsed = updatePaneSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw errors.invalidRequest(
+      "invalid body",
+      parsed.error.flatten(),
+      "the request body failed schema validation; details.fieldErrors lists each rejected field and why",
+    );
+  }
+  const body = parsed.data;
+
+  const paneRaw = await prisma.pane.findUnique({
+    where: { id },
+    include: { templateVersion: true },
+  });
+  const pane = await assertPaneInScope(prisma, paneRaw, me);
+
+  // Same lifecycle gates as upgrade: soft-deleted rows 410 with a restore
+  // hint; closed/expired rows 410 with the standard "create a new pane" hint.
+  if (pane.deletedAt !== null) throw errors.softDeleted("pane");
+  if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
+    throw errors.gone(
+      "pane is closed — editing a closed pane has no effect; create a new one instead",
+    );
+  }
+
+  // Build the Prisma update payload field-by-field so we can also collect the
+  // names of fields actually written, for both the response and the audit
+  // event. Validations are interleaved so a bad value short-circuits BEFORE
+  // any DB mutation.
+  const data: Prisma.PaneUpdateInput = {};
+  const updatedFields: string[] = [];
+
+  // TTL / expires_at — mutually exclusive (Zod already enforced this). Both
+  // forms go through the same MAX_TTL_SECONDS clamp the create path uses:
+  // exceeding the cap is rejected (not silently truncated) so the agent's
+  // sense of the lifetime matches the relay's. The `expires_at` form is
+  // additionally bounded against the past — an in-the-past timestamp would
+  // immediately project the pane as closed.
+  if (body.ttl !== undefined) {
+    if (body.ttl > config.MAX_TTL_SECONDS) {
+      throw errors.invalidRequest(
+        `ttl ${body.ttl}s exceeds this relay's MAX_TTL_SECONDS (${config.MAX_TTL_SECONDS}s)`,
+        { ttl: body.ttl, max: config.MAX_TTL_SECONDS },
+        `pass a ttl <= ${config.MAX_TTL_SECONDS} (in seconds)`,
+      );
+    }
+    data.expiresAt = new Date(Date.now() + body.ttl * 1000);
+    updatedFields.push("ttl");
+  } else if (body.expires_at !== undefined) {
+    const target = new Date(body.expires_at);
+    const maxAt = Date.now() + config.MAX_TTL_SECONDS * 1000;
+    if (target.getTime() > maxAt) {
+      throw errors.invalidRequest(
+        `expires_at exceeds this relay's MAX_TTL_SECONDS (${config.MAX_TTL_SECONDS}s) from now`,
+        { expires_at: body.expires_at, max_seconds: config.MAX_TTL_SECONDS },
+        `pass an expires_at <= ${new Date(maxAt).toISOString()}`,
+      );
+    }
+    if (target.getTime() <= Date.now()) {
+      throw errors.invalidRequest(
+        "expires_at must be in the future",
+        { expires_at: body.expires_at },
+        "to close a pane immediately use DELETE /v1/panes/:id instead",
+      );
+    }
+    data.expiresAt = target;
+    updatedFields.push("expires_at");
+  }
+
+  // input_data — replaced wholesale. Revalidated against the pinned version's
+  // current input_schema (the pane may have been upgraded since create, in
+  // which case the new schema is what matters). Blob refs inside input_data
+  // must be accessible to the calling agent, same as create.
+  if (body.input_data !== undefined) {
+    const inputSchema = pane.templateVersion.inputSchema as unknown;
+    if (inputSchema != null && typeof inputSchema === "object") {
+      validateInputData(inputSchema as object, body.input_data);
+      const refs = collectBlobRefs(inputSchema as object, body.input_data);
+      if (refs.length > 0) {
+        await assertBlobsAccessibleByAgent(prisma, me.id, refs);
+      }
+    }
+    data.inputData = body.input_data as Prisma.InputJsonValue;
+    updatedFields.push("input_data");
+  }
+
+  // Title — same length/control-char gate as create. The fallback chain
+  // (template name when title is null) is a create-time concern; here the
+  // caller is explicitly setting a new title, so we just validate it.
+  if (body.title !== undefined) {
+    data.title = validateSessionTitle(body.title);
+    updatedFields.push("title");
+  }
+
+  // Preamble — same trimmed-280-char gate as create. An empty string after
+  // trimming is rejected by validateSessionPreamble; to clear the preamble
+  // explicitly the caller would today need #503-style null support — out of
+  // scope for #502, callers can set a single space.
+  if (body.preamble !== undefined) {
+    data.preamble = validateSessionPreamble(body.preamble);
+    updatedFields.push("preamble");
+  }
+
+  // Metadata — opaque to the relay (Prisma JSON column). Replaced wholesale.
+  if (body.metadata !== undefined) {
+    data.metadata = body.metadata as Prisma.InputJsonValue;
+    updatedFields.push("metadata");
+  }
+
+  // Tags — replaced wholesale (per #502 design Q). Reserved tag check matches
+  // create; the new pane.tags column = template tags ∪ caller-supplied tags,
+  // deduped. We pull templateTags from the pinned version's head for the
+  // merge.
+  if (body.tags !== undefined) {
+    const callerTags = normalizeTags(body.tags);
+    for (const t of callerTags) {
+      if (t.toLowerCase() === "favorite" || t.toLowerCase() === "favorites") {
+        throw errors.invalidRequest(
+          `'${t}' is a reserved tag`,
+          undefined,
+          "'favorite'/'favorites' are reserved — favoriting is per-human (the star), not a tag",
+        );
+      }
+    }
+    const head = await prisma.template.findUnique({
+      where: { id: pane.templateVersion.templateId },
+      select: { tags: true },
+    });
+    const templateTags = normalizeTags(head?.tags);
+    const merged = mergeTags(templateTags, callerTags);
+    data.tags = merged.length
+      ? (merged as unknown as Prisma.InputJsonValue)
+      : Prisma.JsonNull;
+    updatedFields.push("tags");
+  }
+
+  // Icons — both fields accept null to CLEAR the override (fall back to the
+  // template's icon). When the caller sets an attachment id we run the same
+  // access + ready + raster image checks as create.
+  if (body.icon_emoji !== undefined) {
+    data.iconEmoji = body.icon_emoji;
+    updatedFields.push("icon_emoji");
+  }
+  if (body.icon_attachment_id !== undefined) {
+    if (body.icon_attachment_id !== null) {
+      await assertBlobsAccessibleByAgent(prisma, me.id, [
+        body.icon_attachment_id,
+      ]);
+      const iconRow = await prisma.attachment.findUnique({
+        where: { id: body.icon_attachment_id },
+        select: { status: true, mime: true },
+      });
+      if (!iconRow || iconRow.status !== "ready") {
+        throw errors.invalidRequest(
+          "icon_attachment_id must reference a ready (confirmed) attachment",
+        );
+      }
+      if (!isRasterImageMime(iconRow.mime)) {
+        throw errors.invalidRequest(
+          `icon_attachment_id must be a raster image (png, jpeg, webp, gif); got ${iconRow.mime}`,
+          undefined,
+          "SVG and non-image attachments are rejected as icons",
+        );
+      }
+    }
+    data.iconAttachment =
+      body.icon_attachment_id === null
+        ? { disconnect: true }
+        : { connect: { id: body.icon_attachment_id } };
+    updatedFields.push("icon_attachment_id");
+  }
+
+  // Apply the update — single round-trip. If updatedFields ended up empty the
+  // Zod .refine above already rejected, so we never hit an empty `data` here.
+  const updated = await prisma.pane.update({
+    where: { id },
+    data,
+    include: { templateVersion: true },
+  });
+
+  // Audit event — just the changed field names (design Q), no values, so the
+  // event stream stays small and PII-free. A pane with a callback fires the
+  // webhook on this too via the existing system-event broadcast path.
+  await appendSystemEvent(prisma, id, "system.pane.updated", {
+    fields: updatedFields,
+  });
+
+  return c.json({
+    pane_id: updated.id,
+    status: (updated.expiresAt.getTime() < Date.now()
+      ? "closed"
+      : updated.status) as "open" | "closed",
+    template_id: updated.templateVersion.templateId,
+    template_version_id: updated.templateVersionId,
+    template_version: updated.templateVersion.version,
+    title: updated.title,
+    tags: normalizeTags(updated.tags),
+    metadata: updated.metadata,
+    input_data: updated.inputData,
+    created_at: updated.createdAt.toISOString(),
+    expires_at: updated.expiresAt.toISOString(),
+    deleted_at: updated.deletedAt?.toISOString() ?? null,
+    updated_fields: updatedFields,
+  });
+});
+
 // POST /v1/panes/:id/upgrade — re-pin a live pane to a newer (or
 // other) version of the same template (#267). The schema-compat gate (see
 // src/core/schema-compat.ts) refuses by default when the target schema
@@ -1071,7 +1368,7 @@ panes.post("/:id/upgrade", requireAgent, async (c) => {
     },
   });
   if (!targetVersion) {
-    throw errors.artifactVersionNotFound();
+    throw errors.templateVersionNotFound();
   }
 
   // No-op: the pane is already on the target version. Return the

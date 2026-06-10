@@ -23,6 +23,8 @@ import type {
   TasteInfo,
   TrashListResponse,
   UpgradePaneResponse,
+  UpdatePaneRequest,
+  UpdatePaneResponse,
 } from "./types.js";
 import type { ListPanesQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
@@ -79,6 +81,12 @@ export interface CreateArtifactRequest {
   type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
+  /** Optional per-pane record collections (JSON Schema 2020-12 + the
+   *  `x-pane-collections` extension). Mirrors `createArtifactSchema`. */
+  record_schema?: unknown;
+  /** Optional template-level record collections (same grammar as
+   *  `record_schema`; stored separately on the template version). */
+  template_record_schema?: unknown;
   /** Optional template icon emoji (a single emoji grapheme). Image icons are
    *  set post-create via `updateArtifact({ icon_attachment_id })`. */
   icon_emoji?: string;
@@ -93,6 +101,11 @@ export interface CreateArtifactVersionRequest {
   type: TemplateType;
   event_schema?: unknown;
   input_schema?: Record<string, unknown>;
+  /** Optional per-pane record collections for this version (JSON Schema
+   *  2020-12 + `x-pane-collections`). Mirrors `createArtifactVersionSchema`. */
+  record_schema?: unknown;
+  /** Optional template-level record collections for this version. */
+  template_record_schema?: unknown;
 }
 
 /**
@@ -499,6 +512,22 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
   }
 
+  /**
+   * DELETE /v1/panes/:id/records/:collection — drop a WHOLE collection
+   * (all rows + the collection row). Privileged: the relay restricts this to
+   * the pane's owning agent (#507). Returns nothing on 204.
+   */
+  async deleteRecordCollection(
+    paneId: string,
+    collection: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
   // ----- template-level records CRUD ------------------------------------
 
   /**
@@ -610,6 +639,21 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
   }
 
+  /**
+   * DELETE /v1/templates/:id/template-records/:collection — drop a WHOLE
+   * template collection (all rows + the collection row). Owner-only (#507).
+   */
+  async deleteTemplateRecordCollection(
+    templateIdOrSlug: string,
+    collection: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
   /** POST /v1/panes/:id/events — append an agent event. */
   async sendEvent(
     paneId: string,
@@ -651,6 +695,8 @@ export class PaneClient {
       type: req.type,
       event_schema: req.event_schema,
       input_schema: req.input_schema,
+      record_schema: req.record_schema,
+      template_record_schema: req.template_record_schema,
       icon_emoji: req.icon_emoji,
     });
     if (!r.ok) this.fail(r);
@@ -674,6 +720,8 @@ export class PaneClient {
         type: req.type,
         event_schema: req.event_schema,
         input_schema: req.input_schema,
+        record_schema: req.record_schema,
+        template_record_schema: req.template_record_schema,
       },
     );
     if (!r.ok) this.fail(r);
@@ -951,6 +999,32 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<UpgradePaneResponse>(r);
+  }
+
+  /**
+   * PATCH /v1/panes/:id — in-place edit of instance-level pane fields (#502):
+   * `ttl`/`expires_at`, `input_data`, `title`, `preamble`, `metadata`, `tags`,
+   * `icon_emoji`, `icon_attachment_id`. The pane keeps its id, URL, event log,
+   * and template pin. `input_data` is replaced wholesale and revalidated
+   * against the pane's current template version's input_schema. Pass `null`
+   * for `icon_emoji` / `icon_attachment_id` to CLEAR the override.
+   *
+   * The body must carry at least one updatable field; `ttl` and `expires_at`
+   * are mutually exclusive (both express the same intent). Both TTL forms are
+   * clamped against the relay's `MAX_TTL_SECONDS` cap and rejected (rather
+   * than silently truncated) when exceeded.
+   */
+  async updatePane(
+    paneId: string,
+    body: UpdatePaneRequest,
+  ): Promise<UpdatePaneResponse> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/panes/${encodeURIComponent(paneId)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<UpdatePaneResponse>(r);
   }
 
   /**

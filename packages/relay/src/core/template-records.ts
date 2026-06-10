@@ -42,6 +42,10 @@ import type {
 import type { ValidateFunction } from "ajv";
 import { ApiError, errors } from "../http/errors.js";
 import { publishToTemplate } from "../http/broadcast.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../attachments/ref-access.js";
 import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
 import type { Config } from "../config.js";
@@ -121,6 +125,11 @@ export interface DeleteTemplateRecordInput {
   collectionName: string;
   recordKey: string;
   ifMatch?: number;
+}
+
+export interface DeleteTemplateRecordCollectionResult {
+  /** Number of records (live + tombstoned) removed with the collection. */
+  removed: number;
 }
 
 // -------------------------------------------------------------------------
@@ -382,6 +391,18 @@ export async function writeTemplateRecord(
     data: input.data,
   });
 
+  // Attachment-ref access gate (#505). Template records may carry
+  // `format: pane-attachment-id` refs; verify the template's owning agent can
+  // access each before persisting. The authz anchor is `template.ownerId`
+  // (the owner agent), matching how per-pane records anchor on `pane.agentId`.
+  // See attachments/ref-access.ts.
+  await assertTemplateRecordBlobsAccessible(
+    prisma,
+    template.ownerId,
+    collection.rowSchema,
+    input.data,
+  );
+
   const recordKey = input.recordKey ?? `trec_${cuidish()}`;
 
   let row: TemplateRecord;
@@ -478,6 +499,15 @@ export async function updateTemplateRecord(
     rowSchema: collection.rowSchema,
     data: input.data,
   });
+
+  // Same attachment-ref access gate as writeTemplateRecord — a PATCH can
+  // introduce new refs. See attachments/ref-access.ts.
+  await assertTemplateRecordBlobsAccessible(
+    prisma,
+    template.ownerId,
+    collection.rowSchema,
+    input.data,
+  );
 
   const updated = await prisma.$transaction(async (tx) => {
     const col = await tx.templateRecordCollection.findUnique({
@@ -601,6 +631,101 @@ export async function deleteTemplateRecord(
       deleted_at: (deleted.deletedAt ?? deleted.updatedAt).toISOString(),
     }),
   );
+}
+
+// -------------------------------------------------------------------------
+// Collection delete — drop a whole template collection (#507)
+// -------------------------------------------------------------------------
+
+/**
+ * Delete an entire template-level record collection: every row plus the
+ * collection row itself. Owner-only by virtue of the route (requireAgent +
+ * owner-scope on the template) — same gate as every other template-records
+ * write. Mirrors deleteRecordCollection (per-pane): a `template-record.delete`
+ * tombstone is broadcast to every derived pane for each LIVE row, then the
+ * collection row is removed. The TemplateRecord→TemplateRecordCollection FK is
+ * `onDelete: Cascade`, so dropping the collection row hard-deletes all its
+ * rows (live + tombstoned) in one statement.
+ *
+ * Collection names are the natural key and are NOT renamable. After a delete
+ * the name is free again; the next write re-creates the collection at seq=1.
+ *
+ * Fresh seqs (#531): like the per-pane path, the tombstones mint fresh seqs
+ * above the collection's current max rather than reusing each row's original
+ * seq — otherwise the WS forwarder's `seq > lastReplaySeq` de-dup gate drops
+ * every tombstone for the subscribers it's meant to update.
+ *
+ * 404 when the name isn't declared in the template_record_schema, OR when it's
+ * declared but was never written to (no collection row exists).
+ */
+export async function deleteTemplateRecordCollection(
+  deps: { prisma: PrismaClient },
+  template: TemplateWithSchema,
+  collectionName: string,
+): Promise<DeleteTemplateRecordCollectionResult> {
+  const { prisma } = deps;
+  resolveCollection(template, collectionName); // 404s if undeclared
+
+  const { removed, tombstones, baseSeq } = await prisma.$transaction(
+    async (tx) => {
+      const col = await tx.templateRecordCollection.findUnique({
+        where: {
+          templateId_name: { templateId: template.id, name: collectionName },
+        },
+      });
+      if (!col) {
+        throw templateRecordCollectionNotFound(
+          collectionName,
+          `collection '${collectionName}' has no rows to delete in this template (it was never written to)`,
+        );
+      }
+      const live = await tx.templateRecord.findMany({
+        where: { collectionId: col.id, deletedAt: null },
+      });
+      const total = await tx.templateRecord.count({
+        where: { collectionId: col.id },
+      });
+      await tx.templateRecordCollection.delete({ where: { id: col.id } });
+      return { removed: total, tombstones: live, baseSeq: col.seq };
+    },
+  );
+
+  const deletedAt = new Date().toISOString();
+  tombstones.forEach((row, i) => {
+    publishToTemplate(
+      template.id,
+      makeTemplateRecordDelete(collectionName, {
+        id: row.id,
+        key: row.recordKey,
+        // Fresh monotonic seq above the collection's max (#531) so the delta
+        // clears the forwarder's `seq > lastReplaySeq` de-dup gate.
+        seq: baseSeq + i + 1,
+        deleted_at: deletedAt,
+      }),
+    );
+  });
+
+  return { removed };
+}
+
+// -------------------------------------------------------------------------
+// Attachment-ref access gate (#505)
+// -------------------------------------------------------------------------
+
+// Walk a template record's row schema for `format: pane-attachment-id` sites and
+// verify every referenced attachment is accessible to `agentId` (owned, exists,
+// not soft-deleted). Mirrors the per-pane record gate in core/records.ts and
+// the event gate in core/events.ts. No-op when the schema declares no ref sites.
+async function assertTemplateRecordBlobsAccessible(
+  prisma: PrismaClient,
+  agentId: string,
+  rowSchema: object,
+  data: unknown,
+): Promise<void> {
+  const refs = collectBlobRefs(rowSchema, data);
+  if (refs.length > 0) {
+    await assertBlobsAccessibleByAgent(prisma, agentId, refs);
+  }
 }
 
 // -------------------------------------------------------------------------

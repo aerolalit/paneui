@@ -1053,8 +1053,10 @@ describe("POST /v1/panes — tags", () => {
     expect(tpl.tags).toEqual(["adhoc"]);
   });
 
-  it("returns [] for a pane with no tags, and surfaces tags in the list", async () => {
+  it("derives a name tag when none supplied, and surfaces tags in the list", async () => {
     const apiKey = await seedAgent();
+    // No --tags, no --slug: the pane is still tagged off the template name so
+    // it stays filterable (kebab-cased "Plain" → "plain").
     const untagged = await post("/v1/panes", apiKey, {
       template: {
         name: "Plain",
@@ -1064,8 +1066,8 @@ describe("POST /v1/panes — tags", () => {
       },
     });
     const ub = (await untagged.json()) as { pane_id: string; tags: string[] };
-    expect(ub.tags).toEqual([]);
-    expect(await getTags(ub.pane_id, apiKey)).toEqual([]);
+    expect(ub.tags).toEqual(["plain"]);
+    expect(await getTags(ub.pane_id, apiKey)).toEqual(["plain"]);
 
     const templateId = await taggedTemplate(apiKey, [
       "pr-review",
@@ -1079,7 +1081,7 @@ describe("POST /v1/panes — tags", () => {
     const items = ((await list.json()) as { items: { tags: string[] }[] })
       .items;
     expect(items.some((i) => i.tags.includes("pr-review"))).toBe(true);
-    expect(items.some((i) => i.tags.length === 0)).toBe(true);
+    expect(items.some((i) => i.tags.includes("plain"))).toBe(true);
   });
 
   it("rejects > 20 tags or an over-long tag (400)", async () => {

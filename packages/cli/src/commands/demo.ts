@@ -49,7 +49,7 @@ export const demoHelp = `pane demo — take the 60-second guided tour
 Usage:
   pane demo [options]
 
-Creates a short-lived pane with the built-in tutorial artifact, opens its URL
+Creates a short-lived pane from the built-in tutorial template, opens its URL
 in your browser (or prints it if none is available), then runs a tiny agent
 loop right here in your terminal that watches the session and reacts to each
 thing you do in the pane. Every event you trigger is echoed to this terminal

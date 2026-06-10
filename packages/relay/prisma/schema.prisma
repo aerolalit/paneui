@@ -97,8 +97,13 @@ model Human {
 
   // #302 — soft-delete + retention policy.
   //
-  // `deletedAt`: NULL = active. A soft-deleted human cascades to their claimed
-  // agents (Phase 1 hard-delete sweeper handles the cascade — see #304).
+  // `deletedAt`: NULL = active. Deleting a human cascades to their owned
+  // join/auth rows (Login, ClaimCode, HumanTemplateInstall, HumanPaneFavorite —
+  // all `onDelete: Cascade`). It does NOT delete their claimed agents:
+  // Agent.ownerHuman is `onDelete: SetNull`, so the agent survives with a
+  // nulled ownerHumanId. The hard-delete sweeper (#304) reclaims rows past
+  // retention; see #312/#506 re: agent ownership cleanup before account
+  // deletion ships.
   //
   // `tier`: gates retention. 'free' uses HARD_RETENTION_DAYS_FREE (default
   // 30 days); 'paid' uses HARD_RETENTION_DAYS_PAID (default null = never

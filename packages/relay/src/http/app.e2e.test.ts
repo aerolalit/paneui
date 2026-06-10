@@ -544,7 +544,7 @@ describe("HTTP e2e", () => {
       expect(body.error.docs_url).not.toContain("/attachment/main/");
     });
 
-    it("404 on a missing pane uses session_not_found", async () => {
+    it("404 on a missing pane uses pane_not_found", async () => {
       const { apiKey } = await seedAgent();
       const res = await app.fetch(
         new Request("http://t/v1/panes/pan_does_not_exist", {
@@ -553,11 +553,11 @@ describe("HTTP e2e", () => {
       );
       expect(res.status).toBe(404);
       const body = (await res.json()) as ErrBody;
-      // session_not_found (#137) distinguishes "the pane id is wrong /
+      // pane_not_found (#137) distinguishes "the pane id is wrong /
       // expired" from "this resource type was wrong" so agents can branch.
       // Auth-leak safe: both "doesn't exist" and "not yours" return the
       // same code, so the caller learns nothing they didn't already know.
-      expect(body.error.code).toBe("session_not_found");
+      expect(body.error.code).toBe("pane_not_found");
       expect(body.error.retryable).toBe(false);
       expect(body.error.hint).toBeTruthy();
     });

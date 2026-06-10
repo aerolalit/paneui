@@ -1,10 +1,39 @@
 # Pane
 
-**Apps are built for everyone. Panes are built for you.** Your agent builds a pane (the exact form, dashboard, or tool you need) and Pane hosts it by URL, no GUI host app needed on either side. You use it; your agent reads, queries, and acts on the data it produces (WS, poll, or webhook). Pane doesn't build apps. It hosts the panes your agent builds for you.
+**Human-in-the-loop for AI agents.** Your agent hands a human a real UI — a form, a picker, a dashboard, a diff to review — by URL, and gets the answer back as structured data. No GUI host app, no public address on the agent's side. Works from a cron job, a Slack bot, CI, or any headless server.
+
+> Your agent can do anything except ask a human a real question. Pane fixes that.
+
+![npm](https://img.shields.io/npm/v/@paneui/cli) ![license](https://img.shields.io/github/license/aerolalit/paneui) ![stars](https://img.shields.io/github/stars/aerolalit/paneui?style=social)
+
+[![Pane round-trip demo: an agent creates a pane, a human approves a release in the browser, and the structured result lands back in the agent's terminal](docs/assets/demo.gif)](https://paneui.com)
+
+**Works with** any agent that can run a shell command or call HTTP — Claude Code & the Claude Agent SDK, LangGraph / CrewAI / OpenAI Agents SDK, or your own cron / CI / bot.
+
+## Quickstart
+
+```sh
+npm i -g @paneui/cli                       # Node 20+
+pane agent register --name "my-agent"      # one-time, uses the hosted relay
+pane create --name hello \
+  --template '<form onsubmit="event.preventDefault();pane.emit(\"hello\",{msg:this.m.value})"><input name=m><button>send</button></form>' \
+  --event-schema '{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'
+pane watch <pane-id> --type hello          # open the URL it prints, type, hit send → see the JSON
+```
+
+## Reach for Pane when a text reply is the wrong shape
+
+- **Approvals** — deploy gate, refund, PR merge: agent pauses, human clicks approve/reject, agent continues.
+- **Forms & pickers** — collect structured input instead of parsing prose.
+- **Doc / diff review** — human marks up a diff; agent gets per-line comments back.
+- **Dashboards & status** — view-only panes the human just reads.
+- **Lists & boards** — todo lists, checklists, kanban (records), mutated live.
+
+[Try it in 60 seconds ↓](#run-yourself-human) · [How it works](#how-it-works) · [Agent reference](skills/pane/SKILL.md)
 
 ## The problem
 
-Agents can already emit rich output (the "ask Claude for HTML, not Markdown" pattern). But the human's reply is still prose. The agent → human channel is rich, the human → agent channel is a text box. Pane closes the loop: agent renders a UI (form, picker, doc-review view, dashboard, sketchboard), human manipulates it, every interaction emits structured data, the agent retrieves it (or pushes its own updates back into the same UI). The human "answers" by using a UI, not by typing.
+*Apps are built for everyone; panes are built for you.* Agents can already emit rich output (the "ask Claude for HTML, not Markdown" pattern). But the human's reply is still prose. The agent → human channel is rich, the human → agent channel is a text box. Pane closes the loop: agent renders a UI (form, picker, doc-review view, dashboard, sketchboard), human manipulates it, every interaction emits structured data, the agent retrieves it (or pushes its own updates back into the same UI). The human "answers" by using a UI, not by typing.
 
 This matters most for agents that live **outside a GUI host app**: cron agents, Slack/Telegram bots, CI agents, headless servers, personal-agent setups. None of them can use MCP Apps (which needs a host app to render the UI). Pane needs neither a host app nor a public address on the agent's side; the agent only makes outbound calls to the relay.
 
@@ -41,7 +70,7 @@ The core round trip is the foundation; the relay also carries the pieces you nee
 - **Reusable templates + a marketplace.** `pane template create / list / search / show / version` manage named, versioned templates. A human can mark one **public** in the relay's web UI, giving it a listing other humans can browse and **install** into their own account.
 - **Records** — per-pane mutable collections (posts, comments, kanban cards, line items) keyed by stable `record_key`, with optimistic locking and soft-delete. Use records when the *current value* matters and history doesn't; use events when history is the point. Declared with a `record_schema` (JSON Schema 2020-12 + the `x-pane-collections` extension).
 - **Attachments** — upload images/PDFs/audio/video (`pane attachment …`), reference them by id in events, and let the page fetch them lazily or accept uploads back *from* the human. Capability-URL (`/b/<token>`) downloads, MIME sniffing, and EXIF stripping included.
-- **SQL query** — `pane query "<SQL>"` runs read-only Postgres-flavoured SQL scoped to your own panes, records, and events.
+- **SQL query** — `pane query "<SQL>"` runs read-only DuckDB SQL (a PostgreSQL-compatible dialect) scoped to your own panes, records, and events.
 - **Multi-participant panes** — beyond the single auto-minted human URL, an owner can add identity-bound (email-invite) or public/anonymous participants. `pane participant list / new / revoke` manage URLs on a live pane.
 - **Taste & feedback** — `pane taste` remembers a human's presentation preferences across runs so authored UIs stay consistent; `pane feedback` reports issues about pane itself.
 

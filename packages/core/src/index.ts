@@ -46,6 +46,7 @@ export {
   listPanesQuerySchema,
   mintParticipantSchema,
   upgradePaneSchema,
+  updatePaneSchema,
 } from "./schemas.js";
 export type {
   CreatePaneInput,
@@ -53,6 +54,7 @@ export type {
   ListPanesQuery,
   MintParticipantInput,
   UpgradePaneInput,
+  UpdatePaneInput,
 } from "./schemas.js";
 
 export {
@@ -101,6 +103,8 @@ export type {
   MintParticipantResponse,
   UpgradeBreak,
   UpgradePaneResponse,
+  UpdatePaneRequest,
+  UpdatePaneResponse,
   TrashedPaneEntry,
   TrashedTemplateEntry,
   TrashListResponse,

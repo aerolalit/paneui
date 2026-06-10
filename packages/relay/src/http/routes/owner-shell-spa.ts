@@ -701,10 +701,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
-        <button class="acct-link" id="notif-btn" type="button" role="menuitem" title="Notifications" aria-label="Notifications">
-          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
-          <span class="txt" id="notif-btn-label">Enable Notifications</span>
-        </button>
       </div>
     </div>
   </aside>
@@ -876,6 +872,14 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <div class="settings-row"><span class="k">Account created</span><span class="v">${escapeHtml(
           human.createdAt.toISOString().slice(0, 10),
         )}</span></div>
+      </div>
+      <div class="settings-card" id="notif-card">
+        <h2>Notifications</h2>
+        <p class="settings-note">Get a push notification when one of your agents creates a new pane. On iPhone, add pane to your Home Screen and open it from there first.</p>
+        <div class="settings-row">
+          <span class="k">Push notifications<span class="k-sub" id="notif-status">Off</span></span>
+          <button id="notif-toggle" type="button" role="switch" aria-checked="false" class="switch" aria-label="Push notifications"></button>
+        </div>
       </div>
       <div class="settings-card">
         <h2>Session</h2>
@@ -2873,11 +2877,15 @@ const SHELL_JS = `
 
   // ----- Web Push notification subscription -----
   (function () {
-    var btn = document.getElementById('notif-btn');
-    var lbl = document.getElementById('notif-btn-label');
-    if (!btn || !lbl) return;
+    // The Settings → Notifications toggle drives push on/off.
+    var toggle = document.getElementById('notif-toggle');
+    var statusEl = document.getElementById('notif-status');
+    var card = document.getElementById('notif-card');
+    if (!toggle) return;
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      btn.style.display = 'none';
+      // Push unsupported (e.g. an iOS Safari tab rather than the installed
+      // PWA) — hide the toggle instead of offering one that can't work.
+      if (card) card.style.display = 'none';
       return;
     }
 
@@ -2925,22 +2933,19 @@ const SHELL_JS = `
       if (d && d.type === 'pane.created') showToast(d.title, d.body, d.paneUrl);
     });
 
-    // Reflect the current state on the bell: blocked / on (a toggle that turns
-    // off) / off (a toggle that turns on). The label doubles as the action hint
-    // via the title attribute.
+    // Reflect the current state on the Settings switch: flip aria-checked,
+    // disable when the browser has blocked notifications, and show a status
+    // line (On / Off / Blocked).
     function render() {
-      if (Notification.permission === 'denied') {
-        lbl.textContent = 'Notifications blocked';
-        btn.disabled = true;
-        btn.title = 'Notifications are blocked in your browser settings';
-      } else if (subscribed) {
-        lbl.textContent = 'Notifications on';
-        btn.disabled = false;
-        btn.title = 'Turn off notifications';
-      } else {
-        lbl.textContent = 'Enable Notifications';
-        btn.disabled = false;
-        btn.title = 'Turn on notifications';
+      var perm = Notification.permission;
+      if (toggle) {
+        toggle.setAttribute('aria-checked', subscribed ? 'true' : 'false');
+        toggle.disabled = perm === 'denied';
+      }
+      if (statusEl) {
+        statusEl.textContent = perm === 'denied'
+          ? 'Blocked in your browser settings'
+          : (subscribed ? 'On' : 'Off');
       }
     }
 
@@ -2985,11 +2990,13 @@ const SHELL_JS = `
       subscribed = false;
     }
 
-    btn.addEventListener('click', async function () {
+    // On/off action for the toggle. Disables it while the subscribe/unsubscribe
+    // round-trips, then render() restores a consistent state.
+    async function setEnabled(wantOn) {
       if (Notification.permission === 'denied') return;
-      btn.disabled = true;
+      if (toggle) toggle.disabled = true;
       try {
-        if (subscribed) {
+        if (!wantOn) {
           await unsubscribe();
         } else {
           var perm = Notification.permission === 'granted'
@@ -3004,7 +3011,9 @@ const SHELL_JS = `
         /* fall through to render() to restore a consistent state */
       }
       render();
-    });
+    }
+
+    if (toggle) toggle.addEventListener('click', function () { setEnabled(!subscribed); });
 
     // Detect the existing subscription on load and reflect it. We deliberately
     // do NOT auto-resubscribe when permission is granted but no subscription

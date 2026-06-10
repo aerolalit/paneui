@@ -32,6 +32,10 @@ import type {
 import type { ValidateFunction } from "ajv";
 import { publish } from "../http/broadcast.js";
 import { ApiError, errors } from "../http/errors.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../attachments/ref-access.js";
 import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
 import type { Config } from "../config.js";
@@ -105,6 +109,11 @@ export interface DeleteRecordInput {
   collectionName: string;
   recordKey: string;
   ifMatch?: number;
+}
+
+export interface DeleteRecordCollectionResult {
+  /** Number of records (live + tombstoned) removed with the collection. */
+  removed: number;
 }
 
 // -------------------------------------------------------------------------
@@ -468,6 +477,22 @@ export async function writeRecord(
     data: input.data,
   });
 
+  // Attachment-ref access gate (#505 / #156 follow-up B). Records may legitimately
+  // carry `format: pane-attachment-id` refs, so — exactly like events
+  // (core/events.ts) and pane-create input_data (http/routes/panes.ts) — walk
+  // the row schema for ref sites and verify the pane's owning agent can access
+  // every referenced attachment BEFORE the row hits Prisma. `pane.agentId` is the
+  // authz anchor (not `author.id`): a participant (`page` principal) may
+  // reference an attachment the agent owns, but neither identity may plant
+  // another agent's / a dangling / a soft-deleted attachment_id into a shared
+  // record collection. See attachments/ref-access.ts.
+  await assertRecordBlobsAccessible(
+    prisma,
+    pane.agentId,
+    collection.rowSchema,
+    input.data,
+  );
+
   // If the caller didn't supply a key, generate one. Stable for the row's
   // lifetime — the wire shape exposes it as `key`.
   const recordKey = input.recordKey ?? `rec_${cuidish()}`;
@@ -583,6 +608,16 @@ export async function updateRecord(
     rowSchema: collection.rowSchema,
     data: input.data,
   });
+
+  // Same attachment-ref access gate as writeRecord — a PATCH can introduce
+  // brand-new refs into the row's data, so it must be gated identically. See
+  // the comment in writeRecord and attachments/ref-access.ts.
+  await assertRecordBlobsAccessible(
+    prisma,
+    pane.agentId,
+    collection.rowSchema,
+    input.data,
+  );
 
   const updated = await prisma.$transaction(async (tx) => {
     const col = await tx.recordCollection.findUnique({
@@ -738,12 +773,121 @@ export async function deleteRecord(
 }
 
 // -------------------------------------------------------------------------
+// Collection delete — drop a whole collection (#507)
+// -------------------------------------------------------------------------
+
+/**
+ * Delete an entire record collection: every row plus the collection row
+ * itself. This is the collection-level analogue of deleteRecord and is a
+ * PRIVILEGED operation — the route layer restricts it to the pane's owning
+ * agent (or the owner human over their own shell). Unlike per-record delete
+ * there is NO per-row `delete`-set check and NO `page`/participant path: a
+ * participant who can write individual rows still cannot drop the collection.
+ *
+ * Broadcast: a `record.delete` tombstone is emitted for every LIVE row (so
+ * open subscribers evict each row through the same `applyDelete` path a
+ * single-record delete uses), then the collection row is removed. The
+ * PaneRecord→RecordCollection FK is `onDelete: Cascade`, so deleting the
+ * collection row hard-deletes all its records (live + already-tombstoned) in
+ * one statement — no orphan rows, and no work left for the tombstone sweeper.
+ *
+ * Fresh seqs (#531): the tombstones do NOT reuse each row's original seq. The
+ * per-connection live forwarder de-dupes against replay by dropping any delta
+ * whose seq isn't strictly greater than the highest seq the connection already
+ * replayed — and any subscriber that has *displayed* a row has by definition
+ * advanced past that row's seq. Reusing the original seq would make every
+ * tombstone fail the gate, silently leaving ghost rows. So we mint fresh seqs
+ * above the collection's current max (`col.seq`), mirroring the single-record
+ * delete path which bumps the collection seq before broadcasting.
+ *
+ * Recreate-on-write: collection names are the natural key and are NOT
+ * renamable. After a delete the name is free again; the next write to it
+ * re-creates the collection fresh with seq=1 (via writeRecord's upsert).
+ *
+ * 404 (record_collection_not_found) when the name isn't declared in the
+ * template's recordSchema, OR when it's declared but was never written to
+ * (no collection row exists) — there is nothing to delete in either case.
+ */
+export async function deleteRecordCollection(
+  deps: { prisma: PrismaClient },
+  pane: PaneWithRecordSchema,
+  collectionName: string,
+): Promise<DeleteRecordCollectionResult> {
+  const { prisma } = deps;
+  assertPaneOpen(pane);
+
+  resolveCollection(pane, collectionName); // 404s if undeclared in the schema
+
+  // Load the collection row + its live rows, then drop the collection row.
+  // Deleting the collection cascades to every PaneRecord (live + tombstoned).
+  const { removed, tombstones, baseSeq } = await prisma.$transaction(
+    async (tx) => {
+      const col = await tx.recordCollection.findUnique({
+        where: { paneId_name: { paneId: pane.id, name: collectionName } },
+      });
+      if (!col) {
+        // Declared in the schema but never written — no collection row to drop.
+        throw recordCollectionNotFound(
+          collectionName,
+          `collection '${collectionName}' has no rows to delete in this pane (it was never written to)`,
+        );
+      }
+      // Live rows get a tombstone broadcast so connected subscribers evict them.
+      const live = await tx.paneRecord.findMany({
+        where: { collectionId: col.id, deletedAt: null },
+      });
+      const total = await tx.paneRecord.count({
+        where: { collectionId: col.id },
+      });
+      // Cascade delete: removing the collection row removes all its records.
+      await tx.recordCollection.delete({ where: { id: col.id } });
+      // `col.seq` is the collection's current max — any caught-up subscriber's
+      // replay cursor is at most this. Fresh tombstone seqs start just above it.
+      return { removed: total, tombstones: live, baseSeq: col.seq };
+    },
+  );
+
+  const deletedAt = new Date().toISOString();
+  tombstones.forEach((row, i) => {
+    publish(
+      pane.id,
+      makeRecordDelete(collectionName, {
+        id: row.id,
+        key: row.recordKey,
+        // Fresh monotonic seq above the collection's max (#531) so the delta
+        // clears the forwarder's `seq > lastReplaySeq` de-dup gate.
+        seq: baseSeq + i + 1,
+        deleted_at: deletedAt,
+      }),
+    );
+  });
+
+  return { removed };
+}
+
+// -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
 
 function assertPaneOpen(pane: Pane): void {
   if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
+  }
+}
+
+// #505 — walk a record's row schema for `format: pane-attachment-id` sites and
+// verify every referenced attachment is accessible to `agentId` (owned, exists,
+// not soft-deleted). Mirrors the event gate in core/events.ts:188-194. No-op
+// when the schema declares no ref sites (walker returns []).
+async function assertRecordBlobsAccessible(
+  prisma: PrismaClient,
+  agentId: string,
+  rowSchema: object,
+  data: unknown,
+): Promise<void> {
+  const refs = collectBlobRefs(rowSchema, data);
+  if (refs.length > 0) {
+    await assertBlobsAccessibleByAgent(prisma, agentId, refs);
   }
 }
 

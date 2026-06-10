@@ -238,7 +238,7 @@ describe("POST /v1/panes/:id/records/:collection", () => {
       intruder.apiKey,
       { data: { body: "x" } },
     );
-    // dualAuth rejects with 403 forbidden or 404 session_not_found
+    // dualAuth rejects with 403 forbidden or 404 pane_not_found
     // depending on which lookup loses — both are acceptable rejections.
     expect([401, 403, 404]).toContain(res.status);
   });
@@ -944,5 +944,205 @@ describe("#449 records cookie/public auth", () => {
     // First 3 succeed (201), the rest are throttled (429).
     expect(statuses.filter((s) => s === 201).length).toBe(3);
     expect(statuses).toContain(429);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /v1/panes/:id/records/:collection — collection-level delete (#507)
+// ---------------------------------------------------------------------------
+
+describe("DELETE /v1/panes/:id/records/:collection (collection delete)", () => {
+  it("removes ALL records and the collection row; subsequent write recreates fresh", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    // Seed a few rows, one of them already tombstoned.
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
+      record_key: "a",
+      data: { body: "one" },
+    });
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
+      record_key: "b",
+      data: { body: "two" },
+    });
+    await req("POST", `/v1/panes/${paneId}/records/comments`, apiKey, {
+      record_key: "c",
+      data: { body: "three" },
+    });
+    await req("DELETE", `/v1/panes/${paneId}/records/comments/c`, apiKey);
+
+    const collectionBefore = await prisma.recordCollection.findFirst({
+      where: { paneId, name: "comments" },
+    });
+    expect(collectionBefore).not.toBeNull();
+
+    const del = await req(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+    );
+    expect(del.status).toBe(204);
+
+    // Collection row gone; cascade removed every PaneRecord (live + tombstone).
+    const collectionAfter = await prisma.recordCollection.findFirst({
+      where: { paneId, name: "comments" },
+    });
+    expect(collectionAfter).toBeNull();
+    const rowsAfter = await prisma.paneRecord.count({
+      where: { collectionId: collectionBefore!.id },
+    });
+    expect(rowsAfter).toBe(0);
+
+    // GET now returns an empty page (collection declared, no rows).
+    const get = await req(
+      "GET",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+    );
+    const getBody = (await get.json()) as { records: unknown[] };
+    expect(getBody.records).toHaveLength(0);
+
+    // Recreate-on-write: a fresh write re-creates the collection at seq 1.
+    const recreate = await req(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+      { record_key: "a", data: { body: "again" } },
+    );
+    expect(recreate.status).toBe(201);
+    const recreated = (await recreate.json()) as { record: { seq: number } };
+    expect(recreated.record.seq).toBe(1);
+  });
+
+  it("returns 404 on a collection that was never written to", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments`,
+      apiKey,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("record_collection_not_found");
+  });
+
+  it("returns 404 on a collection not declared in the template schema", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const paneId = await seedPaneWithRecords(agentId);
+    const res = await req(
+      "DELETE",
+      `/v1/panes/${paneId}/records/unknown`,
+      apiKey,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("record_collection_not_found");
+  });
+
+  it("the owner human (cookie) can delete a collection", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    const h = cookieJsonHeaders(owner.cookie);
+    await fetchJson("POST", `/v1/panes/${paneId}/records/comments`, h, {
+      record_key: "c1",
+      data: { body: "hi" },
+    });
+    const del = await fetchJson(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments`,
+      h,
+    );
+    expect(del.status).toBe(204);
+    const collectionAfter = await prisma.recordCollection.findFirst({
+      where: { paneId, name: "comments" },
+    });
+    expect(collectionAfter).toBeNull();
+  });
+
+  it("rejects a non-owner page principal (public guest) with 403, leaving the collection intact", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "public");
+
+    // An anonymous public guest CAN write an individual record (emit-capable)...
+    const post = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}/records/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ record_key: "g1", data: { body: "guest" } }),
+      }),
+    );
+    expect(post.status).toBe(201);
+
+    // ...but must NOT be able to drop the whole collection.
+    const del = await app.fetch(
+      new Request(`http://t/v1/panes/${paneId}/records/comments`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    expect(del.status).toBe(403);
+    const body = (await del.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("author_not_allowed");
+
+    // Collection + row are untouched.
+    const collectionAfter = await prisma.recordCollection.findFirst({
+      where: { paneId, name: "comments" },
+    });
+    expect(collectionAfter).not.toBeNull();
+  });
+
+  it("rejects a participant grantee (page principal) with 403", async () => {
+    const { agentId } = await seedAgent();
+    const owner = await seedHumanWithCookie("owner@example.com");
+    const paneId = await seedOwnedPaneWithRecords(agentId, owner.humanId);
+    await setAccessMode(paneId, "invite_only");
+    const bob = await seedHumanWithCookie("bob@example.com");
+    await prisma.paneGrant.create({
+      data: {
+        paneId,
+        humanId: bob.humanId,
+        inviteEmail: "bob@example.com",
+        role: "participant",
+        invitedBy: owner.humanId,
+        acceptedAt: new Date(),
+      },
+    });
+    // The grantee can write a record but cannot delete the collection.
+    await fetchJson(
+      "POST",
+      `/v1/panes/${paneId}/records/comments`,
+      cookieJsonHeaders(bob.cookie),
+      { record_key: "bob1", data: { body: "from bob" } },
+    );
+    const del = await fetchJson(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments`,
+      cookieJsonHeaders(bob.cookie),
+    );
+    expect(del.status).toBe(403);
+  });
+
+  it("rejects an unrelated agent that doesn't own the pane", async () => {
+    const owner = await seedAgent();
+    const intruder = await seedAgent();
+    const paneId = await seedPaneWithRecords(owner.agentId);
+    await req("POST", `/v1/panes/${paneId}/records/comments`, owner.apiKey, {
+      record_key: "a",
+      data: { body: "one" },
+    });
+    const res = await req(
+      "DELETE",
+      `/v1/panes/${paneId}/records/comments`,
+      intruder.apiKey,
+    );
+    expect([401, 403, 404]).toContain(res.status);
+    // Collection survives the rejected delete.
+    const collectionAfter = await prisma.recordCollection.findFirst({
+      where: { paneId, name: "comments" },
+    });
+    expect(collectionAfter).not.toBeNull();
   });
 });

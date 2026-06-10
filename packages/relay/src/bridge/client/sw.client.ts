@@ -78,18 +78,35 @@ sw.addEventListener(
       (event.notification.data as { paneUrl?: string } | null)?.paneUrl ??
       "/home";
     event.waitUntil(
-      sw.clients
-        .matchAll({ type: "window", includeUncontrolled: true })
-        .then((clients: Array<{ focus(): void }>) => {
-          // Bring an existing window into focus rather than opening a new tab.
+      sw.clients.matchAll({ type: "window", includeUncontrolled: true }).then(
+        async (
+          clients: Array<{
+            url: string;
+            focus(): Promise<unknown>;
+            navigate(u: string): Promise<unknown>;
+          }>,
+        ) => {
+          // Reuse an existing window rather than spawning a new tab, but
+          // NAVIGATE it to the pane first — otherwise tapping the
+          // notification just refocuses whatever view was open (Home /
+          // recents) instead of opening the pane the notification is about.
           for (const client of clients) {
-            if ("focus" in client) {
-              void client.focus();
-              return;
+            // Already on the target pane — just focus, no reload.
+            if (client.url === url) return client.focus();
+          }
+          const existing = clients[0];
+          if (existing && typeof existing.navigate === "function") {
+            try {
+              await existing.navigate(url);
+              return existing.focus();
+            } catch {
+              // navigate() rejects for uncontrolled / cross-origin clients —
+              // fall back to opening the pane in a fresh window.
             }
           }
           return sw.clients.openWindow(url);
-        }),
+        },
+      ),
     );
   },
 );

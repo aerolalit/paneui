@@ -186,11 +186,11 @@ describe("#283 cross-agent pane access", () => {
         headers: { authorization: `Bearer ${b.apiKey}` },
       }),
     );
-    // No human owner on the pane → fall back to session_not_found
+    // No human owner on the pane → fall back to pane_not_found
     // so we don't leak a "yes this exists" signal to random callers.
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("session_not_found");
+    expect(body.error.code).toBe("pane_not_found");
   });
 
   it("DELETE /v1/panes/:id works for a sibling agent's pane", async () => {
