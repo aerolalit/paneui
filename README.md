@@ -6,7 +6,7 @@
 
 ![npm](https://img.shields.io/npm/v/@paneui/cli) ![license](https://img.shields.io/github/license/aerolalit/paneui) ![stars](https://img.shields.io/github/stars/aerolalit/paneui?style=social)
 
-<!-- TODO(demo): drop the round-trip demo GIF here — agent creates a pane → human fills the form → structured JSON lands back in the agent's terminal. Path: docs/assets/demo.gif -->
+[![Pane round-trip demo: an agent creates a pane, a human approves a release in the browser, and the structured result lands back in the agent's terminal](docs/assets/demo.gif)](https://paneui.com)
 
 **Works with** any agent that can run a shell command or call HTTP — Claude Code & the Claude Agent SDK, MCP hosts, LangGraph / CrewAI / OpenAI Agents SDK, or your own cron / CI / bot.
 
