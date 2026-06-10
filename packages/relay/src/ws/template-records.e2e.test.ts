@@ -268,12 +268,11 @@ class FrameQueue {
   }
 }
 
-// CI runs every e2e file in parallel, so the runner is CPU-saturated and a
-// WS handshake can take many seconds — the original tight default produced
-// "ws open timeout" flakes on both lanes. Give the two-pane fan-out test
-// generous headroom (20s open / frame) so a slow handshake under load is not
-// mistaken for a hang; the enclosing test budget is raised to match.
-function waitOpen(ws: WebSocket, timeoutMs = 20000): Promise<void> {
+// Resolve once the socket opens; reject on a per-attempt budget, a transport
+// error, or a close-before-open. This is deliberately a *short* per-attempt
+// timeout (not the old single 20s wait) — `connectAndOpen` below wraps it in a
+// bounded retry, so a single starved handshake no longer fails the test.
+function waitOpen(ws: WebSocket, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("ws open timeout")), timeoutMs);
     ws.once("open", () => {
@@ -293,76 +292,139 @@ function waitOpen(ws: WebSocket, timeoutMs = 20000): Promise<void> {
   });
 }
 
-describe("template-record WS broadcast", () => {
-  it("replays pre-seeded template records on connect", async () => {
-    const { apiKey } = await seedAgent();
-    const { templateId } = await createTemplate(apiKey);
-    await upsertTemplateRecord(apiKey, templateId, "q1", "first?");
-    await upsertTemplateRecord(apiKey, templateId, "q2", "second?");
-
-    const { paneId, agentToken } = await createPaneFromTemplate(
-      apiKey,
-      templateId,
-    );
-    const ws = connect(paneId, agentToken, "*");
+// Open a WS to a pane and wait for it to come up, tolerating a transient slow
+// handshake under CI load.
+//
+// Why retry instead of just a big timeout: the sqlite e2e job runs this file
+// alongside ~60 others under a bounded forks pool on a 2-vCPU runner. The relay
+// uses the synchronous better-sqlite3 adapter on a single shared connection, so
+// when a fork's event loop is starved the *pre-upgrade auth chain*
+// (rate-limit → pane lookup → bearer resolve → participant update, all awaited
+// before the 101 is written) can blow past any fixed wall-clock budget even
+// though its real CPU work is milliseconds. That surfaces to the client as
+// "ws open timeout" (or, if the server tears the half-open socket down,
+// "ws closed before open") — not a hang, and the next handshake succeeds. So
+// on a per-attempt timeout we terminate the dead socket, drop it from the
+// teardown-tracking array (a retried socket must not leak), and reconnect; only
+// repeated failures across all attempts fail the test.
+//
+// Budget: attempts × perAttemptTimeoutMs stays inside each call site's test
+// timeout (default 5s tests get an explicit larger budget; the two-pane test
+// already runs at 60s).
+// Returns the open socket *and* a FrameQueue already bound to it. The queue's
+// `message` listener is attached on the same socket before this resolves, so a
+// replay frame the server sends immediately after the 101 can't slip through
+// the gap between "open" and the caller wiring up its own listener. On retry
+// the previous socket (and its dead queue) is discarded and a fresh pair is
+// built on the new socket, so the returned queue always belongs to the live
+// connection.
+async function connectAndOpen(
+  paneId: string,
+  token: string,
+  subscribe: string,
+  { attempts = 3, perAttemptTimeoutMs = 8000 } = {},
+): Promise<{ ws: WebSocket; q: FrameQueue }> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const ws = connect(paneId, token, subscribe);
+    // Bind the queue before awaiting open so no early frame is dropped.
     const q = new FrameQueue(ws);
-    await waitOpen(ws);
-
-    const upserts: Array<{ key: string }> = [];
-    let sawReplayComplete = false;
-    const seenKinds: string[] = [];
-    while (!sawReplayComplete) {
-      const m = (await q.next(5000)) as {
-        kind?: string;
-        type?: string;
-        collection?: string;
-        record?: { key: string };
-      };
-      seenKinds.push(m.kind ?? m.type ?? "event");
-      if (m.kind === "template-record.upsert" && m.collection === "questions") {
-        upserts.push({ key: m.record!.key });
-      } else if (
-        m.kind === "template-record.replay.complete" &&
-        m.collection === "questions"
-      ) {
-        sawReplayComplete = true;
+    try {
+      await waitOpen(ws, perAttemptTimeoutMs);
+      return { ws, q };
+    } catch (err) {
+      lastErr = err;
+      try {
+        ws.terminate();
+      } catch {
+        // already gone — nothing to do
       }
+      const idx = openSockets.indexOf(ws);
+      if (idx !== -1) openSockets.splice(idx, 1);
     }
-    ws.close();
-    expect(upserts.map((u) => u.key).sort()).toEqual(["q1", "q2"]);
-    void seenKinds; // available for debugging
-  });
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`ws failed to open after ${attempts} attempts`);
+}
 
-  it("broadcasts a live template-record upsert to a derived pane WS", async () => {
-    const { apiKey } = await seedAgent();
-    const { templateId } = await createTemplate(apiKey);
-    const { paneId, agentToken } = await createPaneFromTemplate(
-      apiKey,
-      templateId,
-    );
+describe("template-record WS broadcast", () => {
+  it(
+    "replays pre-seeded template records on connect",
+    { timeout: 30000 },
+    async () => {
+      const { apiKey } = await seedAgent();
+      const { templateId } = await createTemplate(apiKey);
+      await upsertTemplateRecord(apiKey, templateId, "q1", "first?");
+      await upsertTemplateRecord(apiKey, templateId, "q2", "second?");
 
-    const ws = connect(paneId, agentToken, "*");
-    const q = new FrameQueue(ws);
-    await waitOpen(ws);
+      const { paneId, agentToken } = await createPaneFromTemplate(
+        apiKey,
+        templateId,
+      );
+      const { ws, q } = await connectAndOpen(paneId, agentToken, "*");
 
-    // Drain replay sentinel for empty collection.
-    await q.until(
-      (m) =>
-        m.kind === "template-record.replay.complete" &&
-        m.collection === "questions",
-    );
+      const upserts: Array<{ key: string }> = [];
+      let sawReplayComplete = false;
+      const seenKinds: string[] = [];
+      while (!sawReplayComplete) {
+        const m = (await q.next(5000)) as {
+          kind?: string;
+          type?: string;
+          collection?: string;
+          record?: { key: string };
+        };
+        seenKinds.push(m.kind ?? m.type ?? "event");
+        if (
+          m.kind === "template-record.upsert" &&
+          m.collection === "questions"
+        ) {
+          upserts.push({ key: m.record!.key });
+        } else if (
+          m.kind === "template-record.replay.complete" &&
+          m.collection === "questions"
+        ) {
+          sawReplayComplete = true;
+        }
+      }
+      ws.close();
+      expect(upserts.map((u) => u.key).sort()).toEqual(["q1", "q2"]);
+      void seenKinds; // available for debugging
+    },
+  );
 
-    // Live write — should arrive on the WS.
-    await upsertTemplateRecord(apiKey, templateId, "qlive", "live one");
+  it(
+    "broadcasts a live template-record upsert to a derived pane WS",
+    { timeout: 30000 },
+    async () => {
+      const { apiKey } = await seedAgent();
+      const { templateId } = await createTemplate(apiKey);
+      const { paneId, agentToken } = await createPaneFromTemplate(
+        apiKey,
+        templateId,
+      );
 
-    const delta = (await q.until(
-      (m) =>
-        m.kind === "template-record.upsert" && m.collection === "questions",
-    )) as { record?: { key: string; data: { text: string } } };
-    expect(delta.record!.key).toBe("qlive");
-    expect(delta.record!.data.text).toBe("live one");
-    ws.close();
-  });
+      const { ws, q } = await connectAndOpen(paneId, agentToken, "*");
+
+      // Drain replay sentinel for empty collection.
+      await q.until(
+        (m) =>
+          m.kind === "template-record.replay.complete" &&
+          m.collection === "questions",
+      );
+
+      // Live write — should arrive on the WS.
+      await upsertTemplateRecord(apiKey, templateId, "qlive", "live one");
+
+      const delta = (await q.until(
+        (m) =>
+          m.kind === "template-record.upsert" && m.collection === "questions",
+      )) as { record?: { key: string; data: { text: string } } };
+      expect(delta.record!.key).toBe("qlive");
+      expect(delta.record!.data.text).toBe("live one");
+      ws.close();
+    },
+  );
 
   // This two-pane fan-out test used to be the suite's CI flake (on the sqlite
   // e2e job, where it runs): a leaked socket from a thrown assertion let the
@@ -382,12 +444,14 @@ describe("template-record WS broadcast", () => {
       const a = await createPaneFromTemplate(apiKey, templateId);
       const b = await createPaneFromTemplate(apiKey, templateId);
 
-      const wsA = connect(a.paneId, a.agentToken, "*");
-      const wsB = connect(b.paneId, b.agentToken, "*");
-      const qA = new FrameQueue(wsA);
-      const qB = new FrameQueue(wsB);
-      await waitOpen(wsA);
-      await waitOpen(wsB);
+      // Open both sockets concurrently so the two handshakes share one wait
+      // window instead of stacking two sequential waits (which doubled the odds
+      // a single starved handshake blew the budget). Each side independently
+      // retries on a transient slow/closed-before-open handshake.
+      const [{ ws: wsA, q: qA }, { ws: wsB, q: qB }] = await Promise.all([
+        connectAndOpen(a.paneId, a.agentToken, "*"),
+        connectAndOpen(b.paneId, b.agentToken, "*"),
+      ]);
       await qA.until(
         (m) =>
           m.kind === "template-record.replay.complete" &&
