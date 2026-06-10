@@ -56,7 +56,7 @@ function publicWsUrl(config: Config): string {
 
 // #283 — assert the caller may act on this pane. A pane is in scope
 // for any agent claimed to the same human as its owning agent. Throws
-// sessionNotFound when the pane is missing or owned by a strictly
+// paneNotFound when the pane is missing or owned by a strictly
 // unrelated agent (no shared human); throws forbidden when the pane
 // belongs to a different human (so the caller knows they hit a real id
 // that just isn't theirs to act on, which is the debugging hint the
@@ -70,7 +70,7 @@ export async function assertPaneInScope<T extends PaneScopeFields>(
   pane: T | null,
   me: { id: string; ownerHumanId: string | null },
 ): Promise<T> {
-  if (!pane) throw errors.sessionNotFound();
+  if (!pane) throw errors.paneNotFound();
   if (pane.agentId === me.id) return pane;
   const scope = await agentScope(prisma, me);
   if (scope.has(pane.agentId)) return pane;
@@ -80,7 +80,7 @@ export async function assertPaneInScope<T extends PaneScopeFields>(
       "this pane belongs to a different human's agents",
     );
   }
-  throw errors.sessionNotFound();
+  throw errors.paneNotFound();
 }
 
 // #259 — mint a kind="agent" Participant for the calling agent on a pane
@@ -412,14 +412,14 @@ panes.post("/", requireAgent, async (c) => {
         OR: [{ id: template.id }, { slug: template.id }],
       },
     });
-    if (!head) throw errors.artifactNotFound();
+    if (!head) throw errors.templateNotFound();
     const wantVersion = template.version ?? head.latestVersion;
     const version = await prisma.templateVersion.findUnique({
       where: {
         templateId_version: { templateId: head.id, version: wantVersion },
       },
     });
-    if (!version) throw errors.artifactVersionNotFound();
+    if (!version) throw errors.templateVersionNotFound();
     templateVersionId = version.id;
     templateId = head.id;
     templateTags = normalizeTags(head.tags);
@@ -1060,7 +1060,7 @@ panes.post("/:id/upgrade", requireAgent, async (c) => {
     },
   });
   if (!targetVersion) {
-    throw errors.artifactVersionNotFound();
+    throw errors.templateVersionNotFound();
   }
 
   // No-op: the pane is already on the target version. Return the

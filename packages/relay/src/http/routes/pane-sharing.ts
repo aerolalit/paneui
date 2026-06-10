@@ -36,7 +36,7 @@ import {
 const paneSharing = new Hono<AuthEnv>();
 
 // Load the pane (scope fields only) and assert it's in the caller's scope.
-// Throws the same sessionNotFound / forbidden shapes the agent-CRUD routes
+// Throws the same paneNotFound / forbidden shapes the agent-CRUD routes
 // use, so this route is no different an oracle than POST /:id/participants.
 async function loadInScope(
   prisma: PrismaClient,

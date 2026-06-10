@@ -238,7 +238,7 @@ describe("POST /v1/panes/:id/records/:collection", () => {
       intruder.apiKey,
       { data: { body: "x" } },
     );
-    // dualAuth rejects with 403 forbidden or 404 session_not_found
+    // dualAuth rejects with 403 forbidden or 404 pane_not_found
     // depending on which lookup loses — both are acceptable rejections.
     expect([401, 403, 404]).toContain(res.status);
   });
