@@ -430,6 +430,25 @@ describe("collectBlobRefs — patternProperties / additionalProperties (#200)", 
     );
   });
 
+  it("collects from patternProperties holding a tuple/prefixItems array (regression coverage for the array branches)", () => {
+    const schema = {
+      type: "object",
+      patternProperties: {
+        "^slot_": {
+          type: "array",
+          prefixItems: [{ format: "pane-attachment-id" }],
+        },
+      },
+    };
+    const refs = collectBlobRefs(schema, {
+      slot_a: ["cmpel3zb30000k923tf77pjrw"],
+      slot_b: ["cmqfx4ac41111l834ug88qksx"],
+    });
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
   it("malformed regex in patternProperties is skipped, doesn't throw", () => {
     // Defensive: Ajv would catch this at schema-compile time, but the
     // walker shouldn't crash if it ever sees one.
@@ -447,6 +466,116 @@ describe("collectBlobRefs — patternProperties / additionalProperties (#200)", 
       collectBlobRefs(schema, {
         cover: "cmpel3zb30000k923tf77pjrw",
       }),
+    ).toEqual(["cmpel3zb30000k923tf77pjrw"]);
+  });
+});
+
+describe("collectBlobRefs — prefixItems / additionalItems (#504)", () => {
+  // Before the fix, the JSON Schema 2020-12 `prefixItems` keyword (accepted by
+  // the record validators' Ajv 2020 instance) had no walker branch — a
+  // `format: pane-attachment-id` ref placed under `prefixItems` Ajv-validated
+  // fine but the walker returned [], skipping the cross-tenant access gate
+  // entirely. Same bug class as #200's patternProperties gap.
+
+  it("collects a ref placed under prefixItems (the #504 bug)", () => {
+    const schema = {
+      type: "array",
+      prefixItems: [
+        { type: "string", format: "pane-attachment-id" },
+        { type: "number" },
+      ],
+    };
+    expect(collectBlobRefs(schema, ["cmpel3zb30000k923tf77pjrw", 42])).toEqual([
+      "cmpel3zb30000k923tf77pjrw",
+    ]);
+  });
+
+  it("collects multiple refs across prefixItems positions", () => {
+    const schema = {
+      type: "array",
+      prefixItems: [
+        { type: "string", format: "pane-attachment-id" },
+        { type: "string" },
+        { type: "string", format: "pane-attachment-id" },
+      ],
+    };
+    const refs = collectBlobRefs(schema, [
+      "cmpel3zb30000k923tf77pjrw",
+      "label",
+      "cmqfx4ac41111l834ug88qksx",
+    ]);
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("collects a ref nested under a prefixItems object", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          prefixItems: [
+            {
+              type: "object",
+              properties: {
+                attachment_id: { format: "pane-attachment-id" },
+              },
+            },
+          ],
+        },
+      },
+    };
+    expect(
+      collectBlobRefs(schema, {
+        rows: [{ attachment_id: "cmpel3zb30000k923tf77pjrw" }],
+      }),
+    ).toEqual(["cmpel3zb30000k923tf77pjrw"]);
+  });
+
+  it("2020-12: items past the prefix uses the `items` rest-schema", () => {
+    // In 2020-12, `prefixItems` is positional and `items` (single schema)
+    // applies to every position past the prefix.
+    const schema = {
+      type: "array",
+      prefixItems: [{ type: "string" }],
+      items: { type: "string", format: "pane-attachment-id" },
+    };
+    const refs = collectBlobRefs(schema, [
+      "header",
+      "cmpel3zb30000k923tf77pjrw",
+      "cmqfx4ac41111l834ug88qksx",
+    ]);
+    expect(refs.sort()).toEqual(
+      ["cmpel3zb30000k923tf77pjrw", "cmqfx4ac41111l834ug88qksx"].sort(),
+    );
+  });
+
+  it("draft-07: items past a tuple uses the `additionalItems` rest-schema", () => {
+    // Legacy dialect — tuple-form `items: [...]` with `additionalItems`
+    // covering the rest of the array.
+    const schema = {
+      type: "array",
+      items: [{ type: "string" }],
+      additionalItems: { type: "string", format: "pane-attachment-id" },
+    };
+    const refs = collectBlobRefs(schema, [
+      "header",
+      "cmpel3zb30000k923tf77pjrw",
+    ]);
+    expect(refs).toEqual(["cmpel3zb30000k923tf77pjrw"]);
+  });
+
+  it("additionalItems: false (boolean) is a no-op past the tuple", () => {
+    const schema = {
+      type: "array",
+      items: [{ type: "string", format: "pane-attachment-id" }],
+      additionalItems: false,
+    };
+    // The positional item is collected; the trailing extra item carries no
+    // sub-schema (boolean), so nothing more is collected.
+    expect(
+      collectBlobRefs(schema, ["cmpel3zb30000k923tf77pjrw", "extra"]),
     ).toEqual(["cmpel3zb30000k923tf77pjrw"]);
   });
 });

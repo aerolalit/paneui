@@ -32,6 +32,10 @@ import type {
 import type { ValidateFunction } from "ajv";
 import { publish } from "../http/broadcast.js";
 import { ApiError, errors } from "../http/errors.js";
+import {
+  assertBlobsAccessibleByAgent,
+  collectBlobRefs,
+} from "../attachments/ref-access.js";
 import { log } from "../log.js";
 import type { Author, AuthorKind } from "../types.js";
 import type { Config } from "../config.js";
@@ -468,6 +472,22 @@ export async function writeRecord(
     data: input.data,
   });
 
+  // Attachment-ref access gate (#505 / #156 follow-up B). Records may legitimately
+  // carry `format: pane-attachment-id` refs, so — exactly like events
+  // (core/events.ts) and pane-create input_data (http/routes/panes.ts) — walk
+  // the row schema for ref sites and verify the pane's owning agent can access
+  // every referenced attachment BEFORE the row hits Prisma. `pane.agentId` is the
+  // authz anchor (not `author.id`): a participant (`page` principal) may
+  // reference an attachment the agent owns, but neither identity may plant
+  // another agent's / a dangling / a soft-deleted attachment_id into a shared
+  // record collection. See attachments/ref-access.ts.
+  await assertRecordBlobsAccessible(
+    prisma,
+    pane.agentId,
+    collection.rowSchema,
+    input.data,
+  );
+
   // If the caller didn't supply a key, generate one. Stable for the row's
   // lifetime — the wire shape exposes it as `key`.
   const recordKey = input.recordKey ?? `rec_${cuidish()}`;
@@ -583,6 +603,16 @@ export async function updateRecord(
     rowSchema: collection.rowSchema,
     data: input.data,
   });
+
+  // Same attachment-ref access gate as writeRecord — a PATCH can introduce
+  // brand-new refs into the row's data, so it must be gated identically. See
+  // the comment in writeRecord and attachments/ref-access.ts.
+  await assertRecordBlobsAccessible(
+    prisma,
+    pane.agentId,
+    collection.rowSchema,
+    input.data,
+  );
 
   const updated = await prisma.$transaction(async (tx) => {
     const col = await tx.recordCollection.findUnique({
@@ -744,6 +774,22 @@ export async function deleteRecord(
 function assertPaneOpen(pane: Pane): void {
   if (pane.status !== "open" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone();
+  }
+}
+
+// #505 — walk a record's row schema for `format: pane-attachment-id` sites and
+// verify every referenced attachment is accessible to `agentId` (owned, exists,
+// not soft-deleted). Mirrors the event gate in core/events.ts:188-194. No-op
+// when the schema declares no ref sites (walker returns []).
+async function assertRecordBlobsAccessible(
+  prisma: PrismaClient,
+  agentId: string,
+  rowSchema: object,
+  data: unknown,
+): Promise<void> {
+  const refs = collectBlobRefs(rowSchema, data);
+  if (refs.length > 0) {
+    await assertBlobsAccessibleByAgent(prisma, agentId, refs);
   }
 }
 
