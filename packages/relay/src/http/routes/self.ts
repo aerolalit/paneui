@@ -13,12 +13,19 @@
 //                                      key 401s on the next request. Owner-
 //                                      side counterpart to DELETE /v1/keys
 //                                      (self-revoke).
-//   PATCH /v1/self/profile             update the human's display name;
-//                                      `null`/empty clears it (display falls
-//                                      back to the email-local-part).
+//   GET   /v1/self/profile             read the human's display name + the
+//                                      resolved home template (the pinned
+//                                      override, or null = pane default).
+//   PATCH /v1/self/profile             update the human's display name and/or
+//                                      pinned home template; `null`/empty
+//                                      clears name (display falls back to the
+//                                      email-local-part); `null` clears the
+//                                      home-template pin (Home serves the
+//                                      pane default).
 
 import { Hono } from "hono";
 import { z } from "zod";
+import type { PrismaClient } from "@prisma/client";
 import { generateClaimCode, hashClaimCode } from "../../auth/claim.js";
 import { generateApiKey, hashKey, keyPrefix } from "../../keys.js";
 import { errors } from "../errors.js";
@@ -37,6 +44,39 @@ function friendlyName(email: string): string {
 const self = new Hono<HumanAuthEnv>();
 
 self.use("*", requireHuman);
+
+// A template is usable as a human's pinned home template when it is live
+// (not soft-deleted) AND the human has a relationship to it: they own it via
+// one of their claimed agents, they have it installed (HumanTemplateInstall),
+// or it is published to the store. These are exactly the template surfaces a
+// human can reach from Home, so pinning is constrained to that set rather than
+// any arbitrary id in the table.
+async function isHomeTemplateUsable(
+  prisma: PrismaClient,
+  humanId: string,
+  templateId: string,
+): Promise<boolean> {
+  const template = await prisma.template.findFirst({
+    where: {
+      id: templateId,
+      deletedAt: null,
+      OR: [
+        // Published to the store — anyone can pin it.
+        { publishedAt: { not: null } },
+        // Owned via one of the human's claimed agents.
+        { owner: { ownerHumanId: humanId, deletedAt: null } },
+        // Installed by the human (and not later uninstalled).
+        {
+          installs: {
+            some: { humanId, uninstalledAt: null },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  return template !== null;
+}
 
 // POST /v1/self/claim-codes
 // Body: {} (none yet)
@@ -263,37 +303,49 @@ function hasControlChar(s: string): boolean {
 }
 
 // PATCH /v1/self/profile
-// Body: { name: string | null }
-// Response: { name, display_name }
+// Body: { name?: string | null, home_template_id?: string | null }
+// Response: { name, display_name, home_template_id }
 //   - `name` is the stored value after the update: the trimmed string, or
 //     `null` when cleared. An empty / whitespace-only string is normalised
 //     to `null` (an explicit clear), so the display name falls back to the
 //     email-local-part.
 //   - `display_name` is what the UI shows: the stored name if non-empty,
 //     else the friendlyName(email) fallback (shared with owner-shell-spa.ts).
+//   - `home_template_id` is the human's pinned home template after the
+//     update: a template id, or `null` when none is pinned (Home serves the
+//     pane-default). See §5.2.
 //
-// `null` is allowed (explicit clear). Names are capped at 80 chars and may
-// not contain control characters — anything else 400s as invalid_request.
-const profileBody = z.object({
-  // Trim first so a paste with surrounding whitespace normalises before
-  // validation; an empty result becomes `null` (clear the name). `null`
-  // is accepted as-is. Control characters are rejected.
-  name: z.preprocess(
-    (v) => {
-      if (v === null || v === undefined) return null;
-      if (typeof v !== "string") return v;
-      const t = v.trim();
-      return t.length === 0 ? null : t;
-    },
-    z
-      .string()
-      .max(80)
-      .refine((s) => !hasControlChar(s), {
-        message: "name must not contain control characters",
-      })
-      .nullable(),
-  ),
-});
+// Both fields are OPTIONAL and key-presence aware: a field that is *absent*
+// from the body is left untouched, so a caller can patch `name` without
+// disturbing `home_template_id` and vice-versa. An explicit `null` is a
+// clear. Names are capped at 80 chars and may not contain control characters;
+// `home_template_id`, when a string, must reference a template this human can
+// use (owns via a claimed agent, has installed, or is published) — otherwise
+// 404 template_not_found. Anything else 400s as invalid_request.
+//
+// `name` is parsed via `nameValue` only when the `name` key is present; the
+// preprocess collapses empty/whitespace-only to `null` (an explicit clear)
+// and accepts `null` as-is.
+const nameValue = z.preprocess(
+  (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return t.length === 0 ? null : t;
+  },
+  z
+    .string()
+    .max(80)
+    .refine((s) => !hasControlChar(s), {
+      message: "name must not contain control characters",
+    })
+    .nullable(),
+);
+
+// `home_template_id`, when present: a non-empty string id or an explicit
+// `null` (clear). Existence + usability of the id is checked against the DB
+// in the handler (a bad id must 404, not hit the FK and 500).
+const homeTemplateIdValue = z.union([z.string().min(1), z.null()]);
 
 // GET /v1/self/recents
 // Response: { items: [{ pane_id, title, template_id, template_version_id,
@@ -467,29 +519,97 @@ self.delete("/push-subscriptions", async (c) => {
   return c.body(null, 204);
 });
 
+// GET /v1/self/profile
+// Response: { name, display_name, home_template_id }
+//   - `home_template_id` is the human's pinned home template, or `null` when
+//     none is pinned (Home serves the pane-default `home` template). The
+//     read-side counterpart to PATCH — lets the settings UI (and any agent)
+//     observe whether the override is set or the default is in effect.
+self.get("/profile", (c) => {
+  const human = c.get("human");
+  const name = human.name;
+  const displayName =
+    name && name.trim().length > 0 ? name : friendlyName(human.email);
+  return c.json({
+    name,
+    display_name: displayName,
+    home_template_id: human.homeTemplateId,
+  });
+});
+
 self.patch("/profile", async (c) => {
   const prisma = c.get("prisma");
   const human = c.get("human");
 
-  const parsed = profileBody.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) {
+  const raw = (await c.req.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw errors.invalidRequest(
       "invalid profile update",
-      parsed.error.flatten(),
-      "send { name: string | null } — name is trimmed, max 80 chars, no control characters; an empty string clears it",
+      undefined,
+      "send a JSON object with optional { name, home_template_id } fields",
     );
   }
-  const name = parsed.data.name;
 
-  await prisma.human.update({
-    where: { id: human.id },
-    data: { name },
-  });
+  // Key-presence aware: only fields actually present in the body are
+  // touched. This lets a caller patch `name` without clobbering
+  // `home_template_id` and vice-versa.
+  const data: { name?: string | null; homeTemplateId?: string | null } = {};
 
+  if ("name" in raw) {
+    const parsed = nameValue.safeParse(raw.name);
+    if (!parsed.success) {
+      throw errors.invalidRequest(
+        "invalid profile update",
+        parsed.error.flatten(),
+        "name is trimmed, max 80 chars, no control characters; an empty string or null clears it",
+      );
+    }
+    data.name = parsed.data;
+  }
+
+  if ("home_template_id" in raw) {
+    const parsed = homeTemplateIdValue.safeParse(raw.home_template_id);
+    if (!parsed.success) {
+      throw errors.invalidRequest(
+        "invalid profile update",
+        parsed.error.flatten(),
+        "home_template_id must be a non-empty template id or null (to clear the pinned home template)",
+      );
+    }
+    if (parsed.data === null) {
+      // Clearing is always allowed — no existence check.
+      data.homeTemplateId = null;
+    } else {
+      // Validate the template exists and is usable by this human BEFORE
+      // setting, so a bad id returns a clean 404 instead of hitting the FK
+      // and 500. "Usable" = the human owns it (via a claimed agent), has it
+      // installed, or it is published — the same surfaces Home draws from.
+      const usable = await isHomeTemplateUsable(prisma, human.id, parsed.data);
+      if (!usable) throw errors.templateNotFound();
+      data.homeTemplateId = parsed.data;
+    }
+  }
+
+  // Re-read the human so the response reflects the post-update state even when
+  // a field was omitted (left untouched). The update is a no-op when `data` is
+  // empty, but we still re-read to echo back the current values.
+  const updated =
+    Object.keys(data).length > 0
+      ? await prisma.human.update({ where: { id: human.id }, data })
+      : human;
+
+  const name = updated.name;
   const displayName =
     name && name.trim().length > 0 ? name : friendlyName(human.email);
 
-  return c.json({ name, display_name: displayName });
+  return c.json({
+    name,
+    display_name: displayName,
+    home_template_id: updated.homeTemplateId,
+  });
 });
 
 export default self;

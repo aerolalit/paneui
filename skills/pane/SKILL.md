@@ -1452,8 +1452,9 @@ affects new operations).
 
 ## Querying your data with SQL (#355)
 
-`pane query "<SQL>"` runs read-only PostgreSQL-flavoured SQL against your
-own scoped panes, records, and events. The relay scopes results at the
+`pane query "<SQL>"` runs read-only DuckDB SQL (a PostgreSQL-compatible
+dialect) against your own scoped panes, records, and events. The relay
+scopes results at the
 view layer — you can never see a row whose `pane.owner_human_id` doesn't
 match yours.
 
@@ -1491,7 +1492,7 @@ when you want raw access:
 | `records` | `id, pane_id, collection, key, data (JSON), version, seq, author_kind, author_id, created_at, updated_at, deleted_at` |
 | `events`  | `id, pane_id, type, ts, author_kind, author_id, data (JSON), template_version_id` |
 
-Use Postgres-style operators on the `data` column:
+Use DuckDB's PostgreSQL-compatible JSON operators on the `data` column:
 `data->>'title'` (text), `(data->>'done')::boolean` (cast),
 `data->'nested'->>'inner_field'` (deep).
 
