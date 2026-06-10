@@ -36,7 +36,7 @@ participantsHuman.use("*", requireHuman);
 
 /**
  * Verifies the calling human owns the pane (or owns the agent that
- * owns it). Returns the loaded pane. Throws sessionNotFound for any
+ * owns it). Returns the loaded pane. Throws paneNotFound for any
  * mismatch — same shape an agent would see if it didn't own the
  * pane, so no ownership oracle.
  */
@@ -48,17 +48,17 @@ async function loadOwnedPane(c: Context<HumanAuthEnv>): Promise<{
   const prisma = c.get("prisma");
   const human = c.get("human");
   const id = c.req.param("id");
-  if (!id) throw errors.sessionNotFound();
+  if (!id) throw errors.paneNotFound();
 
   const pane = await prisma.pane.findUnique({
     where: { id },
     include: { agent: true },
   });
-  if (!pane) throw errors.sessionNotFound();
+  if (!pane) throw errors.paneNotFound();
 
   const isOwner =
     pane.ownerHumanId === human.id || pane.agent.ownerHumanId === human.id;
-  if (!isOwner) throw errors.sessionNotFound();
+  if (!isOwner) throw errors.paneNotFound();
 
   if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone(

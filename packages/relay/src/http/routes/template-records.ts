@@ -75,7 +75,7 @@ async function loadTemplate(
       OR: [{ id: idOrSlug }, { slug: idOrSlug }],
     },
   });
-  if (!template) throw errors.artifactNotFound();
+  if (!template) throw errors.templateNotFound();
   if (template.deletedAt !== null) throw errors.softDeleted("template");
 
   // Load the head's latest version row — templateRecordSchema lives there.
@@ -89,7 +89,7 @@ async function loadTemplate(
   });
   if (!latestVersionRow) {
     // Defensive: a template head with no version is data corruption.
-    throw errors.artifactVersionNotFound();
+    throw errors.templateVersionNotFound();
   }
   return Object.assign(template, { latestVersionRow });
 }

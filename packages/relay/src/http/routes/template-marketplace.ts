@@ -625,7 +625,7 @@ templateMarketplace.post("/:id/upgrade", requireHuman, async (c) => {
       },
     }),
   ]);
-  if (!toVersion) throw errors.artifactVersionNotFound();
+  if (!toVersion) throw errors.templateVersionNotFound();
   if (!fromVersion) {
     // The installed_version no longer exists in the version history —
     // shouldn't happen (versions are immutable + append-only) but if it
