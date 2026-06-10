@@ -200,7 +200,7 @@ describe("POST /v1/templates/:id/template-records/:collection", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a non-owner agent with artifact_not_found", async () => {
+  it("rejects a non-owner agent with template_not_found", async () => {
     const owner = await seedAgent();
     const intruder = await seedAgent();
     const templateId = await seedTemplateWithRecords(owner.agentId);
@@ -210,7 +210,7 @@ describe("POST /v1/templates/:id/template-records/:collection", () => {
       intruder.apiKey,
       { data: { text: "x" } },
     );
-    // Owner scope returns artifact_not_found (404) to non-owners by design —
+    // Owner scope returns template_not_found (404) to non-owners by design —
     // doesn't leak the existence of someone else's template.
     expect(res.status).toBe(404);
   });

@@ -461,7 +461,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     );
     expect(del.status).toBe(204);
 
-    // Subsequent GET returns 404 artifact_not_found, confirming the row is
+    // Subsequent GET returns 404 template_not_found, confirming the row is
     // gone (and via Prisma's onDelete:Cascade, its TemplateVersion rows
     // too — see schema.prisma).
     const after = await req(
@@ -471,7 +471,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     );
     expect(after.status).toBe(404);
     const body = (await after.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("artifact_not_found");
+    expect(body.error.code).toBe("template_not_found");
   });
 
   it("also accepts a slug", async () => {
@@ -481,7 +481,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     expect(del.status).toBe(204);
   });
 
-  it("returns 404 artifact_not_found on the second delete (not idempotent at the row level)", async () => {
+  it("returns 404 template_not_found on the second delete (not idempotent at the row level)", async () => {
     // We deliberately DO NOT make this 204-on-already-gone like
     // DELETE /v1/panes, because the resource state semantics differ:
     // a pane is a stateful row that can transition to 'closed' (still
@@ -503,7 +503,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     );
     expect(second.status).toBe(404);
     const body = (await second.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("artifact_not_found");
+    expect(body.error.code).toBe("template_not_found");
   });
 
   it("refuses with 409 conflict when a pane still references the template", async () => {
@@ -560,7 +560,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     expect(del.status).toBe(409);
   });
 
-  it("404 artifact_not_found for an unknown id", async () => {
+  it("404 template_not_found for an unknown id", async () => {
     const apiKey = await seedAgent();
     const del = await req("DELETE", "/v1/templates/art_bogus", apiKey);
     expect(del.status).toBe(404);
@@ -569,7 +569,7 @@ describe("DELETE /v1/templates/:id (#137)", () => {
   it("404 (not 403) when the template belongs to a different agent", async () => {
     // Ownership leak: distinguishing "not yours" from "doesn't exist"
     // would tell a probing caller which slugs exist. Treat both as 404
-    // artifact_not_found — same pattern as sessionNotFound.
+    // template_not_found — same pattern as paneNotFound.
     const ownerKey = await seedAgent();
     const intruderKey = await seedAgent();
     const created = (await (await createArtifact(ownerKey)).json()) as {
@@ -582,6 +582,6 @@ describe("DELETE /v1/templates/:id (#137)", () => {
     );
     expect(del.status).toBe(404);
     const body = (await del.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("artifact_not_found");
+    expect(body.error.code).toBe("template_not_found");
   });
 });

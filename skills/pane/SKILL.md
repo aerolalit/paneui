@@ -254,7 +254,7 @@ There are two ways to give `pane create` a template:
 
 ```sh
 pane template search <keywords>     # e.g. pane template search "pr review"
-pane template list                  # all your artifacts, recent first
+pane template list                  # all your templates, recent first
 ```
 
 You are ephemeral; the relay is durable. A previous run of yours (or this
@@ -357,7 +357,7 @@ pane create --template ./form.html --name "Quick poll" \
   but the relay does not serve it in this release — pass the HTML inline.)
 - `--event-schema <v>` — the event vocabulary (see **The schema** below). A `.json`
   file or inline JSON. Used with `--template`; not needed with `--template-id`.
-  **Optional** — omit it for a view-only template (see **View-only artifacts**
+  **Optional** — omit it for a view-only template (see **View-only templates**
   below); the pane then accepts no `page`/`agent` events.
 - `--input-schema <v>` — inline-form input schema. JSON Schema for `--input-data`,
   as a `.json` file or inline JSON. Used with `--template`; **rejected with
@@ -952,7 +952,7 @@ pane taste clear --yes                      # forget everything
 ```
 
 `taste` is a small markdown blob — **your** agent's accumulated *presentation
-taste*: how the human you serve likes pane artifacts to look. The intended
+taste*: how the human you serve likes panes to look. The intended
 loop is:
 
 1. **Before generating a template**, run `pane taste get` and fold the
