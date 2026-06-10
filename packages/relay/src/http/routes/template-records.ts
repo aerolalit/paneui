@@ -14,6 +14,7 @@ import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 import {
   deleteTemplateRecord,
+  deleteTemplateRecordCollection,
   listTemplateRecords,
   updateTemplateRecord,
   writeTemplateRecord,
@@ -238,6 +239,20 @@ templateRecords.delete("/:recordKey", async (c) => {
   return c.body(null, 204);
 });
 
+// DELETE /v1/templates/:id/template-records/:collection
+// Drop a WHOLE template collection — all rows + the collection row (#507).
+// Owner-only by construction: requireAgent + loadTemplate's owner-scope check
+// already restrict every verb on this router to the template's owning agent
+// (and same-human-claimed agents), so no extra principal gate is needed here.
+templateRecords.delete("/", async (c) => {
+  const prisma = c.get("prisma");
+  const template = await loadTemplate(c);
+  const collection = collectionParam(c);
+
+  await deleteTemplateRecordCollection({ prisma }, template, collection);
+  return c.body(null, 204);
+});
+
 // Method-not-allowed fallbacks mirror records.ts.
 templateRecords.all("/:recordKey", (c) => {
   c.header("Allow", "PATCH, DELETE");
@@ -248,10 +263,10 @@ templateRecords.all("/:recordKey", (c) => {
 });
 
 templateRecords.all("/", (c) => {
-  c.header("Allow", "GET, POST");
+  c.header("Allow", "GET, POST, DELETE");
   throw errors.methodNotAllowed(
     `method ${c.req.method} not allowed on this route`,
-    "the template-records collection endpoint supports GET (list) and POST (create)",
+    "the template-records collection endpoint supports GET (list), POST (create), and DELETE (drop the whole collection)",
   );
 });
 

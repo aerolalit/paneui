@@ -510,6 +510,22 @@ export class PaneClient {
     if (!r.ok) this.fail(r);
   }
 
+  /**
+   * DELETE /v1/panes/:id/records/:collection — drop a WHOLE collection
+   * (all rows + the collection row). Privileged: the relay restricts this to
+   * the pane's owning agent (#507). Returns nothing on 204.
+   */
+  async deleteRecordCollection(
+    paneId: string,
+    collection: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/panes/${encodeURIComponent(paneId)}/records/${encodeURIComponent(collection)}`,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
   // ----- template-level records CRUD ------------------------------------
 
   /**
@@ -617,6 +633,21 @@ export class PaneClient {
       "DELETE",
       `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}/${encodeURIComponent(recordKey)}`,
       body,
+    );
+    if (!r.ok) this.fail(r);
+  }
+
+  /**
+   * DELETE /v1/templates/:id/template-records/:collection — drop a WHOLE
+   * template collection (all rows + the collection row). Owner-only (#507).
+   */
+  async deleteTemplateRecordCollection(
+    templateIdOrSlug: string,
+    collection: string,
+  ): Promise<void> {
+    const r = await this.call(
+      "DELETE",
+      `/v1/templates/${encodeURIComponent(templateIdOrSlug)}/template-records/${encodeURIComponent(collection)}`,
     );
     if (!r.ok) this.fail(r);
   }

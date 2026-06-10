@@ -127,6 +127,11 @@ export interface DeleteTemplateRecordInput {
   ifMatch?: number;
 }
 
+export interface DeleteTemplateRecordCollectionResult {
+  /** Number of records (live + tombstoned) removed with the collection. */
+  removed: number;
+}
+
 // -------------------------------------------------------------------------
 // templateRecordSchema resolution
 // -------------------------------------------------------------------------
@@ -626,6 +631,72 @@ export async function deleteTemplateRecord(
       deleted_at: (deleted.deletedAt ?? deleted.updatedAt).toISOString(),
     }),
   );
+}
+
+// -------------------------------------------------------------------------
+// Collection delete — drop a whole template collection (#507)
+// -------------------------------------------------------------------------
+
+/**
+ * Delete an entire template-level record collection: every row plus the
+ * collection row itself. Owner-only by virtue of the route (requireAgent +
+ * owner-scope on the template) — same gate as every other template-records
+ * write. Mirrors deleteRecordCollection (per-pane): a `template-record.delete`
+ * tombstone is broadcast to every derived pane for each LIVE row, then the
+ * collection row is removed. The TemplateRecord→TemplateRecordCollection FK is
+ * `onDelete: Cascade`, so dropping the collection row hard-deletes all its
+ * rows (live + tombstoned) in one statement.
+ *
+ * Collection names are the natural key and are NOT renamable. After a delete
+ * the name is free again; the next write re-creates the collection at seq=1.
+ *
+ * 404 when the name isn't declared in the template_record_schema, OR when it's
+ * declared but was never written to (no collection row exists).
+ */
+export async function deleteTemplateRecordCollection(
+  deps: { prisma: PrismaClient },
+  template: TemplateWithSchema,
+  collectionName: string,
+): Promise<DeleteTemplateRecordCollectionResult> {
+  const { prisma } = deps;
+  resolveCollection(template, collectionName); // 404s if undeclared
+
+  const { removed, tombstones } = await prisma.$transaction(async (tx) => {
+    const col = await tx.templateRecordCollection.findUnique({
+      where: {
+        templateId_name: { templateId: template.id, name: collectionName },
+      },
+    });
+    if (!col) {
+      throw templateRecordCollectionNotFound(
+        collectionName,
+        `collection '${collectionName}' has no rows to delete in this template (it was never written to)`,
+      );
+    }
+    const live = await tx.templateRecord.findMany({
+      where: { collectionId: col.id, deletedAt: null },
+    });
+    const total = await tx.templateRecord.count({
+      where: { collectionId: col.id },
+    });
+    await tx.templateRecordCollection.delete({ where: { id: col.id } });
+    return { removed: total, tombstones: live };
+  });
+
+  const deletedAt = new Date().toISOString();
+  for (const row of tombstones) {
+    publishToTemplate(
+      template.id,
+      makeTemplateRecordDelete(collectionName, {
+        id: row.id,
+        key: row.recordKey,
+        seq: row.seq,
+        deleted_at: deletedAt,
+      }),
+    );
+  }
+
+  return { removed };
 }
 
 // -------------------------------------------------------------------------
