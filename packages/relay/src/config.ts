@@ -370,6 +370,17 @@ const schema = z.object({
     .positive()
     .default(24 * 60 * 60),
 
+  // ------------------------------------------------------------------
+  // Web Push / VAPID (optional — push notifications for logged-in humans)
+  // ------------------------------------------------------------------
+  // Generate a key pair once with: npx web-push generate-vapid-keys
+  // Both keys are required together; if either is unset, push is disabled.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  // The mailto: or https: contact URL sent in the VAPID header. Required by
+  // some push services; defaults to a localhost placeholder (fine for dev).
+  VAPID_MAILTO: z.string().default("mailto:admin@localhost"),
+
   // Lowest @paneui/cli version this relay accepts. When a /v1/* request
   // arrives with `x-pane-cli-version` set to a strictly-lower semver, the
   // relay responds with 426 cli_upgrade_required and the CLI prints an
@@ -672,6 +683,7 @@ export function redactConfig(c: Config): Record<string, unknown> {
   }
   if (r.SMTP_PASS) r.SMTP_PASS = "<set>";
   if (r.RESEND_API_KEY) r.RESEND_API_KEY = "<set>";
+  if (r.VAPID_PRIVATE_KEY) r.VAPID_PRIVATE_KEY = "<set>";
   if (typeof r.DATABASE_URL === "string") {
     // Mask userinfo (scheme://user:pass@host) ...
     let url = r.DATABASE_URL.replace(/:\/\/([^@/]+)@/, "://<redacted>@");
