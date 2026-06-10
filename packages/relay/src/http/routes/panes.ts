@@ -37,6 +37,7 @@ import {
   assertBlobsAccessibleByAgent,
   collectBlobRefs,
 } from "../../attachments/ref-access.js";
+import { extractBlobTokens, hashBlobToken } from "../../attachments/tokens.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
 import { templateTagsWithFallback } from "../../core/tags.js";
 import { encryptSecret } from "../../crypto.js";
@@ -890,6 +891,62 @@ panes.post("/", requireAgent, async (c) => {
       },
       200,
     );
+  }
+
+  // #501 — attachment-token TTL cascade. An agent can bake a `/b/<token>`
+  // capability URL straight into `input_data` (the photobook pattern). Those
+  // tokens carry their own TTL (24h for agent-scope by default), independent
+  // of the pane's. When the pane outlives the token the page stays up but
+  // `<img src="/b/<token>">` 404s partway through — a silent, delayed
+  // breakage. Here we pull every token embedded in `input_data` and extend
+  // any that would expire before this pane to the pane's own expiry, so a
+  // referenced capability URL lives at least as long as the pane that uses it.
+  //
+  // Scope of this pass:
+  //   - Only the calling agent's own, non-`once`, non-revoked tokens are
+  //     touched (the `attachment.ownerId` + `once`/`revokedAt` filters).
+  //   - `once` tokens are deliberately left alone — they're meant to vanish on
+  //     first GET, and an `<img>` fetch would burn them anyway; extending their
+  //     life would contradict the intent.
+  //   - This intentionally overrides the per-scope mint ceiling (agent-scope
+  //     caps a *caller-requested* TTL at 24h). The cascade is system-initiated
+  //     in response to an explicit pane reference, so that "don't get talked
+  //     into a long override" guard doesn't apply.
+  //
+  // Best-effort: the pane row is already committed, so a failure here must not
+  // fail the create. Log and move on — worst case the agent hits the original
+  // footgun and the token expires early, exactly as it did before this fix.
+  if (input_data) {
+    try {
+      const tokens = extractBlobTokens(input_data);
+      if (tokens.length > 0) {
+        const hashes = tokens.map(hashBlobToken);
+        const bumped = await prisma.attachmentToken.updateMany({
+          where: {
+            tokenHash: { in: hashes },
+            once: false,
+            revokedAt: null,
+            expiresAt: { lt: expiresAt },
+            attachment: { ownerId: agent.id, deletedAt: null },
+          },
+          data: { expiresAt },
+        });
+        if (bumped.count > 0) {
+          log.info("extended attachment token TTL to match pane", {
+            paneId,
+            agentId: agent.id,
+            tokensExtended: bumped.count,
+            expiresAt: expiresAt.toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      log.warn("attachment-token TTL cascade failed; pane created anyway", {
+        paneId,
+        agentId: agent.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Bump the template's last-used timestamp — search ranks by it.

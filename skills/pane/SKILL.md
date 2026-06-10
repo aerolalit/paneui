@@ -1026,6 +1026,16 @@ pane attachment token list <blob_id>
 pane attachment token revoke <blob_id> <token_id>
 ```
 
+**Token TTL vs pane TTL.** A `/b/<token>` URL you bake into a pane's
+`--input-data` is auto-extended to the pane's TTL on `pane create`: if the
+token would expire before the pane, the relay bumps it to match, so the
+capability URL never 404s out from under a still-live pane. You no longer need
+to hand-match `--ttl` on `token mint` to the pane's `--ttl`. Caveats: only the
+owning agent's own tokens are extended, and `--once` tokens are left alone (they
+are meant to vanish on first GET). This cascade runs on the URLs present in
+`input_data` at create time — tokens you introduce later via events are not
+retroactively extended.
+
 **One-shot upload + emit** — most agents emit events that REFERENCE blobs
 rather than embed them. Use `pane send --attachment` to do both in one
 call:
