@@ -701,10 +701,6 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           <span class="ico">${spaIco("settings", 16)}</span>
           <span class="txt">${NAV_LABELS.settings}</span>
         </a>
-        <button class="acct-link" id="notif-btn" type="button" role="menuitem" title="Notifications" aria-label="Notifications">
-          <span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
-          <span class="txt" id="notif-btn-label">Enable Notifications</span>
-        </button>
       </div>
     </div>
   </aside>
@@ -2881,18 +2877,14 @@ const SHELL_JS = `
 
   // ----- Web Push notification subscription -----
   (function () {
-    // Two controls share one state: the account-menu bell and the Settings
-    // toggle. Either can turn notifications on/off; render() keeps both in sync.
-    var btn = document.getElementById('notif-btn');
-    var lbl = document.getElementById('notif-btn-label');
+    // The Settings → Notifications toggle drives push on/off.
     var toggle = document.getElementById('notif-toggle');
     var statusEl = document.getElementById('notif-status');
     var card = document.getElementById('notif-card');
-    if (!btn && !toggle) return;
+    if (!toggle) return;
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       // Push unsupported (e.g. an iOS Safari tab rather than the installed
-      // PWA) — hide both controls instead of offering one that can't work.
-      if (btn) btn.style.display = 'none';
+      // PWA) — hide the toggle instead of offering one that can't work.
       if (card) card.style.display = 'none';
       return;
     }
@@ -2941,26 +2933,11 @@ const SHELL_JS = `
       if (d && d.type === 'pane.created') showToast(d.title, d.body, d.paneUrl);
     });
 
-    // Reflect the current state on both controls: blocked / on / off. The bell
-    // label doubles as the action hint; the Settings switch flips aria-checked
-    // and shows a status line.
+    // Reflect the current state on the Settings switch: flip aria-checked,
+    // disable when the browser has blocked notifications, and show a status
+    // line (On / Off / Blocked).
     function render() {
       var perm = Notification.permission;
-      if (btn && lbl) {
-        if (perm === 'denied') {
-          lbl.textContent = 'Notifications blocked';
-          btn.disabled = true;
-          btn.title = 'Notifications are blocked in your browser settings';
-        } else if (subscribed) {
-          lbl.textContent = 'Notifications on';
-          btn.disabled = false;
-          btn.title = 'Turn off notifications';
-        } else {
-          lbl.textContent = 'Enable Notifications';
-          btn.disabled = false;
-          btn.title = 'Turn on notifications';
-        }
-      }
       if (toggle) {
         toggle.setAttribute('aria-checked', subscribed ? 'true' : 'false');
         toggle.disabled = perm === 'denied';
@@ -3013,12 +2990,10 @@ const SHELL_JS = `
       subscribed = false;
     }
 
-    // Shared on/off action for both controls. Disables them while the
-    // subscribe/unsubscribe round-trips, then render() restores a consistent
-    // state for both.
+    // On/off action for the toggle. Disables it while the subscribe/unsubscribe
+    // round-trips, then render() restores a consistent state.
     async function setEnabled(wantOn) {
       if (Notification.permission === 'denied') return;
-      if (btn) btn.disabled = true;
       if (toggle) toggle.disabled = true;
       try {
         if (!wantOn) {
@@ -3038,7 +3013,6 @@ const SHELL_JS = `
       render();
     }
 
-    if (btn) btn.addEventListener('click', function () { setEnabled(!subscribed); });
     if (toggle) toggle.addEventListener('click', function () { setEnabled(!subscribed); });
 
     // Detect the existing subscription on load and reflect it. We deliberately
