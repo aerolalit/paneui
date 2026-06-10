@@ -144,6 +144,20 @@ describe("/v1/templates", () => {
     expect(body.tags).toEqual(["livia-bot"]);
   });
 
+  it("falls back to a name-derived tag when neither tags nor slug supplied", async () => {
+    const apiKey = await seedAgent();
+    const res = await createArtifact(apiKey, {
+      name: "Livia Bot",
+      tags: undefined,
+      slug: undefined,
+    });
+    expect(res.status).toBe(201);
+    const { template_id } = (await res.json()) as { template_id: string };
+    const get = await req("GET", `/v1/templates/${template_id}`, apiKey);
+    const body = (await get.json()) as { tags: string[] };
+    expect(body.tags).toEqual(["livia-bot"]);
+  });
+
   it("dedupes + trims supplied tags", async () => {
     const apiKey = await seedAgent();
     const res = await createArtifact(apiKey, {

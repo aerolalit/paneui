@@ -38,6 +38,7 @@ import {
   collectBlobRefs,
 } from "../../attachments/ref-access.js";
 import { assertSafeWebhookUrl } from "../ssrf.js";
+import { templateTagsWithFallback } from "../../core/tags.js";
 import { encryptSecret } from "../../crypto.js";
 import { recordSessionCreated } from "../../telemetry/metrics.js";
 import { notifyHuman } from "../../push.js";
@@ -492,7 +493,16 @@ panes.post("/", requireAgent, async (c) => {
       validateRecordSchemaShape(inline.record_schema);
     }
 
-    templateTags = normalizeTags(inline.tags);
+    // Same fallback chain as `pane template create` (explicit → slug → name):
+    // the inline form previously stored only the literal tags, so a one-off
+    // pane created with neither --tags nor --slug — the most common path — was
+    // left untagged. Derive a tag from the (required) name so it stays
+    // filterable on the human's Panes tab.
+    templateTags = templateTagsWithFallback(
+      normalizeTags(inline.tags),
+      inline.name,
+      inline.slug,
+    );
     let created;
     try {
       created = await prisma.$transaction(async (tx) => {
