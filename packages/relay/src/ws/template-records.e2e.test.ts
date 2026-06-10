@@ -222,6 +222,20 @@ async function upsertTemplateRecord(
   expect([200, 201]).toContain(res.status);
 }
 
+async function deleteTemplateRecordCollection(
+  apiKey: string,
+  templateId: string,
+): Promise<void> {
+  const res = await fetch(
+    `http://localhost:${port}/v1/templates/${templateId}/template-records/questions`,
+    {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${apiKey}` },
+    },
+  );
+  expect(res.status).toBe(204);
+}
+
 function connect(paneId: string, token: string, subscribe: string): WebSocket {
   const ws = new WebSocket(
     `ws://localhost:${port}/v1/panes/${paneId}/stream?token=${token}&subscribe_template_records=${encodeURIComponent(subscribe)}`,
@@ -422,6 +436,67 @@ describe("template-record WS broadcast", () => {
       )) as { record?: { key: string; data: { text: string } } };
       expect(delta.record!.key).toBe("qlive");
       expect(delta.record!.data.text).toBe("live one");
+      ws.close();
+    },
+  );
+
+  // #531 — collection delete must evict every live row from a caught-up
+  // subscriber. The buggy broadcast reused each row's original seq, which can
+  // never clear the forwarder's `seq > lastReplaySeq` de-dup gate once the row
+  // has been replayed, so every tombstone was silently dropped.
+  it(
+    "delivers a template-record.delete tombstone for every live row on collection delete",
+    { timeout: 30000 },
+    async () => {
+      const { apiKey } = await seedAgent();
+      const { templateId } = await createTemplate(apiKey);
+      // Seed rows BEFORE connecting so the WS replays them and advances the
+      // connection's per-collection replay cursor past every row's seq.
+      await upsertTemplateRecord(apiKey, templateId, "q1", "first?");
+      await upsertTemplateRecord(apiKey, templateId, "q2", "second?");
+      await upsertTemplateRecord(apiKey, templateId, "q3", "third?");
+
+      const { paneId, agentToken } = await createPaneFromTemplate(
+        apiKey,
+        templateId,
+      );
+      const { ws, q } = await connectAndOpen(paneId, agentToken, "*");
+
+      // Drain replay so lastReplaySeq sits at the max row seq.
+      const replayed: string[] = [];
+      let sawReplayComplete = false;
+      while (!sawReplayComplete) {
+        const m = (await q.next(5000)) as {
+          kind?: string;
+          collection?: string;
+          record?: { key: string };
+        };
+        if (
+          m.kind === "template-record.upsert" &&
+          m.collection === "questions"
+        ) {
+          replayed.push(m.record!.key);
+        } else if (
+          m.kind === "template-record.replay.complete" &&
+          m.collection === "questions"
+        ) {
+          sawReplayComplete = true;
+        }
+      }
+      expect(replayed.sort()).toEqual(["q1", "q2", "q3"]);
+
+      await deleteTemplateRecordCollection(apiKey, templateId);
+
+      const tombstoned = new Set<string>();
+      while (tombstoned.size < 3) {
+        const m = (await q.until(
+          (f) =>
+            f.kind === "template-record.delete" && f.collection === "questions",
+        )) as { record?: { key: string } };
+        tombstoned.add(m.record!.key);
+      }
+      expect([...tombstoned].sort()).toEqual(["q1", "q2", "q3"]);
+
       ws.close();
     },
   );

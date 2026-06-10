@@ -791,6 +791,15 @@ export async function deleteRecord(
  * collection row hard-deletes all its records (live + already-tombstoned) in
  * one statement — no orphan rows, and no work left for the tombstone sweeper.
  *
+ * Fresh seqs (#531): the tombstones do NOT reuse each row's original seq. The
+ * per-connection live forwarder de-dupes against replay by dropping any delta
+ * whose seq isn't strictly greater than the highest seq the connection already
+ * replayed — and any subscriber that has *displayed* a row has by definition
+ * advanced past that row's seq. Reusing the original seq would make every
+ * tombstone fail the gate, silently leaving ghost rows. So we mint fresh seqs
+ * above the collection's current max (`col.seq`), mirroring the single-record
+ * delete path which bumps the collection seq before broadcasting.
+ *
  * Recreate-on-write: collection names are the natural key and are NOT
  * renamable. After a delete the name is free again; the next write to it
  * re-creates the collection fresh with seq=1 (via writeRecord's upsert).
@@ -811,41 +820,47 @@ export async function deleteRecordCollection(
 
   // Load the collection row + its live rows, then drop the collection row.
   // Deleting the collection cascades to every PaneRecord (live + tombstoned).
-  const { removed, tombstones } = await prisma.$transaction(async (tx) => {
-    const col = await tx.recordCollection.findUnique({
-      where: { paneId_name: { paneId: pane.id, name: collectionName } },
-    });
-    if (!col) {
-      // Declared in the schema but never written — no collection row to drop.
-      throw recordCollectionNotFound(
-        collectionName,
-        `collection '${collectionName}' has no rows to delete in this pane (it was never written to)`,
-      );
-    }
-    // Live rows get a tombstone broadcast so connected subscribers evict them.
-    const live = await tx.paneRecord.findMany({
-      where: { collectionId: col.id, deletedAt: null },
-    });
-    const total = await tx.paneRecord.count({
-      where: { collectionId: col.id },
-    });
-    // Cascade delete: removing the collection row removes all its records.
-    await tx.recordCollection.delete({ where: { id: col.id } });
-    return { removed: total, tombstones: live };
-  });
+  const { removed, tombstones, baseSeq } = await prisma.$transaction(
+    async (tx) => {
+      const col = await tx.recordCollection.findUnique({
+        where: { paneId_name: { paneId: pane.id, name: collectionName } },
+      });
+      if (!col) {
+        // Declared in the schema but never written — no collection row to drop.
+        throw recordCollectionNotFound(
+          collectionName,
+          `collection '${collectionName}' has no rows to delete in this pane (it was never written to)`,
+        );
+      }
+      // Live rows get a tombstone broadcast so connected subscribers evict them.
+      const live = await tx.paneRecord.findMany({
+        where: { collectionId: col.id, deletedAt: null },
+      });
+      const total = await tx.paneRecord.count({
+        where: { collectionId: col.id },
+      });
+      // Cascade delete: removing the collection row removes all its records.
+      await tx.recordCollection.delete({ where: { id: col.id } });
+      // `col.seq` is the collection's current max — any caught-up subscriber's
+      // replay cursor is at most this. Fresh tombstone seqs start just above it.
+      return { removed: total, tombstones: live, baseSeq: col.seq };
+    },
+  );
 
   const deletedAt = new Date().toISOString();
-  for (const row of tombstones) {
+  tombstones.forEach((row, i) => {
     publish(
       pane.id,
       makeRecordDelete(collectionName, {
         id: row.id,
         key: row.recordKey,
-        seq: row.seq,
+        // Fresh monotonic seq above the collection's max (#531) so the delta
+        // clears the forwarder's `seq > lastReplaySeq` de-dup gate.
+        seq: baseSeq + i + 1,
         deleted_at: deletedAt,
       }),
     );
-  }
+  });
 
   return { removed };
 }
