@@ -23,6 +23,8 @@ import type {
   TasteInfo,
   TrashListResponse,
   UpgradePaneResponse,
+  UpdatePaneRequest,
+  UpdatePaneResponse,
 } from "./types.js";
 import type { ListPanesQuery } from "./schemas.js";
 import { MAX_RESPONSE_SNIPPET_LENGTH } from "./limits.js";
@@ -997,6 +999,32 @@ export class PaneClient {
     );
     if (!r.ok) this.fail(r);
     return this.asObject<UpgradePaneResponse>(r);
+  }
+
+  /**
+   * PATCH /v1/panes/:id — in-place edit of instance-level pane fields (#502):
+   * `ttl`/`expires_at`, `input_data`, `title`, `preamble`, `metadata`, `tags`,
+   * `icon_emoji`, `icon_attachment_id`. The pane keeps its id, URL, event log,
+   * and template pin. `input_data` is replaced wholesale and revalidated
+   * against the pane's current template version's input_schema. Pass `null`
+   * for `icon_emoji` / `icon_attachment_id` to CLEAR the override.
+   *
+   * The body must carry at least one updatable field; `ttl` and `expires_at`
+   * are mutually exclusive (both express the same intent). Both TTL forms are
+   * clamped against the relay's `MAX_TTL_SECONDS` cap and rejected (rather
+   * than silently truncated) when exceeded.
+   */
+  async updatePane(
+    paneId: string,
+    body: UpdatePaneRequest,
+  ): Promise<UpdatePaneResponse> {
+    const r = await this.call(
+      "PATCH",
+      `/v1/panes/${encodeURIComponent(paneId)}`,
+      body,
+    );
+    if (!r.ok) this.fail(r);
+    return this.asObject<UpdatePaneResponse>(r);
   }
 
   /**

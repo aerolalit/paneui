@@ -228,3 +228,39 @@ export const upgradePaneSchema = z.object({
   compat: z.enum(["strict", "force"]).optional(),
 });
 export type UpgradePaneInput = z.infer<typeof upgradePaneSchema>;
+
+// PATCH /v1/panes/:id — in-place edit of instance-level pane fields (#502).
+// All fields are optional but the body must carry at least one. `ttl` and
+// `expires_at` are mutually exclusive (both are ways of saying the same thing).
+// `input_data` is replaced wholesale; the relay revalidates it against the
+// pane's current template version's input_schema. `icon_emoji` and
+// `icon_attachment_id` accept null to CLEAR the override and fall back to the
+// template's icon.
+export const updatePaneSchema = z
+  .object({
+    ttl: z.number().int().positive().optional(),
+    expires_at: z
+      .string()
+      .datetime({ offset: true })
+      .refine((s) => !Number.isNaN(new Date(s).getTime()), {
+        message: "expires_at must be a parseable ISO-8601 timestamp",
+      })
+      .optional(),
+    input_data: z.record(z.string(), z.unknown()).optional(),
+    title: z.string().optional(),
+    preamble: z.string().max(300).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    tags: z.array(z.string().min(1).max(50)).max(20).optional(),
+    icon_emoji: iconEmojiSchema.nullable().optional(),
+    icon_attachment_id: z.string().min(1).nullable().optional(),
+  })
+  .refine((b) => Object.values(b).some((v) => v !== undefined), {
+    message:
+      "request body must carry at least one updatable field (ttl, expires_at, input_data, title, preamble, metadata, tags, icon_emoji, icon_attachment_id)",
+  })
+  .refine((b) => !(b.ttl !== undefined && b.expires_at !== undefined), {
+    message:
+      "ttl and expires_at are mutually exclusive — pass one or the other",
+    path: ["expires_at"],
+  });
+export type UpdatePaneInput = z.infer<typeof updatePaneSchema>;

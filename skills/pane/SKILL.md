@@ -837,6 +837,52 @@ emits a `system.template.updated` event, but an already-open pane tab is **not**
 force-reloaded in this release — the new version renders the next time the URL
 is loaded. If the human is looking at the pane right now, ask them to refresh.
 
+### `pane update <id>` — edit instance-level fields in place (#502)
+
+A pane's per-instance fields (TTL, title, preamble, input_data, metadata, tags,
+icon overrides) are set at `pane create` and are otherwise frozen for the
+pane's lifetime. `pane update` lifts that — `PATCH /v1/panes/:id` lets you
+edit any of them without minting a new pane. The pane keeps its id, URL,
+event log, and template pin; only the fields you pass change.
+
+```sh
+# Extend a live pane's TTL — same URL.
+pane update pan_xxxx --ttl 31536000              # one year from now
+pane update pan_xxxx --expires-at 2027-01-01T00:00:00Z
+
+# Edit display fields.
+pane update pan_xxxx --title "Renamed"
+pane update pan_xxxx --preamble "Why this matters"
+pane update pan_xxxx --tags repo:cp-backend,pr:42
+
+# Replace input_data wholesale — revalidated against the pane's pinned
+# template version's input_schema (same gate as create).
+pane update pan_xxxx --input-data @./session.json
+
+# Per-pane icon overrides — set or clear.
+pane update pan_xxxx --icon-emoji 👶
+pane update pan_xxxx --clear-icon-emoji
+```
+
+`--ttl` and `--expires-at` are mutually exclusive (both express the same
+intent). Both forms are clamped against the relay's `MAX_TTL_SECONDS` cap;
+exceeding it is rejected with `invalid_request` (not silently truncated) so
+the agent's sense of the lifetime matches the relay's.
+
+`--input-data` is replaced wholesale (not merged) and revalidated against the
+pane's current template version's `input_schema`. Same attachment-access gate
+as create: any `format: pane-attachment-id` site in the new data must
+reference attachments accessible to the calling agent.
+
+`--tags` is also replaced wholesale, then merged with the template's tags by
+the relay (template tags lead). `favorite`/`favorites` are reserved.
+
+The relay appends a `system.pane.updated` system event listing the names of
+the fields that changed (no values, so the event stream stays PII-free).
+Already-open pane tabs do **not** auto-reload on PATCH in this release —
+same behaviour as `pane upgrade`. Use `pane update` when the human's URL
+must keep working; use `pane create` only when you need a new logical pane.
+
 ### `pane list` — enumerate your panes
 
 ```sh
