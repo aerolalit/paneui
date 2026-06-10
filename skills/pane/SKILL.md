@@ -390,8 +390,10 @@ A pane's tags are snapshotted at create time as the **union of two sources**:
 
 - **Template tags** (`pane template create --tags …`) — inherited by every pane
   the template spawns. This is the main axis ("what kind": `pr-review`,
-  `standup`). A named template created with a `--slug` but no tags is
-  auto-tagged with its slug, so it's never untagged.
+  `standup`). A template is never left untagged: with no `--tags` it falls back
+  to the `--slug`, and with neither it falls back to a tag derived from the
+  template name (kebab-cased) — so every pane is at least filterable. Still,
+  prefer explicit `--tags`: a name-derived tag is a coarse last resort.
 - **Per-pane tags** (`pane create --tags …`) — an instance-specific axis layered
   on top. The classic case: one `pr-review` template used across repos, with the
   repo per pane:

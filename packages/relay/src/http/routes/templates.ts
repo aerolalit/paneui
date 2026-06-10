@@ -13,6 +13,7 @@ import { requireAgent, type AuthEnv } from "../auth.js";
 import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 import { parseIncludeDeleted, softDeleteWhere } from "../../db/soft-delete.js";
+import { templateTagsWithFallback } from "../../core/tags.js";
 import {
   assertSchemaWithinLimits,
   assertValidInputSchema,
@@ -238,13 +239,11 @@ templates.post("/", async (c) => {
   let template;
   try {
     template = await prisma.$transaction(async (tx) => {
-      // Clean the supplied tags; fall back to the slug so a named, slugged
-      // template is never untagged (keeps every derived pane filterable). A
-      // slugless, tagless template stays untagged — we don't fabricate a tag
-      // from the free-form name.
+      // Clean the supplied tags, then apply the fallback chain (explicit →
+      // slug → name-derived) so a named template — and every pane derived from
+      // it — is never untagged and stays filterable on the human's Panes tab.
       const cleanedTags = cleanTemplateTags(tags);
-      const effectiveTags =
-        cleanedTags.length > 0 ? cleanedTags : slug ? [slug] : [];
+      const effectiveTags = templateTagsWithFallback(cleanedTags, name, slug);
       const head = await tx.template.create({
         data: {
           ownerId: agent.id,
