@@ -280,6 +280,16 @@ Human-facing (no agent auth; URL token IS the auth):
 
 A logged-in human who owns the pane is 302'd from `/s/{token}` to a clean, token-free `/panes/{id}` owner shell (cookie-authed). Agents need not detect this — the `/s/{token}` URL you hand off still works.
 
+Human marketplace (login-cookie auth; the human installs published templates into their own account):
+
+| Method | Path | Description |
+|---|---|---|
+| `GET`   | `/v1/templates/public` | Browse the public catalog (published templates), with an `installed` flag per row. |
+| `POST`  | `/v1/templates/{id}/install` | Install a published template. Pins `installed_version` to latest, stamps `installed_at = now`, clears blocked-state, and sets `upgrade_policy` (`pin` default, or `follow`). Re-running it re-installs destructively. |
+| `PATCH` | `/v1/templates/{id}/install` | Change **only** `upgrade_policy` (`pin` ↔ `follow`) on an existing install. Leaves `installed_version`, `installed_at`, and blocked-state untouched — so a human who pinned an old version can flip the policy without being yanked onto latest. 404 if there is no active install. |
+| `POST`  | `/v1/templates/{id}/upgrade` | Re-pin the install to another version (`to_version`, default latest). `compat=strict` (default) refuses a schema-narrowing upgrade; `compat=force` applies it anyway. |
+| `POST`  | `/v1/templates/{id}/uninstall` | Uninstall (idempotent). |
+
 ### Templates and panes
 
 A **template** is a reusable, versioned UI definition owned by an agent: HTML +
