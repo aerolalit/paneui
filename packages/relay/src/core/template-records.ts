@@ -650,6 +650,11 @@ export async function deleteTemplateRecord(
  * Collection names are the natural key and are NOT renamable. After a delete
  * the name is free again; the next write re-creates the collection at seq=1.
  *
+ * Fresh seqs (#531): like the per-pane path, the tombstones mint fresh seqs
+ * above the collection's current max rather than reusing each row's original
+ * seq — otherwise the WS forwarder's `seq > lastReplaySeq` de-dup gate drops
+ * every tombstone for the subscribers it's meant to update.
+ *
  * 404 when the name isn't declared in the template_record_schema, OR when it's
  * declared but was never written to (no collection row exists).
  */
@@ -661,40 +666,44 @@ export async function deleteTemplateRecordCollection(
   const { prisma } = deps;
   resolveCollection(template, collectionName); // 404s if undeclared
 
-  const { removed, tombstones } = await prisma.$transaction(async (tx) => {
-    const col = await tx.templateRecordCollection.findUnique({
-      where: {
-        templateId_name: { templateId: template.id, name: collectionName },
-      },
-    });
-    if (!col) {
-      throw templateRecordCollectionNotFound(
-        collectionName,
-        `collection '${collectionName}' has no rows to delete in this template (it was never written to)`,
-      );
-    }
-    const live = await tx.templateRecord.findMany({
-      where: { collectionId: col.id, deletedAt: null },
-    });
-    const total = await tx.templateRecord.count({
-      where: { collectionId: col.id },
-    });
-    await tx.templateRecordCollection.delete({ where: { id: col.id } });
-    return { removed: total, tombstones: live };
-  });
+  const { removed, tombstones, baseSeq } = await prisma.$transaction(
+    async (tx) => {
+      const col = await tx.templateRecordCollection.findUnique({
+        where: {
+          templateId_name: { templateId: template.id, name: collectionName },
+        },
+      });
+      if (!col) {
+        throw templateRecordCollectionNotFound(
+          collectionName,
+          `collection '${collectionName}' has no rows to delete in this template (it was never written to)`,
+        );
+      }
+      const live = await tx.templateRecord.findMany({
+        where: { collectionId: col.id, deletedAt: null },
+      });
+      const total = await tx.templateRecord.count({
+        where: { collectionId: col.id },
+      });
+      await tx.templateRecordCollection.delete({ where: { id: col.id } });
+      return { removed: total, tombstones: live, baseSeq: col.seq };
+    },
+  );
 
   const deletedAt = new Date().toISOString();
-  for (const row of tombstones) {
+  tombstones.forEach((row, i) => {
     publishToTemplate(
       template.id,
       makeTemplateRecordDelete(collectionName, {
         id: row.id,
         key: row.recordKey,
-        seq: row.seq,
+        // Fresh monotonic seq above the collection's max (#531) so the delta
+        // clears the forwarder's `seq > lastReplaySeq` de-dup gate.
+        seq: baseSeq + i + 1,
         deleted_at: deletedAt,
       }),
     );
-  }
+  });
 
   return { removed };
 }
