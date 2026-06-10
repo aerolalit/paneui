@@ -8,7 +8,7 @@
 
 [![Pane round-trip demo: an agent creates a pane, a human approves a release in the browser, and the structured result lands back in the agent's terminal](docs/assets/demo.gif)](https://paneui.com)
 
-**Works with** any agent that can run a shell command or call HTTP — Claude Code & the Claude Agent SDK, MCP hosts, LangGraph / CrewAI / OpenAI Agents SDK, or your own cron / CI / bot.
+**Works with** any agent that can run a shell command or call HTTP — Claude Code & the Claude Agent SDK, LangGraph / CrewAI / OpenAI Agents SDK, or your own cron / CI / bot.
 
 ## Quickstart
 
