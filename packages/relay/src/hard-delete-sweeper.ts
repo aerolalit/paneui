@@ -110,16 +110,30 @@ export async function sweepHardDeletable(
   const templatesSwept = await sweepTemplates(prisma, freeCutoff, paidCutoff);
 
   // ---- 5. AGENTS --------------------------------------------------------
-  // Soft-deleted agents past retention. Agents cascade to panes,
-  // templates, feedback, attachments — but those should already be gone
-  // (a human soft-deletes their agent → cascade-soft-delete fires;
-  // hard-delete sweep eventually reclaims everything in dependency order).
+  // Soft-deleted agents past retention. NOTE: agents do NOT cascade to their
+  // owned rows. Pane.agent, Template.owner, and Attachment.owner are required
+  // relations with no `onDelete` → Prisma default `Restrict`; Feedback.agent
+  // is `SetNull`. So deleting an agent neither deletes nor frees its owned
+  // panes/templates/attachments. The sweep above runs panes → attachments →
+  // templates first, so in steady state those are already gone before an agent
+  // is reached — but nothing in the schema enforces that ordering as a cascade.
+  //
+  // NOTE (#312/#506): sweepAgents below is a flat `agent.deleteMany`. It will
+  // throw a P2003 FK-restrict error the moment an account-deletion path starts
+  // soft-deleting agents that still own any Pane/Template/Attachment row. This
+  // is dormant today (nothing sets `deletedAt` on an agent yet). Before that
+  // ships, either make those FKs `Cascade` or have sweepAgents reclaim the
+  // owned children first, inside a transaction. Do not be surprised.
   const agentsSwept = await sweepAgents(prisma, freeCutoff, paidCutoff);
 
   // ---- 6. HUMANS --------------------------------------------------------
-  // Self-soft-deleted humans past retention. Cascades to claimed agents +
-  // logins + claim-codes + template-installs via Prisma. tier='system'
-  // never reaches this — the predicate explicitly excludes it.
+  // Self-soft-deleted humans past retention. Prisma cascades only the
+  // human-owned join/auth rows: Login, ClaimCode, HumanTemplateInstall, and
+  // HumanPaneFavorite are all `onDelete: Cascade`. Claimed AGENTS are NOT
+  // cascade-deleted — Agent.ownerHuman is `onDelete: SetNull`, so deleting a
+  // human only nulls each agent's ownerHumanId, leaving the agent (and its
+  // panes/templates) alive. tier='system' never reaches this — the predicate
+  // explicitly excludes it.
   const humansSwept = await sweepHumans(prisma, freeCutoff, paidCutoff);
 
   const result: HardDeleteResult = {
