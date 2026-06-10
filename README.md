@@ -1,10 +1,39 @@
 # Pane
 
-**Apps are built for everyone. Panes are built for you.** Your agent builds a pane (the exact form, dashboard, or tool you need) and Pane hosts it by URL, no GUI host app needed on either side. You use it; your agent reads, queries, and acts on the data it produces (WS, poll, or webhook). Pane doesn't build apps. It hosts the panes your agent builds for you.
+**Human-in-the-loop for AI agents.** Your agent hands a human a real UI — a form, a picker, a dashboard, a diff to review — by URL, and gets the answer back as structured data. No GUI host app, no public address on the agent's side. Works from a cron job, a Slack bot, CI, or any headless server.
+
+> Your agent can do anything except ask a human a real question. Pane fixes that.
+
+![npm](https://img.shields.io/npm/v/@paneui/cli) ![license](https://img.shields.io/github/license/aerolalit/paneui) ![stars](https://img.shields.io/github/stars/aerolalit/paneui?style=social)
+
+<!-- TODO(demo): drop the round-trip demo GIF here — agent creates a pane → human fills the form → structured JSON lands back in the agent's terminal. Path: docs/assets/demo.gif -->
+
+**Works with** any agent that can run a shell command or call HTTP — Claude Code & the Claude Agent SDK, MCP hosts, LangGraph / CrewAI / OpenAI Agents SDK, or your own cron / CI / bot.
+
+## Quickstart
+
+```sh
+npm i -g @paneui/cli                       # Node 20+
+pane agent register --name "my-agent"      # one-time, uses the hosted relay
+pane create --name hello \
+  --template '<form onsubmit="event.preventDefault();pane.emit(\"hello\",{msg:this.m.value})"><input name=m><button>send</button></form>' \
+  --event-schema '{"events":{"hello":{"emittedBy":["page"],"payload":{"type":"object","properties":{"msg":{"type":"string"}},"required":["msg"]}}}}'
+pane watch <pane-id> --type hello          # open the URL it prints, type, hit send → see the JSON
+```
+
+## Reach for Pane when a text reply is the wrong shape
+
+- **Approvals** — deploy gate, refund, PR merge: agent pauses, human clicks approve/reject, agent continues.
+- **Forms & pickers** — collect structured input instead of parsing prose.
+- **Doc / diff review** — human marks up a diff; agent gets per-line comments back.
+- **Dashboards & status** — view-only panes the human just reads.
+- **Lists & boards** — todo lists, checklists, kanban (records), mutated live.
+
+[Try it in 60 seconds ↓](#run-yourself-human) · [How it works](#how-it-works) · [Agent reference](skills/pane/SKILL.md)
 
 ## The problem
 
-Agents can already emit rich output (the "ask Claude for HTML, not Markdown" pattern). But the human's reply is still prose. The agent → human channel is rich, the human → agent channel is a text box. Pane closes the loop: agent renders a UI (form, picker, doc-review view, dashboard, sketchboard), human manipulates it, every interaction emits structured data, the agent retrieves it (or pushes its own updates back into the same UI). The human "answers" by using a UI, not by typing.
+*Apps are built for everyone; panes are built for you.* Agents can already emit rich output (the "ask Claude for HTML, not Markdown" pattern). But the human's reply is still prose. The agent → human channel is rich, the human → agent channel is a text box. Pane closes the loop: agent renders a UI (form, picker, doc-review view, dashboard, sketchboard), human manipulates it, every interaction emits structured data, the agent retrieves it (or pushes its own updates back into the same UI). The human "answers" by using a UI, not by typing.
 
 This matters most for agents that live **outside a GUI host app**: cron agents, Slack/Telegram bots, CI agents, headless servers, personal-agent setups. None of them can use MCP Apps (which needs a host app to render the UI). Pane needs neither a host app nor a public address on the agent's side; the agent only makes outbound calls to the relay.
 
