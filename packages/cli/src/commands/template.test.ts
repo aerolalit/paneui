@@ -241,6 +241,55 @@ describe("template create", () => {
     // record_schema must be ABSENT, not set to undefined.
     expect("record_schema" in req).toBe(false);
   });
+
+  // --template-record-schema declares the template's TEMPLATE-level (shared
+  // across all panes) record collections (#509). Optional; absent = no
+  // template-level collections.
+  it("parses --template-record-schema as a JSON object and forwards it as template_record_schema", async () => {
+    const templateRecordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      "x-pane-collections": {
+        roster: {
+          schema: { $ref: "#/$defs/Member" },
+          write: ["agent"],
+          delete: ["author"],
+        },
+      },
+    };
+    await run([
+      "create",
+      "--name",
+      "Team roster",
+      "--template",
+      "<html></html>",
+      "--template-record-schema",
+      JSON.stringify(templateRecordSchema),
+    ]);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    expect(req["template_record_schema"]).toEqual(templateRecordSchema);
+  });
+
+  it("rejects a non-object --template-record-schema (array/primitive)", async () => {
+    await run([
+      "create",
+      "--name",
+      "X",
+      "--template",
+      "<html></html>",
+      "--template-record-schema",
+      "[]",
+    ]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("--template-record-schema must be a JSON object");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("omits template_record_schema when --template-record-schema is absent", async () => {
+    await run(["create", "--name", "X", "--template", "<html></html>"]);
+    const req = calls[0]!.args[0] as Record<string, unknown>;
+    // template_record_schema must be ABSENT, not set to undefined.
+    expect("template_record_schema" in req).toBe(false);
+  });
 });
 
 describe("template version", () => {
@@ -311,6 +360,39 @@ describe("template version", () => {
     await run(["version", "pr-review", "--template", "<html>v2</html>"]);
     const req = calls[0]!.args[1] as Record<string, unknown>;
     expect("record_schema" in req).toBe(false);
+  });
+
+  // --template-record-schema on `template version` lets an author introduce
+  // (or change) the TEMPLATE-level record collections on a new version
+  // (#509). Pinned older versions keep whatever schema they had.
+  it("forwards --template-record-schema as template_record_schema on the new version", async () => {
+    const templateRecordSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      "x-pane-collections": {
+        announcements: {
+          schema: { $ref: "#/$defs/Announcement" },
+          write: ["agent"],
+          delete: ["author"],
+        },
+      },
+    };
+    await run([
+      "version",
+      "pr-review",
+      "--template",
+      "<html>v2</html>",
+      "--template-record-schema",
+      JSON.stringify(templateRecordSchema),
+    ]);
+    expect(calls[0]!.method).toBe("createArtifactVersion");
+    const req = calls[0]!.args[1] as Record<string, unknown>;
+    expect(req["template_record_schema"]).toEqual(templateRecordSchema);
+  });
+
+  it("omits template_record_schema on the new version when --template-record-schema is absent", async () => {
+    await run(["version", "pr-review", "--template", "<html>v2</html>"]);
+    const req = calls[0]!.args[1] as Record<string, unknown>;
+    expect("template_record_schema" in req).toBe(false);
   });
 });
 

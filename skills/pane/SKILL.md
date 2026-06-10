@@ -254,7 +254,7 @@ There are two ways to give `pane create` a template:
 
 ```sh
 pane template search <keywords>     # e.g. pane template search "pr review"
-pane template list                  # all your artifacts, recent first
+pane template list                  # all your templates, recent first
 ```
 
 You are ephemeral; the relay is durable. A previous run of yours (or this
@@ -357,7 +357,7 @@ pane create --template ./form.html --name "Quick poll" \
   but the relay does not serve it in this release — pass the HTML inline.)
 - `--event-schema <v>` — the event vocabulary (see **The schema** below). A `.json`
   file or inline JSON. Used with `--template`; not needed with `--template-id`.
-  **Optional** — omit it for a view-only template (see **View-only artifacts**
+  **Optional** — omit it for a view-only template (see **View-only templates**
   below); the pane then accepts no `page`/`agent` events.
 - `--input-schema <v>` — inline-form input schema. JSON Schema for `--input-data`,
   as a `.json` file or inline JSON. Used with `--template`; **rejected with
@@ -390,8 +390,10 @@ A pane's tags are snapshotted at create time as the **union of two sources**:
 
 - **Template tags** (`pane template create --tags …`) — inherited by every pane
   the template spawns. This is the main axis ("what kind": `pr-review`,
-  `standup`). A named template created with a `--slug` but no tags is
-  auto-tagged with its slug, so it's never untagged.
+  `standup`). A template is never left untagged: with no `--tags` it falls back
+  to the `--slug`, and with neither it falls back to a tag derived from the
+  template name (kebab-cased) — so every pane is at least filterable. Still,
+  prefer explicit `--tags`: a name-derived tag is a coarse last resort.
 - **Per-pane tags** (`pane create --tags …`) — an instance-specific axis layered
   on top. The classic case: one `pr-review` template used across repos, with the
   repo per pane:
@@ -835,6 +837,52 @@ emits a `system.template.updated` event, but an already-open pane tab is **not**
 force-reloaded in this release — the new version renders the next time the URL
 is loaded. If the human is looking at the pane right now, ask them to refresh.
 
+### `pane update <id>` — edit instance-level fields in place (#502)
+
+A pane's per-instance fields (TTL, title, preamble, input_data, metadata, tags,
+icon overrides) are set at `pane create` and are otherwise frozen for the
+pane's lifetime. `pane update` lifts that — `PATCH /v1/panes/:id` lets you
+edit any of them without minting a new pane. The pane keeps its id, URL,
+event log, and template pin; only the fields you pass change.
+
+```sh
+# Extend a live pane's TTL — same URL.
+pane update pan_xxxx --ttl 31536000              # one year from now
+pane update pan_xxxx --expires-at 2027-01-01T00:00:00Z
+
+# Edit display fields.
+pane update pan_xxxx --title "Renamed"
+pane update pan_xxxx --preamble "Why this matters"
+pane update pan_xxxx --tags repo:cp-backend,pr:42
+
+# Replace input_data wholesale — revalidated against the pane's pinned
+# template version's input_schema (same gate as create).
+pane update pan_xxxx --input-data @./session.json
+
+# Per-pane icon overrides — set or clear.
+pane update pan_xxxx --icon-emoji 👶
+pane update pan_xxxx --clear-icon-emoji
+```
+
+`--ttl` and `--expires-at` are mutually exclusive (both express the same
+intent). Both forms are clamped against the relay's `MAX_TTL_SECONDS` cap;
+exceeding it is rejected with `invalid_request` (not silently truncated) so
+the agent's sense of the lifetime matches the relay's.
+
+`--input-data` is replaced wholesale (not merged) and revalidated against the
+pane's current template version's `input_schema`. Same attachment-access gate
+as create: any `format: pane-attachment-id` site in the new data must
+reference attachments accessible to the calling agent.
+
+`--tags` is also replaced wholesale, then merged with the template's tags by
+the relay (template tags lead). `favorite`/`favorites` are reserved.
+
+The relay appends a `system.pane.updated` system event listing the names of
+the fields that changed (no values, so the event stream stays PII-free).
+Already-open pane tabs do **not** auto-reload on PATCH in this release —
+same behaviour as `pane upgrade`. Use `pane update` when the human's URL
+must keep working; use `pane create` only when you need a new logical pane.
+
 ### `pane list` — enumerate your panes
 
 ```sh
@@ -952,7 +1000,7 @@ pane taste clear --yes                      # forget everything
 ```
 
 `taste` is a small markdown blob — **your** agent's accumulated *presentation
-taste*: how the human you serve likes pane artifacts to look. The intended
+taste*: how the human you serve likes panes to look. The intended
 loop is:
 
 1. **Before generating a template**, run `pane taste get` and fold the
@@ -1023,6 +1071,16 @@ pane attachment token list <blob_id>
 # Revoke a token (incident response — see docs/RUNBOOK-LEAKED-TOKEN.md):
 pane attachment token revoke <blob_id> <token_id>
 ```
+
+**Token TTL vs pane TTL.** A `/b/<token>` URL you bake into a pane's
+`--input-data` is auto-extended to the pane's TTL on `pane create`: if the
+token would expire before the pane, the relay bumps it to match, so the
+capability URL never 404s out from under a still-live pane. You no longer need
+to hand-match `--ttl` on `token mint` to the pane's `--ttl`. Caveats: only the
+owning agent's own tokens are extended, and `--once` tokens are left alone (they
+are meant to vanish on first GET). This cascade runs on the URLs present in
+`input_data` at create time — tokens you introduce later via events are not
+retroactively extended.
 
 **One-shot upload + emit** — most agents emit events that REFERENCE blobs
 rather than embed them. Use `pane send --attachment` to do both in one
@@ -1320,6 +1378,37 @@ On the inline (one-off) form of `pane create`, `--record-schema` rides
 inside the inline template alongside `--event-schema`. `--record-schema`
 is rejected with `--template-id` — the pinned version owns the schema.
 
+#### Template-level record collections (`--template-record-schema`)
+
+`--record-schema` declares **per-pane** collections — each pane of the
+template gets its own private rows. A template can ALSO declare
+**template-level** collections, which are shared across every pane of the
+template (one set of rows per template, written/read through
+`pane template-records ...`). Declare them with `--template-record-schema`
+on `pane template create` / `pane template version`. It takes a file path
+or inline JSON and uses the exact same `x-pane-collections` grammar as
+`--record-schema`:
+
+```sh
+# Declare a shared, template-level "roster" collection at create time.
+pane template create --name "Team board" --slug team-board \
+  --template ./board.html \
+  --template-record-schema ./roster-records.yaml
+
+# Iterate the declaration on a new version (older versions stay pinned):
+pane template version team-board \
+  --template ./board.html \
+  --template-record-schema ./roster-records-v2.yaml
+```
+
+This flag is the bootstrap step for the template-records feature: until a
+template version declares `template_record_schema`, the
+`pane template-records upsert` / `update` / `delete` verbs are rejected
+with "template declares no template-level record collections." A template
+may declare per-pane (`--record-schema`) and template-level
+(`--template-record-schema`) collections independently — set one, the
+other, both, or neither.
+
 ### Reading + writing records from the page
 
 The page-side `pane.records` API has two halves — **read** (snapshot + on)
@@ -1384,8 +1473,28 @@ pane records upsert <pane-id> comments --data '{"body":"hi"}' --key cmt_1
 pane records list   <pane-id> comments --since 0 --limit 100
 pane records update <pane-id> comments cmt_1 --data '{"body":"edited"}' --if-match 1
 pane records delete <pane-id> comments cmt_1 --if-match 2
+pane records delete-collection <pane-id> comments  # drop the WHOLE collection
 pane records watch  <pane-id>                       # JSON-line stream of deltas
 ```
+
+`delete-collection` removes every row **and** the collection row itself
+(`DELETE /v1/panes/:id/records/:collection`, no `:recordKey`). It is a
+**privileged, owner-only** operation: only the pane's owning agent (or the
+owner human over their own shell) may drop a collection — a participant /
+`page` principal that can write individual rows is rejected with
+`author_not_allowed`. Connected subscribers receive a `record.delete`
+tombstone for each live row, then the rows are hard-deleted via the
+collection's cascade (no sweeper wait). The same shape exists for
+template-level records: `pane template-records delete-collection <template> <name>`.
+
+> **Collection names are immutable — there is no rename.** A collection's
+> `name` is its natural key (`(paneId, name)` / `(templateId, name)`), fixed at
+> first write. To "rename" a typo'd or deprecated collection, drop it with
+> `delete-collection` and write the rows again under the new name (the next
+> write recreates the collection fresh at `seq=1`). A first-class rename is a
+> possible future follow-up — it carries reference/migration semantics for any
+> `input_data` or schema that points at the old name, so it's deliberately out
+> of scope here.
 
 ### Authoring rules of thumb
 
@@ -1421,8 +1530,9 @@ affects new operations).
 
 ## Querying your data with SQL (#355)
 
-`pane query "<SQL>"` runs read-only PostgreSQL-flavoured SQL against your
-own scoped panes, records, and events. The relay scopes results at the
+`pane query "<SQL>"` runs read-only DuckDB SQL (a PostgreSQL-compatible
+dialect) against your own scoped panes, records, and events. The relay
+scopes results at the
 view layer — you can never see a row whose `pane.owner_human_id` doesn't
 match yours.
 
@@ -1460,7 +1570,7 @@ when you want raw access:
 | `records` | `id, pane_id, collection, key, data (JSON), version, seq, author_kind, author_id, created_at, updated_at, deleted_at` |
 | `events`  | `id, pane_id, type, ts, author_kind, author_id, data (JSON), template_version_id` |
 
-Use Postgres-style operators on the `data` column:
+Use DuckDB's PostgreSQL-compatible JSON operators on the `data` column:
 `data->>'title'` (text), `(data->>'done')::boolean` (cast),
 `data->'nested'->>'inner_field'` (deep).
 

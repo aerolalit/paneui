@@ -32,6 +32,11 @@ Verbs:
        --data <path|json> [--if-match <version>]
   delete <template-id|slug> <collection> <record-key>
        [--if-match <version>] [--yes]
+  delete-collection <template-id|slug> <collection>
+       [--yes]
+       Drop a WHOLE collection — all its records + the collection row.
+       Owner-only. Collection names are immutable (no rename): to "rename",
+       delete the old collection and write under the new name.
 
 Output (stdout): single JSON object per command.
 Errors on stderr: {"error":{"code","message"}} with non-zero exit.`;
@@ -45,7 +50,7 @@ export async function runTemplateRecords(args: ParsedArgs): Promise<void> {
   }
   if (verb === undefined) {
     fail(
-      "missing verb — pane template-records <list|get|upsert|update|delete>",
+      "missing verb — pane template-records <list|get|upsert|update|delete|delete-collection>",
       "invalid_args",
     );
   }
@@ -70,9 +75,11 @@ export async function runTemplateRecords(args: ParsedArgs): Promise<void> {
       return runUpdate(sub);
     case "delete":
       return runDelete(sub);
+    case "delete-collection":
+      return runDeleteCollection(sub);
     default:
       fail(
-        `unknown verb '${verb}' — pane template-records <list|get|upsert|update|delete>`,
+        `unknown verb '${verb}' — pane template-records <list|get|upsert|update|delete|delete-collection>`,
         "invalid_args",
       );
   }
@@ -250,6 +257,30 @@ async function runDelete(args: ParsedArgs): Promise<void> {
       ...(ifMatch !== undefined ? { ifMatch } : {}),
     });
     printJson({ deleted: true, key: recordKey });
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
+async function runDeleteCollection(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(
+    args,
+    ["url", "api-key"],
+    ["yes", "help"],
+    "pane template-records delete-collection",
+  );
+  const [templateId, collection] = args.positionals;
+  if (!templateId || !collection) {
+    fail(
+      "usage: pane template-records delete-collection <template-id|slug> <collection>",
+      "invalid_args",
+    );
+  }
+
+  const client = makeClient(args);
+  try {
+    await client.deleteTemplateRecordCollection(templateId!, collection!);
+    printJson({ deleted: true, collection });
   } catch (e) {
     failFromError(e);
   }

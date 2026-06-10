@@ -20,6 +20,7 @@ import { subscribe } from "../http/broadcast.js";
 import { ApiError } from "../http/errors.js";
 import {
   deleteRecord,
+  deleteRecordCollection,
   listRecords,
   updateRecord,
   writeRecord,
@@ -744,5 +745,118 @@ describe("concurrency", () => {
       where: { paneId: f.pane.id, name: "comments" },
     });
     expect(col.seq).toBe(N);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteRecordCollection — drop the whole collection (#507)
+// ---------------------------------------------------------------------------
+
+describe("deleteRecordCollection", () => {
+  it("removes the collection row and cascade-deletes every record (live + tombstoned)", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "a",
+      data: { body: "one" },
+    });
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "b",
+      data: { body: "two" },
+    });
+    // Tombstone one of them first.
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "b",
+    });
+
+    const col = await prisma.recordCollection.findFirstOrThrow({
+      where: { paneId: f.pane.id, name: "comments" },
+    });
+
+    const res = await deleteRecordCollection({ prisma }, f.pane, "comments");
+    expect(res.removed).toBe(2); // 1 live + 1 tombstone
+
+    expect(
+      await prisma.recordCollection.findFirst({
+        where: { paneId: f.pane.id, name: "comments" },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.paneRecord.count({ where: { collectionId: col.id } }),
+    ).toBe(0);
+  });
+
+  it("broadcasts a record.delete tombstone for each LIVE row only", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "a",
+      data: { body: "one" },
+    });
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "b",
+      data: { body: "two" },
+    });
+    // Tombstone b before the collection delete — it must NOT be re-broadcast.
+    await deleteRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "b",
+    });
+
+    const cap = captureBroadcast(f.pane.id);
+    try {
+      await deleteRecordCollection({ prisma }, f.pane, "comments");
+    } finally {
+      cap.unsub();
+    }
+    expect(cap.messages).toHaveLength(1);
+    const m = cap.messages[0] as {
+      kind: string;
+      collection: string;
+      record: { key: string };
+    };
+    expect(m.kind).toBe("record.delete");
+    expect(m.collection).toBe("comments");
+    expect(m.record.key).toBe("a");
+  });
+
+  it("404s when the collection is declared but was never written to", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await expect(
+      deleteRecordCollection({ prisma }, f.pane, "comments"),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "record_collection_not_found",
+    });
+  });
+
+  it("404s when the collection isn't declared in the schema", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await expect(
+      deleteRecordCollection({ prisma }, f.pane, "nope"),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "record_collection_not_found",
+    });
+  });
+
+  it("recreate-on-write: a fresh write after delete starts the collection at seq 1", async () => {
+    const f = await seedPaneWithRecordSchema();
+    await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "a",
+      data: { body: "one" },
+    });
+    await deleteRecordCollection({ prisma }, f.pane, "comments");
+    const again = await writeRecord({ prisma }, f.pane, f.pageAuthor, {
+      collectionName: "comments",
+      recordKey: "a2",
+      data: { body: "fresh" },
+    });
+    expect(again.record.seq).toBe(1);
+    expect(again.record.version).toBe(1);
   });
 });

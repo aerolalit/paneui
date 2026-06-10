@@ -33,6 +33,7 @@ import { runSend, sendHelp } from "./commands/send.js";
 import { runWatch, watchHelp } from "./commands/watch.js";
 import { runDelete, deleteHelp } from "./commands/delete.js";
 import { runUpgrade, upgradeHelp } from "./commands/upgrade.js";
+import { runUpdate, updateHelp } from "./commands/update.js";
 import { runParticipant, participantHelp } from "./commands/participant.js";
 import { runShare, shareHelp } from "./commands/share.js";
 import { runTemplate, artifactHelp } from "./commands/template.js";
@@ -71,6 +72,10 @@ Pane commands (operate on the core noun — a live UI channel):
   upgrade <id>      Re-pin a live pane to another version of its template —
                     swap design + content in place, same URL (--template-version
                     <n>, --force to override the schema-compat gate).
+  update <id>       Edit instance-level fields in place (PATCH /v1/panes/:id):
+                    --ttl / --expires-at, --title, --preamble, --input-data,
+                    --metadata, --tags, --icon-emoji, --icon-attachment-id
+                    (and matching --clear-icon-* flags). Same URL.
   participant       Manage participant URLs on an existing pane
     <list|new|revoke> (list | mint a fresh URL | revoke one URL).
   share <id>        Share a pane by identity: invite humans by email
@@ -85,9 +90,14 @@ Other noun groups:
                     Doubles as an end-to-end smoke test of your install.
   template          Reusable, versioned UI templates
                     (create | version | update | search | list | show | delete).
+  records           Per-pane mutable collections — todo lists, checklists,
+                    kanban cards, comments (list | get | upsert | update |
+                    delete | delete-collection | watch), keyed by a stable
+                    record_key.
   template-records  Owner-curated content scoped to a Template head
-                    (list | get | upsert | update | delete), visible to
-                    every pane derived from any version of the template.
+                    (list | get | upsert | update | delete |
+                    delete-collection), visible to every pane derived from
+                    any version of the template.
   key               YOUR agent's API key (list | revoke).
   taste             YOUR agent's freeform UI taste notes
                     (get | set | clear) — presentation preferences the agent
@@ -159,6 +169,10 @@ const BOOLEAN_FLAGS = new Set([
   "list",
   // `pane upgrade --force`: override the strict schema-compat gate.
   "force",
+  // `pane update --clear-icon-*`: drop the per-pane icon override (the field
+  // becomes null and the pane falls back to the template's icon).
+  "clear-icon-emoji",
+  "clear-icon-attachment-id",
 ]);
 
 async function main(): Promise<void> {
@@ -202,6 +216,7 @@ async function main(): Promise<void> {
     watch: watchHelp,
     delete: deleteHelp,
     upgrade: upgradeHelp,
+    update: updateHelp,
     participant: participantHelp,
     share: shareHelp,
     // Other noun groups.
@@ -263,6 +278,9 @@ async function main(): Promise<void> {
       break;
     case "upgrade":
       await runUpgrade(args);
+      break;
+    case "update":
+      await runUpdate(args);
       break;
     case "participant":
       await runParticipant(args);

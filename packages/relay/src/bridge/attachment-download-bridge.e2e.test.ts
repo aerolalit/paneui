@@ -252,6 +252,110 @@ function getDownloadUrl(token: string, attachmentId: string): string {
   return `http://t/s/${token}/attachments/${attachmentId}`;
 }
 
+// #505 (B) — a record schema whose row carries an attachment_id. Used to prove
+// an agent-owned attachment referenced ONLY from a record resolves on download.
+const blobRecordSchema = {
+  $defs: {
+    Asset: {
+      type: "object",
+      properties: {
+        attachment_id: { type: "string", format: "pane-attachment-id" },
+      },
+    },
+  },
+  "x-pane-collections": {
+    assets: {
+      schema: { $ref: "#/$defs/Asset" },
+      write: ["agent", "page"],
+      delete: ["agent"],
+    },
+  },
+};
+
+// Seed a pane whose template version declares a recordSchema (seedPaneRow
+// doesn't carry recordSchema), returning the bits the record-download tests
+// need.
+async function seedPaneWithRecordSchema(): Promise<{
+  agentApiKey: string;
+  agentId: string;
+  paneId: string;
+  participantToken: string;
+}> {
+  const apiKey = "pane_" + randomBytes(16).toString("hex");
+  const agent = await prisma.agent.create({
+    data: {
+      name: `rec-agent-${randomBytes(4).toString("hex")}`,
+      keyHash: hashKey(apiKey),
+      keyPrefix: keyPrefix(apiKey),
+    },
+  });
+  const template = await prisma.template.create({
+    data: { ownerId: agent.id, name: "Record Download Test", latestVersion: 1 },
+  });
+  const version = await prisma.templateVersion.create({
+    data: {
+      templateId: template.id,
+      version: 1,
+      templateType: "html-inline",
+      templateSource: "<html></html>",
+      eventSchema: blobEventSchema,
+      recordSchema: blobRecordSchema,
+    },
+  });
+  const paneId = `pan_${randomBytes(8).toString("hex")}`;
+  await prisma.pane.create({
+    data: {
+      id: paneId,
+      agentId: agent.id,
+      templateVersionId: version.id,
+      title: "record download test pane",
+      status: "open",
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+  const token = generateHumanParticipantToken();
+  await prisma.participant.create({
+    data: {
+      paneId,
+      kind: "human",
+      identityId: "human-1",
+      tokenHash: hashKey(token),
+      tokenPrefix: keyPrefix(token),
+    },
+  });
+  return {
+    agentApiKey: apiKey,
+    agentId: agent.id,
+    paneId,
+    participantToken: token,
+  };
+}
+
+/** Write a record via the agent's POST /v1/panes/:id/records/:collection route. */
+async function agentWriteRecord(
+  app: Hono,
+  apiKey: string,
+  paneId: string,
+  collection: string,
+  data: unknown,
+): Promise<void> {
+  const res = await app.fetch(
+    new Request(`http://t/v1/panes/${paneId}/records/${collection}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ data }),
+    }),
+  );
+  if (res.status !== 201 && res.status !== 200) {
+    throw new Error(
+      `agentWriteRecord: expected 200/201, got ${res.status}: ${await res.text()}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Happy paths
 // ---------------------------------------------------------------------------
@@ -552,6 +656,61 @@ describe("GET /s/:participantToken/attachments/:attachment_id — authz", () => 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_request");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #505 (B) — record-referenced attachments resolve on download
+// ---------------------------------------------------------------------------
+
+describe("GET /s/:participantToken/attachments/:attachment_id — record refs (#505 B)", () => {
+  beforeEach(async () => {
+    await testDb.truncateAll(prisma);
+  });
+
+  it("serves an agent-owned attachment referenced ONLY from a record (no spurious 404)", async () => {
+    const { agentApiKey, paneId, participantToken } =
+      await seedPaneWithRecordSchema();
+    const bytes = await makeJpeg(256);
+    // Agent uploads (agent-scope) and references it from a RECORD only — never
+    // from an event or inputData. Before the fix collectSessionBlobRefs never
+    // walked records, so this download 404'd as attachment_ref_not_accessible.
+    const { attachment_id, sha256 } = await agentUploadBlob(
+      plainApp,
+      agentApiKey,
+      bytes,
+      "agent",
+    );
+    await agentWriteRecord(plainApp, agentApiKey, paneId, "assets", {
+      attachment_id,
+    });
+
+    const res = await plainApp.fetch(
+      new Request(getDownloadUrl(participantToken, attachment_id)),
+    );
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(createHash("sha256").update(got).digest("hex")).toBe(sha256);
+  });
+
+  it("still 404s an attachment that is neither event-, input-, nor record-referenced", async () => {
+    // Control: the record walk must not over-collect — an owned-but-unreferenced
+    // attachment still fails closed.
+    const { agentApiKey, participantToken } = await seedPaneWithRecordSchema();
+    const bytes = await makeJpeg(256);
+    const { attachment_id } = await agentUploadBlob(
+      plainApp,
+      agentApiKey,
+      bytes,
+      "agent",
+    );
+    // No record written referencing it.
+    const res = await plainApp.fetch(
+      new Request(getDownloadUrl(participantToken, attachment_id)),
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("attachment_ref_not_accessible");
   });
 });
 

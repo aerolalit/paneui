@@ -31,6 +31,11 @@ Verbs:
        --data <path|json> [--if-match <version>]
   delete <pane-id> <collection> <record-key>
        [--if-match <version>] [--yes]
+  delete-collection <pane-id> <collection>
+       [--yes]
+       Drop a WHOLE collection — all its records + the collection row.
+       Owner-only. Collection names are immutable (no rename): to "rename",
+       delete the old collection and write under the new name.
   watch  <pane-id>
        [--collection <name>]... [--since-seq <name>=<n>]...
 
@@ -51,7 +56,7 @@ export async function runRecords(args: ParsedArgs): Promise<void> {
   }
   if (verb === undefined) {
     fail(
-      "missing verb — pane records <list|get|upsert|update|delete|watch>",
+      "missing verb — pane records <list|get|upsert|update|delete|delete-collection|watch>",
       "invalid_args",
     );
   }
@@ -76,11 +81,13 @@ export async function runRecords(args: ParsedArgs): Promise<void> {
       return runUpdate(sub);
     case "delete":
       return runDelete(sub);
+    case "delete-collection":
+      return runDeleteCollection(sub);
     case "watch":
       return runWatch(sub);
     default:
       fail(
-        `unknown verb '${verb}' — pane records <list|get|upsert|update|delete|watch>`,
+        `unknown verb '${verb}' — pane records <list|get|upsert|update|delete|delete-collection|watch>`,
         "invalid_args",
       );
   }
@@ -262,6 +269,34 @@ async function runDelete(args: ParsedArgs): Promise<void> {
       ...(ifMatch !== undefined ? { ifMatch } : {}),
     });
     printJson({ deleted: true, key: recordKey });
+  } catch (e) {
+    failFromError(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// delete-collection — drop a whole collection (all rows + the collection row)
+// ---------------------------------------------------------------------------
+
+async function runDeleteCollection(args: ParsedArgs): Promise<void> {
+  assertKnownFlags(
+    args,
+    ["url", "api-key"],
+    ["yes", "help"],
+    "pane records delete-collection",
+  );
+  const [paneId, collection] = args.positionals;
+  if (!paneId || !collection) {
+    fail(
+      "usage: pane records delete-collection <pane-id> <collection>",
+      "invalid_args",
+    );
+  }
+
+  const client = makeClient(args);
+  try {
+    await client.deleteRecordCollection(paneId!, collection!);
+    printJson({ deleted: true, collection });
   } catch (e) {
     failFromError(e);
   }

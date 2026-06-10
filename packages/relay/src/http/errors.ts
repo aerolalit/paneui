@@ -89,10 +89,10 @@ export const errors = {
   // Distinct from `not_found` so an agent can act differently when the
   // missing thing is a pane (likely expired/cleaned up) vs an template
   // (likely wrong slug/id) vs an template version (likely wrong --version).
-  sessionNotFound: () =>
+  paneNotFound: () =>
     new ApiError(
       404,
-      "session_not_found",
+      "pane_not_found",
       undefined,
       undefined,
       "the pane id may be wrong, or the pane expired and was cleaned up; verify the id and create a new pane if needed",
@@ -100,10 +100,10 @@ export const errors = {
       DOCS.api,
     ),
 
-  artifactNotFound: () =>
+  templateNotFound: () =>
     new ApiError(
       404,
-      "artifact_not_found",
+      "template_not_found",
       undefined,
       undefined,
       "the template id or slug is wrong, or the template does not belong to the calling agent; run 'pane template list' or 'pane template search' to find the right id",
@@ -111,10 +111,10 @@ export const errors = {
       DOCS.api,
     ),
 
-  artifactVersionNotFound: () =>
+  templateVersionNotFound: () =>
     new ApiError(
       404,
-      "artifact_version_not_found",
+      "template_version_not_found",
       undefined,
       undefined,
       "the requested --version does not exist for this template; run 'pane template show <id|slug>' to list its versions",

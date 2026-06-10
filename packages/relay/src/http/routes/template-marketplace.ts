@@ -499,6 +499,56 @@ templateMarketplace.post("/:id/install", requireHuman, async (c) => {
   );
 });
 
+// PATCH /v1/templates/:id/install — change ONLY the install's upgrade_policy
+// (#508). Unlike POST /install (which re-stamps installedVersion=latest,
+// installedAt=now, and clears blocked-state), this is a non-destructive
+// policy-only setter: installedVersion, installedAt, upgradeBlockedAt and
+// upgradeBlockedReason are left untouched. A human who pinned an old version
+// can flip pin↔follow without being yanked onto the latest version.
+const updatePolicyBody = z.object({
+  upgrade_policy: z.enum(["pin", "follow"]),
+});
+templateMarketplace.patch("/:id/install", requireHuman, async (c) => {
+  const prisma = c.get("prisma");
+  const human = c.get("human");
+  const id = c.req.param("id");
+  if (!id) throw errors.invalidRequest("missing template id");
+
+  let body: z.infer<typeof updatePolicyBody>;
+  try {
+    body = updatePolicyBody.parse(await c.req.json().catch(() => ({})));
+  } catch (e) {
+    throw errors.invalidRequest(
+      "invalid body",
+      e,
+      'the body must be `{ "upgrade_policy": "pin" | "follow" }`',
+    );
+  }
+
+  const install = await prisma.humanTemplateInstall.findUnique({
+    where: { humanId_templateId: { humanId: human.id, templateId: id } },
+  });
+  if (!install || install.uninstalledAt) {
+    // Not installed (or uninstalled) — same not-found shape as an unknown
+    // template id. Policy is meaningless without an active install.
+    throw errors.notFound();
+  }
+
+  // Policy-only update: deliberately omit installedVersion / installedAt /
+  // upgradeBlockedAt / upgradeBlockedReason so a pinned version survives.
+  const updated = await prisma.humanTemplateInstall.update({
+    where: { id: install.id },
+    data: { upgradePolicy: body.upgrade_policy },
+  });
+
+  return c.json({
+    template_id: id,
+    installed_version: updated.installedVersion,
+    installed_at: updated.installedAt.toISOString(),
+    upgrade_policy: updated.upgradePolicy,
+  });
+});
+
 // POST /v1/templates/:id/upgrade — re-pin an install to another version of
 // the same template (#267 PR C). Mirrors the pane-side upgrade route but
 // operates on HumanTemplateInstall.installedVersion. Same compat gate;
@@ -575,7 +625,7 @@ templateMarketplace.post("/:id/upgrade", requireHuman, async (c) => {
       },
     }),
   ]);
-  if (!toVersion) throw errors.artifactVersionNotFound();
+  if (!toVersion) throw errors.templateVersionNotFound();
   if (!fromVersion) {
     // The installed_version no longer exists in the version history —
     // shouldn't happen (versions are immutable + append-only) but if it

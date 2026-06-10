@@ -200,7 +200,7 @@ describe("POST /v1/templates/:id/template-records/:collection", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a non-owner agent with artifact_not_found", async () => {
+  it("rejects a non-owner agent with template_not_found", async () => {
     const owner = await seedAgent();
     const intruder = await seedAgent();
     const templateId = await seedTemplateWithRecords(owner.agentId);
@@ -210,7 +210,7 @@ describe("POST /v1/templates/:id/template-records/:collection", () => {
       intruder.apiKey,
       { data: { text: "x" } },
     );
-    // Owner scope returns artifact_not_found (404) to non-owners by design —
+    // Owner scope returns template_not_found (404) to non-owners by design —
     // doesn't leak the existence of someone else's template.
     expect(res.status).toBe(404);
   });
@@ -453,6 +453,114 @@ describe("method-not-allowed fallbacks", () => {
       { data: { text: "x" } },
     );
     expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("GET, POST");
+    expect(res.headers.get("Allow")).toBe("GET, POST, DELETE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /v1/templates/:id/template-records/:collection — collection delete (#507)
+// ---------------------------------------------------------------------------
+
+describe("DELETE /v1/templates/:id/template-records/:collection (collection delete)", () => {
+  it("removes ALL records and the collection row; subsequent write recreates fresh", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const templateId = await seedTemplateWithRecords(agentId);
+    await req(
+      "POST",
+      `/v1/templates/${templateId}/template-records/questions`,
+      apiKey,
+      { record_key: "q1", data: { text: "one" } },
+    );
+    await req(
+      "POST",
+      `/v1/templates/${templateId}/template-records/questions`,
+      apiKey,
+      { record_key: "q2", data: { text: "two" } },
+    );
+    // Tombstone one row to prove cascade clears tombstones too.
+    await req(
+      "DELETE",
+      `/v1/templates/${templateId}/template-records/questions/q2`,
+      apiKey,
+    );
+
+    const collectionBefore = await prisma.templateRecordCollection.findFirst({
+      where: { templateId, name: "questions" },
+    });
+    expect(collectionBefore).not.toBeNull();
+
+    const del = await req(
+      "DELETE",
+      `/v1/templates/${templateId}/template-records/questions`,
+      apiKey,
+    );
+    expect(del.status).toBe(204);
+
+    const collectionAfter = await prisma.templateRecordCollection.findFirst({
+      where: { templateId, name: "questions" },
+    });
+    expect(collectionAfter).toBeNull();
+    const rowsAfter = await prisma.templateRecord.count({
+      where: { collectionId: collectionBefore!.id },
+    });
+    expect(rowsAfter).toBe(0);
+
+    // Recreate-on-write at seq 1.
+    const recreate = await req(
+      "POST",
+      `/v1/templates/${templateId}/template-records/questions`,
+      apiKey,
+      { record_key: "q1", data: { text: "again" } },
+    );
+    expect(recreate.status).toBe(201);
+    const recreated = (await recreate.json()) as { record: { seq: number } };
+    expect(recreated.record.seq).toBe(1);
+  });
+
+  it("returns 404 on a collection never written to", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const templateId = await seedTemplateWithRecords(agentId);
+    const res = await req(
+      "DELETE",
+      `/v1/templates/${templateId}/template-records/questions`,
+      apiKey,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("template_record_collection_not_found");
+  });
+
+  it("returns 404 on a collection not declared in the schema", async () => {
+    const { apiKey, agentId } = await seedAgent();
+    const templateId = await seedTemplateWithRecords(agentId);
+    const res = await req(
+      "DELETE",
+      `/v1/templates/${templateId}/template-records/unknown`,
+      apiKey,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an agent that does not own the template", async () => {
+    const owner = await seedAgent();
+    const intruder = await seedAgent();
+    const templateId = await seedTemplateWithRecords(owner.agentId);
+    await req(
+      "POST",
+      `/v1/templates/${templateId}/template-records/questions`,
+      owner.apiKey,
+      { record_key: "q1", data: { text: "one" } },
+    );
+    const res = await req(
+      "DELETE",
+      `/v1/templates/${templateId}/template-records/questions`,
+      intruder.apiKey,
+    );
+    // Non-owner loses the owner-scope lookup → template_not_found (404).
+    expect([401, 403, 404]).toContain(res.status);
+    const collectionAfter = await prisma.templateRecordCollection.findFirst({
+      where: { templateId, name: "questions" },
+    });
+    expect(collectionAfter).not.toBeNull();
   });
 });
