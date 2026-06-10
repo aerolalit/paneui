@@ -47,6 +47,7 @@ import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
 import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
 import skill from "./routes/skill.js";
 import bridge from "../bridge/routes.js";
+import { loadClient } from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
 import { cliVersionMiddleware } from "./cli-version.js";
 import { baselineSecurityHeaders } from "./security-headers.js";
@@ -241,6 +242,17 @@ export function buildApp(
   });
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
+
+  // GET /sw.js — service worker for Web Push notifications. Served before the
+  // rate-limit middleware (like /healthz) so the browser can always fetch it.
+  // Must be at the origin root so its scope covers all pages.
+  const SW_JS = loadClient("sw.client.js");
+  app.get("/sw.js", (c) => {
+    c.header("Content-Type", "application/javascript; charset=utf-8");
+    c.header("Service-Worker-Allowed", "/");
+    c.header("Cache-Control", "no-cache");
+    return c.body(SW_JS);
+  });
 
   // GET / is served by systemPages (below) — a public landing page for
   // logged-out callers and a redirect to /home for logged-in humans.

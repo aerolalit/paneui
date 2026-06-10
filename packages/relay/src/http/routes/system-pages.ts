@@ -97,6 +97,10 @@ function homeSpaCsp(nonce: string): string {
     "img-src 'self' data:",
     "connect-src 'self'",
     "frame-src 'self'",
+    // Allow same-origin service workers (needed for Web Push registration).
+    // worker-src falls back to script-src when unset, which would block /sw.js
+    // because it has no nonce.
+    "worker-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
