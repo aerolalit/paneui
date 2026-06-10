@@ -877,6 +877,14 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
           human.createdAt.toISOString().slice(0, 10),
         )}</span></div>
       </div>
+      <div class="settings-card" id="notif-card">
+        <h2>Notifications</h2>
+        <p class="settings-note">Get a push notification when one of your agents creates a new pane. On iPhone, add pane to your Home Screen and open it from there first.</p>
+        <div class="settings-row">
+          <span class="k">Push notifications<span class="k-sub" id="notif-status">Off</span></span>
+          <button id="notif-toggle" type="button" role="switch" aria-checked="false" class="switch" aria-label="Push notifications"></button>
+        </div>
+      </div>
       <div class="settings-card">
         <h2>Session</h2>
         <p class="settings-note">Signing out revokes this device's login. You can sign back in any time at <a href="/login">/login</a>.</p>
@@ -2873,11 +2881,19 @@ const SHELL_JS = `
 
   // ----- Web Push notification subscription -----
   (function () {
+    // Two controls share one state: the account-menu bell and the Settings
+    // toggle. Either can turn notifications on/off; render() keeps both in sync.
     var btn = document.getElementById('notif-btn');
     var lbl = document.getElementById('notif-btn-label');
-    if (!btn || !lbl) return;
+    var toggle = document.getElementById('notif-toggle');
+    var statusEl = document.getElementById('notif-status');
+    var card = document.getElementById('notif-card');
+    if (!btn && !toggle) return;
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      btn.style.display = 'none';
+      // Push unsupported (e.g. an iOS Safari tab rather than the installed
+      // PWA) — hide both controls instead of offering one that can't work.
+      if (btn) btn.style.display = 'none';
+      if (card) card.style.display = 'none';
       return;
     }
 
@@ -2925,22 +2941,34 @@ const SHELL_JS = `
       if (d && d.type === 'pane.created') showToast(d.title, d.body, d.paneUrl);
     });
 
-    // Reflect the current state on the bell: blocked / on (a toggle that turns
-    // off) / off (a toggle that turns on). The label doubles as the action hint
-    // via the title attribute.
+    // Reflect the current state on both controls: blocked / on / off. The bell
+    // label doubles as the action hint; the Settings switch flips aria-checked
+    // and shows a status line.
     function render() {
-      if (Notification.permission === 'denied') {
-        lbl.textContent = 'Notifications blocked';
-        btn.disabled = true;
-        btn.title = 'Notifications are blocked in your browser settings';
-      } else if (subscribed) {
-        lbl.textContent = 'Notifications on';
-        btn.disabled = false;
-        btn.title = 'Turn off notifications';
-      } else {
-        lbl.textContent = 'Enable Notifications';
-        btn.disabled = false;
-        btn.title = 'Turn on notifications';
+      var perm = Notification.permission;
+      if (btn && lbl) {
+        if (perm === 'denied') {
+          lbl.textContent = 'Notifications blocked';
+          btn.disabled = true;
+          btn.title = 'Notifications are blocked in your browser settings';
+        } else if (subscribed) {
+          lbl.textContent = 'Notifications on';
+          btn.disabled = false;
+          btn.title = 'Turn off notifications';
+        } else {
+          lbl.textContent = 'Enable Notifications';
+          btn.disabled = false;
+          btn.title = 'Turn on notifications';
+        }
+      }
+      if (toggle) {
+        toggle.setAttribute('aria-checked', subscribed ? 'true' : 'false');
+        toggle.disabled = perm === 'denied';
+      }
+      if (statusEl) {
+        statusEl.textContent = perm === 'denied'
+          ? 'Blocked in your browser settings'
+          : (subscribed ? 'On' : 'Off');
       }
     }
 
@@ -2985,11 +3013,15 @@ const SHELL_JS = `
       subscribed = false;
     }
 
-    btn.addEventListener('click', async function () {
+    // Shared on/off action for both controls. Disables them while the
+    // subscribe/unsubscribe round-trips, then render() restores a consistent
+    // state for both.
+    async function setEnabled(wantOn) {
       if (Notification.permission === 'denied') return;
-      btn.disabled = true;
+      if (btn) btn.disabled = true;
+      if (toggle) toggle.disabled = true;
       try {
-        if (subscribed) {
+        if (!wantOn) {
           await unsubscribe();
         } else {
           var perm = Notification.permission === 'granted'
@@ -3004,7 +3036,10 @@ const SHELL_JS = `
         /* fall through to render() to restore a consistent state */
       }
       render();
-    });
+    }
+
+    if (btn) btn.addEventListener('click', function () { setEnabled(!subscribed); });
+    if (toggle) toggle.addEventListener('click', function () { setEnabled(!subscribed); });
 
     // Detect the existing subscription on load and reflect it. We deliberately
     // do NOT auto-resubscribe when permission is granted but no subscription

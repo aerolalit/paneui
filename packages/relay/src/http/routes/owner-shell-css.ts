@@ -391,6 +391,23 @@ export const OWNER_SHELL_CSS = `
   .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
   .pill.good { background: rgba(52, 211, 153, 0.14); color: #34d399; }
   .pill.muted { background: var(--surface-2); color: var(--ink-mute); }
+  /* Secondary status line under a settings-row label (e.g. the notifications toggle state). */
+  .settings-row .k-sub { display: block; font-size: 12px; color: var(--ink-mute); margin-top: 2px; }
+  /* Toggle switch — a button[role=switch] styled as an iOS-style slider. */
+  .switch {
+    position: relative; flex: none; width: 40px; height: 24px;
+    border-radius: 999px; background: var(--surface-2);
+    border: 1px solid var(--hairline); cursor: pointer; padding: 0;
+    transition: background .15s, border-color .15s;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform .15s;
+  }
+  .switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(16px); }
+  .switch:disabled { opacity: .5; cursor: not-allowed; }
 
   /* ============== Top-level controls (search + profile) ============== */
   .search {
