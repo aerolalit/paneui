@@ -449,10 +449,16 @@ self.delete("/push-subscriptions", async (c) => {
   const prisma = c.get("prisma");
   const human = c.get("human");
 
-  const body = await c.req.json().catch(() => null) as { endpoint?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as {
+    endpoint?: unknown;
+  } | null;
   const endpoint = typeof body?.endpoint === "string" ? body.endpoint : null;
   if (!endpoint) {
-    throw errors.invalidRequest("endpoint is required", undefined, "send { endpoint: string }");
+    throw errors.invalidRequest(
+      "endpoint is required",
+      undefined,
+      "send { endpoint: string }",
+    );
   }
 
   await prisma.pushSubscription.deleteMany({

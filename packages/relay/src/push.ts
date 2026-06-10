@@ -49,7 +49,10 @@ export async function notifyHuman(
     subs.map(async (sub) => {
       try {
         await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth },
+          },
           body,
         );
       } catch (err) {
