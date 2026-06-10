@@ -50,6 +50,20 @@ async function seedAgent(opts: { humanId?: string } = {}): Promise<string> {
   return a.id;
 }
 
+async function seedSoftDeletedAgent(opts: {
+  humanId?: string;
+  deletedDaysAgo: number;
+}): Promise<string> {
+  const id = await seedAgent(opts.humanId ? { humanId: opts.humanId } : {});
+  await prisma.agent.update({
+    where: { id },
+    data: {
+      deletedAt: new Date(Date.now() - opts.deletedDaysAgo * DAY_MS),
+    },
+  });
+  return id;
+}
+
 async function seedHuman(
   email: string,
   tier: "free" | "paid" | "system" = "free",
@@ -319,5 +333,165 @@ describe("sweepHardDeletable — cascade + audit", () => {
       agents: 0,
       humans: 0,
     });
+  });
+});
+
+describe("sweepAgents — Restrict-child guard (#506)", () => {
+  // Before this guard, a soft-deleted past-retention agent that still owned any
+  // Pane/Template/Attachment row made the flat `agent.deleteMany` throw a P2003
+  // FK-restrict error and abort the whole sweep pass. The guard defers such an
+  // agent (excludes it from the eligible set) instead of throwing.
+
+  it("does NOT throw or delete an agent that still owns an active pane", async () => {
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+    // Active (non-soft-deleted) pane keeps the Restrict FK alive across the pass.
+    await seedPaneRow(prisma, {
+      agentId,
+      status: "open",
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+
+    let r: Awaited<ReturnType<typeof sweepHardDeletable>>;
+    await expect(
+      (async () => {
+        r = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+      })(),
+    ).resolves.toBeUndefined();
+
+    expect(r!.agents).toBe(0);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).not.toBeNull();
+    // No audit row should be written for a deferred agent.
+    expect(
+      await prisma.deletionLog.count({
+        where: { entityType: "agent", entityId: agentId },
+      }),
+    ).toBe(0);
+  });
+
+  it("does NOT throw or delete an agent that still owns a template", async () => {
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+    await prisma.template.create({
+      data: { ownerId: agentId, name: "Owned Template", slug: "owned-tmpl" },
+    });
+
+    let r: Awaited<ReturnType<typeof sweepHardDeletable>>;
+    await expect(
+      (async () => {
+        r = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+      })(),
+    ).resolves.toBeUndefined();
+
+    expect(r!.agents).toBe(0);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).not.toBeNull();
+  });
+
+  it("does NOT throw or delete an agent that still owns an attachment", async () => {
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+    await prisma.attachment.create({
+      data: {
+        ownerId: agentId,
+        scope: "agent",
+        mime: "image/png",
+        size: 100,
+        sha256: "f".repeat(64),
+        storageKey: `att_${randomBytes(8).toString("hex")}`,
+        status: "ready",
+      },
+    });
+
+    let r: Awaited<ReturnType<typeof sweepHardDeletable>>;
+    await expect(
+      (async () => {
+        r = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+      })(),
+    ).resolves.toBeUndefined();
+
+    expect(r!.agents).toBe(0);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).not.toBeNull();
+  });
+
+  it("defers an agent that owns an active pane, then reclaims it once the pane (and its template) are gone", async () => {
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+    // Active pane keeps the Restrict FK alive; seedPaneRow also creates a
+    // named Template owned by this agent (another Restrict child).
+    const { paneId, templateVersionId } = await seedPaneRow(prisma, {
+      agentId,
+      status: "open",
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+
+    const first = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+    expect(first.agents).toBe(0);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).not.toBeNull();
+
+    // Remove BOTH Restrict children (pane + the template it pinned), then the
+    // agent is FK-safe and reclaimed on the next pass.
+    const tv = await prisma.templateVersion.findUniqueOrThrow({
+      where: { id: templateVersionId },
+      select: { templateId: true },
+    });
+    await prisma.pane.delete({ where: { id: paneId } });
+    await prisma.template.delete({ where: { id: tv.templateId } });
+
+    const second = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+    expect(second.agents).toBe(1);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).toBeNull();
+    const logs = await prisma.deletionLog.findMany({
+      where: { entityType: "agent", entityId: agentId },
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.phase).toBe("hard_deleted");
+  });
+
+  it("keeps deferring an agent whose only remaining child is a (still-live) template", async () => {
+    // A past-retention agent that owns a named template the user never deleted
+    // stays deferred indefinitely — templates are reusable identities that
+    // survive their panes and are not auto-swept. The agent is NOT a black
+    // hole: the deferral is observable via the logged count, and the agent is
+    // reclaimed once account-deletion (#312) purges the template.
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+    const { paneId } = await seedPaneRow(prisma, {
+      agentId,
+      status: "open",
+      expiresAt: new Date(Date.now() - 1), // already expired → soft-deletable
+    });
+    await prisma.pane.update({
+      where: { id: paneId },
+      data: { deletedAt: new Date(Date.now() - 31 * DAY_MS) },
+    });
+
+    // Pane is past retention → swept this pass. Template survives → agent stays.
+    const r = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+    expect(r.panes).toBe(1);
+    expect(r.agents).toBe(0);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).not.toBeNull();
+  });
+
+  it("regression: a standalone past-retention agent owning nothing is hard-deleted with a deletion_log row", async () => {
+    const agentId = await seedSoftDeletedAgent({ deletedDaysAgo: 60 });
+
+    const r = await sweepHardDeletable({ prisma, config: CFG_DEFAULT });
+    expect(r.agents).toBe(1);
+    expect(
+      await prisma.agent.findUnique({ where: { id: agentId } }),
+    ).toBeNull();
+    const logs = await prisma.deletionLog.findMany({
+      where: { entityType: "agent", entityId: agentId },
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.phase).toBe("hard_deleted");
+    expect(logs[0]!.reason).toBe("retention_window_elapsed");
   });
 });

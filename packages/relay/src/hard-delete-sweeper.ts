@@ -114,26 +114,39 @@ export async function sweepHardDeletable(
   // owned rows. Pane.agent, Template.owner, and Attachment.owner are required
   // relations with no `onDelete` → Prisma default `Restrict`; Feedback.agent
   // is `SetNull`. So deleting an agent neither deletes nor frees its owned
-  // panes/templates/attachments. The sweep above runs panes → attachments →
-  // templates first, so in steady state those are already gone before an agent
-  // is reached — but nothing in the schema enforces that ordering as a cascade.
+  // panes/templates/attachments.
   //
-  // NOTE (#312/#506): sweepAgents below is a flat `agent.deleteMany`. It will
-  // throw a P2003 FK-restrict error the moment an account-deletion path starts
-  // soft-deleting agents that still own any Pane/Template/Attachment row. This
-  // is dormant today (nothing sets `deletedAt` on an agent yet). Before that
-  // ships, either make those FKs `Cascade` or have sweepAgents reclaim the
-  // owned children first, inside a transaction. Do not be surprised.
+  // GUARD (#506): sweepAgents only hard-deletes agents owning ZERO Restrict-
+  // protected children (`panes`/`templates`/`attachments` of ANY status). An
+  // agent that still owns one is DEFERRED to a later pass rather than purged;
+  // its children are reclaimed in the panes → attachments → templates phases
+  // above, and once they're gone the next pass picks the agent up. This makes
+  // the flat `agent.deleteMany` FK-safe — without the guard it would throw a
+  // P2003 FK-restrict error and abort the whole pass the moment an account-
+  // deletion path starts soft-deleting agents that still own children (dormant
+  // today: nothing sets `deletedAt` on an agent yet). The deferral count is
+  // logged for observability so a wedged agent isn't a silent black hole.
+  //
+  // This guard is a SAFETY net, not the deletion semantics. The real cascade-
+  // on-account-deletion (purge an agent's panes/templates/attachments —
+  // including blob bytes + deletionLog audit rows — when the account is
+  // deleted) belongs to the retention epic #312, NOT here. We deliberately do
+  // NOT add `onDelete: Cascade` to those FKs: cascading attachment ROWS would
+  // leak their blob BYTES (no orphaned-blob GC exists; bytes are only purged at
+  // explicit delete points) and skip the deletionLog audit.
   const agentsSwept = await sweepAgents(prisma, freeCutoff, paidCutoff);
 
   // ---- 6. HUMANS --------------------------------------------------------
-  // Self-soft-deleted humans past retention. Prisma cascades only the
-  // human-owned join/auth rows: Login, ClaimCode, HumanTemplateInstall, and
-  // HumanPaneFavorite are all `onDelete: Cascade`. Claimed AGENTS are NOT
-  // cascade-deleted — Agent.ownerHuman is `onDelete: SetNull`, so deleting a
-  // human only nulls each agent's ownerHumanId, leaving the agent (and its
-  // panes/templates) alive. tier='system' never reaches this — the predicate
-  // explicitly excludes it.
+  // Self-soft-deleted humans past retention. NO guard needed here (unlike
+  // sweepAgents): a flat `human.deleteMany` cannot throw a P2003 FK-restrict
+  // error because every child relation of Human is either Cascade or SetNull,
+  // never Restrict. Login, ClaimCode, HumanTemplateInstall, and
+  // HumanPaneFavorite are all `onDelete: Cascade` (rows go with the human);
+  // Agent.ownerHuman is `onDelete: SetNull`, so deleting a human only nulls
+  // each claimed agent's ownerHumanId, leaving the agent (and its panes/
+  // templates) alive. Do NOT copy the sweepAgents guard here — there is no
+  // restricted child to defer on. tier='system' never reaches this — the
+  // predicate explicitly excludes it.
   const humansSwept = await sweepHumans(prisma, freeCutoff, paidCutoff);
 
   const result: HardDeleteResult = {
@@ -392,8 +405,45 @@ async function sweepAgents(
 ): Promise<number> {
   // Agents may or may not have an owner human. Standalone agents (CI bots,
   // scratch scripts) get the free default.
+  //
+  // GUARD (#506): only consider agents that own ZERO Restrict-protected
+  // children. Pane.agent / Template.owner / Attachment.owner are required FKs
+  // with the Prisma default `onDelete: Restrict`, so a flat `agent.deleteMany`
+  // over an agent that still owns any pane/template/attachment throws P2003 and
+  // aborts the whole pass. We exclude such agents with `<rel>: { none: {} }` so
+  // the eligible set is FK-safe. The relation filters match ANY status — a
+  // soft-deleted-but-not-yet-swept child row still holds the FK, so it must
+  // still defer its agent. A skipped agent is reclaimed in a later pass once its
+  // children have been swept (children run in earlier phases of this same pass).
   const candidates = await prisma.agent.findMany({
-    where: { deletedAt: { not: null } },
+    where: {
+      deletedAt: { not: null },
+      panes: { none: {} },
+      templates: { none: {} },
+      attachments: { none: {} },
+    },
+    select: {
+      id: true,
+      deletedAt: true,
+      ownerHumanId: true,
+      ownerHuman: { select: { tier: true, hardRetentionDays: true } },
+    },
+    take: HARD_DELETE_BATCH * 2,
+  });
+
+  // Observability: count soft-deleted, past-retention agents we DEFERRED purely
+  // because they still own Restrict-protected children. Without this, a wedged
+  // agent (child never swept) is an invisible "never deleted" black hole. The
+  // count is the gap between "eligible by retention" and "FK-safe by guard".
+  const blockedRetained = await prisma.agent.findMany({
+    where: {
+      deletedAt: { not: null },
+      OR: [
+        { panes: { some: {} } },
+        { templates: { some: {} } },
+        { attachments: { some: {} } },
+      ],
+    },
     select: {
       id: true,
       deletedAt: true,
@@ -418,6 +468,30 @@ async function sweepAgents(
       paidCutoff,
     ),
   );
+
+  // Same retention predicate applied to the child-owning set, so the deferred
+  // count reflects agents that WOULD be reclaimed if not for the FK guard.
+  const deferred = blockedRetained.filter((a) =>
+    isPastRetention(
+      {
+        id: a.id,
+        deletedAt: a.deletedAt,
+        ownerHumanId: a.ownerHumanId,
+        ownerAgentId: a.id,
+        tier: a.ownerHuman?.tier ?? null,
+        hardRetentionDays: a.ownerHuman?.hardRetentionDays ?? null,
+      },
+      now,
+      freeCutoff,
+      paidCutoff,
+    ),
+  ).length;
+  if (deferred > 0) {
+    log.info("hard-delete sweeper: agents deferred (still own children)", {
+      deferred,
+    });
+  }
+
   if (targets.length === 0) return 0;
 
   const slice = targets.slice(0, HARD_DELETE_BATCH);
