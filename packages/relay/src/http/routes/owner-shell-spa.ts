@@ -889,6 +889,25 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
       </div>
     </section>
 
+    <!-- In-SPA pane view: opening a pane mounts the existing pane shell here in
+         an iframe (?embedded=1) instead of full-page navigating to /panes/:id,
+         so the panes list stays mounted and its scroll is preserved. Back blanks
+         the src, tearing down the shell document (its WebSocket + nested content
+         iframe go with it). The iframe is same-origin trusted chrome; the
+         untrusted agent content is sandboxed by the shell one level down. -->
+    <section class="view" data-view="pane">
+      <div class="pane-host">
+        <div class="pane-host-bar">
+          <button id="pane-host-back" type="button" class="pane-host-back" aria-label="Back">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+            <span>Back</span>
+          </button>
+          <span class="pane-host-title" id="pane-host-title"></span>
+        </div>
+        <iframe id="pane-host-frame" class="pane-host-frame" src="about:blank" title="Pane"></iframe>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -1637,7 +1656,16 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  const VIEWS = ['home', 'panes', 'explore', 'templates', 'agents', 'settings'];
+  // 'pane' is the in-SPA pane viewer. Unlike the others it isn't hash-routable
+  // and has no nav button — it's entered via openPane() (pushState /panes/:id)
+  // and left via popstate. It's listed here so activate('pane') isn't coerced
+  // back to 'home' by the VIEWS guard.
+  const VIEWS = ['home', 'panes', 'explore', 'templates', 'agents', 'settings', 'pane'];
+  // Per-view .main scrollTop, saved on the way out so a back/forward return can
+  // restore it. All views share the one .main scroll container, so hiding a
+  // tall view (display:none) collapses its scrollHeight and the browser clamps
+  // scrollTop — without this, returning to the panes list would land at the top.
+  const scrollPositions = {};
 
   // The Templates view has two segments (Yours / Store). Each maps to its own
   // hash so deep links + browser back/forward land on the right scope, and so
@@ -1654,7 +1682,15 @@ const SHELL_JS = `
     return s;
   }
 
-  function activate(view, explicitSeg) {
+  function activate(view, explicitSeg, opts) {
+    opts = opts || {};
+    // Save the outgoing view's scroll before we hide it, so a later back/forward
+    // return (opts.restoreScroll) can put it back. Read before any class toggle.
+    const mainEl = document.querySelector('.main');
+    const leavingEl = document.querySelector('.view.active');
+    if (mainEl && leavingEl) {
+      scrollPositions[leavingEl.getAttribute('data-view')] = mainEl.scrollTop;
+    }
     // Normalise legacy / aliased hashes onto the current view+segment model.
     // The Template store and My templates tabs merged into one Templates view;
     // '#store' opens it on the Store segment, '#mine' / '#apps' / the old
@@ -1682,14 +1718,21 @@ const SHELL_JS = `
     });
 
     // Resolve the hash: Templates reflects its segment ('#store' for Store,
-    // '#templates' for Yours); every other view is just '#<view>'.
-    let hash = view;
-    if (view === 'templates') hash = setSegment(seg) === 'store' ? 'store' : 'templates';
-    if ('#' + hash !== location.hash) {
-      history.replaceState(null, '', '#' + hash);
+    // '#templates' for Yours); every other view is just '#<view>'. The pane view
+    // owns the URL via pushState('/panes/:id') and must NOT rewrite it to a hash.
+    if (view !== 'pane') {
+      let hash = view;
+      if (view === 'templates') hash = setSegment(seg) === 'store' ? 'store' : 'templates';
+      if ('#' + hash !== location.hash) {
+        history.replaceState(null, '', '#' + hash);
+      }
     }
-    // Scroll the active view back to the top so a re-activation feels fresh.
-    document.querySelector('.main').scrollTop = 0;
+    // Scroll: restore the saved position on a back/forward return; otherwise land
+    // at the top so a fresh user-initiated switch feels fresh. Set AFTER the
+    // target view is display:block so its scrollHeight exists for the restore.
+    if (mainEl) {
+      mainEl.scrollTop = opts.restoreScroll ? (scrollPositions[view] || 0) : 0;
+    }
     // Explore previews are scaled from each card's real width, which is 0 while
     // the view is hidden — rescale now that it's visible (the ResizeObserver
     // also catches this, but this covers the no-RO fallback + avoids a frame of
@@ -1726,7 +1769,60 @@ const SHELL_JS = `
       activate(a.getAttribute('data-go'));
     }
   });
-  window.addEventListener('hashchange', () => activate(viewFromHash()));
+  // hashchange only fires on real back/forward (pushState/replaceState don't
+  // fire it), so a hash change is always a history navigation — restore scroll.
+  window.addEventListener('hashchange', () => activate(viewFromHash(), null, { restoreScroll: true }));
+
+  // ===== In-SPA pane viewer =====
+  // Opening a pane mounts the existing pane shell in #pane-host-frame (an iframe
+  // at /panes/:id?embedded=1) and pushes /panes/:id, instead of full-page
+  // navigating. The panes list stays mounted, so its scroll survives. Back
+  // blanks the iframe src — the browser tears the shell document down, and its
+  // WebSocket + nested content iframe go with it (no leaked live iframe/socket).
+  const paneHostFrame = document.getElementById('pane-host-frame');
+  const paneHostTitle = document.getElementById('pane-host-title');
+
+  function mountPaneHost(paneId, title) {
+    if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
+    const want = '/panes/' + encodeURIComponent(paneId) + '?embedded=1';
+    if (paneHostFrame.getAttribute('src') !== want) paneHostFrame.src = want;
+    if (paneHostTitle && typeof title === 'string') paneHostTitle.textContent = title;
+    activate('pane');
+  }
+  function unmountPaneHost() {
+    if (paneHostFrame && paneHostFrame.getAttribute('src') !== 'about:blank') {
+      paneHostFrame.src = 'about:blank';
+    }
+    if (paneHostTitle) paneHostTitle.textContent = '';
+  }
+  function openPane(paneId, title) {
+    if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
+    history.pushState({ pane: paneId }, '', '/panes/' + encodeURIComponent(paneId));
+    mountPaneHost(paneId, title);
+  }
+  function openPaneHref(href, title) {
+    href = href || '';
+    if (href.slice(0, 7) === '/panes/') {
+      const id = href.slice(7).split('/')[0].split('?')[0].split('#')[0];
+      if (id) { openPane(decodeURIComponent(id), title); return; }
+    }
+    if (href) location.href = href;
+  }
+
+  document.getElementById('pane-host-back')?.addEventListener('click', () => history.back());
+
+  window.addEventListener('popstate', (ev) => {
+    const st = ev.state;
+    if (st && st.pane) {
+      // Forward into (or re-entry of) a pane history entry.
+      mountPaneHost(st.pane);
+    } else {
+      // Left the pane view — tear the iframe down and restore the SPA view we
+      // returned to (hashchange may also fire and re-restore; idempotent).
+      unmountPaneHost();
+      activate(viewFromHash(), null, { restoreScroll: true });
+    }
+  });
 
   // Explore gallery — scale each card's preview iframe from its real width.
   // The iframe renders at a fixed 1000px logical viewport (so the pane reads
@@ -2173,7 +2269,8 @@ const SHELL_JS = `
     if (!row) return;
     if (ev.target instanceof HTMLElement && ev.target.closest('[data-noopen="1"]')) return;
     const href = row.getAttribute('data-href');
-    if (href) location.href = href;
+    const titleEl = row.querySelector('.title');
+    openPaneHref(href, titleEl ? titleEl.textContent : undefined);
   });
 
   // Pane-row triple-dots menu — Open / Copy URL / Delete. Floats next to the
@@ -2311,7 +2408,8 @@ const SHELL_JS = `
       const act = target.getAttribute('data-act');
       const url = location.origin + '/panes/' + encodeURIComponent(paneId);
       if (act === 'open') {
-        location.href = '/panes/' + encodeURIComponent(paneId);
+        closeMenu();
+        openPane(paneId);
       } else if (act === 'tags') {
         closeMenu();
         const row = document.querySelector('.pane-row[data-pane-id="' + (window.CSS && CSS.escape ? CSS.escape(paneId) : paneId) + '"]');
@@ -2738,7 +2836,7 @@ const SHELL_JS = `
     function navTo(ev) {
       if (ev.target instanceof HTMLElement && ev.target.closest('[data-noopen]')) return;
       const c = ev.target instanceof HTMLElement && ev.target.closest('.recent-card[data-href]');
-      if (c) location.href = c.getAttribute('data-href');
+      if (c) openPaneHref(c.getAttribute('data-href'));
     }
     list.addEventListener('click', navTo);
     list.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') navTo(ev); });

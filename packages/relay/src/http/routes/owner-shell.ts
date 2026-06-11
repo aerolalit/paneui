@@ -155,6 +155,12 @@ ownerShell.get("/:id", async (c) => {
   const config = c.get("config");
   const human = c.get("human");
   const id = c.req.param("id");
+  // `?embedded=1` is the owner /home SPA mounting this same-origin shell inside
+  // an iframe (in-SPA pane view) instead of full-page navigating here. It (a)
+  // relaxes the anti-framing headers to allow same-origin framing, and (b) drops
+  // the slim owner top-nav so the chrome isn't doubled up — the SPA supplies its
+  // own. Everything else (auth, WS, content) is identical to the standalone load.
+  const embedded = c.req.query("embedded") === "1";
   const pane = await loadOwnedPane(prisma, id, human.id);
 
   // Recents: record the owner's open. Best-effort — never block the page.
@@ -201,10 +207,12 @@ ownerShell.get("/:id", async (c) => {
       "frame-src 'self'",
       "base-uri 'none'",
       "form-action 'none'",
-      "frame-ancestors 'none'",
+      // Standalone loads forbid framing entirely; the embedded SPA mount allows
+      // same-origin framing (the /home owner shell) and nothing else.
+      embedded ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
     ].join("; "),
   );
-  c.header("X-Frame-Options", "DENY");
+  c.header("X-Frame-Options", embedded ? "SAMEORIGIN" : "DENY");
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Permissions-Policy", PERMISSIONS_POLICY);
@@ -236,8 +244,9 @@ ownerShell.get("/:id", async (c) => {
       // logo links back to /home; system-page tabs are intentionally omitted
       // here so the pane viewer stays a focused single-pane surface. canShare
       // is true: this mount is owner-only (loadOwnedPane asserts ownership), so
-      // the Share button is safe to surface here and nowhere else.
-      topNav: { canShare: true },
+      // the Share button is safe to surface here and nowhere else. Suppressed in
+      // embedded mode — the SPA frames this and supplies its own chrome.
+      topNav: embedded ? null : { canShare: true },
       // Owner mount keeps the static robot home-screen icon. The per-pane icon
       // route (/s/<token>/icon.png) is token-authed; an owner equivalent would
       // be cookie-gated, and iOS may fetch apple-touch-icon without the cookie,

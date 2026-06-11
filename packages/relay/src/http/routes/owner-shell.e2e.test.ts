@@ -188,6 +188,37 @@ describe("GET /panes/:id", () => {
     expect(html).not.toContain('class="brand-name"');
   });
 
+  it("embedded=1 drops the top-nav and relaxes the anti-framing headers", async () => {
+    // The owner /home SPA frames this same-origin shell (in-SPA pane view).
+    // embedded=1 must (a) allow same-origin framing and (b) drop the owner
+    // top-nav so chrome isn't doubled up. Standalone loads stay locked down.
+    const { cookie, paneId } = await seedOwnedPane();
+
+    const standalone = await app.fetch(
+      new Request(`http://t/panes/${paneId}`, withCookie(cookie)),
+    );
+    expect(standalone.headers.get("x-frame-options")).toBe("DENY");
+    expect(standalone.headers.get("content-security-policy")).toContain(
+      "frame-ancestors 'none'",
+    );
+
+    const embedded = await app.fetch(
+      new Request(`http://t/panes/${paneId}?embedded=1`, withCookie(cookie)),
+    );
+    expect(embedded.status).toBe(200);
+    // Framing allowed for same-origin (the /home shell), nothing else.
+    expect(embedded.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+    const csp = embedded.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'self'");
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    // Top-nav account bar is gone (the SPA supplies its own chrome).
+    const html = await embedded.text();
+    expect(html).not.toContain('id="top-nav-share"');
+    expect(html).not.toContain('id="top-nav-signout"');
+    // The pane still works: same content iframe + cfg as the standalone load.
+    expect(html).toContain(`src="/panes/${paneId}/content"`);
+  });
+
   it("401s when no login cookie is present (API / curl path — no Accept header)", async () => {
     const { paneId } = await seedOwnedPane();
     const res = await app.fetch(new Request(`http://t/panes/${paneId}`));
@@ -531,5 +562,36 @@ describe("POST /panes/:id/ws-ticket", () => {
       }),
     );
     expect(res.status).toBe(410);
+  });
+});
+
+describe("GET /home — in-SPA pane view", () => {
+  it("renders the pane-view mount point and the client JS parses", async () => {
+    const { cookie } = await seedOwnedPane();
+    const res = await app.fetch(
+      new Request(`http://t/home`, withCookie(cookie)),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // The in-SPA pane viewer mount point + its chrome are present.
+    expect(html).toContain('data-view="pane"');
+    expect(html).toContain('id="pane-host-frame"');
+    expect(html).toContain('id="pane-host-back"');
+    // The iframe starts blank — a pane is only mounted on open.
+    expect(html).toContain('src="about:blank"');
+
+    // tsc does NOT typecheck the SHELL_JS string body, so a syntax error in the
+    // inline client JS would otherwise reach the browser. Extract the bundle
+    // (the <script> carrying the SPA logic) and compile it with new Function —
+    // this parses without executing, throwing on any syntax error.
+    const scripts = [
+      ...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),
+    ].map((m) => m[1]);
+    const shellJs = scripts.find((s) => s.includes("function openPane"));
+    expect(shellJs, "SPA client JS bundle not found").toBeTruthy();
+    expect(shellJs).toContain("mountPaneHost");
+    expect(shellJs).toContain("popstate");
+    expect(() => new Function(shellJs as string)).not.toThrow();
   });
 });

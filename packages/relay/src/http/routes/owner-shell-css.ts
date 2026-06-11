@@ -371,6 +371,31 @@ export const OWNER_SHELL_CSS = `
     .view { padding: 14px 16px 28px; }
   }
 
+  /* ===== In-SPA pane view ===== */
+  /* Full-bleed: the pane shell is framed edge-to-edge, so this view drops the
+     standard padding/max-width and fills the .main scroll area. .main has a
+     definite height (1fr of the 100dvh app grid), so height:100% cascades down
+     to the iframe. The display:flex override beats the generic .view.active
+     display:block via attribute-selector specificity. */
+  .view[data-view="pane"] { padding: 0; max-width: none; height: 100%; }
+  .view[data-view="pane"].active { display: flex; }
+  .pane-host { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
+  .pane-host-bar {
+    flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-bottom: 1px solid var(--hairline); background: var(--bg-2);
+  }
+  .pane-host-back {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    background: transparent; border: 1px solid var(--hairline); color: var(--ink);
+    font: inherit; font-size: 13px; padding: 5px 11px 5px 9px; border-radius: 8px; cursor: pointer;
+  }
+  .pane-host-back:hover { border-color: var(--accent); color: var(--accent); }
+  .pane-host-title {
+    font-size: 13px; color: var(--ink-mute); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pane-host-frame { flex: 1; width: 100%; border: 0; display: block; background: #fff; min-height: 0; }
+
   .view-head {
     display: flex; align-items: end; justify-content: space-between;
     gap: 12px;
