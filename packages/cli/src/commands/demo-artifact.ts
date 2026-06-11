@@ -100,17 +100,23 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light" />
 <title>Pane — the 60-second tour</title>
 <style>
   :root {
-    --bg: #0b0d12;
-    --panel: #141821;
-    --ink: #e7ebf3;
-    --muted: #97a1b5;
-    --line: #232a37;
-    --accent: #6ea8fe;
-    --accent-2: #8b78ff;
-    --ok: #46d39a;
+    --bg: #f7f5f1;
+    --bg-soft: #efece5;
+    --panel: #ffffff;
+    --panel-2: #faf8f4;
+    --border: #e6e0d6;
+    --ink: #1a1726;
+    --muted: #5b5570;
+    --faint: #8b85a0;
+    --agent: #D97757;
+    --human: #E0A23A;
+    --accent: #D97757;
+    --accent-2: #E0A23A;
+    --code: #f3f0ea;
     --radius: 14px;
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
       Arial, sans-serif;
@@ -120,26 +126,61 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
   html, body { height: 100%; }
   body {
     margin: 0;
-    background:
-      radial-gradient(1100px 600px at 50% -10%, #1a2030 0%, var(--bg) 60%);
+    background: var(--bg);
     color: var(--ink);
     font-family: var(--font);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100%;
     padding: 24px;
-    line-height: 1.5;
+    line-height: 1.65;
+    position: relative;
+  }
+  /* ambient warm-sunset glow, matching the landing page */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(120vw 78vh at 50% -12%,
+      rgba(217, 119, 87, 0.10), rgba(224, 162, 58, 0.04) 46%, transparent 72%);
+    pointer-events: none;
+    z-index: 0;
   }
   .stage {
+    position: relative;
+    z-index: 1;
     width: 100%;
     max-width: 560px;
     background: var(--panel);
-    border: 1px solid var(--line);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 14px 38px rgba(26, 23, 38, 0.08);
     overflow: hidden;
+  }
+  .brandbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 22px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-soft);
+  }
+  .brandbar .mark { width: 26px; height: 26px; display: block; flex: none; }
+  .brandbar .name {
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .brandbar .ttl {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--faint);
   }
   .progress {
     display: flex;
@@ -150,46 +191,62 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     flex: 1;
     height: 3px;
     border-radius: 3px;
-    background: var(--line);
+    background: var(--border);
     transition: background 0.4s ease;
   }
-  .progress i.on { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-  .body { padding: 26px 30px 30px; }
+  .progress i.on { background: linear-gradient(100deg, var(--accent), var(--accent-2)); }
+  .body { padding: 22px 30px 30px; }
   .scene { display: none; }
   .scene.active { display: block; }
   .kicker {
     font-size: 12px;
-    letter-spacing: 0.14em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--muted);
     margin: 0 0 10px;
   }
   h1 {
-    font-size: 24px;
-    line-height: 1.25;
+    font-size: 25px;
+    line-height: 1.18;
+    font-weight: 800;
     margin: 0 0 12px;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.025em;
   }
-  p { margin: 0 0 14px; color: #c7cedd; }
+  h1 .grad {
+    background: linear-gradient(100deg, var(--agent), var(--human));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  p { margin: 0 0 14px; color: var(--muted); }
   p.lead { color: var(--ink); font-size: 16px; }
   .muted { color: var(--muted); font-size: 14px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--code);
+    border-radius: 5px;
+    padding: 2px 6px;
+    color: var(--ink);
+  }
   button.cta {
     appearance: none;
     border: 0;
     cursor: pointer;
     font: inherit;
-    font-weight: 600;
-    color: #0b0d12;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    padding: 12px 20px;
+    font-weight: 650;
+    color: #fff;
+    background: linear-gradient(100deg, var(--accent), var(--accent-2));
+    padding: 12px 22px;
     border-radius: 10px;
     margin-top: 6px;
     transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.2s ease;
-    box-shadow: 0 6px 18px rgba(110, 168, 254, 0.28);
+    box-shadow: 0 8px 20px rgba(217, 119, 87, 0.28);
   }
-  button.cta:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(110, 168, 254, 0.38); }
+  button.cta:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(217, 119, 87, 0.30); }
   button.cta:active { transform: translateY(0); }
-  button.cta:disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
+  button.cta:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
   .diagram {
     display: flex;
     align-items: center;
@@ -197,75 +254,83 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     gap: 8px;
     margin: 6px 0 18px;
     padding: 18px 14px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--border);
     border-radius: 12px;
-    background: #10141d;
+    background: var(--panel-2);
   }
   .node {
     flex: 1;
     text-align: center;
     font-size: 13px;
+    font-weight: 600;
     color: var(--ink);
     padding: 12px 6px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--border);
     border-radius: 10px;
-    background: #161b26;
+    background: var(--panel);
+    box-shadow: 0 4px 14px rgba(26, 23, 38, 0.04);
   }
   .node .ic { font-size: 20px; display: block; margin-bottom: 4px; }
-  .node small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
-  .wire { color: var(--accent); font-size: 18px; opacity: 0.7; }
+  .node small { display: block; color: var(--faint); font-weight: 500; font-size: 11px; margin-top: 2px; }
+  .wire { color: var(--accent); font-size: 18px; }
   .field { display: block; margin: 0 0 14px; }
-  .field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .field span { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
   input[type="text"] {
     width: 100%;
     font: inherit;
     color: var(--ink);
-    background: #0e121a;
-    border: 1px solid var(--line);
-    border-radius: 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     padding: 11px 12px;
     outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--faint); }
+  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.12); }
   .choices { display: flex; gap: 8px; flex-wrap: wrap; }
   .choices label {
     flex: 1;
     min-width: 120px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
     padding: 11px 12px;
     cursor: pointer;
-    background: #0e121a;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    background: var(--panel-2);
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   }
-  .choices label.sel { border-color: var(--accent); background: #141b2b; }
+  .choices label.sel { border-color: var(--accent); background: rgba(217, 119, 87, 0.07); box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.12); }
   .choices input { position: absolute; opacity: 0; pointer-events: none; }
-  .choices b { display: block; font-size: 14px; }
-  .choices em { display: block; font-style: normal; color: var(--muted); font-size: 12px; }
+  .choices b { display: block; font-size: 14px; color: var(--ink); }
+  .choices em { display: block; font-style: normal; color: var(--faint); font-size: 12px; }
   pre {
     margin: 0 0 14px;
     padding: 14px 16px;
-    background: #0e121a;
-    border: 1px solid var(--line);
-    border-radius: 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
     font-family: var(--mono);
     font-size: 13px;
-    color: #cdd6e6;
+    line-height: 1.6;
+    color: var(--ink);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
+    box-shadow: 0 4px 14px rgba(26, 23, 38, 0.04);
   }
-  pre .k { color: var(--accent); }
-  pre .s { color: var(--ok); }
+  pre code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
+  pre .k { color: var(--accent); font-weight: 600; }
+  pre .s { color: var(--human); }
   .badge {
     display: inline-flex;
     align-items: center;
     gap: 7px;
     font-size: 13px;
-    color: var(--ok);
-    border: 1px solid rgba(70, 211, 154, 0.35);
-    background: rgba(70, 211, 154, 0.08);
-    padding: 6px 11px;
+    font-weight: 600;
+    color: var(--agent);
+    border: 1px solid rgba(217, 119, 87, 0.32);
+    background: rgba(217, 119, 87, 0.08);
+    padding: 6px 12px;
     border-radius: 999px;
     margin: 0 0 14px;
   }
@@ -281,14 +346,15 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     gap: 10px;
     align-items: baseline;
     padding: 9px 12px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
     margin-bottom: 7px;
-    background: #0e121a;
+    background: var(--panel-2);
     font-size: 13px;
   }
-  .log code { font-family: var(--mono); color: var(--accent); }
-  .log .who { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .log code { font-family: var(--mono); color: var(--accent); background: transparent; padding: 0; }
+  .log .who { color: var(--faint); font-size: 11px; margin-left: auto; }
+  .inline-cmd { font-family: var(--mono); color: var(--accent); background: var(--code); }
   .anim-in { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
   @keyframes rise {
     from { opacity: 0; transform: translateY(10px); }
@@ -302,6 +368,18 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
 </head>
 <body>
   <main class="stage" role="application" aria-label="Pane tutorial">
+    <div class="brandbar">
+      <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+        <rect width="100" height="100" rx="22" fill="#D97757" />
+        <circle cx="62" cy="58" r="17" fill="#ffffff" />
+        <rect x="20" y="26" width="40" height="32" rx="10" fill="#D97757" />
+        <rect x="24" y="30" width="32" height="24" rx="7" fill="#ffffff" />
+        <circle cx="33.5" cy="42" r="3.4" fill="#D97757" />
+        <circle cx="46.5" cy="42" r="3.4" fill="#D97757" />
+      </svg>
+      <span class="name">Pane</span>
+      <span class="ttl">the 60-second tour</span>
+    </div>
     <div class="progress" aria-hidden="true">
       <i data-step="1"></i><i data-step="2"></i><i data-step="3"></i>
       <i data-step="4"></i><i data-step="5"></i><i data-step="6"></i>
@@ -310,9 +388,9 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
       <!-- Scene 1 — Hook -->
       <section class="scene" data-scene="1">
         <p class="kicker">A pane</p>
-        <h1>You're looking at a pane.</h1>
+        <h1>You're looking at a <span class="grad">pane</span>.</h1>
         <p class="lead">
-          An agent just handed you this UI — by URL, nothing installed. Whatever
+          An agent just handed you this UI by URL, nothing installed. Whatever
           you do here turns into structured data the agent reads back.
         </p>
         <p class="muted">Let's prove it in about a minute.</p>
@@ -331,7 +409,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
           <div class="node"><span class="ic">&#9638;</span>this page<small>the pane</small></div>
         </div>
         <p>
-          You ran <code>pane demo</code> &mdash; that command is acting as your
+          You ran <code>pane demo</code> and that command is acting as your
           agent right now. It's watching this session over a WebSocket.
         </p>
         <button class="cta" id="b-hello" type="button">Click me</button>
@@ -341,7 +419,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
       <section class="scene" data-scene="3">
         <div class="badge">&#10003; Your agent just received your click.</div>
         <h1>That landed in two places.</h1>
-        <p class="point">Look at your terminal — it printed the same event.</p>
+        <p class="point">Look at your terminal, it printed the same event.</p>
         <p>
           The click became a <code>demo.hello</code> event, streamed to the
           agent, which streamed a reply back to redraw this page. No polling, no
@@ -354,7 +432,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
       <!-- Scene 4 — Structured data -->
       <section class="scene" data-scene="4">
         <p class="kicker">Structured data</p>
-        <h1>Interactions aren't clicks — they're data.</h1>
+        <h1>Interactions aren't clicks, they're data.</h1>
         <label class="field">
           <span>Your name (optional)</span>
           <input type="text" id="f-name" autocomplete="off" maxlength="80"
@@ -376,7 +454,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
           <div class="badge" style="margin-top:16px">&#10003; Your agent received:</div>
           <pre id="echo-pre"></pre>
           <p class="muted">
-            That's the exact payload — typed and validated by the relay before
+            That's the exact payload, typed and validated by the relay before
             the agent ever saw it.
           </p>
         </div>
@@ -393,7 +471,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
         <ul class="log" id="log"></ul>
         <p class="muted">
           From your terminal that's just:
-          <code style="font-family:var(--mono);color:var(--accent)">pane show &lt;id&gt;</code>
+          <code class="inline-cmd">pane show &lt;id&gt;</code>
         </p>
       </section>
 
@@ -402,13 +480,13 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
         <p class="kicker">Your turn</p>
         <h1>That's the whole idea.</h1>
         <p>An agent hands a human a UI, gets structured data back. To build one:</p>
-        <pre><span class="k">pane</span> create \\
-  --template ./form.html --name "My form" \\
+        <pre><code><span class="k">pane</span> create \\
+  --template ./form.html --name <span class="s">"My form"</span> \\
   --event-schema ./schema.json
-<span class="k">pane</span> watch &lt;id&gt; --type form.submitted</pre>
+<span class="k">pane</span> watch &lt;id&gt; --type form.submitted</code></pre>
         <p>
           The full guide is in the skill:
-          <code style="font-family:var(--mono);color:var(--accent)">pane skill show</code>.
+          <code class="inline-cmd">pane skill show</code>.
         </p>
         <p class="muted">Now go hand one to a human.</p>
       </section>
