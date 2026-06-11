@@ -1685,6 +1685,11 @@ const SHELL_JS = `
     }
     // Scroll the active view back to the top so a re-activation feels fresh.
     document.querySelector('.main').scrollTop = 0;
+    // Explore previews are scaled from each card's real width, which is 0 while
+    // the view is hidden — rescale now that it's visible (the ResizeObserver
+    // also catches this, but this covers the no-RO fallback + avoids a frame of
+    // mis-scaled previews on first open).
+    if (view === 'explore') scaleExplorePreviews();
     // The Panes-tab tag-overflow layout needs a non-zero clientWidth to
     // measure chips, which it can't get while the tab is display:none. Re-run
     // the pass when we land on Panes so server-rendered chips pick up the
@@ -1717,6 +1722,38 @@ const SHELL_JS = `
     }
   });
   window.addEventListener('hashchange', () => activate(viewFromHash()));
+
+  // Explore gallery — scale each card's preview iframe from its real width.
+  // The iframe renders at a fixed 1000px logical viewport (so the pane reads
+  // like a shrunk desktop page, matching the favorites/recents thumbnails) and
+  // is scaled down to the card. The grid is fluid, so the factor = cardWidth /
+  // 1000; the 16:11 aspect keeps the logical height constant (688px, set in
+  // CSS). Recompute on element resize (a ResizeObserver also fires when the
+  // initially-hidden Explore view first gets a non-zero width).
+  function scaleExplorePreview(frame) {
+    const box = frame.parentElement; // .ec-prev
+    if (!box) return;
+    const w = box.clientWidth;
+    if (w > 0) frame.style.transform = 'scale(' + (w / 1000) + ')';
+  }
+  function scaleExplorePreviews() {
+    document
+      .querySelectorAll('#explore-list .tile-preview')
+      .forEach(scaleExplorePreview);
+  }
+  if (window.ResizeObserver) {
+    const exploreRO = new ResizeObserver((entries) => {
+      entries.forEach((e) => {
+        const frame = e.target.querySelector('.tile-preview');
+        if (frame) scaleExplorePreview(frame);
+      });
+    });
+    document
+      .querySelectorAll('#explore-list .ec-prev')
+      .forEach((el) => exploreRO.observe(el));
+  } else {
+    window.addEventListener('resize', scaleExplorePreviews);
+  }
 
   // Light haptic tap for touch interactions (bottom-bar nav, account menu,
   // sign-out). navigator.vibrate is Android/Chromium-only and a no-op

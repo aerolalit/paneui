@@ -1263,20 +1263,22 @@ export const OWNER_SHELL_CSS = `
    * The Explore tab is a visual gallery (not the dense .pane-row list): each
    * card is a full-bleed live thumbnail of the pane itself, with the title +
    * sharer overlaid on a gradient scrim and a live/ended pill in the corner.
-   * Fixed-width cards (248px) so the .tile-preview scale factor is exact and
-   * the same pane reads identically here and in its Home favorite/recents
-   * thumbnail; auto-fill packs as many columns as fit, left-aligned. */
+   * The grid is FLUID — cards stretch to fill the row (one column on a phone,
+   * more as the viewport widens) instead of fixed-width cards that leave dead
+   * space. Because the card width varies, the .tile-preview scale factor can't
+   * be a CSS constant; JS sets it per card from the real width (see
+   * scaleExplorePreviews in owner-shell-spa). The 16:11 aspect keeps the
+   * preview's logical HEIGHT constant (1000 * 11/16 ≈ 688px), so only the
+   * scale changes. */
   .explore-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, 248px);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
     gap: 18px;
-    justify-content: start;
   }
   .explore-grid .empty-strip { grid-column: 1 / -1; }
   .explore-card {
     position: relative;
     display: block;
-    width: 248px;
     aspect-ratio: 16 / 11;
     border-radius: var(--radius-card);
     overflow: hidden;
@@ -1291,11 +1293,11 @@ export const OWNER_SHELL_CSS = `
   .explore-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
   .explore-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .ec-prev { position: absolute; inset: 0; overflow: hidden; }
-  /* 1000px logical viewport scaled to the 248px card (matches the .tile-preview
-   * trick used by favorites/recents): 248/1000 = 0.248; the card is 170.5px
-   * tall (248 * 11/16), so the logical height is 170.5/0.248 ≈ 688px — the
-   * scaled iframe covers the whole card with no monogram strip showing. */
-  .explore-card .tile-preview { height: 688px; transform: scale(0.248); }
+  /* 1000px logical viewport (matches the favorites/recents .tile-preview trick)
+   * scaled to the card's real width by JS. The default scale (~260px min
+   * column) keeps first paint sensible before JS runs; the constant 688px
+   * height = 1000 * 11/16 so the scaled iframe always covers the 16:11 card. */
+  .explore-card .tile-preview { height: 688px; transform: scale(0.26); }
   .ec-corner { position: absolute; top: 8px; right: 8px; z-index: 2; }
   .ec-scrim {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
