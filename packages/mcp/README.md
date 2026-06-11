@@ -94,20 +94,61 @@ Config precedence mirrors the CLI: env vars win over the saved profile, which fa
 
 ## Tools
 
-MCP tools are request/response — there is no long-lived "watch". To receive a human's response you **poll** `get_events` with the cursor from the previous call (optionally with `wait_seconds` to long-poll). Each tool description spells out the pattern for the model.
+This server has **full parity with the [`pane` CLI](https://www.npmjs.com/package/@paneui/cli)** — every capability the CLI exposes is reachable here.
+
+MCP tools are request/response — there is no long-lived "watch". To receive a human's response you **poll** `get_events` with the cursor from the previous call (optionally with `wait_seconds` to long-poll); to watch a record collection, re-call `list_records` with the prior `since`. Each tool description spells out the pattern for the model.
+
+To keep the tool list compact (a flat 50+ tools would bloat client context and degrade selection), **hot-path nouns stay discrete tools** while **multi-verb management nouns collapse into one tool each with a required `action` enum**.
+
+### Hot-path (discrete) tools
 
 | Tool | What it does |
 | --- | --- |
-| `create_pane` | Create a pane from inline HTML (+ optional event/record schema). Returns `{ pane_id, url, expires_at }`. **Give `url` to the human.** |
+| `create_pane` | Create a pane — inline HTML (`name`+`html`) **or** reuse a saved template (`template_id`). Optional event/input/record schema, participants, tags, icon, callback, `context_key`. Returns `{ pane_id, url, urls, title, expires_at }`. **Give `url` to the human.** |
 | `get_pane_state` | Fetch a pane's metadata (status, title, expiry) without its event log. |
 | `get_events` | Poll the pane's append-only event log for what the human did. Pass `since` (cursor) and optional `wait_seconds` (long-poll). |
 | `send_to_pane` | Push an event into an open pane to update the live UI. |
-| `list_records` | List rows in a pane's mutable record collection (todos, line items, comments…). |
+| `update_pane` | Edit a live pane in place (ttl/title/preamble/input_data/metadata/tags/icon). |
+| `upgrade_pane` | Re-pin a live pane to another version of its template (swap HTML+schemas, same URL). |
+| `list_panes` | Enumerate your panes (filter by status/template_id; paginated). |
+| `delete_pane` | Close/delete a pane. |
+| `list_records` | List rows in a pane's mutable record collection (also the records poll/watch). |
+| `get_record` | Fetch one record row by key. |
 | `upsert_record` | Create/return a record row (dedups on `record_key`). |
 | `update_record` | Update a record row (optional `if_match` optimistic lock). |
 | `delete_record` | Soft-delete a record row (the page sees it live). |
 
+### Consolidated tools (one tool, required `action`)
+
+| Tool | Actions |
+| --- | --- |
+| `template` | `create` · `version` · `update` · `search` · `list` · `show` · `get_version` · `delete` · `publish` · `unpublish` · `search_public` · `set_icon` |
+| `template_records` | `list` · `get` · `upsert` · `update` · `delete` · `delete_collection` |
+| `participant` | `list` · `new` · `revoke` |
+| `share` | `list` · `invite` · `set_access` · `revoke` |
+| `attachments` | `upload` · `download` · `show` · `list` · `delete` · `mint_token` · `revoke_token` · `list_tokens` |
+| `taste` | `get` · `set` · `clear` |
+| `key` | `list` · `revoke` |
+| `trash` | `list` · `restore` · `restore_template` · `purge` · `purge_template` |
+| `feedback` | `create` · `list` |
+| `agent` | `whoami` · `claim` · `logout` |
+
+### Single-purpose tools
+
+| Tool | What it does |
+| --- | --- |
+| `run_query` | Read-only SQL over your scoped panes/records/events (`format`: json/csv/tsv/table). |
+| `get_skill` | Fetch the relay's auto-updating `SKILL.md` (unauthenticated) to self-teach the workflow. |
+
+**Attachments** take/return file paths: `upload` reads an absolute `file_path`; `download` writes to an absolute `out_path` (or returns base64 when omitted).
+
 **Events vs records.** Events are an append-only journal — forms, approvals, surveys, pickers. Records are a mutable collection where the current state matters more than the edit history — todo lists, kanban boards, comment threads. Reach for records when the page shows several mutable items.
+
+### Not exposed (and why)
+
+- The CLI's `config show` is replaced by `agent`→`whoami` (resolved relay URL + active profile + whether a key is set; no secrets).
+- `agent register` isn't a tool — the server auto-registers on first use and shares the CLI's key store; `agent`→`claim` binds it to a human afterward.
+- `demo` (the interactive 60-second terminal tour) and the CLI self-updater are terminal/CLI concerns with no agent use; omitted.
 
 ## Typical flow
 
