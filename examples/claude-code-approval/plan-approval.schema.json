@@ -1,0 +1,15 @@
+{
+  "events": {
+    "plan.decided": {
+      "emittedBy": ["page"],
+      "payload": {
+        "type": "object",
+        "properties": {
+          "decision": { "type": "string", "enum": ["approve", "reject"] },
+          "reason": { "type": "string", "maxLength": 2000 }
+        },
+        "required": ["decision"]
+      }
+    }
+  }
+}

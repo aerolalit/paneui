@@ -1,0 +1,166 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Deploy gate</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font:
+      15px/1.5 system-ui,
+      sans-serif;
+    margin: 0;
+    padding: 24px;
+    max-width: 680px;
+  }
+  h1 {
+    font-size: 1.2rem;
+    margin: 0 0 4px;
+  }
+  .meta {
+    color: #666;
+    margin: 0 0 16px;
+  }
+  code {
+    font-family: ui-monospace, monospace;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    margin: 0 0 12px;
+  }
+  dt {
+    color: #666;
+  }
+  dd {
+    margin: 0;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 60px;
+    margin: 12px 0;
+    font: inherit;
+    padding: 8px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    font: inherit;
+    padding: 9px 18px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+  }
+  #approve {
+    background: #16794e;
+    color: #fff;
+    border-color: #16794e;
+  }
+  #reject {
+    background: #fff;
+    color: #b42318;
+    border-color: #b42318;
+  }
+  #status {
+    margin-top: 14px;
+    font-weight: 600;
+  }
+  #reason-wrap {
+    display: none;
+  }
+</style>
+
+<h1 id="title">Approve deploy?</h1>
+<p class="meta" id="meta"></p>
+
+<dl id="details"></dl>
+
+<div id="reason-wrap">
+  <label for="reason">Reason (required to reject):</label>
+  <textarea
+    id="reason"
+    placeholder="Why are you rejecting this deploy?"
+  ></textarea>
+</div>
+
+<div class="row">
+  <button type="button" id="approve">Approve deploy</button>
+  <button type="button" id="reject">Reject</button>
+</div>
+
+<p id="status"></p>
+
+<script>
+  let rejecting = false;
+
+  (async () => {
+    await window.pane.ready;
+    const d = window.pane.inputData || {};
+    document.getElementById("title").textContent =
+      `Deploy ${d.environment || "?"}?`;
+    document.getElementById("meta").textContent = d.repo
+      ? `${d.repo} · run #${d.run_id || "?"}`
+      : "";
+    const dl = document.getElementById("details");
+    const rows = [
+      ["Environment", d.environment],
+      ["Commit", d.sha],
+      ["Branch", d.ref],
+      ["Triggered by", d.actor],
+    ];
+    for (const [label, value] of rows) {
+      if (!value) continue;
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      dl.append(dt, dd);
+    }
+  })();
+
+  async function send(decision, reason) {
+    document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    document.getElementById("status").textContent = "Sending…";
+    try {
+      await window.pane.emit(
+        "deploy.decided",
+        reason ? { decision, reason } : { decision },
+      );
+      document.getElementById("status").textContent =
+        decision === "approve"
+          ? "Approved — the pipeline is continuing."
+          : "Rejected — the pipeline will stop.";
+    } catch (e) {
+      document.getElementById("status").textContent =
+        "Failed: " + (e.code || e.message);
+      document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }
+  }
+
+  document
+    .getElementById("approve")
+    .addEventListener("click", () => send("approve"));
+
+  // Reject requires a reason: first click reveals the field, second click sends.
+  document.getElementById("reject").addEventListener("click", () => {
+    const wrap = document.getElementById("reason-wrap");
+    const reason = document.getElementById("reason").value.trim();
+    if (!rejecting) {
+      rejecting = true;
+      wrap.style.display = "block";
+      document.getElementById("reason").focus();
+      return;
+    }
+    if (!reason) {
+      document.getElementById("status").textContent =
+        "A reason is required to reject.";
+      return;
+    }
+    send("reject", reason);
+  });
+</script>

@@ -1,0 +1,116 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Release approval</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font:
+      15px/1.5 system-ui,
+      sans-serif;
+    margin: 0;
+    padding: 24px;
+    max-width: 640px;
+  }
+  h1 {
+    font-size: 1.2rem;
+    margin: 0 0 12px;
+  }
+  code {
+    font-family: ui-monospace, monospace;
+  }
+  ul {
+    padding-left: 20px;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 60px;
+    margin: 12px 0;
+    font: inherit;
+    padding: 8px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    font: inherit;
+    padding: 9px 18px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+  }
+  #approve {
+    background: #16794e;
+    color: #fff;
+    border-color: #16794e;
+  }
+  #reject {
+    background: #fff;
+    color: #b42318;
+    border-color: #b42318;
+  }
+  #status {
+    margin-top: 14px;
+    font-weight: 600;
+  }
+</style>
+
+<h1>Ship this release?</h1>
+<p><strong id="service"></strong> <code id="version"></code></p>
+<ul id="changes"></ul>
+
+<textarea
+  id="reason"
+  placeholder="Optional reason (sent back to the bot)"
+></textarea>
+
+<div class="row">
+  <button type="button" id="approve">Approve &amp; ship</button>
+  <button type="button" id="reject">Reject</button>
+</div>
+
+<p id="status"></p>
+
+<script>
+  (async () => {
+    await window.pane.ready;
+    const d = window.pane.inputData || {};
+    document.getElementById("service").textContent = d.service || "release";
+    document.getElementById("version").textContent = d.version || "";
+    const ul = document.getElementById("changes");
+    for (const change of d.changes || []) {
+      const li = document.createElement("li");
+      li.textContent = change;
+      ul.appendChild(li);
+    }
+  })();
+
+  async function decide(decision) {
+    const reason = document.getElementById("reason").value.trim();
+    document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    document.getElementById("status").textContent = "Sending…";
+    try {
+      await window.pane.emit(
+        "release.decided",
+        reason ? { decision, reason } : { decision },
+      );
+      document.getElementById("status").textContent =
+        "Decision sent — you can close this tab.";
+    } catch (e) {
+      document.getElementById("status").textContent =
+        "Failed: " + (e.code || e.message);
+      document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    }
+  }
+
+  document
+    .getElementById("approve")
+    .addEventListener("click", () => decide("approve"));
+  document
+    .getElementById("reject")
+    .addEventListener("click", () => decide("reject"));
+</script>

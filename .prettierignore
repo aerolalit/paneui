@@ -26,3 +26,8 @@ SECURITY.md
 docs/
 skills/
 site/
+
+# examples — shell scripts and dotfiles prettier can't parse; the .ts/.html/
+# .json/.yml in here are still formatted and checked
+examples/**/*.sh
+examples/**/.gitignore
