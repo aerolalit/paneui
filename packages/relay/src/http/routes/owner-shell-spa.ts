@@ -613,7 +613,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
   const publicPanesCount = data.publicPanes.length;
   const publicPanesHtml =
     publicPanesCount === 0
-      ? `<li class="empty-strip">No public panes yet. Mark one of <a data-go="panes" style="color:var(--accent);cursor:pointer;">your panes</a> public to share it here.</li>`
+      ? `<div class="empty-strip">No public panes yet. Mark one of <a data-go="panes" style="color:var(--accent);cursor:pointer;">your panes</a> public to share it here.</div>`
       : data.publicPanes.map((p) => publicPaneRow(p)).join("");
 
   return `<!doctype html>
@@ -773,7 +773,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
         <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg></span>
         <input id="explore-search" placeholder="Search public panes…" autocomplete="off" />
       </div>
-      <ul class="panes-list" id="explore-list">${publicPanesHtml}</ul>
+      <div class="explore-grid" id="explore-list">${publicPanesHtml}</div>
     </section>
 
     <!-- Templates — your library and the public store under one view, switched
@@ -1208,33 +1208,45 @@ function paneRow(p: PaneRef): string {
   </li>`;
 }
 
-// Explore-view row for a public pane. Reuses the .pane-row component but:
-//  - opens /p/:id (the public read-only viewer) — works for ANY viewer,
-//    unlike /panes/:id which 404s for non-owners;
-//  - drops the favorite/share/menu controls (they mutate the viewer's own
-//    library/sharing, meaningless for someone else's pane), so the grid is a
-//    simpler icon + info + status (overridden inline);
-//  - never links the owner-gated icon image — emoji or gradient monogram only.
+// Explore-view CARD for a public pane. Unlike the dense .pane-row list, the
+// Explore tab is a visual gallery: each card renders a live, scaled-down
+// thumbnail of the pane ITSELF (a lazy sandboxed <iframe> over /p/:id/preview)
+// with the title + sharer overlaid on a gradient scrim, so you browse by sight.
+//  - the card is an <a href="/p/:id"> → native nav to the public read-only
+//    viewer, which works for ANY viewer (unlike /panes/:id, owner-only);
+//  - the preview iframe always layers over the gradient monogram (the monogram
+//    is the fallback while the iframe lazy-loads / for an empty artifact) — we
+//    deliberately don't branch on iconEmoji here: the point is the rendered
+//    pane, not its icon;
+//  - no favorite/share/menu controls (they mutate the viewer's own library,
+//    meaningless for someone else's pane).
 function publicPaneRow(p: PublicPaneRef): string {
   const tplName = p.templateName ?? p.title ?? "Untitled template";
-  const inner = iconTileInner({
-    emoji: p.iconEmoji,
-    seedId: p.id,
-    label: tplName,
-  });
+  // Monogram fallback — same gradient formula as iconTileInner(), inlined
+  // because the gallery preview must show regardless of whether the pane has
+  // an emoji icon (iconTileInner would short-circuit to the emoji and skip the
+  // iframe). Kept in lockstep with iconTileInner deliberately.
+  const hue = paneHue(p.id);
+  const initials = paneInitials(tplName);
+  const monogramStyle = `background:linear-gradient(135deg, hsl(${hue}, 80%, 70%) 0%, hsl(${(hue + 30) % 360}, 75%, 60%) 100%);`;
   const rel = relativeDate(p.createdAt);
   const viewers = p.viewerCount === 1 ? "1 viewer" : `${p.viewerCount} viewers`;
   const meta = `by ${escapeHtml(p.sharedBy)} · ${escapeHtml(viewers)} · ${escapeHtml(rel)}`;
-  const statusCls = p.isLive ? "live" : "closed";
-  const statusText = p.isLive ? "live" : "ended";
-  return `<li class="pane-row public" data-pane-id="${escapeHtml(p.id)}" data-href="/p/${encodeURIComponent(p.id)}" style="grid-template-columns:44px 1fr auto;">
-    <div class="icon">${inner}</div>
-    <div class="info">
-      <div class="title">${escapeHtml(p.title)}</div>
-      <div class="meta">${meta}</div>
+  const statusCls = p.isLive ? "live" : "ended";
+  const livePill = p.isLive
+    ? `<span class="ec-pill live"><span class="ec-dot"></span>live</span>`
+    : `<span class="ec-pill ended">ended</span>`;
+  return `<a class="explore-card" data-pane-id="${escapeHtml(p.id)}" href="/p/${encodeURIComponent(p.id)}" data-status="${statusCls}">
+    <div class="ec-prev">
+      <span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>
+      <iframe class="tile-preview" src="/p/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
     </div>
-    <div class="status ${statusCls}">${escapeHtml(statusText)}</div>
-  </li>`;
+    <div class="ec-corner">${livePill}</div>
+    <div class="ec-scrim">
+      <div class="ec-title">${escapeHtml(p.title)}</div>
+      <div class="ec-meta">${meta}</div>
+    </div>
+  </a>`;
 }
 
 // ----- helpers -----
@@ -2353,7 +2365,7 @@ const SHELL_JS = `
   // the active segment's panel is visible, so filtering the hidden one is a
   // harmless no-op and the box keeps working across a segment switch.
   bindSearch('templates-search', ['#apps-mine .app-tile-wrap', '#apps-installed .app-tile-wrap', '#apps-discover .app-tile-wrap']);
-  bindSearch('explore-search', ['#explore-list .pane-row']);
+  bindSearch('explore-search', ['#explore-list .explore-card']);
   // Panes tab — combined search + tag-chip filter. A row shows iff it matches
   // the search text AND every selected chip (AND semantics). "All" clears the
   // chip selection; "__fav__" is the reserved Favorites pseudo-tag.
