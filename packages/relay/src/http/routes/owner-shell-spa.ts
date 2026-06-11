@@ -1777,7 +1777,28 @@ const SHELL_JS = `
       frame.setAttribute('src', frame.dataset.src);
     }
   };
-  if (window.IntersectionObserver) {
+  // iOS / touch devices: do NOT mount live preview iframes at all. iOS WebKit
+  // keeps every iframe's document in ONE memory-capped content process, so a
+  // gallery of live pane-preview iframes blows the per-tab ceiling and the tab
+  // is killed ("A problem repeatedly occurred" / Aw Snap) — reproducible only
+  // on-device (iPhone), never in desktop Chrome which gives each iframe its own
+  // budget with far more headroom. The gradient monogram already sits behind
+  // every preview, so skipping the iframe just leaves a clean monogram tile.
+  // Detect iOS by UA (covers iPadOS-as-Mac via maxTouchPoints) plus any
+  // primary-touch device (hover:none + pointer:coarse) as a broader backstop.
+  const ua = navigator.userAgent || '';
+  const isIOS =
+    /iP(hone|od|ad)/.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isPrimaryTouch = !!(
+    window.matchMedia &&
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches
+  );
+  const liveIframePreviews = !(isIOS || isPrimaryTouch);
+  if (!liveIframePreviews) {
+    // Leave every preview as its monogram — never create an iframe document.
+    observePreview = () => {};
+  } else if (window.IntersectionObserver) {
     const liveFrames = new Set();
     const mountPreview = (frame) => {
       if (!frame) return;

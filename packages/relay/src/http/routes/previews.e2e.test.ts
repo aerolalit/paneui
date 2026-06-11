@@ -459,6 +459,13 @@ describe("owner-shell SPA — tile-preview iframe placement", () => {
     expect(html).not.toContain(`data-src="/templates/${emojiId}/preview"`);
     expect(html).not.toContain(`data-src="/templates/${imgId}/preview"`);
 
+    // iOS/touch gate: the client script must keep the switch that skips
+    // mounting preview iframes on iOS WebKit (one memory-capped content
+    // process → a gallery of live preview iframes crashes the tab on-device).
+    // Removing this regresses the iPhone crash.
+    expect(html).toContain("liveIframePreviews");
+    expect(html).toContain("(hover: none) and (pointer: coarse)");
+
     // The 44px pane-row keeps the monogram (no iframe in the row). The row's
     // icon is a .tile-monogram with no adjacent tile-preview iframe — assert the
     // monogram is still emitted for the pane.
