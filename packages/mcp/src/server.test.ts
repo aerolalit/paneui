@@ -41,7 +41,7 @@ describe("MCP handshake", () => {
     expect(names).toContain("run_query");
     expect(names).toContain("update_pane");
     expect(names).toContain("get_skill");
-    expect(names).toHaveLength(25);
+    expect(names).toHaveLength(26);
     // Each advertised tool carries a description + JSON-schema inputSchema the
     // host shows to the model.
     for (const t of tools) {
