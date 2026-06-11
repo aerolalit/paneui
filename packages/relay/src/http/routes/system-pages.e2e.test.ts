@@ -537,12 +537,13 @@ describe("Owner-shell SPA at /home", () => {
       new Request("http://t/home", withCookie(cookie)),
     );
     const html = await res.text();
-    // The public pane (owned by a different human) appears, attributed to its
-    // sharer, and links the read-only /p/:id viewer — not the owner-gated
-    // /panes/:id path.
+    // The public pane (owned by a different human) appears as a gallery card,
+    // attributed to its sharer, and links the read-only /p/:id viewer — not the
+    // owner-gated /panes/:id path.
     expect(html).toContain("Community Retro Board");
     expect(html).toContain("by Mallory");
-    expect(html).toContain('data-href="/p/');
+    expect(html).toContain('class="explore-card"');
+    expect(html).toContain('href="/p/');
     // Non-public panes never leak into the gallery.
     expect(html).not.toContain("Unlisted Link Pane");
     expect(html).not.toContain("Invite Only Pane");
