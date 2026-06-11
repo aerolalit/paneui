@@ -588,11 +588,11 @@ export const OWNER_SHELL_CSS = `
      itself with the title + last-viewed overlaid on a gradient scrim, the same
      shape as the Explore gallery card. Unlike Explore's fixed-width cards, the
      recents grid is fluid (minmax 1fr), so the preview can't use a fixed scale
-     factor; container-type makes the card a query container and the preview
-     scales by 100cqw/1000 to fill whatever width the card lands at — a pane
-     reads identically here and in Explore. */
+     factor. scale() needs a unitless number (a length like 100cqw/1000 is
+     invalid and silently dropped, which leaves the 1000px preview unscaled —
+     a zoomed-in crop), so the card width is measured in JS and fed in as the
+     --rc-scale number; see the ResizeObserver in owner-shell-spa.ts. */
   .recent-card {
-    container-type: inline-size;
     position: relative;
     display: block;
     aspect-ratio: 16 / 11;
@@ -1263,15 +1263,16 @@ export const OWNER_SHELL_CSS = `
     height: 1000px;
     transform: scale(0.064);
   }
-  /* Recents — fluid-width gallery card (aspect 16/11), so the scale factor is
-   * driven by the card's own width via container query units instead of a
-   * fixed number: 100cqw/1000 maps the 1000px logical viewport onto the card.
-   * The card is 11/16 as tall as it is wide, so the logical height is
-   * 1000 * 11/16 = 688px — the scaled iframe covers the whole card edge to
-   * edge with no monogram strip showing, at any column width. */
+  /* Recents — fluid-width gallery card (aspect 16/11). The 1000px logical
+   * viewport renders the pane's DESKTOP layout; --rc-scale (= card width / 1000,
+   * set per card by the ResizeObserver in owner-shell-spa.ts) shrinks the whole
+   * page to fit the column instead of showing a zoomed-in crop. The card is
+   * 11/16 as tall as it is wide, so the logical height is 1000 * 11/16 = 688px —
+   * the scaled iframe covers the whole card edge to edge at any column width.
+   * The default keeps a sane scale for the frame before the observer fires. */
   .recent-card .tile-preview {
     height: 688px;
-    transform: scale(calc(100cqw / 1000));
+    transform: scale(var(--rc-scale, 0.16));
   }
 
   /* ============== Explore gallery cards ==============
