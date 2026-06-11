@@ -137,13 +137,32 @@ pane watch <pane-id> --type hello
 
 ## Distribution
 
-The repo is an npm-workspaces monorepo with three packages:
+The repo is an npm-workspaces monorepo with four packages:
 
 - **`@paneui/core`** — the relay client: a pure, framework-free HTTP + WebSocket library (`PaneClient` + `openStream`). Build any client on it.
 - **`@paneui/relay`** — the relay server. Use the hosted instance, or self-host it as a single Docker container (SQLite by default) — see [Self-hosting](#self-hosting).
 - **`@paneui/cli`** — the `pane` command-line tool. The agent's entry point: emits JSON on stdout, so it's harness-agnostic — works for an MCP host, a cron agent, a shell pipeline, a CI job, or a process supervisor. `pane watch <id> --type <event>` streams a pane as JSON-lines and exits when the awaited event lands. A LangChain tool wrapper may come later.
+- **`@paneui/mcp`** — a thin stdio [MCP](https://modelcontextprotocol.io) server (binary `pane-mcp`). Point Claude Desktop, Cursor, or any MCP client at `npx @paneui/mcp` and Pane shows up as tools — `create_pane`, `get_events`, `send_to_pane`, and the record tools. See the [package README](packages/mcp/README.md) for client config snippets.
 
 The CLI is `pane <command> [options]` — `create`, `show`, `send`, `watch`, `list`, `delete`, and `participant` operate on a pane; `template`, `attachment`, `records`, `query`, `taste`, `feedback`, `key`, `agent`, `config`, and `skill` are the other command groups. Run `pane --help` for the full list.
+
+### Use from an MCP client
+
+Add Pane to any MCP host (Claude Desktop, Cursor, …) — no global install needed:
+
+```json
+{
+  "mcpServers": {
+    "pane": {
+      "command": "npx",
+      "args": ["-y", "@paneui/mcp"],
+      "env": { "PANE_API_KEY": "pane_..." }
+    }
+  }
+}
+```
+
+Omit `env` to let the server auto-register an agent on first use. Full setup, the tool list, and the poll-for-events pattern are in the [`@paneui/mcp` README](packages/mcp/README.md).
 
 ## Stack
 

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.aerolalit/pane",
+  "title": "Pane",
+  "description": "Hand a human a rich interactive UI by URL and get structured data back — forms, approvals, pickers, dashboards, diff review — from any MCP client.",
+  "version": "0.0.18",
+  "repository": {
+    "url": "https://github.com/aerolalit/paneui",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@paneui/mcp",
+      "version": "0.0.18",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PANE_API_KEY",
+          "description": "Pane agent API key. If unset, the server auto-registers a fresh agent against the relay on first use and saves the key to the shared CLI store (~/.config/pane/config.json).",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "PANE_URL",
+          "description": "Pane relay base URL. Defaults to the hosted relay https://relay.paneui.com; set this to point at a self-hosted relay.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "PANE_AGENT_NAME",
+          "description": "Display name for the auto-registered agent on the relay.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "PANE_REGISTER_SECRET",
+          "description": "Registration secret, required only for relays running REGISTRATION_MODE=secret.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
