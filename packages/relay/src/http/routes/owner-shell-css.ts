@@ -717,12 +717,12 @@ export const OWNER_SHELL_CSS = `
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
-    /* icon | info | visibility | star | menu — five cells. Keep this column
-       count in sync with paneRow()'s children: a missing track pushes the last
-       action (the ⋯ menu) onto an implicit second row. (Share was dropped from
-       the row — it lives in the pane shell's top bar now, which frees width
-       for the title.) */
-    grid-template-columns: 44px 1fr auto auto auto;
+    /* icon | info | actions — three cells. The three trailing controls
+       (visibility, star, ⋯ menu) live together in one .row-actions flex cell so
+       they cluster tightly instead of each sitting a full 14px grid gap apart —
+       on mobile every px of that whitespace is title width. (Share was dropped
+       from the row — it lives in the pane shell's top bar now.) */
+    grid-template-columns: 44px 1fr auto;
     gap: 14px;
     align-items: center;
     cursor: pointer;
@@ -767,6 +767,12 @@ export const OWNER_SHELL_CSS = `
     content: ''; display: inline-block; width: 6px; height: 6px;
     border-radius: 999px; background: currentColor; margin-right: 5px;
     vertical-align: middle;
+  }
+  /* The trailing controls cluster — visibility icon, star, ⋯ menu — packed
+     tight (2px) rather than spread across grid gaps, so the title keeps the
+     width. Buttons still carry their own 40px hit targets internally. */
+  .pane-row .row-actions {
+    display: flex; align-items: center; gap: 2px;
   }
   /* Visibility icon cell on a pane row (lock / link / globe). Muted so it
      reads as metadata, not an action; the title attr names the access mode. */
