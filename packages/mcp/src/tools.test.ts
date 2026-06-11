@@ -44,6 +44,7 @@ const EXPECTED_TOOLS = [
   "upsert_record",
   "update_record",
   "delete_record",
+  "delete_record_collection",
   // consolidated management
   "template",
   "template_records",
@@ -487,6 +488,48 @@ describe("pane lifecycle tools", () => {
       },
     );
     expect(JSON.parse(all.content[0]!.text).records).toHaveLength(2);
+  });
+
+  it("delete_record_collection requires confirm:true", () => {
+    const schema = z.object(
+      tool("delete_record_collection").inputSchema as Record<
+        string,
+        z.ZodTypeAny
+      >,
+    );
+    // confirm is required and must be literally true.
+    expect(schema.safeParse({ pane_id: "p", collection: "c" }).success).toBe(
+      false,
+    );
+    expect(
+      schema.safeParse({ pane_id: "p", collection: "c", confirm: false })
+        .success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ pane_id: "p", collection: "c", confirm: true })
+        .success,
+    ).toBe(true);
+  });
+
+  it("delete_record_collection blocks the drop without confirm:true", async () => {
+    const deleteRecordCollection = vi.fn().mockResolvedValue(undefined);
+    const blocked = await tool("delete_record_collection").handler(
+      fakeClient({ deleteRecordCollection }),
+      { pane_id: "p", collection: "c" },
+    );
+    expect(blocked.isError).toBe(true);
+    expect(deleteRecordCollection).not.toHaveBeenCalled();
+  });
+
+  it("delete_record_collection drops the collection via core with confirm:true", async () => {
+    const deleteRecordCollection = vi.fn().mockResolvedValue(undefined);
+    const res = await tool("delete_record_collection").handler(
+      fakeClient({ deleteRecordCollection }),
+      { pane_id: "p", collection: "c", confirm: true },
+    );
+    expect(deleteRecordCollection).toHaveBeenCalledWith("p", "c");
+    const body = JSON.parse(res.content[0]!.text);
+    expect(body).toMatchObject({ deleted: true, collection: "c" });
   });
 });
 

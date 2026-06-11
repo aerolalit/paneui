@@ -117,6 +117,7 @@ To keep the tool list compact (a flat 50+ tools would bloat client context and d
 | `upsert_record` | Create/return a record row (dedups on `record_key`). |
 | `update_record` | Update a record row (optional `if_match` optimistic lock). |
 | `delete_record` | Soft-delete a record row (the page sees it live). |
+| `delete_record_collection` | Drop a whole record collection (all rows + the collection row). Destructive, owner-only, requires `confirm: true`. |
 
 ### Consolidated tools (one tool, required `action`)
 

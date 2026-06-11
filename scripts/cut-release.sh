@@ -143,6 +143,21 @@ sed -i.bak "s/export const VERSION = \".*\";/export const VERSION = \"$VERSION\"
 rm "${VERSION_TS}.bak"
 echo "  $VERSION_TS (VERSION constant)"
 
+# Runtime VERSION constant — reported in the MCP server's serverInfo
+# (and seen by an MCP client's `initialize`).
+MCP_VERSION_TS="packages/mcp/src/version.ts"
+sed -i.bak "s/export const VERSION = \".*\";/export const VERSION = \"$VERSION\";/" "$MCP_VERSION_TS"
+rm "${MCP_VERSION_TS}.bak"
+echo "  $MCP_VERSION_TS (VERSION constant)"
+
+# MCP registry manifest — both the top-level `version` and the npm
+# package's `version` must match the published @paneui/mcp version, or
+# the registry rejects the submission as inconsistent with npm.
+MCP_SERVER_JSON="packages/mcp/server.json"
+tmp=$(mktemp)
+jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' "$MCP_SERVER_JSON" > "$tmp" && mv "$tmp" "$MCP_SERVER_JSON"
+echo "  $MCP_SERVER_JSON (version + packages[].version)"
+
 # Skill version comment — the `<!-- pane skill vX.Y.Z -->` line in SKILL.md.
 # Kept in lockstep with the package version (see the "Keeping this skill up
 # to date" section of SKILL.md). The relay reads this comment at boot and
@@ -182,14 +197,17 @@ echo "→ committing release-prep"
 git add package.json package-lock.json \
   packages/cli/package.json packages/cli/src/version.ts \
   packages/core/package.json \
-  packages/mcp/package.json \
+  packages/mcp/package.json packages/mcp/src/version.ts packages/mcp/server.json \
   packages/relay/package.json \
   skills/pane/SKILL.md
 git commit -q -m "chore(release): v${VERSION}
 
 Bump @paneui/core, @paneui/cli, @paneui/mcp, @paneui/relay and root to
 ${VERSION}.
-Bump VERSION constant in packages/cli/src/version.ts to match.
+Bump VERSION constant in packages/cli/src/version.ts and
+packages/mcp/src/version.ts to match, plus the version + packages[].version
+in packages/mcp/server.json so the MCP registry manifest matches the
+published npm version.
 Bump internal @paneui/core dependency in @paneui/cli, @paneui/mcp and
 @paneui/relay to ^${VERSION} so workspace linking finds the local copy
 at build time.
