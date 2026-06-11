@@ -12,6 +12,18 @@
 
 ## Quickstart
 
+Fastest path — register once, then one command. `pane demo` spins up a
+short-lived sample pane on the hosted relay, opens it in your browser, and
+prints the structured event back in your terminal the moment you interact
+(it cleans the pane up on exit):
+
+```sh
+npx @paneui/cli agent register --name "my-agent"   # one-time, hosted relay
+npx @paneui/cli demo                               # Node 20+ — round-trip in ~60s
+```
+
+Prefer to wire it up yourself:
+
 ```sh
 npm i -g @paneui/cli                       # Node 20+
 pane agent register --name "my-agent"      # one-time, uses the hosted relay
