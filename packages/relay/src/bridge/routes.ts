@@ -1020,7 +1020,14 @@ function shareModalScript(
 </script>`;
 }
 
-export function renderShell(args: ShellArgs): string {
+// The pane-viewer body fragment — the header/top-nav chrome, the optional
+// agent preamble, the iframe (or the "closed" placeholder), the share modal,
+// and the cfg + SHELL_JS boot. Split out of renderShell() so the same viewer
+// can be mounted standalone (the document wrapper below, for /s/:token and the
+// not-signed-in /panes/:id) or, in future, inline inside the owner /home SPA.
+// renderShell() wraps this in the full HTML document; the two are byte-for-byte
+// the document this function used to return on its own.
+export function renderPaneViewer(args: ShellArgs): string {
   const cfg = {
     paneId: args.paneId,
     schema: args.schema,
@@ -1041,6 +1048,97 @@ export function renderShell(args: ShellArgs): string {
   // neutralise it the same way we'd neutralise any HTML text node: escape `<`.
   // (JSON.stringify already emits valid JSON; we just close the one breakout.)
   const cfgJson = JSON.stringify(cfg).replace(/</g, "\\u003c");
+  return `${renderTopNav(args)}${
+    args.topNav
+      ? // Top-nav mode already carries the brand + presence pills inline,
+        // so we skip the standalone dark `<header>` block — otherwise the
+        // shell shows three header rows (brand, presence, tabs) for one
+        // page's worth of context.
+        ""
+      : // Standalone header — runs on /s/<token> (anonymous capability-link
+        // mount) and on /p/:paneId when not signed in. Both audiences see the
+        // landing page at /, not the owner's /home (which is logged-in-only).
+        // The owner's mount renders the top-nav variant above with /home.
+        `<header>
+  <a class="brand" href="/" aria-label="pane home">
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
+    <span class="brand-name">Pane</span>
+  </a>
+  <span class="spacer"></span>
+  <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+      <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
+      <line x1="8" y1="12" x2="16" y2="12"/>
+    </svg>
+    <span id="dot" class="dot"></span>
+    <span id="status" class="info">connecting...</span>
+  </span>
+  <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="4" y="9" width="16" height="11" rx="2.5"/>
+      <path d="M12 9V5"/>
+      <circle cx="12" cy="3.5" r="1.6"/>
+      <line x1="9" y1="14" x2="9" y2="14.5"/>
+      <line x1="15" y1="14" x2="15" y2="14.5"/>
+    </svg>
+    <span id="agent-dot" class="dot"></span>
+    <span id="agent-status" class="info">${args.isClosed ? "pane closed" : "no agent yet"}</span>
+  </span>
+</header>`
+  }
+${
+  args.preamble
+    ? `<div class="preamble" role="note">
+  <svg class="preamble-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+  </svg>
+  <span class="preamble-text">${htmlEscape(args.preamble)}</span>
+</div>`
+    : ""
+}${
+    args.isClosed
+      ? `<div class="closed">This pane is closed. It cannot accept new events.</div>`
+      : // `allow-downloads` is required for `<a download href="attachment:...">` to
+        // actually fire on Chromium-based browsers (especially mobile Chrome),
+        // which silently drops the navigation otherwise. Without it, an template
+        // that delivers a non-image file (PDF, CSV, archive) the human is meant
+        // to save has no working code path — the file can be fetched via
+        // window.pane.downloadBlob() but never reaches the disk.
+        //
+        // `allow-top-navigation-by-user-activation` lets a template link out
+        // (e.g. `<a target="_top" href="/s/...">` — a demo index linking to the
+        // other demo panes) by navigating the WHOLE tab on a real user click.
+        // Chosen over `allow-popups`: the destination loads as a normal
+        // top-level document (so a linked pane actually works, vs. a popup that
+        // would stay sandboxed and broken), it's gated on user activation (no
+        // silent/background redirects), and it opens no new windows.
+        // `allow-popups` and `allow-same-origin` remain omitted, so the framed
+        // document itself still runs at an opaque origin and can't spawn windows.
+        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
+  }${args.topNav?.canShare ? `\n${renderShareModal()}` : ""}
+<script type="application/json" id="pane-cfg">${cfgJson}</script>
+<script nonce="${args.nonce}">${SHELL_JS}</script>${
+    args.topNav
+      ? `
+<script nonce="${args.nonce}">
+  document.getElementById("top-nav-signout")?.addEventListener("click", async () => {
+    try { await fetch("/v1/auth/logout", { method: "POST", credentials: "same-origin" }); } catch {}
+    location.href = "/login";
+  });
+</script>`
+      : ""
+  }${
+    args.topNav?.canShare
+      ? `\n${shareModalScript(args.paneId, args.title, args.nonce)}`
+      : ""
+  }`;
+}
+
+export function renderShell(args: ShellArgs): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1310,94 +1408,7 @@ export function renderShell(args: ShellArgs): string {
 </style>
 </head>
 <body>
-${renderTopNav(args)}${
-    args.topNav
-      ? // Top-nav mode already carries the brand + presence pills inline,
-        // so we skip the standalone dark `<header>` block — otherwise the
-        // shell shows three header rows (brand, presence, tabs) for one
-        // page's worth of context.
-        ""
-      : // Standalone header — runs on /s/<token> (anonymous capability-link
-        // mount) and on /p/:paneId when not signed in. Both audiences see the
-        // landing page at /, not the owner's /home (which is logged-in-only).
-        // The owner's mount renders the top-nav variant above with /home.
-        `<header>
-  <a class="brand" href="/" aria-label="pane home">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
-    <span class="brand-name">Pane</span>
-  </a>
-  <span class="spacer"></span>
-  <span class="pill">
-    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-      <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
-      <line x1="8" y1="12" x2="16" y2="12"/>
-    </svg>
-    <span id="dot" class="dot"></span>
-    <span id="status" class="info">connecting...</span>
-  </span>
-  <span class="pill">
-    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="4" y="9" width="16" height="11" rx="2.5"/>
-      <path d="M12 9V5"/>
-      <circle cx="12" cy="3.5" r="1.6"/>
-      <line x1="9" y1="14" x2="9" y2="14.5"/>
-      <line x1="15" y1="14" x2="15" y2="14.5"/>
-    </svg>
-    <span id="agent-dot" class="dot"></span>
-    <span id="agent-status" class="info">${args.isClosed ? "pane closed" : "no agent yet"}</span>
-  </span>
-</header>`
-  }
-${
-  args.preamble
-    ? `<div class="preamble" role="note">
-  <svg class="preamble-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-  </svg>
-  <span class="preamble-text">${htmlEscape(args.preamble)}</span>
-</div>`
-    : ""
-}${
-    args.isClosed
-      ? `<div class="closed">This pane is closed. It cannot accept new events.</div>`
-      : // `allow-downloads` is required for `<a download href="attachment:...">` to
-        // actually fire on Chromium-based browsers (especially mobile Chrome),
-        // which silently drops the navigation otherwise. Without it, an template
-        // that delivers a non-image file (PDF, CSV, archive) the human is meant
-        // to save has no working code path — the file can be fetched via
-        // window.pane.downloadBlob() but never reaches the disk.
-        //
-        // `allow-top-navigation-by-user-activation` lets a template link out
-        // (e.g. `<a target="_top" href="/s/...">` — a demo index linking to the
-        // other demo panes) by navigating the WHOLE tab on a real user click.
-        // Chosen over `allow-popups`: the destination loads as a normal
-        // top-level document (so a linked pane actually works, vs. a popup that
-        // would stay sandboxed and broken), it's gated on user activation (no
-        // silent/background redirects), and it opens no new windows.
-        // `allow-popups` and `allow-same-origin` remain omitted, so the framed
-        // document itself still runs at an opaque origin and can't spawn windows.
-        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
-  }${args.topNav?.canShare ? `\n${renderShareModal()}` : ""}
-<script type="application/json" id="pane-cfg">${cfgJson}</script>
-<script nonce="${args.nonce}">${SHELL_JS}</script>${
-    args.topNav
-      ? `
-<script nonce="${args.nonce}">
-  document.getElementById("top-nav-signout")?.addEventListener("click", async () => {
-    try { await fetch("/v1/auth/logout", { method: "POST", credentials: "same-origin" }); } catch {}
-    location.href = "/login";
-  });
-</script>`
-      : ""
-  }${
-    args.topNav?.canShare
-      ? `\n${shareModalScript(args.paneId, args.title, args.nonce)}`
-      : ""
-  }
+${renderPaneViewer(args)}
 </body>
 </html>`;
 }
