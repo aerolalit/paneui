@@ -10,7 +10,7 @@ description: >-
   watch for the result.
 ---
 
-<!-- pane skill v0.0.18 -->
+<!-- pane skill v0.0.19 -->
 
 # pane
 
@@ -707,6 +707,77 @@ Rules of thumb when authoring the template:
 - No external assets that need the network (CDN scripts, remote fonts/images):
   the sandbox CSP blocks them. Inline everything, or use data URIs.
 - Keep the template self-contained — it's one HTML document.
+
+### House style — don't hardcode colors, build on the injected theme
+
+The relay injects a **default stylesheet into every pane** before your markup —
+pane's brand look (warm-paper background, coral accent) that is **already both
+light- and dark-mode aware** via `prefers-color-scheme`. Plain semantic HTML
+(`<h2>`, `<table>`, `<label>`, `<input>`, `<button>`, `<fieldset>`…) renders
+on-brand with **zero CSS from you**. The default path is therefore: write
+semantic HTML and let it inherit. Only add CSS for layout/bespoke components —
+and when you do, **build on the injected CSS variables, never hardcode colors,
+backgrounds, or fonts.** Hardcoded values break dark mode and drift off-brand.
+
+The variables (set on `:root`, with a `prefers-color-scheme: dark` variant — so
+referencing them is automatically theme-correct):
+
+| Variable | Role |
+|----------|------|
+| `--pane-bg` | page / control background |
+| `--pane-fg` | primary text |
+| `--pane-muted` | secondary / label text |
+| `--pane-subtle` | inset surfaces (code, chips, zebra rows) |
+| `--pane-border` | borders, dividers, rules |
+| `--pane-accent` | brand accent — links, focus rings, primary buttons |
+| `--pane-accent-hover` | accent hover state |
+| `--pane-danger` | destructive / error |
+| `--pane-radius` | corner radius |
+| `--pane-font` / `--pane-mono` | sans / mono stacks |
+
+GOOD — a custom card that stays brand- and theme-correct for free:
+
+```css
+.card {
+  background: var(--pane-subtle);
+  color: var(--pane-fg);
+  border: 1px solid var(--pane-border);
+  border-radius: var(--pane-radius);
+  padding: 16px;
+}
+.card .meta { color: var(--pane-muted); }
+.card .cta { background: var(--pane-accent); color: #fff; }
+```
+
+AVOID — hardcoded values. **LLMs habitually default to a dark "dashboard" look
+(`#0d1117`, `#111`, neon accents). Don't.** It ignores the human's actual theme,
+fails in light mode, and clashes with pane's brand:
+
+```css
+/* ✗ breaks light mode, off-brand, ignores the human's preference */
+body { background: #0d1117; color: #e6edf3; }
+.card { background: #161b22; border: 1px solid #30363d; }
+.cta { background: #238636; }
+```
+
+Rules of thumb:
+
+- **Both themes are non-negotiable.** Anything you author must read correctly in
+  light *and* dark. Using the variables gets you this automatically; if you set
+  a literal color anywhere, you now own making it work in both — usually not
+  worth it.
+- **Check `pane taste` first.** Before authoring, run `pane taste get` — if the
+  human has recorded presentation preferences ("always dark", "denser tables",
+  "purple accents"), those **override** this default guidance. When the human
+  gives presentation feedback, persist it with `pane taste set`. See the
+  [`pane taste`](#-pane-taste--remembering-ui-preferences-across-runs) section
+  for the full loop.
+- **Escape hatch — `data-pane-bare`.** Put the literal string `data-pane-bare`
+  anywhere in your HTML (e.g. `<html data-pane-bare>`) and the relay skips the
+  default-sheet injection entirely — you own 100% of the styling. Use it **only**
+  when the human explicitly asked for a fully bespoke theme (or taste says so).
+  Once bare, the `--pane-*` variables no longer exist, so you must define every
+  color yourself — including a dark-mode path.
 
 ### `pane watch <id>` — wait for the answer
 
