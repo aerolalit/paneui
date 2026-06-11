@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
-    "@paneui/core": "^0.0.18",
+    "@paneui/core": "^0.0.19",
     "zod": "^4.4.3"
   },
   "devDependencies": {

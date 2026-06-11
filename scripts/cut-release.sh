@@ -26,7 +26,9 @@
 #   git tag v<version> <merge-commit-sha>
 #   git push origin v<version>
 #
-# The tag push triggers release-image (GHCR build) and release (npm publish).
+# The tag push triggers release-image (GHCR build), release (npm publish +
+# landing-page deploy + GitHub Release) and — once the -postgres image is
+# built — an automatic prod relay rollout (deploy-prod-relay → paneui-ops).
 #
 # Why this script exists: v0.0.6 was prepared by hand and missed the
 # @paneui/core dep bump in @paneui/relay, which broke the workspace build
@@ -217,9 +219,15 @@ cat <<EOF
     git -C $REPO_ROOT tag v${VERSION} <merge-commit-sha>
     git -C $REPO_ROOT push origin v${VERSION}
 
-  The tag push triggers:
-    - release-image  → builds ghcr.io/aerolalit/paneui:${VERSION} + :${VERSION}-postgres
-    - release        → publishes @paneui/core@${VERSION} + @paneui/cli@${VERSION} + @paneui/mcp@${VERSION} to npm
+  The tag push triggers (all automatic — no further button presses):
+    - release-image  → builds ghcr.io/aerolalit/paneui:${VERSION} + :${VERSION}-postgres,
+                       then dispatches deploy-prod-relay → paneui-ops rolls the
+                       prod relay (ca-eur-prod-pane) to :${VERSION}-postgres
+    - release        → publishes @paneui/core@${VERSION} + @paneui/cli@${VERSION} + @paneui/mcp@${VERSION} to npm,
+                       redeploys the landing page (paneui.com) and cuts a GitHub Release
+
+  Prod relay rollback stays manual: dispatch paneui-ops relay-deploy with the
+  previous version.
 EOF
 
 # ---- Optional auto-push ------------------------------------------------
