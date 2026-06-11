@@ -85,6 +85,12 @@ function embedJson(value: unknown): string {
 //   - on(): no-op, returns an unsubscribe no-op
 //   - emit(): resolves to a stub ack, never hits the network
 //   - state: empty event log with last()/subscribe() stubs
+//   - records / template.records: empty snapshot() + no-op on() (+ write stubs
+//     that resolve inertly) — a records-backed page (todo list, kanban, …) must
+//     not throw `Cannot read properties of undefined (reading 'snapshot'/'on')`
+//     in a thumbnail. The live runtime exposes these (runtime.client.ts); the
+//     preview MUST mirror the surface or every records page renders blank with
+//     an uncaught TypeError.
 //   - uploadBlob/downloadBlob/saveBlob: reject — a thumbnail can't broker blobs
 // `__PANE_INPUT__` is the embedded-JSON placeholder filled by the caller.
 function paneShim(inputDataLiteral: string): string {
@@ -92,6 +98,8 @@ function paneShim(inputDataLiteral: string): string {
   var inputData = ${inputDataLiteral};
   var noop = function(){};
   var unsub = function(){ return noop; };
+  var emptySnapshot = function(){ return []; };
+  var resolveNull = function(){ return Promise.resolve(null); };
   var pane = {
     inputData: inputData,
     ready: Promise.resolve(),
@@ -102,11 +110,35 @@ function paneShim(inputDataLiteral: string): string {
       last: function(){ return null; },
       subscribe: function(){ return noop; }
     },
+    // Pane-level records (mutable collections). Reads return empty, writes
+    // resolve inertly, subscriptions are no-ops — a frozen snapshot has no
+    // live store and a thumbnail can't mutate one.
+    records: {
+      snapshot: emptySnapshot,
+      on: unsub,
+      create: resolveNull,
+      upsert: resolveNull,
+      update: resolveNull,
+      delete: function(){ return Promise.resolve(); }
+    },
+    // Template-level records — read-only mirror in the live runtime; inert here.
+    template: {
+      records: {
+        snapshot: emptySnapshot,
+        on: unsub
+      }
+    },
     uploadBlob: function(){ return Promise.reject(new Error("preview: blobs unavailable")); },
     downloadBlob: function(){ return Promise.reject(new Error("preview: blobs unavailable")); },
     saveBlob: function(){ return Promise.reject(new Error("preview: blobs unavailable")); }
   };
-  try { Object.freeze(pane.state); Object.freeze(pane); } catch (e) {}
+  try {
+    Object.freeze(pane.state);
+    Object.freeze(pane.records);
+    Object.freeze(pane.template.records);
+    Object.freeze(pane.template);
+    Object.freeze(pane);
+  } catch (e) {}
   window.pane = pane;
 })();`;
 }
