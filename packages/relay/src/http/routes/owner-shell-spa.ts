@@ -2377,6 +2377,16 @@ const SHELL_JS = `
         }
         row.style.display = show ? '' : 'none';
       });
+      // Narrow the tag chips by the same keyword so the chip row tracks the
+      // search. "All" and "★ Favorites" are pseudo-tags and stay visible.
+      if (chips) {
+        chips.querySelectorAll('button[data-chip]').forEach((btn) => {
+          const k = btn.getAttribute('data-chip') || '';
+          if (k === '__all__' || k === '__fav__') return;
+          const match = q.length === 0 || k.toLowerCase().includes(q);
+          btn.style.display = match ? '' : 'none';
+        });
+      }
     }
     if (search) {
       search.addEventListener('input', apply);
