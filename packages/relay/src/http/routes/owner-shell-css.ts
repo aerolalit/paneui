@@ -96,16 +96,24 @@ export const OWNER_SHELL_CSS = `
   a { color: inherit; text-decoration: none; }
 
   /* ============== App shell layout ============== */
+  /* Height tracks the *dynamic* viewport (100dvh) rather than a fixed
+     inset:0 box. On iOS the layout viewport (what position:fixed anchors to)
+     is taller than the visible area while the Safari toolbar is shown, so a
+     fixed inset:0 shell + a fixed bottom bar left a dead strip below the bar.
+     100dvh follows the live visible height, so the bottom row always hugs the
+     true visual bottom. 100vh is the fallback for engines without dvh. */
   .app {
-    position: fixed; inset: 0;
+    height: 100vh;
+    height: 100dvh;
     display: grid;
     grid-template-columns: 220px 1fr;
     grid-template-rows: 1fr;
   }
   @media (max-width: 639px) {
-    /* Single full-height content row; the nav becomes a fixed bottom bar
-       (out of flow), so it no longer needs a grid track. */
-    .app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+    /* Content row flexes; the nav is an in-flow bottom row (auto height) that
+       sits at the bottom of the dvh shell — no fixed positioning, so it can't
+       drift above the home indicator or below a retracting Safari toolbar. */
+    .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
   }
 
   /* ============== Sidebar (desktop) / bottom nav (mobile) ============== */
@@ -210,13 +218,13 @@ export const OWNER_SHELL_CSS = `
   .nav .me .acct-id { display: none; }
 
   @media (max-width: 639px) {
-    /* Fixed bottom bar — same model as the system-pages bottom-tabs nav, so
-       the tab strip sits flush above the home indicator and matches every
-       other page. (Previously a grid row inside the fixed inset:0 app shell,
-       which left a gap above the home indicator on devices with a tall bottom
-       safe area, e.g. iPhone 14 Pro Max.) */
+    /* In-flow bottom bar: the second row of the dvh app-shell grid. Because the
+       shell is sized with 100dvh (not a fixed inset:0 / layout-viewport box),
+       this row hugs the live visual bottom — flush above the home indicator and
+       immune to the iOS Safari toolbar gap that an earlier position:fixed
+       version still showed on tall-safe-area devices (e.g. iPhone 14 Pro Max).
+       The safe-area is reserved via padding-bottom below. */
     .nav {
-      position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
       border-right: none; border-top: 1px solid var(--hairline);
       background: color-mix(in srgb, var(--bg-2) 92%, transparent);
       -webkit-backdrop-filter: saturate(180%) blur(14px);
@@ -343,9 +351,10 @@ export const OWNER_SHELL_CSS = `
     to   { opacity: 1; transform: translateY(0); }
   }
   @media (max-width: 639px) {
-    /* Reserve space for the fixed bottom nav (~52px tab + 12px padding) plus
-       the home-indicator safe area, so content can scroll clear of the bar. */
-    .view { padding: 14px 16px calc(28px + 64px + var(--safe-bottom)); }
+    /* The bottom nav is now an in-flow grid row (not overlapping content), so
+       the view only needs its own bottom padding — the bar and the
+       home-indicator safe area take their own space below this scroll area. */
+    .view { padding: 14px 16px 28px; }
   }
 
   .view-head {
