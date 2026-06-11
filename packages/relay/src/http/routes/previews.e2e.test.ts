@@ -447,16 +447,17 @@ describe("owner-shell SPA — tile-preview iframe placement", () => {
     const html = await res.text();
 
     // The plain template's app-tile carries a preview iframe pointing at its
-    // /templates/:id/preview endpoint.
+    // /templates/:id/preview endpoint. The URL is in data-src (the preview
+    // IntersectionObserver promotes it to a real src only near the viewport).
     expect(html).toContain('class="tile-preview"');
-    expect(html).toContain(`src="/templates/${plainId}/preview"`);
+    expect(html).toContain(`data-src="/templates/${plainId}/preview"`);
 
     // The favorited pane's big tile carries a pane preview iframe.
-    expect(html).toContain(`src="/panes/${paneId}/preview"`);
+    expect(html).toContain(`data-src="/panes/${paneId}/preview"`);
 
     // Emoji + image tiles do NOT get a preview iframe.
-    expect(html).not.toContain(`src="/templates/${emojiId}/preview"`);
-    expect(html).not.toContain(`src="/templates/${imgId}/preview"`);
+    expect(html).not.toContain(`data-src="/templates/${emojiId}/preview"`);
+    expect(html).not.toContain(`data-src="/templates/${imgId}/preview"`);
 
     // The 44px pane-row keeps the monogram (no iframe in the row). The row's
     // icon is a .tile-monogram with no adjacent tile-preview iframe — assert the

@@ -288,8 +288,9 @@ describe("owner-shell SPA — Explore gallery cards", () => {
     expect(html).toContain('class="explore-grid" id="explore-list"');
     expect(html).toContain('class="explore-card"');
     // Each card layers a live preview iframe over the monogram, pointing at the
-    // new PUBLIC preview route (works for non-owners).
-    expect(html).toContain(`src="/p/${paneId}/preview"`);
+    // new PUBLIC preview route (works for non-owners). The URL is in data-src;
+    // the preview IntersectionObserver promotes it to a real src near-viewport.
+    expect(html).toContain(`data-src="/p/${paneId}/preview"`);
     expect(html).toContain('class="tile-preview"');
     expect(html).toContain('class="tile-monogram"');
     // Overlay caption + live pill (the pane is open & unexpired).
