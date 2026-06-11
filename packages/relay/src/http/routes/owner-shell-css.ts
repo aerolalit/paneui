@@ -110,10 +110,14 @@ export const OWNER_SHELL_CSS = `
     grid-template-rows: 1fr;
   }
   @media (max-width: 639px) {
-    /* Content row flexes; the nav is an in-flow bottom row (auto height) that
-       sits at the bottom of the dvh shell — no fixed positioning, so it can't
-       drift above the home indicator or below a retracting Safari toolbar. */
+    /* The nav is the first child (the desktop left sidebar), so on a row grid
+       it auto-places into the top row. Pin main to the flexible top row and the
+       nav to the auto bottom row so the in-flow tab bar sits at the bottom of
+       the dvh shell — no fixed positioning, so it can't drift above the home
+       indicator or below a retracting Safari toolbar. */
     .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    .app > .main { grid-row: 1; }
+    .app > .nav  { grid-row: 2; }
   }
 
   /* ============== Sidebar (desktop) / bottom nav (mobile) ============== */
