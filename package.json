@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @paneui/core && npm run build --workspace @paneui/relay && npm run build --workspace @paneui/cli",
+    "build": "npm run build --workspace @paneui/core && npm run build --workspace @paneui/relay && npm run build --workspace @paneui/cli && npm run build --workspace @paneui/mcp",
     "typecheck": "npm run build --workspace @paneui/core && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",
