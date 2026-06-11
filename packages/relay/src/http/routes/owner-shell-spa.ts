@@ -1307,7 +1307,6 @@ const EXTRA_CSS = `
   .pane-row { cursor: pointer; }
   .pane-row .menu-btn { cursor: pointer; }
   .pane-row:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .recent-card { text-decoration: none; color: inherit; }
   .app-tile, .fav-tile { font: inherit; }
   .fav-tile, .app-tile { background: transparent; border: none; }
   .btn.danger { color: var(--pink); border-color: rgba(251,113,133,0.3); }
@@ -2701,27 +2700,43 @@ const SHELL_JS = `
       .then((body) => {
         const items = body && Array.isArray(body.items) ? body.items : [];
         if (!items.length) return;
+        // Client-side relative time for the scrim meta — the recents cards are
+        // built here in the browser, so we can't reuse the server relativeDate().
+        function relTime(iso) {
+          const when = new Date(iso);
+          if (isNaN(when.getTime())) return '';
+          const now = new Date();
+          const day = 86400000;
+          const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const tgt = new Date(when.getFullYear(), when.getMonth(), when.getDate());
+          const d = Math.round((start.getTime() - tgt.getTime()) / day);
+          if (d <= 0) return 'today';
+          if (d === 1) return 'yesterday';
+          if (d < 14) return d + 'd ago';
+          return iso.slice(0, 10);
+        }
         for (const it of items.slice(0, 12)) {
           const title = it.title || it.pane_id;
           const h = hue(it.pane_id);
+          // Visual gallery card mirroring the Explore tab: a full-bleed live
+          // preview of the pane with the title + last-viewed overlaid on a
+          // gradient scrim. The iframe layers over a gradient monogram fallback
+          // (shown while it lazy-loads / when a closed pane has no artifact).
           const card = document.createElement('div');
           card.className = 'recent-card';
           card.setAttribute('data-href', '/panes/' + encodeURIComponent(it.pane_id));
           card.setAttribute('data-pane-id', it.pane_id);
           card.setAttribute('role', 'link');
           card.setAttribute('tabindex', '0');
-          const thumb = document.createElement('div');
-          thumb.className = 'thumb';
-          thumb.style.background =
+          card.setAttribute('aria-label', title);
+          const prev = document.createElement('div');
+          prev.className = 'rc-prev';
+          const mono = document.createElement('span');
+          mono.className = 'rc-mono';
+          mono.style.background =
             'linear-gradient(135deg, hsl(' + h + ', 80%, 70%) 0%, hsl(' + ((h + 30) % 360) + ', 75%, 60%) 100%)';
-          const glyph = document.createElement('span');
-          glyph.className = 'glyph';
-          glyph.textContent = initials(title);
-          thumb.appendChild(glyph);
-          // Layer a lazy preview iframe on top of the gradient glyph — same
-          // shape as the server-rendered pane tiles elsewhere on Home.
-          // Without this, closed/old panes in the ledger only show the
-          // gradient + initials and never the real HTML.
+          mono.textContent = initials(title);
+          prev.appendChild(mono);
           const previewFrame = document.createElement('iframe');
           previewFrame.className = 'tile-preview';
           previewFrame.src = '/panes/' + encodeURIComponent(it.pane_id) + '/preview';
@@ -2730,14 +2745,17 @@ const SHELL_JS = `
           previewFrame.setAttribute('scrolling', 'no');
           previewFrame.setAttribute('tabindex', '-1');
           previewFrame.setAttribute('aria-hidden', 'true');
-          thumb.appendChild(previewFrame);
-          // Visibility badge (top-left) + ⋯ menu (top-right) overlaid on the thumb.
+          prev.appendChild(previewFrame);
+          card.appendChild(prev);
+          // Visibility badge + ⋯ menu as corner chips over the preview (top-right).
+          const corner = document.createElement('div');
+          corner.className = 'rc-corner';
           const vis = document.createElement('span');
           vis.className = 'recent-vis';
           vis.title = visLabel(it.access_mode);
           vis.setAttribute('aria-label', vis.title);
           vis.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + visInner(it.access_mode) + '</svg>';
-          thumb.appendChild(vis);
+          corner.appendChild(vis);
           const menuBtn = document.createElement('button');
           menuBtn.className = 'recent-menu-btn';
           menuBtn.type = 'button';
@@ -2746,12 +2764,20 @@ const SHELL_JS = `
           menuBtn.setAttribute('aria-label', 'More');
           menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>';
           menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openRecentMenu(menuBtn, it.pane_id, !!it.owned); });
-          thumb.appendChild(menuBtn);
+          corner.appendChild(menuBtn);
+          card.appendChild(corner);
+          // Title + last-viewed overlaid on the gradient scrim.
+          const scrim = document.createElement('div');
+          scrim.className = 'rc-scrim';
           const titleEl = document.createElement('div');
-          titleEl.className = 'title';
+          titleEl.className = 'rc-title';
           titleEl.textContent = title;
-          card.appendChild(thumb);
-          card.appendChild(titleEl);
+          scrim.appendChild(titleEl);
+          const metaEl = document.createElement('div');
+          metaEl.className = 'rc-meta';
+          metaEl.textContent = relTime(it.last_viewed_at);
+          scrim.appendChild(metaEl);
+          card.appendChild(scrim);
           list.appendChild(card);
         }
         section.hidden = false;
