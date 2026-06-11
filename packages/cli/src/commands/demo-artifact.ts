@@ -100,7 +100,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="light" />
+<meta name="color-scheme" content="light dark" />
 <title>Pane — the 60-second tour</title>
 <style>
   :root {
@@ -121,8 +121,48 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
       Arial, sans-serif;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    /* scheme-dependent depth + accent tints (overridden in dark mode) */
+    --glow: radial-gradient(120vw 78vh at 50% -12%,
+      rgba(217, 119, 87, 0.10), rgba(224, 162, 58, 0.04) 46%, transparent 72%);
+    --shadow-stage: 0 14px 38px rgba(26, 23, 38, 0.08);
+    --shadow-card: 0 4px 14px rgba(26, 23, 38, 0.04);
+    --shadow-cta: 0 8px 20px rgba(217, 119, 87, 0.28);
+    --shadow-cta-hover: 0 10px 28px rgba(217, 119, 87, 0.30);
+    --focus-ring: 0 0 0 3px rgba(217, 119, 87, 0.12);
+    --accent-tint: rgba(217, 119, 87, 0.07);
+    --accent-tint-strong: rgba(217, 119, 87, 0.08);
+    --accent-tint-border: rgba(217, 119, 87, 0.32);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14110d;
+      --bg-soft: #1b160f;
+      --panel: #211b14;
+      --panel-2: #1b160f;
+      --border: #2a231a;
+      --ink: #f3ece2;
+      --muted: #a89c89;
+      --faint: #87795f;
+      --agent: #e8906b;
+      --human: #E0A23A;
+      --accent: #e8906b;
+      --accent-2: #E0A23A;
+      --code: #2a231a;
+      /* darker, subtler ambient glow + deeper shadows for contrast */
+      --glow: radial-gradient(120vw 78vh at 50% -12%,
+        rgba(232, 144, 107, 0.07), rgba(224, 162, 58, 0.03) 46%, transparent 72%);
+      --shadow-stage: 0 16px 40px rgba(0, 0, 0, 0.45);
+      --shadow-card: 0 4px 14px rgba(0, 0, 0, 0.30);
+      --shadow-cta: 0 8px 20px rgba(0, 0, 0, 0.45);
+      --shadow-cta-hover: 0 10px 28px rgba(0, 0, 0, 0.55);
+      --focus-ring: 0 0 0 3px rgba(232, 144, 107, 0.22);
+      --accent-tint: rgba(232, 144, 107, 0.14);
+      --accent-tint-strong: rgba(232, 144, 107, 0.16);
+      --accent-tint-border: rgba(232, 144, 107, 0.40);
+    }
   }
   * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
   html, body { height: 100%; }
   body {
     margin: 0;
@@ -144,8 +184,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     content: "";
     position: fixed;
     inset: 0;
-    background: radial-gradient(120vw 78vh at 50% -12%,
-      rgba(217, 119, 87, 0.10), rgba(224, 162, 58, 0.04) 46%, transparent 72%);
+    background: var(--glow);
     pointer-events: none;
     z-index: 0;
   }
@@ -157,7 +196,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 14px 38px rgba(26, 23, 38, 0.08);
+    box-shadow: var(--shadow-stage);
     overflow: hidden;
   }
   .brandbar {
@@ -242,9 +281,9 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     border-radius: 10px;
     margin-top: 6px;
     transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.2s ease;
-    box-shadow: 0 8px 20px rgba(217, 119, 87, 0.28);
+    box-shadow: var(--shadow-cta);
   }
-  button.cta:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(217, 119, 87, 0.30); }
+  button.cta:hover { transform: translateY(-1px); box-shadow: var(--shadow-cta-hover); }
   button.cta:active { transform: translateY(0); }
   button.cta:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
   .diagram {
@@ -268,7 +307,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--panel);
-    box-shadow: 0 4px 14px rgba(26, 23, 38, 0.04);
+    box-shadow: var(--shadow-card);
   }
   .node .ic { font-size: 20px; display: block; margin-bottom: 4px; }
   .node small { display: block; color: var(--faint); font-weight: 500; font-size: 11px; margin-top: 2px; }
@@ -287,7 +326,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   input[type="text"]::placeholder { color: var(--faint); }
-  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.12); }
+  input[type="text"]:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
   .choices { display: flex; gap: 8px; flex-wrap: wrap; }
   .choices label {
     flex: 1;
@@ -299,7 +338,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     background: var(--panel-2);
     transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   }
-  .choices label.sel { border-color: var(--accent); background: rgba(217, 119, 87, 0.07); box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.12); }
+  .choices label.sel { border-color: var(--accent); background: var(--accent-tint); box-shadow: var(--focus-ring); }
   .choices input { position: absolute; opacity: 0; pointer-events: none; }
   .choices b { display: block; font-size: 14px; color: var(--ink); }
   .choices em { display: block; font-style: normal; color: var(--faint); font-size: 12px; }
@@ -316,7 +355,7 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    box-shadow: 0 4px 14px rgba(26, 23, 38, 0.04);
+    box-shadow: var(--shadow-card);
   }
   pre code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
   pre .k { color: var(--accent); font-weight: 600; }
@@ -328,8 +367,8 @@ export const DEMO_ARTIFACT_HTML = `<!doctype html>
     font-size: 13px;
     font-weight: 600;
     color: var(--agent);
-    border: 1px solid rgba(217, 119, 87, 0.32);
-    background: rgba(217, 119, 87, 0.08);
+    border: 1px solid var(--accent-tint-border);
+    background: var(--accent-tint-strong);
     padding: 6px 12px;
     border-radius: 999px;
     margin: 0 0 14px;
