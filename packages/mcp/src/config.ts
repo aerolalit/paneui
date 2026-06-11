@@ -136,6 +136,34 @@ function upsertProfile(
   chmodSync(path, 0o600);
 }
 
+/**
+ * Clear the active saved profile from the shared store (mirrors `pane agent
+ * logout` for the active-profile case). Removes the profile entry and unsets
+ * `current_profile` so the next resolve falls back to env / the default URL.
+ * Local-only: it does NOT revoke the key on the relay (use the `key` tool's
+ * `revoke` action for that). Idempotent — clearing an empty store is a no-op.
+ * Returns the profile name that was cleared (or null when nothing was active)
+ * and the store path.
+ */
+export function clearActiveProfile(): {
+  cleared: boolean;
+  profile: string | null;
+  path: string;
+} {
+  const store = readStore();
+  const path = storePath();
+  const name = store.currentProfile;
+  if (name === undefined || store.profiles[name] === undefined) {
+    return { cleared: true, profile: null, path };
+  }
+  delete store.profiles[name];
+  store.currentProfile = undefined;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, serialize(store), { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return { cleared: true, profile: name, path };
+}
+
 /** Resolve the relay URL using the same precedence as the CLI. */
 export function resolveUrl(): string {
   const store = readStore();
@@ -144,6 +172,45 @@ export function resolveUrl(): string {
     : undefined;
   const url = process.env.PANE_URL ?? active?.url ?? DEFAULT_RELAY_URL;
   return url.replace(/\/$/, "");
+}
+
+/**
+ * Describe how the server is currently configured WITHOUT touching the network
+ * — the resolved relay URL, the active profile name, where the key is coming
+ * from, and whether a key is present at all. Backs the `agent` tool's `whoami`
+ * action so an MCP client can introspect its own identity / relay binding the
+ * way `pane config show` does for the CLI. No secrets are returned (the API key
+ * plaintext is never surfaced — only its source + whether it exists).
+ */
+export function describeActiveConfig(): {
+  url: string;
+  profile: string | null;
+  api_key_present: boolean;
+  api_key_source: "env" | "profile" | "none";
+  store_path: string;
+} {
+  const store = readStore();
+  const url = resolveUrl();
+  const profile = store.currentProfile ?? null;
+  let source: "env" | "profile" | "none" = "none";
+  if (
+    (process.env.PANE_API_KEY && process.env.PANE_API_KEY !== "") ||
+    (process.env.PANE_TOKEN && process.env.PANE_TOKEN !== "")
+  ) {
+    source = "env";
+  } else {
+    const active = store.currentProfile
+      ? store.profiles[store.currentProfile]
+      : undefined;
+    if (active?.apiKey && active.apiKey !== "") source = "profile";
+  }
+  return {
+    url,
+    profile,
+    api_key_present: source !== "none",
+    api_key_source: source,
+    store_path: storePath(),
+  };
 }
 
 /** Resolve the API key (env → PANE_TOKEN alias → active profile). */
