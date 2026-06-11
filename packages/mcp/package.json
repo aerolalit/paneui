@@ -1,0 +1,55 @@
+{
+  "name": "@paneui/mcp",
+  "version": "0.0.18",
+  "description": "Model Context Protocol (stdio) server for Pane: lets any MCP client (Claude Desktop, Cursor, …) hand a human a rich interactive UI by URL and get structured data back.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pane",
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "relay",
+    "human-in-the-loop"
+  ],
+  "homepage": "https://github.com/aerolalit/paneui#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aerolalit/paneui.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/aerolalit/paneui/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "pane-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "server.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@paneui/core": "^0.0.18",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
