@@ -17,6 +17,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Human as HumanRow } from "@prisma/client";
 import { OWNER_SHELL_CSS } from "./owner-shell-css.js";
+import { PREVIEW_FRAME_PX } from "../../bridge/preview-render.js";
 import { BRAND_FAVICON_DATA_HREF, BRAND_LOGO } from "../../brand.js";
 import { NAV_GLYPHS, NAV_LABELS, type NavKey } from "./nav-meta.js";
 import { hasRequiredInputSchema } from "../../core/validation.js";
@@ -1738,7 +1739,7 @@ const SHELL_JS = `
     const box = frame.parentElement; // .ec-prev
     if (!box) return;
     const w = box.clientWidth;
-    if (w > 0) frame.style.transform = 'scale(' + (w / 1000) + ')';
+    if (w > 0) frame.style.transform = 'scale(' + (w / ${PREVIEW_FRAME_PX}) + ')';
   }
   function scaleExplorePreviews() {
     document
@@ -1759,92 +1760,45 @@ const SHELL_JS = `
     window.addEventListener('resize', scaleExplorePreviews);
   }
 
-  // Preview iframe lifecycle — the load-bearing fix for the home/explore OOM.
-  // Every preview (favorites, explore, recents) is a full sandboxed pane
-  // renderer. They used to ship a real src + loading="lazy", which mounted each
-  // one as it scrolled into view and NEVER unmounted it — so the count of live
-  // renderers grew without bound on scroll and eventually crashed the tab
-  // ("Aw, Snap"), worst on mobile. Now the URL sits in data-src and we promote
-  // it to a real src only while the card is near the viewport, clearing it
-  // (back to the monogram) once it scrolls away. PREVIEW_CAP is a hard backstop
-  // so we never hold more than a handful of live renderers regardless of
-  // viewport size; it only ever evicts frames that are already off-screen.
-  const PREVIEW_CAP = 10;
-  // Default (no-IntersectionObserver fallback): just mount the preview. The IO
-  // branch below reassigns this to the viewport-gated version.
-  let observePreview = (frame) => {
-    if (frame && frame.dataset && frame.dataset.src && !frame.getAttribute('src')) {
+  // Preview iframe lifecycle. Each preview is a sandboxed pane renderer whose
+  // URL sits in data-src; we lazily promote it to a real src as the card nears
+  // the viewport and then KEEP it mounted — scrolling back never reverts a card
+  // to its monogram. This is affordable now that previews rasterise into a
+  // small PREVIEW_FRAME_PX-wide frame (see preview-render.ts): the old approach
+  // rendered each into a full 1000px iframe, and a screenful of those blew iOS
+  // WebKit's per-page graphics limit on high-DPR devices. We mount-once and
+  // never evict, so there is no scroll-back flicker.
+  const mountPreview = (frame) => {
+    if (!frame || !frame.dataset || !frame.dataset.src) return;
+    if (!frame.getAttribute('src')) {
       frame.setAttribute('src', frame.dataset.src);
+      // Explore previews are scaled imperatively (per fluid card width);
+      // favorites/app use a fixed CSS scale and recents a CSS var, so
+      // scaleExplorePreview must run only for explore frames.
+      if (frame.closest && frame.closest('#explore-list')) scaleExplorePreview(frame);
     }
   };
-  // iOS / touch devices: do NOT mount live preview iframes at all. iOS WebKit
-  // keeps every iframe's document in ONE memory-capped content process, so a
-  // gallery of live pane-preview iframes blows the per-tab ceiling and the tab
-  // is killed ("A problem repeatedly occurred" / Aw Snap) — reproducible only
-  // on-device (iPhone), never in desktop Chrome which gives each iframe its own
-  // budget with far more headroom. The gradient monogram already sits behind
-  // every preview, so skipping the iframe just leaves a clean monogram tile.
-  // Detect iOS by UA (covers iPadOS-as-Mac via maxTouchPoints) plus any
-  // primary-touch device (hover:none + pointer:coarse) as a broader backstop.
-  const ua = navigator.userAgent || '';
-  const isIOS =
-    /iP(hone|od|ad)/.test(ua) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const isPrimaryTouch = !!(
-    window.matchMedia &&
-    window.matchMedia('(hover: none) and (pointer: coarse)').matches
-  );
-  const liveIframePreviews = !(isIOS || isPrimaryTouch);
-  if (!liveIframePreviews) {
-    // Leave every preview as its monogram — never create an iframe document.
-    observePreview = () => {};
-  } else if (window.IntersectionObserver) {
-    const liveFrames = new Set();
-    const mountPreview = (frame) => {
-      if (!frame) return;
-      if (frame.dataset.src && !frame.getAttribute('src')) {
-        frame.setAttribute('src', frame.dataset.src);
-        // Only Explore previews are scaled imperatively (per fluid card width).
-        // Favorites/app tiles use a fixed CSS scale and recents a CSS var, so
-        // calling scaleExplorePreview on them would clobber their transform.
-        if (frame.closest && frame.closest('#explore-list')) scaleExplorePreview(frame);
-      }
-      liveFrames.add(frame);
-      if (liveFrames.size > PREVIEW_CAP) {
-        for (const f of liveFrames) {
-          if (f !== frame && f.__paneVisible !== 1) {
-            unmountPreview(f);
-            if (liveFrames.size <= PREVIEW_CAP) break;
-          }
-        }
-      }
-    };
-    const unmountPreview = (frame) => {
-      if (!frame) return;
-      if (frame.getAttribute('src')) frame.removeAttribute('src'); // unloads the iframe → monogram shows
-      liveFrames.delete(frame);
-    };
+  let observePreview = mountPreview;
+  if (window.IntersectionObserver) {
     const previewIO = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
+        if (!e.isIntersecting) return;
         const t = e.target;
         const frame = t.classList && t.classList.contains('tile-preview')
           ? t
           : (t.querySelector ? t.querySelector('.tile-preview') : null);
-        if (!frame) return;
-        if (e.isIntersecting) { frame.__paneVisible = 1; mountPreview(frame); }
-        else { frame.__paneVisible = 0; unmountPreview(frame); }
+        mountPreview(frame);
+        previewIO.unobserve(e.target); // mounted once — never reverts
       });
-      // Viewport root (not the .main scroller) so intersection is computed the
-      // same way no matter which ancestor scrolls — and so we don't depend on
-      // .main being an ancestor of every preview container.
-    }, { root: null, rootMargin: '300px 0px', threshold: 0 });
+      // Viewport root + a generous margin so a preview is ready by the time the
+      // card is on screen; we never unmount, so cards scrolled past stay live.
+    }, { root: null, rootMargin: '600px 0px', threshold: 0 });
     // Observe the preview's container (it carries the card's real box; the
-    // iframe itself is a scaled 1000px-wide element). Mirrors exploreRO.
+    // iframe is a scaled small frame). Mirrors exploreRO.
     observePreview = (frame) => { if (frame && frame.parentElement) previewIO.observe(frame.parentElement); };
     document.querySelectorAll('.tile-preview').forEach(observePreview);
   } else {
-    // No IntersectionObserver (very old browser): mount everything up front —
-    // the legacy behavior. observePreview already does this.
+    // No IntersectionObserver (very old browser): mount everything up front.
     document.querySelectorAll('.tile-preview').forEach(observePreview);
   }
 
@@ -2817,7 +2771,7 @@ const SHELL_JS = `
         const scaleObserver = new ResizeObserver((entries) => {
           for (const e of entries) {
             const w = e.target.clientWidth;
-            if (w) e.target.style.setProperty('--rc-scale', String(w / 1000));
+            if (w) e.target.style.setProperty('--rc-scale', String(w / ${PREVIEW_FRAME_PX}));
           }
         });
         for (const it of items.slice(0, 12)) {

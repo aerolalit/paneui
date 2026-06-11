@@ -21,6 +21,26 @@
 
 import { PANE_DEFAULT_CSS, shouldInjectDefaults } from "./default-styles.js";
 
+// Preview-thumbnail render geometry — shared by the preview document (this
+// file), the owner-shell CSS (.tile-preview sizing) and the owner-shell JS
+// (per-card scale). KEEP THESE THREE IN SYNC via these constants.
+//
+// A thumbnail must show the pane's full DESKTOP layout, but rendering it into a
+// 1000px-wide iframe and shrinking with a CSS transform is what blew iOS
+// WebKit's per-page graphics limit on high-DPR devices (iPhone 14 Pro Max): an
+// iframe rasterises at its OWN css size × devicePixelRatio, so a 1000px frame is
+// ~25-36MB of GPU memory EACH regardless of how light the pane is, and a gallery
+// of them crashes the tab.
+//
+// Fix: render into a small PREVIEW_FRAME_PX-wide iframe but apply `zoom` in the
+// document so its LAYOUT viewport is still 1000px (full desktop view), just
+// rasterised low-res. `zoom = frame/1000` makes a PREVIEW_FRAME_PX-wide frame
+// lay out at 1000px; the card then transform-scales the frame by
+// display/PREVIEW_FRAME_PX. Backing store drops ~(1000/PREVIEW_FRAME_PX)² ≈ 11×.
+export const PREVIEW_LOGICAL_WIDTH = 1000;
+export const PREVIEW_FRAME_PX = 300;
+export const PREVIEW_ZOOM = PREVIEW_FRAME_PX / PREVIEW_LOGICAL_WIDTH; // 0.3
+
 // The single Content-Security-Policy both the live viewer's `/content` route
 // and the preview endpoints set — built here so the two can never drift on
 // policy. `imgMediaOrigin` is the relay's own public origin (scheme + host +
@@ -157,11 +177,17 @@ export function wrapArtifactForPreview(
     ? `<style>${PANE_DEFAULT_CSS}</style>`
     : "";
   const shim = paneShim(embedJson(inputData));
+  // `zoom` expands the layout viewport to the full PREVIEW_LOGICAL_WIDTH (so the
+  // pane renders its DESKTOP layout) while rasterising into the small frame —
+  // see the PREVIEW_FRAME_PX note above. This is the graphics-memory fix; it
+  // also reproduces the exact same crop the old 1000px-iframe + transform did.
+  const zoomBlock = `<style>html{zoom:${PREVIEW_ZOOM}}</style>`;
   return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${zoomBlock}
 ${styleBlock}
 <script>${shim}</script>
 </head>

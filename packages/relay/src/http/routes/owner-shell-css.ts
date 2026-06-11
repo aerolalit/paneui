@@ -8,6 +8,16 @@
 // (--bg #f7f5f1) like the landing page; dark mode is a warm charcoal
 // re-tint. Both are driven by prefers-color-scheme below.
 
+import { PREVIEW_FRAME_PX } from "../../bridge/preview-render.js";
+
+// Preview-thumbnail frame geometry (see PREVIEW_FRAME_PX in preview-render.ts):
+// the iframe is PREVIEW_FRAME_PX wide and renders the pane's 1000px desktop
+// layout into it via `zoom`, so each card just scales the small frame by
+// display/PREVIEW_FRAME_PX. Square tiles (favourites, app) use a square frame;
+// the 16:11 gallery cards (recents, explore) use a PREVIEW_FRAME_PX*11/16 frame.
+const PVF = PREVIEW_FRAME_PX;
+const PVF_169 = (PREVIEW_FRAME_PX * 11) / 16; // 16:11 card height in frame px
+
 export const OWNER_SHELL_CSS = `
   :root {
     color-scheme: light dark;
@@ -1242,7 +1252,7 @@ export const OWNER_SHELL_CSS = `
   .tile-preview {
     position: absolute;
     top: 0; left: 0;
-    width: 1000px;
+    width: ${PVF}px;
     border: 0;
     background: transparent;
     transform-origin: top left;
@@ -1250,33 +1260,32 @@ export const OWNER_SHELL_CSS = `
     /* Above the monogram, below any badge/tag the card lays over it. */
     z-index: 1;
   }
-  /* Favorites — 76px SQUARE icon. The logical viewport must match the tile's
-   * aspect or the scaled iframe ends up shorter than the tile and the monogram
-   * gradient shows through the gap below it. Square viewport: 1000x1000 * 0.076
-   * = 76x76, fully covering the tile. */
+  /* Favorites — 76px SQUARE icon. The frame is a square ${PVF}px box; the
+   * preview doc renders the pane's 1000px desktop layout into it via zoom, and
+   * scaling by 76/${PVF} covers the tile exactly with no monogram gap. */
   .fav-tile .icon { overflow: hidden; }
   .fav-tile .icon .tile-preview {
-    height: 1000px;
-    transform: scale(0.076);
+    height: ${PVF}px;
+    transform: scale(${76 / PVF});
   }
-  /* App tiles — 64px SQUARE icon. Square logical viewport (1000x1000) so the
-   * scaled iframe covers the whole 64x64 tile with no gradient strip beneath.
+  /* App tiles — 64px SQUARE icon. Square ${PVF}px frame so the scaled iframe
+   * covers the whole 64x64 tile with no gradient strip beneath.
    * .icon needs the clip + a stacking context (it isn't positioned by default). */
   .app-tile .icon { overflow: hidden; position: relative; }
   .app-tile .icon .tile-preview {
-    height: 1000px;
-    transform: scale(0.064);
+    height: ${PVF}px;
+    transform: scale(${64 / PVF});
   }
-  /* Recents — fluid-width gallery card (aspect 16/11). The 1000px logical
-   * viewport renders the pane's DESKTOP layout; --rc-scale (= card width / 1000,
-   * set per card by the ResizeObserver in owner-shell-spa.ts) shrinks the whole
-   * page to fit the column instead of showing a zoomed-in crop. The card is
-   * 11/16 as tall as it is wide, so the logical height is 1000 * 11/16 = 688px —
-   * the scaled iframe covers the whole card edge to edge at any column width.
-   * The default keeps a sane scale for the frame before the observer fires. */
+  /* Recents — fluid-width gallery card (aspect 16/11). The frame renders the
+   * pane's 1000px DESKTOP layout (zoom in the preview doc) into a ${PVF}px-wide
+   * box; --rc-scale (= card width / ${PVF}, set per card by the ResizeObserver in
+   * owner-shell-spa.ts) scales it to the column width instead of a zoomed crop.
+   * The card is 11/16 as tall as wide, so the frame height is ${PVF}*11/16 — the
+   * scaled iframe covers the card edge to edge. Default holds before the
+   * observer fires. */
   .recent-card .tile-preview {
-    height: 688px;
-    transform: scale(var(--rc-scale, 0.16));
+    height: ${PVF_169}px;
+    transform: scale(var(--rc-scale, 0.67));
   }
 
   /* ============== Explore gallery cards ==============
@@ -1313,11 +1322,11 @@ export const OWNER_SHELL_CSS = `
   .explore-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
   .explore-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .ec-prev { position: absolute; inset: 0; overflow: hidden; }
-  /* 1000px logical viewport (matches the favorites/recents .tile-preview trick)
-   * scaled to the card's real width by JS. The default scale (~260px min
-   * column) keeps first paint sensible before JS runs; the constant 688px
-   * height = 1000 * 11/16 so the scaled iframe always covers the 16:11 card. */
-  .explore-card .tile-preview { height: 688px; transform: scale(0.26); }
+  /* ${PVF}px frame rendering the pane's 1000px desktop layout (zoom in the
+   * preview doc, like favorites/recents), scaled to the card's real width by JS.
+   * Default scale (~260px min column / ${PVF}) keeps first paint sensible before
+   * JS runs; height = ${PVF}*11/16 so the scaled iframe covers the 16:11 card. */
+  .explore-card .tile-preview { height: ${PVF_169}px; transform: scale(${260 / PVF}); }
   .ec-corner { position: absolute; top: 8px; right: 8px; z-index: 2; }
   .ec-scrim {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
