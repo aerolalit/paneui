@@ -575,64 +575,69 @@ export const OWNER_SHELL_CSS = `
     padding: 4px 2px 2px;
     margin: 0 -2px;
   }
+  /* Each recent is a visual card — a full-bleed live thumbnail of the pane
+     itself with the title + last-viewed overlaid on a gradient scrim, the same
+     shape as the Explore gallery card. Unlike Explore's fixed-width cards, the
+     recents grid is fluid (minmax 1fr), so the preview can't use a fixed scale
+     factor; container-type makes the card a query container and the preview
+     scales by 100cqw/1000 to fill whatever width the card lands at — a pane
+     reads identically here and in Explore. */
   .recent-card {
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-card);
-    padding: 12px;
-    display: flex; flex-direction: column; gap: 10px;
-    cursor: pointer;
-    transition: border-color 150ms, transform 150ms;
-  }
-  .recent-card:hover { border-color: var(--hairline-2); transform: translateY(-2px); }
-  .recent-card .thumb {
-    height: 100px;
-    border-radius: 10px;
-    background: var(--surface-2);
+    container-type: inline-size;
     position: relative;
+    display: block;
+    aspect-ratio: 16 / 11;
+    border-radius: var(--radius-card);
     overflow: hidden;
+    border: 1px solid var(--hairline);
+    box-shadow: var(--shadow-soft);
+    background: var(--surface);
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .recent-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
+  .recent-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .recent-card .rc-prev { position: absolute; inset: 0; overflow: hidden; }
+  .recent-card .rc-mono {
+    position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
+    color: #07090f; font-weight: 800; font-size: 34px;
   }
-  .recent-card .thumb .glyph {
-    font-size: 32px;
-    color: #07090f;
-    font-weight: 800;
+  /* Visibility badge + ⋯ menu as corner chips over the preview (top-right).
+     Both stay visible (no hover-reveal) so they work on touch; z-index sits
+     above the .tile-preview iframe and the scrim, and pointer-events: auto
+     guarantees clicks land on the controls rather than the card behind. */
+  .recent-card .rc-corner {
+    position: absolute; top: 8px; right: 8px; z-index: 3;
+    display: flex; gap: 6px;
   }
-  .recent-card .thumb .tag {
-    position: absolute; bottom: 6px; left: 8px;
-    font-family: var(--mono); font-size: 10px;
-    background: rgba(0,0,0,0.45);
-    color: var(--ink);
-    padding: 1px 6px; border-radius: 4px;
-  }
-  /* Overlays on a recent card's thumb: visibility badge + ⋯ menu, grouped at
-     the bottom-right corner. Both stay visible (no hover-reveal) so they work
-     on touch; the dark chip keeps them legible over any preview.
-     z-index sits above the .tile-preview iframe (z-index: 1) so an opaque
-     loaded preview never paints over them, and pointer-events: auto guarantees
-     clicks land on the controls rather than passing to the preview behind. */
-  .recent-card .thumb .recent-vis,
-  .recent-card .thumb .recent-menu-btn {
-    position: absolute; bottom: 6px; z-index: 3;
-    width: 22px; height: 22px; padding: 0;
+  .recent-card .recent-vis,
+  .recent-card .recent-menu-btn {
+    width: 24px; height: 24px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 6px;
+    border-radius: 7px;
     background: rgba(0,0,0,0.5); color: #fff;
     pointer-events: auto;
   }
-  .recent-card .thumb .recent-menu-btn {
-    right: 6px; border: none; cursor: pointer;
-    transition: background 120ms;
+  .recent-card .recent-menu-btn { border: none; cursor: pointer; transition: background 120ms; }
+  .recent-card .recent-menu-btn:hover { background: rgba(0,0,0,0.72); }
+  .recent-card .recent-vis svg,
+  .recent-card .recent-menu-btn svg { display: block; }
+  .recent-card .rc-scrim {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    padding: 26px 12px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.80), rgba(0,0,0,0.42) 55%, transparent);
+    color: #fff;
   }
-  .recent-card .thumb .recent-vis { right: 34px; }
-  .recent-card .thumb .recent-menu-btn:hover { background: rgba(0,0,0,0.72); }
-  .recent-card .thumb .recent-vis svg,
-  .recent-card .thumb .recent-menu-btn svg { display: block; }
-  .recent-card .title { font-weight: 600; font-size: 13.5px; }
-  .recent-card .meta {
-    display: flex; justify-content: space-between;
-    color: var(--ink-mute); font-size: 11.5px;
-    font-family: var(--mono);
+  .recent-card .rc-title {
+    font-weight: 600; font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .recent-card .rc-meta {
+    font-size: 12px; color: rgba(255,255,255,0.82);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
   /* Apps grid (Launchpad-style) */
@@ -1243,15 +1248,16 @@ export const OWNER_SHELL_CSS = `
     height: 1000px;
     transform: scale(0.064);
   }
-  /* Recents — 280px-wide x 100px-tall thumb (.thumb already clips + is
-   * positioned). 280 / 1000 = 0.28; a 1000x750 logical page scales to
-   * 280x210, clipped to the 100px-tall thumb (top of the page shows). */
-  .recent-card .thumb .tile-preview {
-    height: 750px;
-    transform: scale(0.28);
+  /* Recents — fluid-width gallery card (aspect 16/11), so the scale factor is
+   * driven by the card's own width via container query units instead of a
+   * fixed number: 100cqw/1000 maps the 1000px logical viewport onto the card.
+   * The card is 11/16 as tall as it is wide, so the logical height is
+   * 1000 * 11/16 = 688px — the scaled iframe covers the whole card edge to
+   * edge with no monogram strip showing, at any column width. */
+  .recent-card .tile-preview {
+    height: 688px;
+    transform: scale(calc(100cqw / 1000));
   }
-  /* The recents version tag must sit above the preview. */
-  .recent-card .thumb .tag { z-index: 2; }
 
   /* ============== Explore gallery cards ==============
    * The Explore tab is a visual gallery (not the dense .pane-row list): each
