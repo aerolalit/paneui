@@ -1537,11 +1537,15 @@ const EXTRA_CSS = `
   .chip.on {
     background: var(--accent); color: #1a120c; border-color: transparent;
   }
-  .pane-row .row-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .pane-row .row-tags {
+    display: flex; flex-wrap: nowrap; gap: 5px; margin-top: 5px;
+    overflow: hidden; min-width: 0;
+  }
   .pane-row .row-tag {
     font-size: 10.5px; color: var(--ink-mute);
     background: var(--surface-2); border: 1px solid var(--hairline);
     border-radius: 999px; padding: 1px 8px;
+    flex: 0 0 auto; white-space: nowrap;
   }
   /* Inline per-pane tag editor (row ⋯ → Edit tags). */
   .tag-editor { margin-top: 8px; }
