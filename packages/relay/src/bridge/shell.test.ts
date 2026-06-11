@@ -807,4 +807,45 @@ describe("shell — record-mutate-request handler", () => {
       error: { code: "invalid_request" },
     });
   });
+
+  // mountPaneViewer() returns a controller whose destroy() tears the viewer
+  // down. The most leak-prone teardown is the window 'message' listener: it
+  // closes over the iframe + socket, so a viewer left mounted (e.g. an SPA that
+  // navigated away without destroying) keeps that closure — and its iframe —
+  // alive. Assert destroy() removes the listener so the iframe can no longer
+  // reach the shell, and that it is idempotent.
+  it("destroy() removes the message listener so the iframe can no longer reach the shell", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ ticket: "t" }), { status: 200 }),
+    );
+    await flushMicrotasks();
+
+    // An emit with no open socket replies with a synthetic 'disconnected'
+    // error frame — a deterministic, synchronous proof the listener is live.
+    const emitMsg = {
+      __pane: 1,
+      v: 1,
+      kind: "emit",
+      type: "x.y",
+      data: {},
+      correlation_id: "c1",
+    };
+    dispatchFromIframe(emitMsg);
+    expect(
+      iframePostSpy.mock.calls.some(
+        (c) => (c[0] as { kind?: string }).kind === "error",
+      ),
+    ).toBe(true);
+
+    const controller = (
+      window as unknown as { __paneViewer?: { destroy: () => void } }
+    ).__paneViewer;
+    expect(controller).toBeTruthy();
+    iframePostSpy.mockClear();
+    controller!.destroy();
+    controller!.destroy(); // idempotent — second call is a no-op
+
+    dispatchFromIframe(emitMsg);
+    expect(iframePostSpy).not.toHaveBeenCalled();
+  });
 });
