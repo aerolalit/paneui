@@ -1015,9 +1015,14 @@ function iconTileInner(opts: {
   if (opts.previewUrl) {
     // Monogram first (the background layer), preview iframe on top. The iframe
     // is sandboxed (allow-scripts only — no forms/downloads for a thumbnail),
-    // lazy-loaded, non-interactive (pointer-events:none in CSS keeps the card
-    // clickable), and removed from the a11y/tab tree.
-    return `${monogram}<iframe class="tile-preview" src="${escapeHtml(opts.previewUrl)}" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>`;
+    // non-interactive (pointer-events:none in CSS keeps the card clickable),
+    // and removed from the a11y/tab tree. The URL lives in data-src and is only
+    // promoted to a real src while the card is near the viewport (see the
+    // preview IntersectionObserver in the client script), then cleared when it
+    // scrolls away — each live preview is a full sandboxed pane renderer, so
+    // keeping them all mounted OOMs the tab. `loading="lazy"` mounted them but
+    // never unmounted them, so they accumulated without bound on scroll.
+    return `${monogram}<iframe class="tile-preview" data-src="${escapeHtml(opts.previewUrl)}" sandbox="allow-scripts" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>`;
   }
   return monogram;
 }
@@ -1241,7 +1246,7 @@ function publicPaneRow(p: PublicPaneRef): string {
   return `<a class="explore-card" data-pane-id="${escapeHtml(p.id)}" href="/p/${encodeURIComponent(p.id)}" data-status="${statusCls}">
     <div class="ec-prev">
       <span class="tile-monogram" style="${monogramStyle}">${escapeHtml(initials)}</span>
-      <iframe class="tile-preview" src="/p/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" loading="lazy" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
+      <iframe class="tile-preview" data-src="/p/${encodeURIComponent(p.id)}/preview" sandbox="allow-scripts" scrolling="no" tabindex="-1" aria-hidden="true"></iframe>
     </div>
     <div class="ec-corner">${livePill}</div>
     <div class="ec-scrim">
@@ -1752,6 +1757,74 @@ const SHELL_JS = `
       .forEach((el) => exploreRO.observe(el));
   } else {
     window.addEventListener('resize', scaleExplorePreviews);
+  }
+
+  // Preview iframe lifecycle — the load-bearing fix for the home/explore OOM.
+  // Every preview (favorites, explore, recents) is a full sandboxed pane
+  // renderer. They used to ship a real src + loading="lazy", which mounted each
+  // one as it scrolled into view and NEVER unmounted it — so the count of live
+  // renderers grew without bound on scroll and eventually crashed the tab
+  // ("Aw, Snap"), worst on mobile. Now the URL sits in data-src and we promote
+  // it to a real src only while the card is near the viewport, clearing it
+  // (back to the monogram) once it scrolls away. PREVIEW_CAP is a hard backstop
+  // so we never hold more than a handful of live renderers regardless of
+  // viewport size; it only ever evicts frames that are already off-screen.
+  const PREVIEW_CAP = 10;
+  // Default (no-IntersectionObserver fallback): just mount the preview. The IO
+  // branch below reassigns this to the viewport-gated version.
+  let observePreview = (frame) => {
+    if (frame && frame.dataset && frame.dataset.src && !frame.getAttribute('src')) {
+      frame.setAttribute('src', frame.dataset.src);
+    }
+  };
+  if (window.IntersectionObserver) {
+    const liveFrames = new Set();
+    const mountPreview = (frame) => {
+      if (!frame) return;
+      if (frame.dataset.src && !frame.getAttribute('src')) {
+        frame.setAttribute('src', frame.dataset.src);
+        // Only Explore previews are scaled imperatively (per fluid card width).
+        // Favorites/app tiles use a fixed CSS scale and recents a CSS var, so
+        // calling scaleExplorePreview on them would clobber their transform.
+        if (frame.closest && frame.closest('#explore-list')) scaleExplorePreview(frame);
+      }
+      liveFrames.add(frame);
+      if (liveFrames.size > PREVIEW_CAP) {
+        for (const f of liveFrames) {
+          if (f !== frame && f.__paneVisible !== 1) {
+            unmountPreview(f);
+            if (liveFrames.size <= PREVIEW_CAP) break;
+          }
+        }
+      }
+    };
+    const unmountPreview = (frame) => {
+      if (!frame) return;
+      if (frame.getAttribute('src')) frame.removeAttribute('src'); // unloads the iframe → monogram shows
+      liveFrames.delete(frame);
+    };
+    const previewIO = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        const t = e.target;
+        const frame = t.classList && t.classList.contains('tile-preview')
+          ? t
+          : (t.querySelector ? t.querySelector('.tile-preview') : null);
+        if (!frame) return;
+        if (e.isIntersecting) { frame.__paneVisible = 1; mountPreview(frame); }
+        else { frame.__paneVisible = 0; unmountPreview(frame); }
+      });
+      // Viewport root (not the .main scroller) so intersection is computed the
+      // same way no matter which ancestor scrolls — and so we don't depend on
+      // .main being an ancestor of every preview container.
+    }, { root: null, rootMargin: '300px 0px', threshold: 0 });
+    // Observe the preview's container (it carries the card's real box; the
+    // iframe itself is a scaled 1000px-wide element). Mirrors exploreRO.
+    observePreview = (frame) => { if (frame && frame.parentElement) previewIO.observe(frame.parentElement); };
+    document.querySelectorAll('.tile-preview').forEach(observePreview);
+  } else {
+    // No IntersectionObserver (very old browser): mount everything up front —
+    // the legacy behavior. observePreview already does this.
+    document.querySelectorAll('.tile-preview').forEach(observePreview);
   }
 
   // Light haptic tap for touch interactions (bottom-bar nav, account menu,
@@ -2750,9 +2823,11 @@ const SHELL_JS = `
           prev.appendChild(mono);
           const previewFrame = document.createElement('iframe');
           previewFrame.className = 'tile-preview';
-          previewFrame.src = '/panes/' + encodeURIComponent(it.pane_id) + '/preview';
+          // Held in data-src and mounted/unmounted by the preview
+          // IntersectionObserver (see observePreview below) so off-screen
+          // recents don't keep a live pane renderer alive.
+          previewFrame.dataset.src = '/panes/' + encodeURIComponent(it.pane_id) + '/preview';
           previewFrame.setAttribute('sandbox', 'allow-scripts');
-          previewFrame.setAttribute('loading', 'lazy');
           previewFrame.setAttribute('scrolling', 'no');
           previewFrame.setAttribute('tabindex', '-1');
           previewFrame.setAttribute('aria-hidden', 'true');
@@ -2791,6 +2866,8 @@ const SHELL_JS = `
           card.appendChild(scrim);
           list.appendChild(card);
           scaleObserver.observe(card);
+          // Gate the preview iframe on viewport proximity (mount/unmount).
+          observePreview(previewFrame);
         }
         section.hidden = false;
       })
