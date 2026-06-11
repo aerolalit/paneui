@@ -8,8 +8,8 @@
 // Surface design (full parity with the `pane` CLI):
 //   - Hot-path nouns are DISCRETE tools with sharp descriptions: create_pane,
 //     get_pane_state, get_events, send_to_pane, update_pane, delete_pane,
-//     upgrade_pane, list_panes, and the four record CRUD tools (list_records,
-//     upsert_record, update_record, delete_record).
+//     upgrade_pane, list_panes, and the record tools (list_records, get_record,
+//     upsert_record, update_record, delete_record, delete_record_collection).
 //   - Multi-verb MANAGEMENT nouns each collapse into ONE tool with a required
 //     `action` enum and per-action fields: records_admin (template/per-pane
 //     collection admin lives under the discrete record tools + this one for the
@@ -475,6 +475,19 @@ const deleteRecordShape = {
     .int()
     .optional()
     .describe("Optional optimistic-lock version."),
+};
+
+const deleteRecordCollectionShape = {
+  pane_id: z.string().min(1).describe("The pane id."),
+  collection: z
+    .string()
+    .min(1)
+    .describe("The record collection to drop in its entirety."),
+  confirm: z
+    .literal(true)
+    .describe(
+      "Required (true) to drop the whole collection. This removes every row plus the collection row itself and cannot be undone.",
+    ),
 };
 
 // ===========================================================================
@@ -1205,6 +1218,28 @@ export const TOOLS: ToolDef[] = [
             : {},
         );
         return jsonResult({ deleted: true, key: args["record_key"] });
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  },
+  {
+    name: "delete_record_collection",
+    description:
+      "Drop a WHOLE per-pane record collection at once: every row plus the collection row itself. Use this to reset or remove a collection (todo list, comment thread, board) rather than deleting rows one by one with delete_record. Owner-only and destructive, so it requires confirm:true. Collection names are immutable, so to rename a collection drop the old one and write under the new name. Returns { deleted: true, collection }.",
+    inputSchema: deleteRecordCollectionShape,
+    handler: async (client, args) => {
+      try {
+        if (args["confirm"] !== true) {
+          return invalidArgs(
+            "delete_record_collection drops the whole collection. Pass confirm:true to proceed.",
+          );
+        }
+        await client.deleteRecordCollection(
+          String(args["pane_id"]),
+          String(args["collection"]),
+        );
+        return jsonResult({ deleted: true, collection: args["collection"] });
       } catch (e) {
         return errorResult(e);
       }
