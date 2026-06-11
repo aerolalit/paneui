@@ -71,8 +71,11 @@ Environment:
   PANE_AGENT_NAME       Display name for the auto-registered agent.
   PANE_REGISTER_SECRET  Registration secret (REGISTRATION_MODE=secret relays).
 
-Tools exposed: create_pane, get_pane_state, get_events, send_to_pane,
-list_records, upsert_record, update_record, delete_record.
+Tools exposed (full CLI parity): create_pane, get_pane_state, get_events,
+send_to_pane, update_pane, upgrade_pane, list_panes, delete_pane,
+list_records, get_record, upsert_record, update_record, delete_record,
+template, template_records, participant, share, attachments, taste, key,
+trash, feedback, agent, run_query, get_skill.
 
 See https://github.com/aerolalit/paneui for docs.
 `;

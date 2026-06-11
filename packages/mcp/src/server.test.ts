@@ -35,7 +35,13 @@ describe("MCP handshake", () => {
     expect(names).toContain("get_events");
     expect(names).toContain("send_to_pane");
     expect(names).toContain("upsert_record");
-    expect(names).toHaveLength(8);
+    // Consolidated management tools + the new hot-path lifecycle tools.
+    expect(names).toContain("template");
+    expect(names).toContain("attachments");
+    expect(names).toContain("run_query");
+    expect(names).toContain("update_pane");
+    expect(names).toContain("get_skill");
+    expect(names).toHaveLength(25);
     // Each advertised tool carries a description + JSON-schema inputSchema the
     // host shows to the model.
     for (const t of tools) {
