@@ -1559,6 +1559,10 @@ const EXTRA_CSS = `
     border-radius: 999px; padding: 1px 8px;
     flex: 0 0 auto; white-space: nowrap;
   }
+  .pane-row .row-tag-more {
+    background: transparent; border-style: dashed;
+    color: var(--ink-mute); font-variant-numeric: tabular-nums;
+  }
   /* Inline per-pane tag editor (row ⋯ → Edit tags). */
   .tag-editor { margin-top: 8px; }
   .tag-editor .te-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -1679,6 +1683,13 @@ const SHELL_JS = `
     }
     // Scroll the active view back to the top so a re-activation feels fresh.
     document.querySelector('.main').scrollTop = 0;
+    // The Panes-tab tag-overflow layout needs a non-zero clientWidth to
+    // measure chips, which it can't get while the tab is display:none. Re-run
+    // the pass when we land on Panes so server-rendered chips pick up the
+    // "+N more" badge on first reveal.
+    if (view === 'panes' && typeof window.__panesApplyFilters === 'function') {
+      window.__panesApplyFilters();
+    }
   }
   function viewFromHash() {
     const h = (location.hash || '').replace(/^#/, '');
@@ -2169,6 +2180,9 @@ const SHELL_JS = `
         rt.textContent = '';
         next.forEach((t) => { const s = document.createElement('span'); s.className = 'row-tag'; s.textContent = t; rt.appendChild(s); });
         rt.style.display = next.length ? '' : 'none';
+        // Re-run the Panes-tab layout pass so the new tag set picks up the
+        // "+N more" overflow badge and respects the current search keyword.
+        if (typeof window.__panesApplyFilters === 'function') window.__panesApplyFilters();
         done();
       } catch (e) { alert('Network error — try again.'); save.disabled = false; save.textContent = 'Save'; }
     });
@@ -2379,6 +2393,74 @@ const SHELL_JS = `
       try { return JSON.parse(row.getAttribute('data-tags') || '[]'); }
       catch (e) { return []; }
     }
+    // Lay out a row's tag chips on a single line: tags matching the search
+    // keyword are promoted to the front so they don't get clipped off-screen,
+    // then any chips that overflow are hidden and replaced with a single
+    // "+N more" badge so the user knows tags are missing.
+    function layoutRowTags(row, q) {
+      const rt = row.querySelector('.row-tags');
+      if (!rt) return;
+      const all = rowTags(row);
+      if (!all.length) { rt.style.display = 'none'; return; }
+      rt.style.display = '';
+      // Reorder: matches first (preserving original order among matches), then
+      // the rest. When the search is empty, "ordered" equals the original list.
+      let ordered = all;
+      if (q.length > 0) {
+        const hit = [], miss = [];
+        for (const t of all) (t.toLowerCase().includes(q) ? hit : miss).push(t);
+        if (hit.length) ordered = hit.concat(miss);
+      }
+      // Rebuild the chip nodes only when the order actually changed, so we
+      // don't thrash the DOM on every keystroke.
+      const current = [];
+      rt.querySelectorAll('.row-tag:not(.row-tag-more)').forEach((c) => current.push(c.textContent || ''));
+      const sameOrder = current.length === ordered.length && current.every((t, i) => t === ordered[i]);
+      if (!sameOrder) {
+        rt.textContent = '';
+        ordered.forEach((t) => {
+          const s = document.createElement('span');
+          s.className = 'row-tag'; s.textContent = t;
+          rt.appendChild(s);
+        });
+      } else {
+        // Remove a stale "+N more" badge from the previous layout pass.
+        const oldMore = rt.querySelector('.row-tag-more');
+        if (oldMore) oldMore.remove();
+        // Make sure any chips hidden by a previous pass are visible again
+        // before we re-measure.
+        rt.querySelectorAll('.row-tag').forEach((c) => { c.style.display = ''; });
+      }
+      // Measure widths once. Bail out if the row isn't laid out yet (e.g. the
+      // Panes tab is hidden) — we'll re-run when it becomes visible.
+      const W = rt.clientWidth;
+      if (W <= 0) return;
+      const cs = window.getComputedStyle(rt);
+      const gap = parseFloat(cs.columnGap || cs.gap || '0') || 0;
+      const chips = Array.from(rt.querySelectorAll('.row-tag:not(.row-tag-more)'));
+      let used = 0, fits = 0;
+      for (let i = 0; i < chips.length; i++) {
+        const w = chips[i].offsetWidth;
+        const add = (i === 0 ? 0 : gap) + w;
+        if (used + add <= W) { used += add; fits++; } else break;
+      }
+      if (fits === chips.length) return;
+      // Append the badge, then shrink "fits" until it actually fits alongside.
+      const more = document.createElement('span');
+      more.className = 'row-tag row-tag-more';
+      more.textContent = '+' + (chips.length - fits);
+      rt.appendChild(more);
+      const moreW = more.offsetWidth;
+      while (fits > 0) {
+        const trailing = chips[fits - 1].offsetWidth;
+        if (used + gap + moreW <= W) break;
+        used -= (fits === 1 ? 0 : gap) + trailing;
+        fits--;
+      }
+      more.textContent = '+' + (chips.length - fits);
+      for (let i = 0; i < chips.length; i++) chips[i].style.display = i < fits ? '' : 'none';
+    }
+
     function apply() {
       const q = (search && search.value.trim().toLowerCase()) || '';
       list.querySelectorAll('.pane-row').forEach((row) => {
@@ -2392,6 +2474,7 @@ const SHELL_JS = `
           }
         }
         row.style.display = show ? '' : 'none';
+        if (show) layoutRowTags(row, q);
       });
       // Narrow the tag chips by the same keyword so the chip row tracks the
       // search. "All" and "★ Favorites" are pseudo-tags and stay visible.
@@ -2423,6 +2506,18 @@ const SHELL_JS = `
         apply();
       });
     }
+    // Initial pass measures the server-rendered chips and adds "+N more"
+    // badges where rows overflow. Re-run on resize so the badge tracks the
+    // panel width (debounced via requestAnimationFrame).
+    let resizePending = false;
+    window.addEventListener('resize', () => {
+      if (resizePending) return;
+      resizePending = true;
+      requestAnimationFrame(() => { resizePending = false; apply(); });
+    });
+    // Expose so the inline tag editor can re-run the layout after a save.
+    window.__panesApplyFilters = apply;
+    apply();
   })();
 
   // Recently viewed — fetch the human's HumanPaneView ledger and render a
