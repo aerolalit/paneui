@@ -1,0 +1,49 @@
+# Example GitHub Actions workflow: a human-approved deploy gate backed by pane.
+#
+# Copy this into .github/workflows/ in your own repo and set two secrets:
+#   PANE_API_KEY      — a pane agent key (from `pane agent register --print-key`)
+#   SLACK_WEBHOOK_URL — optional; if set, the gate also DMs the URL to Slack
+#
+# The `gate` job creates a pane, posts its URL to the run's job summary (and
+# Slack), and blocks until a human approves or rejects. `deploy` only runs if
+# the gate exits 0.
+
+name: deploy-with-approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: production
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install the pane CLI
+        run: npm i -g @paneui/cli
+
+      - name: Wait for human approval
+        env:
+          PANE_API_KEY: ${{ secrets.PANE_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DEPLOY_ENV: ${{ github.event.inputs.environment }}
+          GATE_TIMEOUT: "3600" # one hour for a human to act
+        # The script lives alongside this workflow in the example; adjust the
+        # path to wherever you copy gate.sh + the .html / .schema.json files.
+        run: bash examples/ci-deploy-gate/gate.sh
+
+  deploy:
+    needs: gate # only runs if the gate exited 0 (approved)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploying to ${{ github.event.inputs.environment }}…"
+      # …your real deploy steps here…

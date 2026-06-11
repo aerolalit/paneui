@@ -1,0 +1,10 @@
+{
+  "title": "Approve this plan?",
+  "summary": "Refactor the auth module before shipping v2.",
+  "steps": [
+    "Extract token verification into AuthService",
+    "Add a refresh-token rotation test",
+    "Delete the legacy email-lookup path",
+    "Run the e2e suite against staging"
+  ]
+}

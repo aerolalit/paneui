@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Approve this plan?</title>
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font:
+      15px/1.5 system-ui,
+      sans-serif;
+    margin: 0;
+    padding: 24px;
+    max-width: 720px;
+  }
+  h1 {
+    font-size: 1.25rem;
+    margin: 0 0 4px;
+  }
+  .sub {
+    color: #666;
+    margin: 0 0 16px;
+  }
+  ol {
+    padding-left: 20px;
+  }
+  li {
+    margin: 4px 0;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 64px;
+    margin: 12px 0;
+    font: inherit;
+    padding: 8px;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  button {
+    font: inherit;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+  }
+  #approve {
+    background: #16794e;
+    color: #fff;
+    border-color: #16794e;
+  }
+  #reject {
+    background: #fff;
+    color: #b42318;
+    border-color: #b42318;
+  }
+  #status {
+    margin-top: 16px;
+    font-weight: 600;
+  }
+</style>
+
+<h1 id="title">Approve this plan?</h1>
+<p class="sub" id="subtitle"></p>
+<ol id="steps"></ol>
+
+<textarea
+  id="reason"
+  placeholder="Optional note (sent back to the agent)"
+></textarea>
+
+<div class="row">
+  <button type="button" id="approve">Approve</button>
+  <button type="button" id="reject">Reject</button>
+</div>
+
+<p id="status"></p>
+
+<script>
+  // Read the per-instance seed data the agent passed via --input-data.
+  // It is null until the init frame lands, so await window.pane.ready first.
+  (async () => {
+    await window.pane.ready;
+    const input = window.pane.inputData || {};
+    if (input.title) document.getElementById("title").textContent = input.title;
+    document.getElementById("subtitle").textContent = input.summary || "";
+    const steps = document.getElementById("steps");
+    for (const step of input.steps || []) {
+      const li = document.createElement("li");
+      li.textContent = step; // textContent, never innerHTML — no markup injection
+      steps.appendChild(li);
+    }
+  })();
+
+  async function decide(decision) {
+    const reason = document.getElementById("reason").value.trim();
+    const buttons = document.querySelectorAll("button");
+    buttons.forEach((b) => (b.disabled = true));
+    document.getElementById("status").textContent = "Sending…";
+    try {
+      // The terminal event. The agent waits for this with
+      //   pane watch <id> --type plan.decided
+      await window.pane.emit(
+        "plan.decided",
+        reason ? { decision, reason } : { decision },
+      );
+      document.getElementById("status").textContent =
+        decision === "approve"
+          ? "Approved — thank you."
+          : "Rejected — thank you.";
+    } catch (e) {
+      document.getElementById("status").textContent =
+        "Failed: " + (e.code || e.message);
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  document
+    .getElementById("approve")
+    .addEventListener("click", () => decide("approve"));
+  document
+    .getElementById("reject")
+    .addEventListener("click", () => decide("reject"));
+</script>

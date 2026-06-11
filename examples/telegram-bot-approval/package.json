@@ -1,0 +1,23 @@
+{
+  "name": "pane-example-telegram-bot-approval",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A Telegram bot that hands a human a pane URL for a rich decision and reads the structured result back over @paneui/core.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "node --experimental-strip-types src/bot.ts"
+  },
+  "dependencies": {
+    "@paneui/core": "^0.0.18",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "typescript": "^5.6.0"
+  }
+}
