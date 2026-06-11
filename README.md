@@ -76,6 +76,41 @@ The core round trip is the foundation; the relay also carries the pieces you nee
 
 See [`skills/pane/SKILL.md`](skills/pane/SKILL.md) — the agent-facing reference — for the authoritative, version-matched description of all of the above.
 
+## How Pane compares
+
+Pane is not a competitor to in-chat UI extensions — it owns a different
+quadrant. **MCP Apps** (SEP-1865), **MCP elicitation**, and **AG-UI /
+CopilotKit** all render UI *inside* a live host or chat session: a host app
+(Claude Desktop, ChatGPT, VS Code) or your own front-end is present, the human
+is looking at it, and the UI is torn down when the turn ends. Pane is for the
+agents those approaches can't serve — the ones with **no session at all**: a
+cron job, a CI pipeline, a Slack or Telegram bot, a headless server, or any case
+where the human is on a different device than the agent. Agents that live
+outside a GUI need a *callback URL*, not a chat window.
+
+| | **Pane** | **MCP Apps** (SEP-1865) | **MCP elicitation** | **AG-UI / CopilotKit** |
+|---|---|---|---|---|
+| Where the UI renders | Standalone URL, any browser/device | Sandboxed iframe inside the MCP **host app** | Inside the MCP **client** (form/URL prompt) | Inside **your front-end app** |
+| Needs a host app / live session | **No** — agent makes outbound HTTP only | Yes — an MCP host renders it | Yes — an MCP client must be connected | Yes — a running front-end + SSE session |
+| Out-of-band delivery (URL to another device/channel) | **Yes** — hand the URL over Slack, Telegram, email, SMS | No — bound to the host UI | No — the client drives the prompt in-session | No — bound to the app the user is in |
+| Survives the agent turn ending | **Yes** — pane lives until its TTL; the human can answer later | No — tied to the conversation turn | No — request is resolved within the call | No — tied to the live session |
+| Persistent / mutable state | **Yes** — durable event log + mutable records per pane | Per-render component state | Single request/response | Session state (STATE_DELTA), app-managed |
+| Self-hostable | **Yes** — one container, MIT | Spec only; depends on host | Spec only; depends on client | Open-source; you host the app + agent |
+
+The rows pane wins on are exactly the headless/out-of-band ones: no host app,
+URL-on-another-device delivery, an answer that can arrive minutes or hours later,
+and state that outlives a single turn. If you *do* have a live host or front-end
+session, MCP Apps / elicitation / AG-UI are the natural fit — render the UI right
+where the human already is. Pane is the tool for everywhere else.
+
+## Examples
+
+Runnable, copy-pasteable examples live in [`examples/`](examples/):
+
+- [`claude-code-approval/`](examples/claude-code-approval/) — a CLI agent (Claude Code or any shell agent) hands a human an "approve this plan?" pane and reads the decision back from `pane watch`.
+- [`telegram-bot-approval/`](examples/telegram-bot-approval/) — a Telegram bot DMs the human a pane URL for a rich decision and receives the structured result over `@paneui/core`.
+- [`ci-deploy-gate/`](examples/ci-deploy-gate/) — a GitHub Actions deploy gate: the pipeline posts a pane URL, a human approves/rejects with a reason, and a script polls the result and exits `0`/`1`.
+
 ## Install
 
 No build step, no host app. Pick your audience — paste the agent block into your AI agent's chat, or run the human block yourself.
