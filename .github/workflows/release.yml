@@ -1,19 +1,20 @@
 name: release
 
-# Publishes @paneui/core and @paneui/cli to npm when a v* tag is pushed.
+# Publishes @paneui/core, @paneui/cli and @paneui/mcp to npm when a v* tag
+# is pushed.
 #
 # This is the canonical release path. Procedure:
 #   1. Run `./scripts/cut-release.sh <version>` — bumps every package's
-#      "version", bumps the @paneui/core dep in @paneui/cli and @paneui/relay
-#      (so workspace links resolve to the local copy at build time), bumps
-#      the VERSION constant in packages/cli/src/version.ts, refreshes the
-#      lockfile, runs a smoke build, and commits the changes on a release-
-#      prep branch. Pass --push to also push and open the PR.
+#      "version", bumps the @paneui/core dep in @paneui/cli, @paneui/mcp
+#      and @paneui/relay (so workspace links resolve to the local copy at
+#      build time), bumps the VERSION constant in packages/cli/src/version.ts,
+#      refreshes the lockfile, runs a smoke build, and commits the changes
+#      on a release-prep branch. Pass --push to also push and open the PR.
 #   2. Review the diff, merge the PR.
 #   3. Tag and push:
 #         git tag v0.1.0 <merge-commit-sha> && git push origin v0.1.0
-#   4. This workflow builds, runs unit tests, and publishes both packages with
-#      npm provenance attached.
+#   4. This workflow builds, runs unit tests, and publishes all three packages
+#      with npm provenance attached.
 #   5. On a successful publish it also dispatches paneui-ops to redeploy the
 #      landing page (paneui.com) from this tag, so the marketing site never
 #      drifts behind a release.
@@ -63,7 +64,9 @@ jobs:
 
       - run: npm run test:unit
 
-      # @paneui/core must publish before @paneui/cli — @paneui/cli depends on it.
+      # @paneui/core must publish before @paneui/cli and @paneui/mcp — both
+      # depend on it. cli and mcp are independent of each other, so their
+      # order is arbitrary.
       - name: publish @paneui/core
         run: npm publish --workspace @paneui/core --provenance --access public
         env:
@@ -71,6 +74,11 @@ jobs:
 
       - name: publish @paneui/cli
         run: npm publish --workspace @paneui/cli --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: publish @paneui/mcp
+        run: npm publish --workspace @paneui/mcp --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

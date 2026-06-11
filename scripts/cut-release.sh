@@ -14,8 +14,8 @@
 #
 # What it bumps:
 #   - "version" in root package.json
-#   - "version" in packages/{cli,core,relay}/package.json
-#   - "@paneui/core" dependency in packages/{cli,relay}/package.json
+#   - "version" in packages/{cli,core,mcp,relay}/package.json
+#   - "@paneui/core" dependency in packages/{cli,mcp,relay}/package.json
 #     (caret-pins to the new ^X.Y.Z so npm-workspaces keeps linking the
 #      local copy instead of resolving an older version from npm)
 #   - VERSION constant in packages/cli/src/version.ts
@@ -115,19 +115,19 @@ trap cleanup EXIT
 # ---- Bump --------------------------------------------------------------
 
 echo "→ bumping versions"
-for f in package.json packages/cli/package.json packages/core/package.json packages/relay/package.json; do
+for f in package.json packages/cli/package.json packages/core/package.json packages/mcp/package.json packages/relay/package.json; do
   tmp=$(mktemp)
   jq --arg v "$VERSION" '.version = $v' "$f" > "$tmp" && mv "$tmp" "$f"
   echo "  $f"
 done
 
 # Bump the internal @paneui/core dep in every package that depends on it
-# (today: cli + relay). Caret-pinning to the new version is what makes
-# npm-workspaces keep linking the local copy at build time — without
+# (today: cli + mcp + relay). Caret-pinning to the new version is what
+# makes npm-workspaces keep linking the local copy at build time — without
 # this, the workspace falls back to the older published version from npm
 # and the build fails with "no exported member …" errors for anything
 # added since the last release.
-for f in packages/cli/package.json packages/relay/package.json; do
+for f in packages/cli/package.json packages/mcp/package.json packages/relay/package.json; do
   if jq -e '.dependencies."@paneui/core"' "$f" >/dev/null; then
     tmp=$(mktemp)
     jq --arg v "^$VERSION" '.dependencies."@paneui/core" = $v' "$f" > "$tmp" && mv "$tmp" "$f"
@@ -180,14 +180,17 @@ echo "→ committing release-prep"
 git add package.json package-lock.json \
   packages/cli/package.json packages/cli/src/version.ts \
   packages/core/package.json \
+  packages/mcp/package.json \
   packages/relay/package.json \
   skills/pane/SKILL.md
 git commit -q -m "chore(release): v${VERSION}
 
-Bump @paneui/core, @paneui/cli, @paneui/relay and root to ${VERSION}.
+Bump @paneui/core, @paneui/cli, @paneui/mcp, @paneui/relay and root to
+${VERSION}.
 Bump VERSION constant in packages/cli/src/version.ts to match.
-Bump internal @paneui/core dependency in @paneui/cli and @paneui/relay
-to ^${VERSION} so workspace linking finds the local copy at build time.
+Bump internal @paneui/core dependency in @paneui/cli, @paneui/mcp and
+@paneui/relay to ^${VERSION} so workspace linking finds the local copy
+at build time.
 Bump <!-- pane skill v... --> comment in skills/pane/SKILL.md so the
 relay's GET /skills/pane/SKILL.md/version probe matches the release."
 
@@ -216,7 +219,7 @@ cat <<EOF
 
   The tag push triggers:
     - release-image  → builds ghcr.io/aerolalit/paneui:${VERSION} + :${VERSION}-postgres
-    - release        → publishes @paneui/core@${VERSION} + @paneui/cli@${VERSION} to npm
+    - release        → publishes @paneui/core@${VERSION} + @paneui/cli@${VERSION} + @paneui/mcp@${VERSION} to npm
 EOF
 
 # ---- Optional auto-push ------------------------------------------------
