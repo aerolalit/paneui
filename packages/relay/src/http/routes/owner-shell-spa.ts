@@ -2715,6 +2715,17 @@ const SHELL_JS = `
           if (d < 14) return d + 'd ago';
           return iso.slice(0, 10);
         }
+        // Each preview iframe renders the pane at a 1000px logical (desktop)
+        // viewport; scale it by cardWidth/1000 so the whole desktop layout
+        // shrinks to fit the column rather than showing a zoomed-in crop.
+        // scale() needs a unitless number CSS can't derive from a fluid width,
+        // so we measure each card here and keep --rc-scale fresh on reflow.
+        const scaleObserver = new ResizeObserver((entries) => {
+          for (const e of entries) {
+            const w = e.target.clientWidth;
+            if (w) e.target.style.setProperty('--rc-scale', String(w / 1000));
+          }
+        });
         for (const it of items.slice(0, 12)) {
           const title = it.title || it.pane_id;
           const h = hue(it.pane_id);
@@ -2779,6 +2790,7 @@ const SHELL_JS = `
           scrim.appendChild(metaEl);
           card.appendChild(scrim);
           list.appendChild(card);
+          scaleObserver.observe(card);
         }
         section.hidden = false;
       })

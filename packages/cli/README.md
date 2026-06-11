@@ -14,6 +14,19 @@ npx @paneui/cli <command>
 
 The binary is `pane`.
 
+## Try it
+
+Register once, then `pane demo` spins up a short-lived sample pane on the hosted
+relay, opens it in your browser, and prints the structured event back in your
+terminal the moment you interact (the demo pane is cleaned up on exit):
+
+```sh
+npx @paneui/cli agent register --name "my-agent"   # one-time, hosted relay
+npx @paneui/cli demo                               # Node 20+ — round-trip in ~60s
+```
+
+Add `--no-open` on a headless / SSH box and it just prints the URL.
+
 ## Setup
 
 ```sh
@@ -32,6 +45,7 @@ Override per-invocation with `--url <url>` and `--api-key <key>`.
 Uniform `pane <noun> <verb> [options]`:
 
 ```
+pane demo                      Zero-setup guided tour — see the round-trip live
 pane agent register            Provision an agent API key and save it locally
 pane agent logout              Clear the locally-saved URL + API key
 pane create            Create a pane — returns pane_id, urls, tokens
