@@ -564,19 +564,16 @@ export const OWNER_SHELL_CSS = `
     border: 2px solid var(--bg);
   }
 
-  /* Recent panes — two fixed rows that scroll horizontally together (same
-     2-row carousel as Favorites). Cards keep their original 280px width via
-     grid-auto-columns instead of stretching to fill. */
+  /* Recent panes — a responsive wrap grid that scrolls with the page instead
+     of sideways. auto-fill + minmax(160px, 1fr) yields ~2 columns on a phone
+     and more as the viewport widens, with columns stretching to fill the row
+     so nothing overflows horizontally or hides behind a sideways scrollbar. */
   .recents {
     display: grid;
-    grid-auto-flow: column;
-    grid-template-rows: repeat(2, auto);
-    grid-auto-columns: 280px;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 14px;
-    overflow-x: auto;
-    padding: 4px 2px 12px;
+    padding: 4px 2px 2px;
     margin: 0 -2px;
-    scrollbar-width: thin;
   }
   .recent-card {
     background: var(--surface);
