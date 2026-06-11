@@ -1256,6 +1256,80 @@ export const OWNER_SHELL_CSS = `
   /* The recents version tag must sit above the preview. */
   .recent-card .thumb .tag { z-index: 2; }
 
+  /* ============== Explore gallery cards ==============
+   * The Explore tab is a visual gallery (not the dense .pane-row list): each
+   * card is a full-bleed live thumbnail of the pane itself, with the title +
+   * sharer overlaid on a gradient scrim and a live/ended pill in the corner.
+   * Fixed-width cards (248px) so the .tile-preview scale factor is exact and
+   * the same pane reads identically here and in its Home favorite/recents
+   * thumbnail; auto-fill packs as many columns as fit, left-aligned. */
+  .explore-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 248px);
+    gap: 18px;
+    justify-content: start;
+  }
+  .explore-grid .empty-strip { grid-column: 1 / -1; }
+  .explore-card {
+    position: relative;
+    display: block;
+    width: 248px;
+    aspect-ratio: 16 / 11;
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    border: 1px solid var(--hairline);
+    box-shadow: var(--shadow-soft);
+    background: var(--surface);
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .explore-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
+  .explore-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ec-prev { position: absolute; inset: 0; overflow: hidden; }
+  /* 1000px logical viewport scaled to the 248px card (matches the .tile-preview
+   * trick used by favorites/recents): 248/1000 = 0.248; the card is 170.5px
+   * tall (248 * 11/16), so the logical height is 170.5/0.248 ≈ 688px — the
+   * scaled iframe covers the whole card with no monogram strip showing. */
+  .explore-card .tile-preview { height: 688px; transform: scale(0.248); }
+  .ec-corner { position: absolute; top: 8px; right: 8px; z-index: 2; }
+  .ec-scrim {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    padding: 26px 12px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.80), rgba(0,0,0,0.42) 55%, transparent);
+    color: #fff;
+  }
+  .ec-title {
+    font-weight: 600; font-size: 14px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ec-meta {
+    font-size: 12px; color: rgba(255,255,255,0.82);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ec-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 600 11px/1 var(--sans);
+    padding: 4px 9px; border-radius: var(--radius-pill);
+  }
+  .ec-pill.live { color: #d5ffe8; background: rgba(34,176,107,0.42); }
+  .ec-pill.ended { color: rgba(255,255,255,0.85); background: rgba(0,0,0,0.45); }
+  .ec-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #22b06b;
+    box-shadow: 0 0 0 0 rgba(34,176,107,0.6);
+    animation: ec-pulse 2s infinite;
+  }
+  @keyframes ec-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(34,176,107,0.5); }
+    70% { box-shadow: 0 0 0 6px rgba(34,176,107,0); }
+    100% { box-shadow: 0 0 0 0 rgba(34,176,107,0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .explore-card { transition: none; }
+    .ec-dot { animation: none; }
+  }
+
   /* ============== Agent-init instructions modal ============== */
   .ai-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .ai-modal[hidden] { display: none; }

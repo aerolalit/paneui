@@ -52,7 +52,15 @@ import {
   type ServeablePane,
 } from "../../bridge/serve-pane.js";
 import { recordView } from "../../bridge/recents.js";
-import { computeAgentPresence } from "../../bridge/routes.js";
+import {
+  computeAgentPresence,
+  PERMISSIONS_POLICY,
+} from "../../bridge/routes.js";
+import {
+  wrapArtifactForPreview,
+  buildPaneCsp,
+  paneCspImgOrigin,
+} from "../../bridge/preview-render.js";
 import {
   getOrCreateIdentityParticipant,
   getOrCreatePublicGuestParticipant,
@@ -311,6 +319,53 @@ paneAccess.get("/:paneId/content", async (c) => {
   }
 
   return renderPaneContent(c, pane!);
+});
+
+// GET /p/:paneId/preview — a non-interactive thumbnail of the pane's artifact,
+// rendered with its real input_data. This is the public counterpart of the
+// owner-gated /panes/:id/preview (routes/previews.ts): it powers the lazy
+// <iframe> in each Explore-gallery card, which lists PUBLIC panes from ANY
+// owner — so the owner-scoped route would 404 for the viewer.
+//
+// Access reuses resolveAccess, so a `public` pane previews for anyone (even
+// anonymous), `link` panes preview read-only, and invite_only/missing panes
+// stay oracle-free (login/404). Explore only ever links public panes; the
+// broader allow set just means the route never needs its own auth rules.
+//
+// Unlike /content there is NO status/TTL gate: an ended-but-public pane should
+// still show its last artifact as a thumbnail (the preview is inert HTML +
+// embedded input_data — no WebSocket, no live interaction). Served `private,
+// no-store` because the body embeds per-instance input_data, mirroring
+// previews.ts exactly so the two CSP/headers can't drift.
+paneAccess.get("/:paneId/preview", async (c) => {
+  const prisma = c.get("prisma");
+  const config = c.get("config");
+  const paneId = c.req.param("paneId");
+  if (!paneId) throw errors.notFound();
+
+  const human = await resolveHumanFromCookie(c);
+  const pane = await loadPane(prisma, paneId);
+  const access = await resolveAccess(prisma, pane, human);
+  if (access.kind !== "allow") return denyResponse(c, access);
+
+  // html-ref is rejected at template-create in v1, so anything that isn't
+  // html-inline renders the same inert placeholder the viewer's /content uses
+  // for its defence-in-depth branch.
+  const artifactBody =
+    pane!.templateVersion.templateType === "html-inline"
+      ? pane!.templateVersion.templateSource
+      : "<!-- template.type=html-ref is not implemented in v1 -->";
+
+  c.header(
+    "Content-Security-Policy",
+    buildPaneCsp(paneCspImgOrigin(config.publicUrl)),
+  );
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("Permissions-Policy", PERMISSIONS_POLICY);
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "private, no-store");
+  return c.body(wrapArtifactForPreview(artifactBody, pane!.inputData));
 });
 
 // GET /p/:paneId/presence — agent-presence poll.
