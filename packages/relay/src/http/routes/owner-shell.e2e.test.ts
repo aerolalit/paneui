@@ -212,21 +212,21 @@ describe("GET /panes/:id", () => {
     const csp = embedded.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("frame-ancestors 'self'");
     expect(csp).not.toContain("frame-ancestors 'none'");
-    // Chrome-free: no top-nav, and no standalone header band at all — the SPA
-    // frames this full-screen. The shell client still needs its four presence
-    // elements, so a hidden stub carries them (no null-deref).
+    // The owner top-nav (account bar) is dropped — the SPA supplies that chrome.
     const html = await embedded.text();
     expect(html).not.toContain('id="top-nav-share"');
     expect(html).not.toContain('id="top-nav-signout"');
-    expect(html).not.toContain("<header");
-    expect(html).not.toContain('class="brand"');
-    expect(html).not.toContain('class="pill"');
-    // The hidden presence stub is present so the shell JS can read #status etc.
-    expect(html).toContain('<div hidden aria-hidden="true"><span id="dot">');
-    // Standalone load DOES render the header band (regression guard).
-    expect(standalone_html).toContain('class="pill"');
+    // ...but the standalone header band DOES render, so the embedded pane keeps
+    // its WS-connection + agent-live/offline presence pills inside the SPA.
+    expect(html).toContain("<header");
+    expect(html).toContain('class="pill"');
+    expect(html).toContain('id="status"');
+    expect(html).toContain('id="agent-status"');
     // The pane still works: same content iframe + cfg as the standalone load.
     expect(html).toContain(`src="/panes/${paneId}/content"`);
+    // The standalone (non-embedded) load DOES carry the owner top-nav — the one
+    // piece embedded drops (it keeps only the presence header above).
+    expect(standalone_html).toContain('id="top-nav-share"');
   });
 
   it("401s when no login cookie is present (API / curl path — no Accept header)", async () => {
