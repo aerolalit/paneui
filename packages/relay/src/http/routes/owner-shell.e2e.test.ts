@@ -574,12 +574,21 @@ describe("GET /home — in-SPA pane view", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
 
-    // The in-SPA pane viewer mount point + its chrome are present.
+    // The in-SPA pane viewer mount point is present.
     expect(html).toContain('data-view="pane"');
     expect(html).toContain('id="pane-host-frame"');
-    expect(html).toContain('id="pane-host-back"');
     // The iframe starts blank — a pane is only mounted on open.
     expect(html).toContain('src="about:blank"');
+    // No in-SPA back bar — exit is the browser Back button only.
+    expect(html).not.toContain("pane-host-back");
+    // The pane view full-screens by hiding the SPA nav.
+    const shellForNav = [
+      ...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),
+    ].map((m) => m[1]);
+    expect(
+      shellForNav.some((s) => s.includes("'viewing-pane'")),
+      "viewing-pane fullscreen toggle missing",
+    ).toBe(true);
 
     // tsc does NOT typecheck the SHELL_JS string body, so a syntax error in the
     // inline client JS would otherwise reach the browser. Extract the bundle

@@ -896,16 +896,7 @@ function renderHtml(human: HumanRow, data: ShellData, nonce: string): string {
          iframe go with it). The iframe is same-origin trusted chrome; the
          untrusted agent content is sandboxed by the shell one level down. -->
     <section class="view" data-view="pane">
-      <div class="pane-host">
-        <div class="pane-host-bar">
-          <button id="pane-host-back" type="button" class="pane-host-back" aria-label="Back">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-            <span>Back</span>
-          </button>
-          <span class="pane-host-title" id="pane-host-title"></span>
-        </div>
-        <iframe id="pane-host-frame" class="pane-host-frame" src="about:blank" title="Pane"></iframe>
-      </div>
+      <iframe id="pane-host-frame" class="pane-host-frame" src="about:blank" title="Pane"></iframe>
     </section>
 
   </main>
@@ -1716,6 +1707,11 @@ const SHELL_JS = `
     document.querySelectorAll('#nav-items button').forEach((el) => {
       el.classList.toggle('active', el.getAttribute('data-view') === view);
     });
+    // Full-screen the pane view: hide the SPA nav (sidebar / bottom tab bar) so
+    // the framed pane fills the viewport. Toggled here so every entry/exit path
+    // (open, popstate back, forward) keeps it in sync.
+    const appEl = document.querySelector('.app');
+    if (appEl) appEl.classList.toggle('viewing-pane', view === 'pane');
 
     // Resolve the hash: Templates reflects its segment ('#store' for Store,
     // '#templates' for Yours); every other view is just '#<view>'. The pane view
@@ -1780,37 +1776,33 @@ const SHELL_JS = `
   // blanks the iframe src — the browser tears the shell document down, and its
   // WebSocket + nested content iframe go with it (no leaked live iframe/socket).
   const paneHostFrame = document.getElementById('pane-host-frame');
-  const paneHostTitle = document.getElementById('pane-host-title');
 
-  function mountPaneHost(paneId, title) {
+  function mountPaneHost(paneId) {
     if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
     const want = '/panes/' + encodeURIComponent(paneId) + '?embedded=1';
     if (paneHostFrame.getAttribute('src') !== want) paneHostFrame.src = want;
-    if (paneHostTitle && typeof title === 'string') paneHostTitle.textContent = title;
     activate('pane');
   }
   function unmountPaneHost() {
     if (paneHostFrame && paneHostFrame.getAttribute('src') !== 'about:blank') {
       paneHostFrame.src = 'about:blank';
     }
-    if (paneHostTitle) paneHostTitle.textContent = '';
   }
-  function openPane(paneId, title) {
+  function openPane(paneId) {
     if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
     history.pushState({ pane: paneId }, '', '/panes/' + encodeURIComponent(paneId));
-    mountPaneHost(paneId, title);
+    mountPaneHost(paneId);
   }
-  function openPaneHref(href, title) {
+  function openPaneHref(href) {
     href = href || '';
     if (href.slice(0, 7) === '/panes/') {
       const id = href.slice(7).split('/')[0].split('?')[0].split('#')[0];
-      if (id) { openPane(decodeURIComponent(id), title); return; }
+      if (id) { openPane(decodeURIComponent(id)); return; }
     }
     if (href) location.href = href;
   }
 
-  document.getElementById('pane-host-back')?.addEventListener('click', () => history.back());
-
+  // Exit is the browser Back button only (no in-SPA back bar) — popstate below.
   window.addEventListener('popstate', (ev) => {
     const st = ev.state;
     if (st && st.pane) {
@@ -2269,8 +2261,7 @@ const SHELL_JS = `
     if (!row) return;
     if (ev.target instanceof HTMLElement && ev.target.closest('[data-noopen="1"]')) return;
     const href = row.getAttribute('data-href');
-    const titleEl = row.querySelector('.title');
-    openPaneHref(href, titleEl ? titleEl.textContent : undefined);
+    openPaneHref(href);
   });
 
   // Pane-row triple-dots menu — Open / Copy URL / Delete. Floats next to the
