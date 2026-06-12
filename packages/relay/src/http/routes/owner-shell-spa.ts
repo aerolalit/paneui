@@ -1648,48 +1648,6 @@ const EXTRA_CSS = `
 
 const SHELL_JS = `
 (function () {
-  // TEMP DIAGNOSTIC (preview envs only — hostname contains '-pr'). Prints the
-  // real device viewport numbers so we can see exactly why the bottom bar leaves
-  // a gap in an installed iOS PWA. Remove before merge.
-  (function paneViewportDebug() {
-    try {
-      if (!/-pr\\d+\\./.test(location.hostname)) return;
-      var box = document.createElement('div');
-      box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;'
-        + 'font:11px/1.35 ui-monospace,monospace;background:rgba(10,10,12,.92);'
-        + 'color:#7CFC9A;padding:6px 8px;white-space:pre;pointer-events:none;'
-        + 'border-bottom:1px solid #2a2a2a;';
-      function probe() {
-        var p = document.createElement('div');
-        p.style.cssText = 'position:fixed;bottom:0;height:env(safe-area-inset-bottom);width:0;';
-        document.body.appendChild(p);
-        var sab = p.getBoundingClientRect().height;
-        p.remove();
-        var nav = document.querySelector('.nav');
-        var app = document.querySelector('.app');
-        var navR = nav ? nav.getBoundingClientRect() : null;
-        var appR = app ? app.getBoundingClientRect() : null;
-        var vv = window.visualViewport;
-        var standalone = (window.matchMedia('(display-mode: standalone)').matches)
-          || (navigator.standalone === true);
-        box.textContent =
-          'standalone=' + standalone + '  dm=' + (window.matchMedia('(display-mode: standalone)').matches)
-          + '\\ninnerH=' + window.innerHeight + '  screenH=' + screen.height
-          + '  vvH=' + (vv ? Math.round(vv.height) : 'n/a')
-          + '\\nsafe-bottom=' + Math.round(sab) + 'px'
-          + '\\napp: pos=' + (app ? getComputedStyle(app).position : '?')
-          + ' h=' + (appR ? Math.round(appR.height) : '?')
-          + ' bottom=' + (appR ? Math.round(appR.bottom) : '?')
-          + '\\nnav.bottom=' + (navR ? Math.round(navR.bottom) : '?')
-          + '  GAP(innerH-nav.bottom)=' + (navR ? Math.round(window.innerHeight - navR.bottom) : '?');
-      }
-      if (document.body) { document.body.appendChild(box); probe(); }
-      else document.addEventListener('DOMContentLoaded', function () { document.body.appendChild(box); probe(); });
-      window.addEventListener('resize', probe);
-      if (window.visualViewport) window.visualViewport.addEventListener('resize', probe);
-    } catch (e) { /* diagnostic must never break the app */ }
-  })();
-
   // 'pane' is the in-SPA pane viewer. Unlike the others it isn't hash-routable
   // and has no nav button — it's entered via openPane() (pushState /panes/:id)
   // and left via popstate. It's listed here so activate('pane') isn't coerced
