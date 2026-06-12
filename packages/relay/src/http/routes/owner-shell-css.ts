@@ -265,7 +265,12 @@ export const OWNER_SHELL_CSS = `
       flex-direction: row;
       align-items: stretch;
       justify-content: space-around;
-      padding: 6px max(8px, env(safe-area-inset-left)) calc(6px + var(--safe-bottom)) max(8px, env(safe-area-inset-right));
+      /* Keep the bar compact and native-tight: the bottom inset is the
+         home-indicator safe area (env ~34px) plus just 2px breathing — the only
+         space that can sit below the labels (tappable content can't go under the
+         indicator). Top padding is small so the whole bar reads like an iOS tab
+         bar (~49px + safe area) rather than an oversized block. */
+      padding: 4px max(8px, env(safe-area-inset-left)) calc(2px + var(--safe-bottom)) max(8px, env(safe-area-inset-right));
     }
     .nav .brand { display: none; }
     /* The footer's full-page links (/my-agents, /settings) and sign-out have
@@ -284,10 +289,10 @@ export const OWNER_SHELL_CSS = `
     .nav .me .avatar, .nav .me .who { display: none; }
     .nav .me .acct-tab {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3px; width: 100%; min-height: 52px;
+      gap: 3px; width: 100%; min-height: 46px;
       background: transparent; border: none; cursor: pointer;
       color: var(--ink-dim); font-size: 11px;
-      padding: 8px 4px 4px;
+      padding: 4px 4px 2px;
     }
     .nav .me .acct-tab .icon {
       width: 22px; height: 22px;
@@ -360,8 +365,8 @@ export const OWNER_SHELL_CSS = `
       flex-direction: column;
       justify-content: center;
       gap: 3px;
-      padding: 8px 4px 4px;
-      min-height: 52px;
+      padding: 4px 4px 2px;
+      min-height: 46px;
       font-size: 11px;
       text-align: center;
       border-radius: 8px;
