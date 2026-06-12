@@ -612,10 +612,48 @@ describe("authenticated MCP tool call runs as the mapped agent", () => {
       { token: access_token, sessionId: sid },
     );
     const listRpc = await readRpc(listRes);
-    const tools = (listRpc.result as { tools: { name: string }[] }).tools;
+    const tools = (
+      listRpc.result as {
+        tools: {
+          name: string;
+          annotations?: {
+            title?: string;
+            readOnlyHint?: boolean;
+            destructiveHint?: boolean;
+            idempotentHint?: boolean;
+            openWorldHint?: boolean;
+          };
+        }[];
+      }
+    ).tools;
     const names = tools.map((t) => t.name);
     expect(names).toContain("create_pane");
     expect(names).toContain("get_skill");
+    expect(tools).toHaveLength(26);
+
+    // Directory-readiness: annotations (title + behavioural hints) must reach
+    // tools/list over the HTTP transport, not just the stdio one. Assert a
+    // representative read-only / destructive / consolidated sample.
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    for (const t of tools) {
+      expect(t.annotations, t.name).toBeTruthy();
+      expect(typeof t.annotations!.title, t.name).toBe("string");
+    }
+    expect(byName.get("list_panes")!.annotations).toMatchObject({
+      title: "List Panes",
+      readOnlyHint: true,
+    });
+    expect(byName.get("delete_pane")!.annotations).toMatchObject({
+      title: "Delete Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    });
+    expect(byName.get("template")!.annotations).toMatchObject({
+      title: "Manage Templates",
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
 
     // tools/call create_pane — runs as the mapped agent against the relay's
     // own API (loopback). NOTE: the loopback points at 127.0.0.1:PORT which the

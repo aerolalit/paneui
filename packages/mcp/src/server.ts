@@ -85,8 +85,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     server.registerTool(
       tool.name,
       {
+        // `title` (top-level, display name) + `annotations` (the ToolAnnotations
+        // behavioural hints, which also carry a title) both flow into tools/list
+        // so MCP hosts / Anthropic's connector directory can classify the tool.
+        title: tool.annotations.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
       },
       async (args: Record<string, unknown>) => {
         let client: PaneClient;

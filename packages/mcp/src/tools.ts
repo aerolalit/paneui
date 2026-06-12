@@ -29,6 +29,7 @@
 // action-specific requirements and returns a tight invalid_args error).
 
 import { z } from "zod";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { PaneClient } from "@paneui/core";
 import { PaneApiError } from "@paneui/core";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -85,6 +86,15 @@ export interface ToolDef {
   // Zod raw shape — the object passed to z.object(). The MCP SDK accepts this
   // directly in registerTool({ inputSchema }) and validates arguments with it.
   inputSchema: z.ZodRawShape;
+  // MCP tool annotations (ToolAnnotations: title + behavioural hints). Both
+  // servers thread this straight into registerTool's config so the hints
+  // surface in tools/list output for the stdio AND HTTP transports. Hints are
+  // advisory metadata for the client/host (Anthropic's connector directory
+  // reads them to classify a tool as read-only vs destructive); they do NOT
+  // change server behaviour. The hint reflects the MOST-privileged action a
+  // tool can take — a consolidated action-enum tool that CAN delete is marked
+  // destructive even though it also has read sub-actions.
+  annotations: ToolAnnotations;
   // `env` is optional: when omitted (the stdio server + existing tests) the
   // config/skill-coupled tools use their CLI defaults; the relay's HTTP server
   // injects one so the same handlers run server-side.
@@ -902,6 +912,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Hand the human a rich interactive UI by URL and (optionally) get structured data back. Build the UI as inline HTML (pass `name` + `html`) OR reuse a saved template (pass `template_id`). The relay hosts it and returns a URL. ALWAYS give the returned url to the human — paste it into the conversation and ask them to open it. Reach for this whenever a text reply is the wrong shape: forms, approvals, pickers, surveys, dashboards, diff/doc review, wizards. If the page captures input it emits events back to you (poll them with get_events) or mutates record collections (the record tools). BEFORE authoring: call get_skill for the events-vs-records decision + schema grammar, and the `taste` tool (action: get) for the human's house style — both shape the HTML you write. Returns { pane_id, url, urls, title, expires_at }.",
     inputSchema: createPaneShape,
+    annotations: {
+      title: "Create Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     handler: async (client, args) => {
       try {
         const hasTemplateId = str(args, "template_id") !== undefined;
@@ -973,6 +990,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Fetch a pane's current metadata (status, title, template version, timestamps, expires_at) WITHOUT its event log. Use it to check whether a pane is still open or has expired. To read what the human did, use get_events.",
     inputSchema: getPaneStateShape,
+    annotations: {
+      title: "Get Pane State",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         return jsonResult(await client.getPane(String(args["pane_id"])));
@@ -986,6 +1008,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Poll a pane's append-only event log for what the human did (form submissions, approvals, picks). This is how you receive the round-trip result — there is no push/streaming in MCP. Poll loop: call with no `since` first; process the returned events; remember next_cursor; call again passing it as `since` to get only newer events. To WAIT for a human who hasn't acted yet, pass wait_seconds (~25) so the relay holds the request open until an event arrives or it times out, then call again with the same cursor. Returns { events, next_cursor }.",
     inputSchema: getEventsShape,
+    annotations: {
+      title: "Get Events",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const page = await client.getEvents(String(args["pane_id"]), {
@@ -1003,6 +1030,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Push an event INTO an open pane — update the live UI the human is looking at (progress, a new message, a status change, fresh data). The event type must be declared in the pane's event_schema with 'agent' in its emittedBy. For mutable collections (todos, line items, comment threads) prefer the record tools instead. Returns { event, deduped }.",
     inputSchema: sendToPaneShape,
+    annotations: {
+      title: "Send to Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     handler: async (client, args) => {
       try {
         const res = await client.sendEvent(String(args["pane_id"]), {
@@ -1021,6 +1055,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Edit instance-level fields on a LIVE pane in place (PATCH) without minting a new one — the pane keeps its id, URL, event log, and template pin. Settable: ttl_seconds OR expires_at (mutually exclusive), title, preamble, input_data (replaced wholesale + revalidated), metadata, tags, icon_emoji / icon_attachment_id (or clear_* to drop the override). Pass at least one field. Returns the full new pane state + an updated_fields array. To swap the HTML/schemas, use upgrade_pane instead.",
     inputSchema: updatePaneShape,
+    annotations: {
+      title: "Update Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const body: Record<string, unknown> = {};
@@ -1080,6 +1121,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Re-pin a LIVE pane to another version of its SAME template (POST /upgrade) — swap the HTML (design) and event/input/record schemas in place. The human keeps the same URL; no new pane is created. Use after appending a new template version with the `template` tool (action: version). By default a strict schema-compat gate refuses an upgrade that would narrow the schema (returns schema_incompatible_upgrade + details.breaks); pass force:true to apply anyway. Returns { pane_id, template_version, upgraded, breaks, compat }.",
     inputSchema: upgradePaneShape,
+    annotations: {
+      title: "Upgrade Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const opts: { template_version?: number; compat?: "strict" | "force" } =
@@ -1100,6 +1148,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Enumerate YOUR agent's panes (newest first). Use it to find a pane_id you lost, audit what's open, or get a cursor for pagination. No secrets in the response (participant tokens are unrecoverable — mint a fresh URL with the participant tool). Filter by status (open|closed|all) or template_id. Returns { items, next_cursor }.",
     inputSchema: listPanesShape,
+    annotations: {
+      title: "List Panes",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const opts: Record<string, unknown> = {};
@@ -1123,6 +1176,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Close/delete a pane (idempotent — an already-closed pane still succeeds). The human's URL stops working. To merely edit a pane keep it alive with update_pane; to recover a soft-deleted pane use the trash tool (action: restore).",
     inputSchema: deletePaneShape,
+    annotations: {
+      title: "Delete Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         await client.deletePane(String(args["pane_id"]));
@@ -1138,6 +1198,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "List rows in a pane's mutable record collection (todo list, shopping list, kanban board, comment thread). Records are the right primitive when the page shows several mutable items and the CURRENT state matters more than the history. This also doubles as the POLL/watch for records (no streaming in MCP): pass the prior next_since to fetch only newer/changed rows. include_tombstones:true surfaces deletions. Returns { records, next_since, has_more }.",
     inputSchema: listRecordsShape,
+    annotations: {
+      title: "List Records",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const out = await client.listRecords(
@@ -1166,6 +1231,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Fetch a single record row by its key from a pane collection (scans the collection — fine for a one-off lookup, not a hot loop). Returns { record } or an isError record_not_found.",
     inputSchema: getRecordShape,
+    annotations: {
+      title: "Get Record",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const row = await client.getRecord(
@@ -1189,6 +1259,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Create a row in a pane's record collection, or return the existing row if record_key is already present (deduped:true). Use to add a todo, a line item, a comment, etc. The collection must be declared in the pane's record schema with 'agent' allowed to write. If you're still designing the pane, call get_skill first for the records-vs-events decision and the x-pane-collections schema grammar. Returns { record, deduped }.",
     inputSchema: upsertRecordShape,
+    annotations: {
+      title: "Upsert Record",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const body: { record_key?: string; data: unknown } = {
@@ -1213,6 +1290,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Update an existing row in a pane's record collection (replaces its data). Pass if_match with the row's current version for an optimistic-locked update — on a version mismatch the relay returns the current row so you can retry. Returns { record }.",
     inputSchema: updateRecordShape,
+    annotations: {
+      title: "Update Record",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const body: { data: unknown; if_match?: number } = {
@@ -1238,6 +1322,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Soft-delete a row from a pane's record collection. The page sees the deletion live (the row becomes a tombstone in list_records). Pass if_match for an optimistic-locked delete. Returns { deleted: true }.",
     inputSchema: deleteRecordShape,
+    annotations: {
+      title: "Delete Record",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         await client.deleteRecord(
@@ -1259,6 +1350,13 @@ export const TOOLS: ToolDef[] = [
     description:
       "Drop a WHOLE per-pane record collection at once: every row plus the collection row itself. Use this to reset or remove a collection (todo list, comment thread, board) rather than deleting rows one by one with delete_record. Owner-only and destructive, so it requires confirm:true. Collection names are immutable, so to rename a collection drop the old one and write under the new name. Returns { deleted: true, collection }.",
     inputSchema: deleteRecordCollectionShape,
+    annotations: {
+      title: "Delete Record Collection",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         if (args["confirm"] !== true) {
@@ -1282,6 +1380,17 @@ export const TOOLS: ToolDef[] = [
     description:
       "Manage reusable, versioned UI templates (author once, instance many times via create_pane's template_id). ONE tool with an `action` enum: create | version | update | search | list | show | get_version | delete | publish | unpublish | search_public | set_icon. Required fields per action are documented on the `action` parameter. A template is HTML + an event schema (+ optional input/record/template-record schemas); a pane is one use of one version of it.",
     inputSchema: templateShape,
+    // Consolidated action-enum tool: read sub-actions (search/list/show/
+    // get_version/search_public) coexist with mutating ones (create/version/
+    // update/delete/publish/...). The hint reflects the most-privileged action
+    // (delete is destructive), so readOnlyHint:false + destructiveHint:true.
+    annotations: {
+      title: "Manage Templates",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1465,6 +1574,15 @@ export const TOOLS: ToolDef[] = [
     description:
       "CRUD for TEMPLATE-level record collections — owner-curated content anchored to a template head and visible to every pane derived from any of its versions (vs per-pane records, which are the discrete record tools). ONE tool with an `action` enum: list | get | upsert | update | delete | delete_collection. The template version must declare the collection via template_record_schema (set it with the `template` tool first).",
     inputSchema: templateRecordsShape,
+    // Consolidated tool: read actions (list/get) + mutating ones (upsert/
+    // update/delete/delete_collection). Hint reflects the destructive action.
+    annotations: {
+      title: "Manage Template Records",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       const templateId = String(args["template_id"]);
@@ -1571,6 +1689,15 @@ export const TOOLS: ToolDef[] = [
     description:
       "Manage a pane's participant URLs (recovery + leak-containment). ONE tool with an `action` enum: list | new | revoke. Use `new` when you lost the original URL (the plaintext token is returned ONCE — save it). Token URLs are stored hashed and cannot be recovered.",
     inputSchema: participantShape,
+    // Consolidated tool: read action (list) + mutating ones (new mints a URL,
+    // revoke invalidates one). Hint reflects the destructive action.
+    annotations: {
+      title: "Manage Participants",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       const paneId = String(args["pane_id"]);
@@ -1605,6 +1732,16 @@ export const TOOLS: ToolDef[] = [
     description:
       "Identity sharing on a pane (layered on top of participant tokens). ONE tool with an `action` enum: list (access_mode + grants) | invite (a human by email, role participant|viewer) | set_access (the /p access mode: invite_only|link|public) | revoke (one grant by id). Token (/s/<token>) links are independent of access_mode and keep working.",
     inputSchema: shareShape,
+    // Consolidated tool: read action (list) + mutating/side-effecting ones
+    // (invite emails a human, set_access, revoke). openWorld:true because
+    // invite delivers a message to an external recipient.
+    annotations: {
+      title: "Manage Pane Sharing",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       const paneId = String(args["pane_id"]);
@@ -1655,6 +1792,17 @@ export const TOOLS: ToolDef[] = [
     description:
       "Binary attachments (images, PDFs, audio, video) referenced from event payloads / input_data via `format: pane-attachment-id`. ONE tool with an `action` enum: upload | download | show | list | delete | mint_token | revoke_token | list_tokens. upload reads an ABSOLUTE file_path; download writes to an ABSOLUTE out_path (or returns base64). Scope an upload to agent (default, reusable), pane, or template. mint_token returns a /b/<token> capability URL (ONCE) a browser can GET without your API key.",
     inputSchema: attachmentsShape,
+    // Consolidated tool: read actions (download/show/list/list_tokens) +
+    // mutating ones (upload/delete/mint_token/revoke_token). openWorld:true
+    // because upload pushes bytes into external relay storage + mint_token
+    // produces a publicly-fetchable capability URL.
+    annotations: {
+      title: "Manage Attachments",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1778,6 +1926,15 @@ export const TOOLS: ToolDef[] = [
     description:
       "Read / write / clear the agent's freeform UI taste notes (a small markdown document of presentation preferences learned from human feedback — 'denser layout', 'no rounded corners'). ONE tool with an `action` enum: get | set | clear. Call `get` BEFORE generating a pane so prior feedback shapes the output; `set` does a whole-document replace (not append). Keep entries about UI/presentation only.",
     inputSchema: tasteShape,
+    // Consolidated tool: read action (get) + mutating ones (set replaces the
+    // doc, clear deletes it). Hint reflects the destructive action.
+    annotations: {
+      title: "Manage UI Taste Notes",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1808,6 +1965,16 @@ export const TOOLS: ToolDef[] = [
     description:
       "Inspect or revoke the calling agent's API key. ONE tool with an `action` enum: list (key info — agent_id, key_prefix, timestamps) | revoke (self-destruct the agent's OWN key; it stops working immediately and is irreversible — pass confirm:true). The relay scopes keys to the caller, so both act only on your own key.",
     inputSchema: keyShape,
+    // Consolidated tool: read action (list) + a mutating one (revoke
+    // self-destructs the agent's own key). Hint reflects the destructive
+    // action.
+    annotations: {
+      title: "Manage API Key",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1837,6 +2004,16 @@ export const TOOLS: ToolDef[] = [
     description:
       "Manage soft-deleted panes + templates. ONE tool with an `action` enum: list | restore (pane id) | restore_template (template id|slug) | purge (pane id) | purge_template (template id|slug). purge bypasses the retention window and is permanent. Soft-deleted rows live in trash until the sweeper reclaims them.",
     inputSchema: trashShape,
+    // Consolidated tool: read action (list) + mutating ones (restore/purge/
+    // restore_template/purge_template; purge is permanent). Hint reflects the
+    // destructive action.
+    annotations: {
+      title: "Manage Trash",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1880,6 +2057,15 @@ export const TOOLS: ToolDef[] = [
     description:
       "Send or list feedback to the relay operator. ONE tool with an `action` enum: create (a bug|feature|note with a message, optional pane_id) | list (the agent's own submissions, newest first, paginated by before).",
     inputSchema: feedbackShape,
+    // Consolidated tool: read action (list) + a side-effecting one (create
+    // submits feedback to the relay operator). Hint reflects the write action.
+    annotations: {
+      title: "Manage Feedback",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       const action = String(args["action"]);
       try {
@@ -1921,6 +2107,16 @@ export const TOOLS: ToolDef[] = [
     description:
       "Agent identity + binding. ONE tool with an `action` enum: whoami (the resolved relay URL, active profile, whether a key is configured — no network, no secrets) | claim (bind this agent to a human via a one-shot claim code from their Settings UI; one-way) | logout (clear the locally-saved key/profile; does NOT revoke it on the relay — use the `key` tool's revoke for that).",
     inputSchema: agentShape,
+    // Consolidated tool: read action (whoami) + mutating ones (claim binds
+    // this agent to a human, logout clears the local profile). Hint reflects
+    // the state-changing action.
+    annotations: {
+      title: "Manage Agent Identity",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     handler: async (client, args, env) => {
       const action = String(args["action"]);
       try {
@@ -1949,6 +2145,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Run read-only SQL over YOUR scoped data (panes, records, events) — the relay scopes every row to panes you own. Use it to summarise activity, find panes/records by content, or build a report. Tables + columns and JSON projection operators are documented on the `sql` parameter. Default output is { columns, rows, truncated, scope, elapsed_ms } (format:json); csv/tsv/table render the rows as text. Capped at 10,000 rows; 10s timeout.",
     inputSchema: runQueryShape,
+    annotations: {
+      title: "Run SQL Query",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (client, args) => {
       try {
         const result = await client.query(
@@ -1977,6 +2178,11 @@ export const TOOLS: ToolDef[] = [
     description:
       "Fetch the relay's auto-updating SKILL.md (the full Pane usage guide) — UNAUTHENTICATED, needs no API key. Call this to self-teach the Pane workflow (events vs records, schema grammars, the poll loop) before driving the other tools. Pass version_only:true to get just the relay's skill version string (to check if a cached copy is stale).",
     inputSchema: getSkillShape,
+    annotations: {
+      title: "Get Skill Guide",
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     handler: async (_client, args, env) => {
       try {
         const versionOnly = args["version_only"] === true;

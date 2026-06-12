@@ -143,7 +143,15 @@ function buildMcpServer(
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema },
+      {
+        // title + annotations (ToolAnnotations behavioural hints) ride into the
+        // HTTP transport's tools/list exactly as they do for the stdio server,
+        // so the remote connector advertises the same directory-readiness hints.
+        title: tool.annotations.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+      },
       async (args, extra) => {
         // The auth holder is the source of truth for this request's identity;
         // fall back to extra.authInfo (set by the transport) for safety.

@@ -50,6 +50,42 @@ describe("MCP handshake", () => {
     }
   });
 
+  it("tools/list carries annotations over the (stdio-style) transport", async () => {
+    // The annotations the directory reads MUST survive registerTool → the
+    // transport → tools/list (not just live on the in-memory ToolDef).
+    const mcp = await connect(fakeClient({}));
+    const { tools } = await mcp.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t]));
+
+    // Every tool has a title + a privilege hint over the wire.
+    for (const t of tools) {
+      expect(t.annotations, t.name).toBeTruthy();
+      expect(typeof t.annotations!.title, t.name).toBe("string");
+      const ro = t.annotations!.readOnlyHint === true;
+      const destructive = t.annotations!.destructiveHint === true;
+      expect(ro || destructive, t.name).toBe(true);
+    }
+
+    // Read-only sample.
+    expect(byName.get("list_panes")!.annotations).toMatchObject({
+      title: "List Panes",
+      readOnlyHint: true,
+    });
+    // Destructive sample.
+    expect(byName.get("delete_pane")!.annotations).toMatchObject({
+      title: "Delete Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    });
+    // Consolidated action-enum sample.
+    expect(byName.get("template")!.annotations).toMatchObject({
+      title: "Manage Templates",
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  });
+
   it("rejects tools/call with invalid arguments before hitting core", async () => {
     const createPane = vi.fn();
     const mcp = await connect(fakeClient({ createPane }));
