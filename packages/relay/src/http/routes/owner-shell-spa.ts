@@ -1775,41 +1775,45 @@ const SHELL_JS = `
   // navigating. The panes list stays mounted, so its scroll survives. Back
   // blanks the iframe — the browser tears the shell document down, and its
   // WebSocket + nested content iframe go with it (no leaked live iframe/socket).
-  const paneHostFrame = document.getElementById('pane-host-frame');
   // Which pane the iframe currently shows (null = blank). Tracked so we don't
-  // needlessly reload, and so navigation uses location.replace (see below).
+  // needlessly reload, and to gate teardown.
   let mountedPaneId = null;
 
-  // Navigate the host iframe WITHOUT adding a browser history entry. Setting
-  // iframe.src pushes a joint-session-history entry, so a single openPane()
-  // would cost TWO back presses — the first would only rewind the iframe to
-  // about:blank (a blank pane page) before the second reached the list.
-  // location.replace() swaps the iframe document in place instead. The frame is
-  // always same-origin (about:blank or our own /panes/:id), so this is allowed;
-  // .src is a defensive fallback.
-  function frameReplace(url) {
-    try {
-      paneHostFrame.contentWindow.location.replace(url);
-    } catch (e) {
-      paneHostFrame.src = url;
-    }
+  // Load a URL into the host iframe by REPLACING the iframe element with a fresh
+  // one. Navigating an existing iframe (src= or location.replace) pushes a
+  // joint-session-history entry in some browsers, so a single openPane() could
+  // cost two Back presses — the first only rewinds the iframe to about:blank
+  // (a white pane) before the second reaches the list. A brand-new iframe's
+  // first navigation always REPLACES its initial about:blank, so it adds no
+  // history entry; removing the old element also tears down its document (the
+  // shell's WebSocket + nested content iframe go with it). Returns the new node.
+  function swapPaneFrame(src) {
+    const old = document.getElementById('pane-host-frame');
+    if (!old) return null;
+    const fresh = document.createElement('iframe');
+    fresh.id = 'pane-host-frame';
+    fresh.className = 'pane-host-frame';
+    fresh.title = 'Pane';
+    fresh.setAttribute('src', src); // set before insertion → first load replaces
+    old.replaceWith(fresh);
+    return fresh;
   }
   function mountPaneHost(paneId) {
-    if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
+    if (!document.getElementById('pane-host-frame')) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
     if (mountedPaneId !== paneId) {
-      frameReplace('/panes/' + encodeURIComponent(paneId) + '?embedded=1');
+      swapPaneFrame('/panes/' + encodeURIComponent(paneId) + '?embedded=1');
       mountedPaneId = paneId;
     }
     activate('pane');
   }
   function unmountPaneHost() {
-    if (paneHostFrame && mountedPaneId !== null) {
-      frameReplace('about:blank');
+    if (mountedPaneId !== null) {
+      swapPaneFrame('about:blank');
       mountedPaneId = null;
     }
   }
   function openPane(paneId) {
-    if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
+    if (!document.getElementById('pane-host-frame')) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
     history.pushState({ pane: paneId }, '', '/panes/' + encodeURIComponent(paneId));
     mountPaneHost(paneId);
   }
