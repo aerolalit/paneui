@@ -1296,6 +1296,25 @@ export const OWNER_SHELL_CSS = `
     pointer-events: none;
     /* Above the monogram, below any badge/tag the card lays over it. */
     z-index: 1;
+    /* Fade in on first paint instead of popping. mountPreview() adds .loaded
+       on iframe.load; the class stays for the lifetime of the card, so
+       compositor-layer reaping on scroll-away does NOT re-trigger the
+       transition — it just briefly exposes the (quiet) monogram beneath. */
+    opacity: 0;
+    transition: opacity 220ms ease-out;
+  }
+  .tile-preview.loaded { opacity: 1; }
+  /* When a tile carries a preview iframe (data-src present), swap the
+     colorful per-pane gradient on the monogram for a quiet neutral cream.
+     The iframe paints over the monogram once loaded; if WebKit reaps the
+     iframe's GPU layer on scroll-away, the cream is what flashes through
+     on scroll-back — reads as a loading state, not a hard colour change.
+     !important is required to override the inline per-pane gradient style.
+     Initials go transparent so the only thing visible during the flash is
+     a flat warm-paper surface that blends with the card edge. */
+  *:has(> .tile-preview[data-src]) > .tile-monogram {
+    background: var(--surface-2) !important;
+    color: transparent;
   }
   /* Favorites — 76px SQUARE icon. The frame is a square ${PVF}px box; the
    * preview doc renders the pane's 1000px desktop layout into it via zoom, and
