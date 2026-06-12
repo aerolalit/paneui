@@ -10,6 +10,8 @@
 //   magic_links        expires_at < NOW()  OR  consumed_at < NOW() - 7d
 //   claim_codes        expires_at < NOW()  OR  consumed_at < NOW() - 7d
 //   attachment_tokens  expires_at < NOW()  OR  revoked_at  < NOW() - 7d
+//   oauth_auth_codes   expires_at < NOW()  OR  consumed_at < NOW() - 7d
+//   oauth_tokens       expires_at < NOW()  OR  revoked_at  < NOW() - 7d
 //
 // The 7-day "consumed/revoked grace" exists because a consumed magic-link
 // or revoked attachment-token is auth-state-dead but useful for forensic
@@ -29,6 +31,8 @@ export interface AuthSweepResult {
   magic_links: number;
   claim_codes: number;
   attachment_tokens: number;
+  oauth_auth_codes: number;
+  oauth_tokens: number;
 }
 
 /**
@@ -104,17 +108,60 @@ export async function sweepAuthTokens(
       ).count
     : 0;
 
+  // oauth_auth_codes — expired OR consumed > 7 days ago (single-use codes are
+  // dead the moment they're consumed; keep a short forensic window).
+  const expiredOauthCodeIds = await prisma.oAuthAuthCode.findMany({
+    where: {
+      OR: [{ expiresAt: { lt: now } }, { consumedAt: { lt: graceCutoff } }],
+    },
+    select: { codeHash: true },
+    take: AUTH_SWEEP_BATCH,
+  });
+  const oauthCodesCount = expiredOauthCodeIds.length
+    ? (
+        await prisma.oAuthAuthCode.deleteMany({
+          where: {
+            codeHash: { in: expiredOauthCodeIds.map((r) => r.codeHash) },
+          },
+        })
+      ).count
+    : 0;
+
+  // oauth_tokens — expired OR revoked > 7 days ago (same forensic window as
+  // attachment_tokens). A revoked-but-recent token row is kept so an operator
+  // can answer "when was Claude disconnected?".
+  const expiredOauthTokenIds = await prisma.oAuthToken.findMany({
+    where: {
+      OR: [{ expiresAt: { lt: now } }, { revokedAt: { lt: graceCutoff } }],
+    },
+    select: { tokenHash: true },
+    take: AUTH_SWEEP_BATCH,
+  });
+  const oauthTokensCount = expiredOauthTokenIds.length
+    ? (
+        await prisma.oAuthToken.deleteMany({
+          where: {
+            tokenHash: { in: expiredOauthTokenIds.map((r) => r.tokenHash) },
+          },
+        })
+      ).count
+    : 0;
+
   const result: AuthSweepResult = {
     logins: loginsCount,
     magic_links: magicLinksCount,
     claim_codes: claimCodesCount,
     attachment_tokens: attachmentTokensCount,
+    oauth_auth_codes: oauthCodesCount,
+    oauth_tokens: oauthTokensCount,
   };
   const total =
     result.logins +
     result.magic_links +
     result.claim_codes +
-    result.attachment_tokens;
+    result.attachment_tokens +
+    result.oauth_auth_codes +
+    result.oauth_tokens;
   if (total > 0) {
     log.info("auth-sweeper pass", { ...result });
   }

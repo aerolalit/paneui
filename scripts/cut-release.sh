@@ -168,6 +168,15 @@ sed -i.bak "s|<!-- pane skill v[0-9][^ ]* -->|<!-- pane skill v${VERSION} -->|" 
 rm "${SKILL_MD}.bak"
 echo "  $SKILL_MD (skill version comment)"
 
+# The MCP invocation layer carries the same version comment so the composed
+# MCP guide (MCP-INVOCATION.md + the core blocks of SKILL.md) reports one
+# version in lockstep with SKILL.md. The relay reads SKILL.md's comment for the
+# MCP.md/version probe, but bumping both keeps the source files consistent.
+MCP_INVOCATION_MD="skills/pane/MCP-INVOCATION.md"
+sed -i.bak "s|<!-- pane skill v[0-9][^ ]* -->|<!-- pane skill v${VERSION} -->|" "$MCP_INVOCATION_MD"
+rm "${MCP_INVOCATION_MD}.bak"
+echo "  $MCP_INVOCATION_MD (skill version comment)"
+
 # ---- Refresh lockfile + workspace symlinks -----------------------------
 
 echo ""

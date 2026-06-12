@@ -24,6 +24,8 @@ Use `pane` when the human's answer is genuinely too rich for text — a form to
 fill, options to rank, a document to mark up, a dashboard to act on. For a plain
 question, just ask in text; `pane` only wins on the rich slice.
 
+<!-- pane:core:start -->
+
 ## Events or records — pick the primitive first
 
 Pane has **two** data primitives. Pick before you design the schema or write
@@ -65,6 +67,8 @@ invent things that don't exist or miss things that do.
 
 Each surface is documented in detail further down (`The schema`, `Records`,
 `Attachments`). Use this table as the index, not as the spec.
+
+<!-- pane:core:end -->
 
 ## Setup
 
@@ -451,6 +455,8 @@ latest_version, last_used_at` — no HTML. Fetch the HTML with `show` once you
   Panes pin the version they were created with, so old panes are
   unaffected by a new version.
 
+<!-- pane:core:start -->
+
 ## The schema
 
 The schema is the contract for _every_ event on the pane. The relay
@@ -778,6 +784,8 @@ Rules of thumb:
   when the human explicitly asked for a fully bespoke theme (or taste says so).
   Once bare, the `--pane-*` variables no longer exist, so you must define every
   color yourself — including a dark-mode path.
+
+<!-- pane:core:end -->
 
 ### `pane watch <id>` — wait for the answer
 
@@ -1364,6 +1372,8 @@ capability token is minted by the agent that owns it, and `downloadBlob`'s
 participant token cannot enumerate arbitrary blobs the agent owns. See
 `docs/CAPABILITY-URLS.md` for the full trust model.
 
+<!-- pane:core:start -->
+
 ## Records — per-pane mutable collections (#287)
 
 Records are a **separate data shape from events**. Where events are an
@@ -1535,6 +1545,8 @@ await pane.records.delete("comments", "cmt_1", { ifMatch: 2 });
 Mutator error codes you'll see on the rejected Error: `record_collection_not_found`,
 `record_schema_violation`, `author_not_allowed`, `conflict` (with
 `details.current`), `gone` (the pane was closed / expired).
+
+<!-- pane:core:end -->
 
 **Agents** mutate the same collections via the CLI (or the equivalent
 `/v1/panes/:id/records/:collection` HTTP routes):

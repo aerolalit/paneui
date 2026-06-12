@@ -43,6 +43,38 @@ export async function fetchSkill(
   return { markdown };
 }
 
+/**
+ * GET the relay's MCP-flavoured guide (the conceptual core + MCP tool-call
+ * invocation grammar) from GET /skills/pane/MCP.md, or just its version from
+ * GET /skills/pane/MCP.md/version. This is what an MCP consumer should read
+ * (not the CLI-grammar SKILL.md). Served unauthenticated, same as the skill.
+ */
+export async function fetchMcpGuide(
+  relayUrl: string,
+  opts: { version?: boolean } = {},
+): Promise<{ markdown?: string; version?: string }> {
+  const base = relayUrl.replace(/\/$/, "");
+  if (opts.version) {
+    const res = await fetchOrThrow(base + "/skills/pane/MCP.md/version");
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    const version =
+      body !== null &&
+      typeof body === "object" &&
+      typeof (body as { version?: unknown }).version === "string"
+        ? (body as { version: string }).version
+        : "0.0.0";
+    return { version };
+  }
+  const res = await fetchOrThrow(base + "/skills/pane/MCP.md");
+  const markdown = await res.text();
+  return { markdown };
+}
+
 async function fetchOrThrow(url: string): Promise<Response> {
   let res: Response;
   try {

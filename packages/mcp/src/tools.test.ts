@@ -99,6 +99,129 @@ describe("tool listing", () => {
     }
   });
 
+  it("registers exactly 26 tools", () => {
+    // Pinned so the directory-readiness annotation sweep can't silently lose or
+    // duplicate a tool.
+    expect(TOOLS).toHaveLength(26);
+  });
+
+  it("every tool carries a Title-Case title and behavioural hints", () => {
+    for (const t of TOOLS) {
+      // A human-friendly title is mandatory for connector-directory readiness.
+      expect(typeof t.annotations.title).toBe("string");
+      expect(t.annotations.title!.length).toBeGreaterThan(0);
+      // First char of the title is upper-case (Title Case).
+      expect(t.annotations.title![0]).toBe(
+        t.annotations.title![0]!.toUpperCase(),
+      );
+      // Exactly one of readOnly / destructive describes the tool's privilege.
+      const ro = t.annotations.readOnlyHint === true;
+      const destructive = t.annotations.destructiveHint === true;
+      expect(ro || destructive).toBe(true);
+      // A read-only tool must not ALSO claim to be destructive.
+      if (ro) expect(destructive).toBe(false);
+    }
+  });
+
+  it("pure-read tools are readOnly and never destructive", () => {
+    const READ_ONLY = [
+      "get_pane_state",
+      "get_events",
+      "list_panes",
+      "list_records",
+      "get_record",
+      "run_query",
+      "get_skill",
+    ];
+    for (const name of READ_ONLY) {
+      const a = tool(name).annotations;
+      expect(a.readOnlyHint, name).toBe(true);
+      expect(a.destructiveHint, name).not.toBe(true);
+    }
+  });
+
+  it("mutating + consolidated tools are destructive and not readOnly", () => {
+    const DESTRUCTIVE = [
+      // discrete mutators
+      "create_pane",
+      "update_pane",
+      "upgrade_pane",
+      "delete_pane",
+      "send_to_pane",
+      "upsert_record",
+      "update_record",
+      "delete_record",
+      "delete_record_collection",
+      // consolidated action-enum tools (most-privileged action is a write/delete)
+      "template",
+      "template_records",
+      "participant",
+      "share",
+      "attachments",
+      "taste",
+      "key",
+      "trash",
+      "feedback",
+      "agent",
+    ];
+    for (const name of DESTRUCTIVE) {
+      const a = tool(name).annotations;
+      expect(a.destructiveHint, name).toBe(true);
+      expect(a.readOnlyHint, name).toBe(false);
+    }
+  });
+
+  it("idempotent mutators set idempotentHint", () => {
+    for (const name of [
+      "delete_pane",
+      "delete_record",
+      "delete_record_collection",
+      "update_pane",
+      "update_record",
+      "upsert_record",
+    ]) {
+      expect(tool(name).annotations.idempotentHint, name).toBe(true);
+    }
+  });
+
+  it("open-world (human-facing / external-delivery) tools set openWorldHint", () => {
+    for (const name of [
+      "create_pane",
+      "send_to_pane",
+      "share",
+      "attachments",
+    ]) {
+      expect(tool(name).annotations.openWorldHint, name).toBe(true);
+    }
+    // A pane-internal CRUD tool is closed-world.
+    expect(tool("update_record").annotations.openWorldHint).toBe(false);
+  });
+
+  it("representative annotation sample is exactly correct", () => {
+    // Read-only.
+    expect(tool("list_panes").annotations).toEqual({
+      title: "List Panes",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    // Destructive + idempotent + closed-world.
+    expect(tool("delete_pane").annotations).toEqual({
+      title: "Delete Pane",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    // Consolidated action-enum tool (CAN delete → destructive).
+    expect(tool("template").annotations).toEqual({
+      title: "Manage Templates",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+  });
+
   it("create_pane tells the model to deliver the URL to the human", () => {
     // Load-bearing: the whole point of the MCP server is that the model hands
     // the human the URL. If this guidance drops out of the description the

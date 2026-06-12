@@ -46,9 +46,11 @@ import blobBridge from "../bridge/attachment-bridge.js";
 import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
 import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
 import skill from "./routes/skill.js";
+import { oauth, registerOAuthMetadata } from "./routes/oauth.js";
+import { mountMcp } from "./routes/mcp.js";
 import bridge from "../bridge/routes.js";
 import { loadClient } from "../bridge/routes.js";
-import { generalRateLimit } from "./rate-limit.js";
+import { generalRateLimit, mcpOAuthRateLimit } from "./rate-limit.js";
 import { cliVersionMiddleware } from "./cli-version.js";
 import { baselineSecurityHeaders } from "./security-headers.js";
 import { csrfProtect } from "./csrf.js";
@@ -97,6 +99,17 @@ export function buildApp(
     config.ANON_RECORD_WRITE_RATE_WINDOW_SECONDS * 1000,
   );
 
+  // Per-IP limiter for the OAuth endpoints + the unauthenticated /mcp
+  // discovery path. Only constructed when the MCP feature is on (otherwise
+  // none of those routes exist). Owned by this app instance like the limiters
+  // above so its sliding-window state is per-app.
+  const mcpOAuthLimiter = config.MCP_HTTP_ENABLED
+    ? createRateLimiter(
+        config.MCP_RATE_LIMIT,
+        config.MCP_RATE_LIMIT_WINDOW_SECONDS * 1000,
+      )
+    : undefined;
+
   // Fall back to an app-owned general limiter when the caller did not inject a
   // shared one (HTTP-only tests). The relay always injects the shared instance.
   const effectiveGeneralLimiter =
@@ -124,6 +137,7 @@ export function buildApp(
     c.set("magicLinkLimiter", magicLinkLimiter);
     c.set("generalLimiter", effectiveGeneralLimiter);
     c.set("anonRecordWriteLimiter", anonRecordWriteLimiter);
+    if (mcpOAuthLimiter) c.set("mcpOAuthLimiter", mcpOAuthLimiter);
     if (blobStore) c.set("blobStore", blobStore);
     if (effectiveBlobRevokeCache)
       c.set("blobRevokeCache", effectiveBlobRevokeCache);
@@ -265,6 +279,36 @@ export function buildApp(
   // agent can fetch it from the relay it uses. Registered here, before the
   // rate-limit middleware, so it stays unmetered like /healthz.
   app.route("/skills", skill);
+
+  // Remote MCP connector — OAuth 2.1 authorization server + Streamable-HTTP MCP
+  // endpoint. Registered BEFORE the rate limiter / CSRF / body-cap middleware
+  // (like /skills and /healthz) so:
+  //   - capability discovery (initialize, tools/list) is reachable without a
+  //     token and without tripping the per-IP limiter during Claude's probe;
+  //   - the OAuth metadata + token endpoints answer Claude's discovery chain
+  //     unmetered (a hosted client polls them);
+  //   - the /mcp transport sets its own permissive CORS (the cookie-auth CSRF
+  //     gate does not apply — /mcp is bearer-token-auth, never cookie-auth).
+  // The MCP route does its own auth (verifyMcpAccessToken) + 401 challenge.
+  // Gate the whole feature behind MCP_HTTP_ENABLED so a CLI-only relay can hide
+  // it entirely (no /mcp, no /oauth, no /.well-known/oauth-*).
+  if (config.MCP_HTTP_ENABLED) {
+    registerOAuthMetadata(app);
+    // Dedicated per-IP rate limit on the OAuth + /mcp surface. Applied here
+    // (not via the general /v1 limiter, which these routes sit ahead of) so an
+    // attacker can't flood DCR / token / unauthenticated initialize with no
+    // bound while Claude's legitimate discovery burst still fits the window.
+    // The .well-known metadata GETs are intentionally left unmetered (pure
+    // static JSON, polled by hosted clients) — the abuse surface is the
+    // state-changing /oauth/* POSTs and unauthenticated /mcp session creation.
+    app.use("/oauth/*", mcpOAuthRateLimit);
+    app.use("/mcp", mcpOAuthRateLimit);
+    app.route("/oauth", oauth);
+    // Tool-handler PaneClient loops back to the relay's own API. Prefer a
+    // localhost loopback so it never leaves the box; fall back to publicUrl.
+    const loopback = `http://127.0.0.1:${config.PORT}`;
+    mountMcp(app, loopback);
+  }
 
   // System pages — /login + /home + /my-panes + /my-templates + /my-agents
   // + /settings. These are pane-shipped HTML pages that read the human's

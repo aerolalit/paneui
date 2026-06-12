@@ -30,6 +30,12 @@
   "bin": {
     "pane-mcp": "dist/index.js"
   },
+  "exports": {
+    "./tools": "./dist/tools.js",
+    "./guide": "./dist/guide.js",
+    "./capabilities": "./dist/capabilities.js",
+    "./server": "./dist/server.js"
+  },
   "files": [
     "dist",
     "server.json",

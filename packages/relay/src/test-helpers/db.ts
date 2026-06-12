@@ -268,6 +268,15 @@ export async function setupTestDb(): Promise<TestDb> {
         await p.claimCode.deleteMany();
         await p.login.deleteMany();
         await p.humanTemplateInstall.deleteMany();
+        // OAuth (remote-MCP) rows. Tokens + auth-codes FK oauth_clients
+        // (CASCADE); pending-authorizations have no FK. Clear children before
+        // clients, and all of them before humans/agents (they reference
+        // human_id / agent_id by value, not FK, so order vs those is for
+        // tidy row counts rather than referential safety).
+        await p.oAuthToken.deleteMany();
+        await p.oAuthAuthCode.deleteMany();
+        await p.oAuthPendingAuthorization.deleteMany();
+        await p.oAuthClient.deleteMany();
         await p.human.deleteMany();
         await p.agent.deleteMany();
         // #302 — deletion_log has no FK to anything, so order doesn't matter,
@@ -332,7 +341,7 @@ export async function setupTestDb(): Promise<TestDb> {
       for (let attempt = 1; ; attempt++) {
         try {
           await p.$executeRawUnsafe(
-            `TRUNCATE TABLE "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "pane_records", "record_collections", "panes", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
+            `TRUNCATE TABLE "oauth_tokens", "oauth_auth_codes", "oauth_pending_authorizations", "oauth_clients", "magic_links", "claim_codes", "logins", "human_template_installs", "humans", "attachment_tokens", "attachments", "feedback", "events", "participants", "pane_records", "record_collections", "panes", "template_versions", "templates", "agents", "deletion_log" RESTART IDENTITY CASCADE`,
           );
           return;
         } catch (err) {
