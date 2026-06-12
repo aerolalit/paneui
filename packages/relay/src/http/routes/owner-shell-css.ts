@@ -119,6 +119,17 @@ export const OWNER_SHELL_CSS = `
     grid-template-columns: 220px 1fr;
     grid-template-rows: 1fr;
   }
+  /* Installed PWA: size to the *layout* viewport (100vh) instead of the dynamic
+     one. In standalone mode there is no Safari toolbar, so layout == visual ==
+     screen during live use (no regression to the dvh toolbar fix above). But the
+     iOS app-switcher paints its card snapshot at the layout viewport / full
+     screen, while a 100dvh shell can be captured shorter than that — leaving the
+     splash/background_color (--bg #f7f5f1) exposed as a dead strip below the
+     in-flow bottom tab bar. Filling 100vh paints the whole snapshot canvas, so
+     the tab bar hugs the true bottom in the switcher, matching native apps. */
+  @media all and (display-mode: standalone) {
+    .app { height: 100vh; }
+  }
   @media (max-width: 639px) {
     /* The nav is the first child (the desktop left sidebar), so on a row grid
        it auto-places into the top row. Pin main to the flexible top row and the
