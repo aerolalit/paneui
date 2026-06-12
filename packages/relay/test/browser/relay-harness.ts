@@ -45,10 +45,36 @@ export async function startRelay(): Promise<RelayHandle> {
   const { serve } = await import("@hono/node-server");
   const { buildApp } = await import("../../src/http/app.js");
   const { attachWs } = await import("../../src/ws/handler.js");
+  const { loadConfig } = await import("../../src/config.js");
+  const { makeDevProvider } = await import("../../src/auth/providers/dev.js");
+  const { createRateLimiter } = await import("../../src/http/rate-limit.js");
 
-  const app = buildApp();
+  // Mirror index.ts's DI root: one config + one shared general limiter handed to
+  // BOTH buildApp() and attachWs() (they no longer read ambient env / module
+  // singletons). Dev email provider so the owner-shell / magic-link routes
+  // construct, even though the browser tests authenticate via a seeded cookie.
+  const config = loadConfig({
+    DATABASE_URL: testDb.dbUrl,
+    PUBLIC_URL: `http://localhost:${port}`,
+    EMAIL_PROVIDER: "dev",
+    // The smoke test's createSession() self-registers an agent over /v1/register,
+    // which 404s under the default `closed` mode. Open it for the throwaway DB.
+    REGISTRATION_MODE: "open",
+  });
+  const generalLimiter = createRateLimiter(
+    config.RATE_LIMIT,
+    config.RATE_LIMIT_WINDOW_SECONDS * 1000,
+  );
+  const app = buildApp(
+    config,
+    prisma,
+    generalLimiter,
+    undefined,
+    undefined,
+    makeDevProvider({ isProduction: false }),
+  );
   const server = serve({ fetch: app.fetch, port }) as unknown as Server;
-  attachWs(server);
+  attachWs(server, { config, prisma, generalLimiter });
   await new Promise<void>((resolve) =>
     server.once("listening", () => resolve()),
   );
@@ -109,10 +135,17 @@ export async function createSession(base: string): Promise<CreatedSession> {
         authorization: "Bearer " + reg.api_key,
       },
       body: JSON.stringify({
-        template: { name: "ping", type: "html-inline", source: template },
-        schema: {
-          events: {
-            ping: { payload: { type: "object" }, emittedBy: ["page"] },
+        // The inline event vocabulary now rides INSIDE template.event_schema
+        // (a top-level `schema` is ignored, yielding a view-only pane whose
+        // pane.emit fails unknown_event_type).
+        template: {
+          name: "ping",
+          type: "html-inline",
+          source: template,
+          event_schema: {
+            events: {
+              ping: { payload: { type: "object" }, emittedBy: ["page"] },
+            },
           },
         },
         title: "Test pane",
@@ -125,4 +158,79 @@ export async function createSession(base: string): Promise<CreatedSession> {
     humanUrl: created.urls.humans[0]!,
     apiKey: reg.api_key,
   };
+}
+
+export interface OwnerSession {
+  cookie: string;
+  humanId: string;
+  paneIds: string[];
+}
+
+// Seed a logged-in human who owns `count` panes, returned newest-first — enough
+// to make the /home Panes list taller than the viewport so scroll-restore is
+// observable. Writes straight through prisma (mirrors seedOwnedPane in the
+// owner-shell e2e), since there's no public "create as owner" HTTP path.
+export async function createOwnerSession(
+  prisma: import("@prisma/client").PrismaClient,
+  count = 25,
+): Promise<OwnerSession> {
+  const { generateLoginCookie, hashLoginCookie } =
+    await import("../../src/auth/cookie.js");
+  const { generateApiKey, generatePaneId, hashKey, keyPrefix } =
+    await import("../../src/keys.js");
+
+  const human = await prisma.human.create({
+    data: { email: `owner-${Date.now()}@example.com`, verifiedAt: new Date() },
+  });
+  const cookie = generateLoginCookie();
+  await prisma.login.create({
+    data: {
+      humanId: human.id,
+      cookieHash: hashLoginCookie(cookie),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+
+  const agentKey = generateApiKey();
+  const agent = await prisma.agent.create({
+    data: {
+      keyHash: hashKey(agentKey),
+      keyPrefix: keyPrefix(agentKey),
+      name: "browser-owner-agent",
+      ownerHumanId: human.id,
+      claimedAt: new Date(),
+    },
+  });
+  const template = await prisma.template.create({
+    data: { name: "Browser pane", ownerId: agent.id, slug: `bp-${agent.id}` },
+  });
+  const templateVersion = await prisma.templateVersion.create({
+    data: {
+      templateId: template.id,
+      version: 1,
+      templateType: "html-inline",
+      templateSource: '<div id="m">pane body</div>',
+      eventSchema: {
+        events: { ping: { payload: { type: "object" }, emittedBy: ["page"] } },
+      },
+    },
+  });
+
+  const paneIds: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const pane = await prisma.pane.create({
+      data: {
+        id: generatePaneId(),
+        agentId: agent.id,
+        ownerHumanId: human.id,
+        templateVersionId: templateVersion.id,
+        title: `Pane number ${i + 1}`,
+        status: "open",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    paneIds.unshift(pane.id); // newest-first, matching the /home list order
+  }
+
+  return { cookie, humanId: human.id, paneIds };
 }

@@ -181,21 +181,9 @@ interface SerializedEvent {
   [k: string]: unknown;
 }
 
-// Mount the pane viewer: parse the cfg block, wire the WebSocket + presence
-// polling, and proxy the postMessage protocol to/from the sandboxed iframe.
-// Returns a controller whose `destroy()` tears all of that down — closes the
-// socket, clears the timers, and removes the window message listener. The
-// standalone documents (/s/:token, not-signed-in /panes/:id) mount once and
-// never destroy (the tab IS the pane); an embedding owner-SPA mounts on
-// route-enter and calls destroy() on route-leave so a left-behind viewer can't
-// leak a live iframe/socket (the renderer-OOM class fixed in #561/#563/#565).
-interface PaneViewerController {
-  destroy: () => void;
-}
-
-function mountPaneViewer(): PaneViewerController {
+(function () {
   const cfgEl = document.getElementById("pane-cfg");
-  if (!cfgEl || !cfgEl.textContent) return { destroy() {} };
+  if (!cfgEl || !cfgEl.textContent) return;
   const CFG: ShellCfg = JSON.parse(cfgEl.textContent);
 
   const dot = document.getElementById("dot")!;
@@ -227,15 +215,6 @@ function mountPaneViewer(): PaneViewerController {
   // reconnect is ever queued.
   let connecting = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  // Lifecycle state. `destroyed` latches on destroy() and gates every path that
-  // could re-arm the viewer after teardown — the reconnect scheduler, connect(),
-  // and the post-await continuation in openWithTicket() — so a socket that closes
-  // (or a ticket that resolves) after destroy() can't resurrect it. The two timer
-  // handles are captured so destroy() can clear the presence-render and
-  // presence-poll intervals (the only setInterval()s the viewer arms).
-  let destroyed = false;
-  let presenceRenderTimer: ReturnType<typeof setInterval> | null = null;
-  let presencePollTimer: ReturnType<typeof setInterval> | null = null;
 
   function setStatus(t: string, cls?: "up" | "dn"): void {
     statusEl.textContent = t;
@@ -398,7 +377,7 @@ function mountPaneViewer(): PaneViewerController {
   const presenceUrl = window.location.origin + CFG.presenceUrl;
 
   async function pollPresence(): Promise<void> {
-    if (CFG.isClosed || destroyed) return;
+    if (CFG.isClosed) return;
     let body: {
       agentLive?: unknown;
       agentLastEventAt?: unknown;
@@ -430,10 +409,10 @@ function mountPaneViewer(): PaneViewerController {
 
   renderAgentPresence();
   // "active 2m ago" must advance on its own even when no events arrive.
-  presenceRenderTimer = setInterval(renderAgentPresence, 20000);
+  setInterval(renderAgentPresence, 20000);
   // Keep the seed facts live (see pollPresence). This interval also re-renders
   // the pill via pollPresence's renderAgentPresence() call.
-  presencePollTimer = setInterval(() => void pollPresence(), PRESENCE_POLL_MS);
+  setInterval(() => void pollPresence(), PRESENCE_POLL_MS);
   void pollPresence();
 
   // The iframe is sandboxed WITHOUT allow-same-origin, so it runs at the opaque
@@ -562,7 +541,7 @@ function mountPaneViewer(): PaneViewerController {
   // Schedule exactly one reconnect attempt. Coalesces: if a timer is already
   // pending (e.g. a stray second close fired) we do not stack another.
   function scheduleReconnect(): void {
-    if (CFG.isClosed || destroyed || reconnectTimer !== null) return;
+    if (CFG.isClosed || reconnectTimer !== null) return;
     setStatus("reconnecting in " + Math.round(backoff / 1000) + "s...", "dn");
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -628,7 +607,7 @@ function mountPaneViewer(): PaneViewerController {
   }
 
   function connect(): void {
-    if (CFG.isClosed || destroyed) return;
+    if (CFG.isClosed) return;
     // Never run two connections at once. If one is already opening or open,
     // bail — whatever triggered this call (a stale close, a double-invoke)
     // would otherwise spawn a parallel socket.
@@ -662,10 +641,9 @@ function mountPaneViewer(): PaneViewerController {
       scheduleReconnect();
       return;
     }
-    // The pane may have closed, the viewer may have been destroyed, or a newer
-    // connect superseded us, while the mint was in flight — bail rather than
-    // open a doomed (or leaked) socket.
-    if (CFG.isClosed || destroyed) {
+    // The pane may have closed, or a newer connect superseded us, while the
+    // mint was in flight — bail rather than open a doomed socket.
+    if (CFG.isClosed) {
       connecting = false;
       return;
     }
@@ -849,7 +827,7 @@ function mountPaneViewer(): PaneViewerController {
     });
   }
 
-  function onWindowMessage(e: MessageEvent): void {
+  window.addEventListener("message", (e: MessageEvent) => {
     if (!frame || e.source !== frame.contentWindow) return;
     const m = e.data;
     // Reject anything that is not a current-version Pane frame: wrong marker
@@ -1548,41 +1526,7 @@ function mountPaneViewer(): PaneViewerController {
       }
       return;
     }
-  }
-  window.addEventListener("message", onWindowMessage);
-
-  // Tear the viewer down: latch `destroyed` (gates reconnect/connect/poll), clear
-  // the presence timers + any pending reconnect, close the socket (teardownWs
-  // strips its listeners first so its close can't re-arm a reconnect), and drop
-  // the window message listener. Idempotent. This is the OOM-safety hook an
-  // embedding SPA calls on route-leave; the standalone documents never do.
-  function destroy(): void {
-    if (destroyed) return;
-    destroyed = true;
-    if (presenceRenderTimer !== null) {
-      clearInterval(presenceRenderTimer);
-      presenceRenderTimer = null;
-    }
-    if (presencePollTimer !== null) {
-      clearInterval(presencePollTimer);
-      presencePollTimer = null;
-    }
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    teardownWs();
-    window.removeEventListener("message", onWindowMessage);
-  }
+  });
 
   connect();
-  return { destroy };
-}
-
-// Mount once on load. The standalone /s/:token and not-signed-in /panes/:id
-// documents are the only callers today (the tab IS the pane, so they never
-// destroy). The controller is parked on `window` so an embedding owner-SPA can
-// reach destroy() on route-leave; harmless where nothing reads it.
-const __paneViewer = mountPaneViewer();
-(window as unknown as { __paneViewer?: PaneViewerController }).__paneViewer =
-  __paneViewer;
+})();

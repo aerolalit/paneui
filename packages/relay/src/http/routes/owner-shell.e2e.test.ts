@@ -201,6 +201,7 @@ describe("GET /panes/:id", () => {
     expect(standalone.headers.get("content-security-policy")).toContain(
       "frame-ancestors 'none'",
     );
+    const standalone_html = await standalone.text();
 
     const embedded = await app.fetch(
       new Request(`http://t/panes/${paneId}?embedded=1`, withCookie(cookie)),
@@ -211,10 +212,19 @@ describe("GET /panes/:id", () => {
     const csp = embedded.headers.get("content-security-policy") ?? "";
     expect(csp).toContain("frame-ancestors 'self'");
     expect(csp).not.toContain("frame-ancestors 'none'");
-    // Top-nav account bar is gone (the SPA supplies its own chrome).
+    // Chrome-free: no top-nav, and no standalone header band at all — the SPA
+    // frames this full-screen. The shell client still needs its four presence
+    // elements, so a hidden stub carries them (no null-deref).
     const html = await embedded.text();
     expect(html).not.toContain('id="top-nav-share"');
     expect(html).not.toContain('id="top-nav-signout"');
+    expect(html).not.toContain("<header");
+    expect(html).not.toContain('class="brand"');
+    expect(html).not.toContain('class="pill"');
+    // The hidden presence stub is present so the shell JS can read #status etc.
+    expect(html).toContain('<div hidden aria-hidden="true"><span id="dot">');
+    // Standalone load DOES render the header band (regression guard).
+    expect(standalone_html).toContain('class="pill"');
     // The pane still works: same content iframe + cfg as the standalone load.
     expect(html).toContain(`src="/panes/${paneId}/content"`);
   });

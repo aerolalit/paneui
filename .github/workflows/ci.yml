@@ -170,3 +170,31 @@ jobs:
           # round-trip against the Azurite service container above. Locally
           # the env var is unset by default and the suite skips cleanly.
           AZURITE_URL: http://127.0.0.1:10000
+
+  # Real-browser smoke (Playwright/Chromium): boots a relay against throwaway
+  # SQLite and drives the actual shipped pages. Guards behaviour that lives in
+  # the inline SPA <script> (tsc can't see it) — e.g. the in-SPA pane view's
+  # open-in-place + single-Back + scroll-restore. Runs after unit passes.
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run generate --workspace @paneui/relay -- sqlite
+
+      # relay's harness imports @paneui/core's compiled output; build first.
+      - run: npm run build
+
+      - run: npx playwright install --with-deps chromium
+        working-directory: packages/relay
+
+      - run: npm run test:browser --workspace @paneui/relay

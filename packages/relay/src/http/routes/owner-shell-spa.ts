@@ -1884,6 +1884,11 @@ const SHELL_JS = `
   const mountPreview = (frame) => {
     if (!frame || !frame.dataset || !frame.dataset.src) return;
     if (!frame.getAttribute('src')) {
+      // Tag the iframe on its first load so the CSS opacity transition fades
+      // it in once content is actually visible (instead of fading in a blank
+      // frame the moment src lands). { once: true } keeps any subsequent
+      // navigation inside the iframe from re-firing the fade.
+      frame.addEventListener('load', () => { frame.classList.add('loaded'); }, { once: true });
       frame.setAttribute('src', frame.dataset.src);
       // Explore previews are scaled imperatively (per fluid card width);
       // favorites/app use a fixed CSS scale and recents a CSS var, so
@@ -2277,8 +2282,10 @@ const SHELL_JS = `
         return;
       }
       const body = await res.json();
-      const url = body.urls && body.urls.humans && body.urls.humans[0];
-      if (url) location.href = url;
+      // Open the freshly-launched pane in the SPA pane view (same as a list
+      // click) instead of full-navigating to its /s/<token> URL.
+      if (body.pane_id) openPane(body.pane_id);
+      else if (body.urls && body.urls.humans && body.urls.humans[0]) location.href = body.urls.humans[0];
     } catch (e) {
       reset();
       alert('Network error — try again.');
@@ -3028,8 +3035,8 @@ const SHELL_JS = `
           actionBtn.disabled = false; actionBtn.textContent = orig; return;
         }
         const b = await res.json();
-        const url = b.urls && b.urls.humans && b.urls.humans[0];
-        if (url) location.href = url;
+        if (b.pane_id) openPane(b.pane_id);
+        else if (b.urls && b.urls.humans && b.urls.humans[0]) location.href = b.urls.humans[0];
       } catch (e) {
         showErr('Network error — try again.');
         actionBtn.disabled = false; actionBtn.textContent = orig;
