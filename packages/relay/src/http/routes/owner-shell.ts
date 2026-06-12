@@ -244,12 +244,11 @@ ownerShell.get("/:id", async (c) => {
       // logo links back to /home; system-page tabs are intentionally omitted
       // here so the pane viewer stays a focused single-pane surface. canShare
       // is true: this mount is owner-only (loadOwnedPane asserts ownership), so
-      // the Share button is safe to surface here and nowhere else. Suppressed in
-      // embedded mode — the SPA frames this and supplies its own chrome.
+      // the Share button is safe to surface here and nowhere else. In embedded
+      // mode the SPA supplies its own chrome, so the owner top-nav is dropped —
+      // but the standalone header (brand + WS/agent presence pills) still renders
+      // so the pane keeps its connection / agent-live status inside the SPA.
       topNav: embedded ? null : { canShare: true },
-      // Embedded mounts render chrome-free (no header band) so the pane fills the
-      // SPA's full-screen pane view; the standalone load keeps its header.
-      chromeless: embedded,
       // Owner mount keeps the static robot home-screen icon. The per-pane icon
       // route (/s/<token>/icon.png) is token-authed; an owner equivalent would
       // be cookie-gated, and iOS may fetch apple-touch-icon without the cookie,
