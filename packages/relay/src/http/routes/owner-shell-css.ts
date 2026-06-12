@@ -371,6 +371,25 @@ export const OWNER_SHELL_CSS = `
     .view { padding: 14px 16px 28px; }
   }
 
+  /* ===== In-SPA pane view ===== */
+  /* Full-bleed: the pane shell is framed edge-to-edge, so this view drops the
+     standard padding/max-width and fills the .main scroll area. .main has a
+     definite height (1fr of the 100dvh app grid), so height:100% cascades down
+     to the iframe. The display:flex override beats the generic .view.active
+     display:block via attribute-selector specificity. There is no in-SPA chrome
+     (no back bar) — the browser Back button drives the exit via popstate. */
+  .view[data-view="pane"] { padding: 0; max-width: none; height: 100%; }
+  .view[data-view="pane"].active { display: flex; flex-direction: column; }
+  .pane-host-frame { flex: 1; width: 100%; border: 0; display: block; background: #fff; min-height: 0; }
+  /* While a pane is open the SPA chrome (left sidebar / bottom tab bar) is
+     hidden so the pane fills the whole viewport. activate() toggles
+     .viewing-pane on .app; collapsing the nav grid track lets .main span full. */
+  .app.viewing-pane { grid-template-columns: 1fr; }
+  .app.viewing-pane > .nav { display: none; }
+  @media (max-width: 639px) {
+    .app.viewing-pane { grid-template-rows: 1fr; }
+  }
+
   .view-head {
     display: flex; align-items: end; justify-content: space-between;
     gap: 12px;
