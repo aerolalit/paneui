@@ -668,22 +668,13 @@ export interface ShellArgs {
   // static `/apple-touch-icon.png` (its icon route is cookie-gated and iOS may
   // fetch the icon without the cookie).
   appleTouchIconHref: string;
-  // Chrome-free render: no visible header/top-nav at all, just a hidden stub of
-  // the presence elements the shell client reads. Set by the owner /home SPA's
-  // embedded iframe mount (?embedded=1), which supplies its own chrome and wants
-  // the pane edge-to-edge. Defaults to falsy → the normal header renders.
-  chromeless?: boolean;
 }
 
-// The header band: the slim owner top-nav, or the standalone brand+presence
-// header, or — when chromeless — nothing visible. Chromeless still emits a
-// hidden stub carrying the four presence element ids (#dot/#status/#agent-dot/
-// #agent-status) the shell client reads, so it can't null-deref when there's no
-// header to render into.
+// The header band: the slim owner top-nav, or — when topNav is null (the
+// /s/<token> mount and the owner /home SPA's embedded ?embedded=1 mount) — the
+// standalone brand+presence header, which carries the WS-connection and
+// agent-live/offline pills.
 function renderShellHeader(args: ShellArgs): string {
-  if (args.chromeless) {
-    return `<div hidden aria-hidden="true"><span id="dot"></span><span id="status"></span><span id="agent-dot"></span><span id="agent-status"></span></div>`;
-  }
   return `${renderTopNav(args)}${
     args.topNav
       ? // Top-nav mode already carries the brand + presence pills inline,
