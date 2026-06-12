@@ -612,7 +612,7 @@ export const OWNER_SHELL_CSS = `
     aspect-ratio: 16 / 11;
     border-radius: var(--radius-card);
     overflow: hidden;
-    border: 1px solid var(--hairline);
+    border: 1px solid rgba(244,201,140,.28);
     box-shadow: var(--shadow-soft);
     background: var(--surface);
     text-decoration: none;
@@ -648,18 +648,22 @@ export const OWNER_SHELL_CSS = `
   .recent-card .recent-menu-btn:hover { background: rgba(0,0,0,0.72); }
   .recent-card .recent-vis svg,
   .recent-card .recent-menu-btn svg { display: block; }
+  /* Warm amber-tinted scrim — crushed brand-2 (#f4c98c) gives a deep cognac
+     undertone instead of pure black. Reads as "pane-brand warm" without
+     overpowering the live preview underneath. */
   .recent-card .rc-scrim {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
     padding: 26px 12px 10px;
-    background: linear-gradient(to top, rgba(0,0,0,0.80), rgba(0,0,0,0.42) 55%, transparent);
+    background: linear-gradient(to top, rgba(62,38,12,.92) 0%, rgba(62,38,12,.55) 45%, transparent 100%);
     color: #fff;
   }
   .recent-card .rc-title {
-    font-weight: 600; font-size: 14px;
+    font-weight: 700; font-size: 14px; letter-spacing: -0.01em;
+    color: #fff2db;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .recent-card .rc-meta {
-    font-size: 12px; color: rgba(255,255,255,0.82);
+    font-size: 12px; color: rgba(255,236,210,.80);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
@@ -1311,7 +1315,7 @@ export const OWNER_SHELL_CSS = `
     aspect-ratio: 16 / 11;
     border-radius: var(--radius-card);
     overflow: hidden;
-    border: 1px solid var(--hairline);
+    border: 1px solid rgba(244,201,140,.28);
     box-shadow: var(--shadow-soft);
     background: var(--surface);
     text-decoration: none;
@@ -1331,15 +1335,16 @@ export const OWNER_SHELL_CSS = `
   .ec-scrim {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
     padding: 26px 12px 10px;
-    background: linear-gradient(to top, rgba(0,0,0,0.80), rgba(0,0,0,0.42) 55%, transparent);
+    background: linear-gradient(to top, rgba(62,38,12,.92) 0%, rgba(62,38,12,.55) 45%, transparent 100%);
     color: #fff;
   }
   .ec-title {
-    font-weight: 600; font-size: 14px;
+    font-weight: 700; font-size: 14px; letter-spacing: -0.01em;
+    color: #fff2db;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .ec-meta {
-    font-size: 12px; color: rgba(255,255,255,0.82);
+    font-size: 12px; color: rgba(255,236,210,.80);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .ec-pill {
