@@ -80,8 +80,9 @@ cookie for the human consent step.
 - The PaneClient loops back to `http://127.0.0.1:PORT` so the call never leaves
   the box.
 - One MCP agent per human (`name` prefix `claude-mcp`). Repeat authorizations
-  reuse it (and rotate its key); the human's panes/templates accumulate under
-  one identity.
+  reuse it **with a stable key** (`agents.mcp_key_enc`, sealed at-rest), so
+  previously-issued tokens keep working; the human's panes/templates accumulate
+  under one identity.
 
 ## Why opaque-token-in-DB (not a JWT)
 
@@ -104,6 +105,34 @@ natural home.
 - **Human login + consent reuse the existing magic-link flow.** `/authorize`
   and `/authorize/decision` require the `pane_login` cookie; the decision can
   only be made by the same logged-in human.
+- **Consent CSRF protection** (two layers). The consent decision is a
+  cookie-authed, state-changing POST that mints an authorization code, so
+  SameSite=Lax alone is insufficient. (1) A **signed, single-use CSRF token** is
+  embedded in the consent form, HMAC-bound (via `PANE_SECRET_KEY`) to BOTH the
+  login session that rendered the form AND a server-side pending-authorization
+  record — a token can't be replayed across sessions or authorizations. (2) A
+  **server-side Origin/Referer check** refuses any cross-origin POST (mirrors
+  `csrf.ts`). A forged cross-site consent is rejected with 403 before any code
+  is minted.
+- **Consent integrity** (no trust in hidden fields). `/authorize` creates a
+  server-side **pending-authorization** record (keyed to the login session)
+  holding the validated `client_id`/`redirect_uri`/PKCE challenge/scope/resource.
+  `/authorize/decision` loads every parameter from that record (referenced only
+  by an opaque id), so a tampered hidden field can't alter what is authorized.
+  The record is single-use (deleted on first decision) and short-TTL.
+- **Unverified-client consent notice.** DCR is open (Claude mobile needs it), so
+  the consent screen explicitly marks the requesting client as **not verified by
+  pane** and shows the **redirect_uri host** the human is authorizing — reducing
+  the consent-phishing surface an open registration endpoint creates.
+- **Token audience binding** (RFC 8707). Each access token records the
+  `resource` it was issued for (`<publicUrl>/mcp`); `verifyMcpAccessToken`
+  rejects a token whose bound resource doesn't exactly match this MCP endpoint,
+  so a token minted for a different audience can't be replayed here.
+- **Stable per-human agent key.** The per-human MCP agent's API key is stored
+  **sealed at-rest** (`agents.mcp_key_enc`, AES-256-GCM). A re-authorization
+  REUSES that key instead of rotating it, so previously-issued OAuth tokens
+  (each carrying its own sealed copy of the same key) keep authenticating —
+  overlapping authorize flows no longer invalidate each other's live tokens.
 - **Refresh-token rotation**: a refresh revokes the old refresh + its last
   access token and mints a fresh pair.
 - **Revocation** (RFC 7009): revoking a token is idempotent; revoking a refresh
@@ -114,9 +143,26 @@ natural home.
 - **CORS** is permissive on `/mcp` and exposes `Mcp-Session-Id`. `/mcp` is
   bearer-auth (never cookie-auth), so the relay's CSRF gate does not apply.
 - **Rate limiting**: `/mcp` + `/oauth` + `/.well-known/oauth-*` are mounted
-  before the general per-IP limiter (like `/skills` and `/healthz`) so Claude's
-  discovery probes aren't throttled; the MCP route does its own auth + 401
-  challenge. (A dedicated MCP limiter is a possible future enhancement.)
+  before the *general* per-IP limiter (so Claude's discovery probes aren't
+  throttled by the agent-API bucket), but a **dedicated per-IP limiter**
+  (`MCP_RATE_LIMIT`, default 60/min) now covers the `/oauth/*` POSTs and the
+  unauthenticated `/mcp` discovery path so DCR / token / `initialize` floods are
+  bounded. The static `.well-known` GETs stay unmetered.
+- **Bounded session map.** The in-memory MCP session map is capped
+  (`MCP_MAX_SESSIONS`, default 1000) with idle eviction
+  (`MCP_SESSION_IDLE_TTL_SECONDS`, default 30 min), so unauthenticated
+  `initialize` (which creates a session) can't grow memory unboundedly.
+
+### Login returnUrl (consent resumption)
+
+When `/authorize` finds no logged-in human it bounces to
+`/login?returnUrl=<consent path>`. The login form forwards that `returnUrl` to
+`POST /v1/auth/request-link`; it rides the magic-link row to the verify
+callback, which redirects the human back to the (validated, same-origin) consent
+screen instead of dropping them on `/home`. Every hop runs the same
+same-origin/path-only guard (`sameOriginPathOrNull` / `sameOriginReturnPath`),
+so an off-origin or protocol-relative `returnUrl` is dropped (open-redirect
+defence).
 
 ## Scopes
 
@@ -139,6 +185,13 @@ the agent once tokens arrive.
   challenge + the human + the provisioned agent.
 - `OAuthToken` — access/refresh tokens (`token_hash`), the encrypted agent key,
   `revokedAt`, refresh→access linkage for rotation.
+- `OAuthPendingAuthorization` — short-TTL, single-use record created at
+  `/authorize` and consumed at `/authorize/decision`. Keyed to the login session
+  (`login_session_hash`); holds the validated authorization params so the
+  decision needn't trust hidden form fields, and anchors the consent CSRF token.
+- `agents.mcp_key_enc` — the per-human MCP agent's API key, sealed at-rest, so
+  re-authorization recovers the same key (stable across authorizations). NULL
+  for ordinary CLI agents.
 
 ## The skill, MCP-native
 
@@ -152,7 +205,17 @@ for MCP-native discovery. Both the stdio and HTTP servers register them.
 
 ## Multi-replica note
 
-The per-code agent-key handoff between `/authorize/decision` and `/token` uses a
-short-lived in-memory map (the value is already ciphertext). For a single-replica
-container this is fine; multi-replica hosting should move it onto the auth-code
-row. Tracked as a follow-up.
+Two pieces of state are still single-replica scoped and would need attention for
+horizontal scaling:
+
+- The **MCP session map** is in-process. A multi-replica deployment needs
+  sticky sessions (route a `Mcp-Session-Id` back to its replica) or a shared
+  session store. The map is now bounded + idle-evicted regardless.
+- The per-code agent-key handoff between `/authorize/decision` and `/token` uses
+  a short-lived in-memory map (the value is already ciphertext). It is now only
+  a convenience — the agent key is stable and sealed at-rest
+  (`agents.mcp_key_enc`), so a future change can recover it from the agent row
+  at exchange time instead, dropping the in-memory handoff entirely.
+
+The CSRF + consent-integrity state (`OAuthPendingAuthorization`) is already in
+the DB, so it is multi-replica safe.

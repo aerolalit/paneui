@@ -218,6 +218,60 @@ describe("GET /login", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/home");
   });
+
+  it("carries a safe same-origin returnUrl into the form (#6)", async () => {
+    const res = await app.fetch(
+      new Request(
+        "http://t/login?returnUrl=" +
+          encodeURIComponent("/oauth/authorize?client_id=x&state=y"),
+      ),
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The path is embedded for the submit script to forward as returnUrl.
+    expect(html).toContain("/oauth/authorize");
+  });
+
+  it("redirects an already-signed-in human to a safe returnUrl (#6)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(
+        "http://t/login?returnUrl=" +
+          encodeURIComponent("/oauth/authorize?a=b"),
+        { ...withCookie(cookie), redirect: "manual" },
+      ),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/oauth/authorize?a=b");
+  });
+
+  it("drops an off-origin returnUrl (open-redirect defence) (#6)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(
+        "http://t/login?returnUrl=" + encodeURIComponent("https://evil.test/x"),
+        { ...withCookie(cookie), redirect: "manual" },
+      ),
+    );
+    expect(res.status).toBe(302);
+    // Falls back to /home, never the attacker URL.
+    expect(res.headers.get("location")).toBe("/home");
+  });
+
+  it("drops a protocol-relative returnUrl (#6)", async () => {
+    const { cookie } = await seedLoggedInHuman();
+    const res = await app.fetch(
+      new Request(
+        "http://t/login?returnUrl=" + encodeURIComponent("//evil.test/x"),
+        {
+          ...withCookie(cookie),
+          redirect: "manual",
+        },
+      ),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/home");
+  });
 });
 
 describe("F-18 — Content-Security-Policy on system pages", () => {
@@ -902,5 +956,31 @@ describe("auth.verify redirect", () => {
     );
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/home");
+  });
+
+  it("returns the human to a safe same-origin returnUrl after verify (#6)", async () => {
+    const { generateMagicLinkToken, hashMagicLinkToken } =
+      await import("../../auth/magic-link.js");
+    const raw = generateMagicLinkToken();
+    await prisma.magicLink.create({
+      data: {
+        email: "bob@example.com",
+        tokenHash: hashMagicLinkToken(raw),
+        // The OAuth consent screen the human was bounced from, carried as an
+        // absolute same-origin URL (what the login form forwards).
+        returnUrl: "http://localhost:3000/oauth/authorize?client_id=x&state=y",
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const res = await app.fetch(
+      new Request(`http://t/v1/auth/verify?token=${raw}`, {
+        redirect: "manual",
+      }),
+    );
+    expect(res.status).toBe(303);
+    // Lands back on the consent path (not /home), so the OAuth flow resumes.
+    expect(res.headers.get("location")).toBe(
+      "/oauth/authorize?client_id=x&state=y",
+    );
   });
 });

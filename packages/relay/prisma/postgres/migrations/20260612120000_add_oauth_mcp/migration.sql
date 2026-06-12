@@ -48,6 +48,25 @@ CREATE TABLE "oauth_tokens" (
     CONSTRAINT "oauth_tokens_pkey" PRIMARY KEY ("token_hash")
 );
 
+-- CreateTable
+CREATE TABLE "oauth_pending_authorizations" (
+    "id" TEXT NOT NULL,
+    "login_session_hash" TEXT NOT NULL,
+    "client_id" TEXT NOT NULL,
+    "redirect_uri" TEXT NOT NULL,
+    "code_challenge" TEXT NOT NULL,
+    "state" TEXT,
+    "scope" TEXT,
+    "resource" TEXT,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "oauth_pending_authorizations_pkey" PRIMARY KEY ("id")
+);
+
+-- AlterTable: stable at-rest key for the per-human remote-MCP agent.
+ALTER TABLE "agents" ADD COLUMN "mcp_key_enc" TEXT;
+
 -- CreateIndex
 CREATE INDEX "oauth_auth_codes_client_id_idx" ON "oauth_auth_codes"("client_id");
 
@@ -65,6 +84,12 @@ CREATE INDEX "oauth_tokens_expires_at_idx" ON "oauth_tokens"("expires_at");
 
 -- CreateIndex
 CREATE INDEX "oauth_tokens_kind_idx" ON "oauth_tokens"("kind");
+
+-- CreateIndex
+CREATE INDEX "oauth_pending_authorizations_login_session_hash_idx" ON "oauth_pending_authorizations"("login_session_hash");
+
+-- CreateIndex
+CREATE INDEX "oauth_pending_authorizations_expires_at_idx" ON "oauth_pending_authorizations"("expires_at");
 
 -- AddForeignKey
 ALTER TABLE "oauth_auth_codes" ADD CONSTRAINT "oauth_auth_codes_client_id_fkey" FOREIGN KEY ("client_id") REFERENCES "oauth_clients"("client_id") ON DELETE CASCADE ON UPDATE CASCADE;

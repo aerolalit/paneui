@@ -12,9 +12,14 @@
 // The HTTP routes (routes/oauth.ts) and the OAuthServerProvider
 // (oauth-provider.ts) call into here; this file does no HTTP and no Hono.
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import type { Agent, PrismaClient } from "@prisma/client";
-import { encryptSecret, decryptSecret } from "../crypto.js";
+import { encryptSecret, decryptSecret, getMasterKey } from "../crypto.js";
 import { generateApiKey, hashKey, keyPrefix } from "../keys.js";
 
 /** sha256 hex of a token/code/secret — what we persist, never the raw value. */
@@ -40,6 +45,61 @@ export function generateClientId(): string {
 /** Optional client_secret for confidential clients (Claude is public/PKCE). */
 export function generateClientSecret(): string {
   return "pmcs_" + randomBytes(32).toString("base64url");
+}
+
+/** Server-side pending-authorization id (the consent form's hidden anchor). */
+export function generatePendingAuthId(): string {
+  return "pma_" + randomBytes(32).toString("base64url");
+}
+
+// ----- Consent CSRF token (signed, single-use, session-bound) -------------
+//
+// The consent decision is a cookie-authenticated, state-changing POST (it mints
+// an authorization code). SameSite=Lax alone is insufficient (csrf.ts §6-9), so
+// the consent form embeds an anti-CSRF token that the decision handler verifies.
+//
+// The token is `<nonce>.<hmac>` where hmac = HMAC-SHA256(masterKey,
+// loginSessionHash + ":" + pendingAuthId + ":" + nonce). It is therefore bound
+// to BOTH the specific login session that rendered the form AND the specific
+// pending authorization — a token minted for one human's session can't be
+// replayed against another's, and a token for one authorization can't be reused
+// for another. Single-use is enforced separately by deleting the pending-auth
+// record on first use. `loginSessionHash` is sha256(login cookie) (the same
+// value persisted as Login.cookieHash) — never the raw cookie.
+
+/** Mint a consent CSRF token bound to (login session, pending authorization). */
+export function generateConsentCsrfToken(
+  loginSessionHash: string,
+  pendingAuthId: string,
+): string {
+  const nonce = randomBytes(16).toString("base64url");
+  const mac = createHmac("sha256", getMasterKey())
+    .update(`${loginSessionHash}:${pendingAuthId}:${nonce}`)
+    .digest("base64url");
+  return `${nonce}.${mac}`;
+}
+
+/**
+ * Verify a consent CSRF token against the presenting session + pending auth.
+ * Constant-time on the MAC compare; returns false on any structural problem.
+ */
+export function verifyConsentCsrfToken(
+  token: string | undefined,
+  loginSessionHash: string,
+  pendingAuthId: string,
+): boolean {
+  if (!token) return false;
+  const dot = token.indexOf(".");
+  if (dot <= 0) return false;
+  const nonce = token.slice(0, dot);
+  const presented = token.slice(dot + 1);
+  const expected = createHmac("sha256", getMasterKey())
+    .update(`${loginSessionHash}:${pendingAuthId}:${nonce}`)
+    .digest("base64url");
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /**
@@ -84,11 +144,20 @@ export function redirectUriAllowed(
  * per human: a stable name lets repeat authorizations reuse the same agent and
  * its accumulated panes/templates, exactly like a CLI agent the human claimed.
  *
- * Returns the agent plus its PLAINTEXT api key. The key is freshly generated
- * (we never stored the old one in plaintext); on reuse we ROTATE the key —
- * the previous tokens carried their own encrypted copy of the old key, and the
- * fresh key is encrypted into the new token. The agent row stores only the
- * hash, as for any agent.
+ * Returns the agent plus its PLAINTEXT api key.
+ *
+ * KEY STABILITY (do NOT rotate on reuse): an earlier design re-minted the agent
+ * key on every authorization, which overwrote the agent's `keyHash` and so
+ * silently invalidated every previously-issued OAuth token (each token carries
+ * its own sealed copy of the key it was issued with — that copy decrypts to the
+ * OLD key, whose hash no longer matches the agent row, so the relay's /v1 API
+ * rejects it). Two overlapping authorize flows, or a re-authorize while a token
+ * is live, would break the live token. To keep the human's MCP agent key
+ * STABLE across re-authorizations, the agent stores its key sealed at-rest
+ * (`mcpKeyEnc`, AES-256-GCM via crypto.ts — same envelope as the token copy).
+ * On first provision we generate, seal, and store it; on reuse we DECRYPT the
+ * stored copy and return the SAME plaintext key, leaving `keyHash` untouched so
+ * every outstanding token keeps authenticating.
  */
 export const MCP_AGENT_NAME_PREFIX = "claude-mcp";
 
@@ -96,12 +165,7 @@ export async function provisionMcpAgent(
   prisma: PrismaClient,
   humanId: string,
 ): Promise<{ agent: Agent; apiKey: string }> {
-  const apiKey = generateApiKey();
-  const keyHash = hashKey(apiKey);
-  const prefix = keyPrefix(apiKey);
-
-  // Reuse the human's existing MCP agent if one exists (and isn't deleted),
-  // rotating its key; otherwise create a fresh claimed agent owned by them.
+  // Reuse the human's existing MCP agent if one exists (and isn't deleted).
   const existing = await prisma.agent.findFirst({
     where: {
       ownerHumanId: humanId,
@@ -113,18 +177,40 @@ export async function provisionMcpAgent(
   });
 
   if (existing) {
+    // Recover the STABLE key from the at-rest sealed copy — no rotation, so
+    // tokens issued by prior authorizations keep working.
+    if (existing.mcpKeyEnc) {
+      const apiKey = decryptSecret(existing.mcpKeyEnc);
+      const agent = await prisma.agent.update({
+        where: { id: existing.id },
+        data: { lastUsedAt: new Date() },
+      });
+      return { agent, apiKey };
+    }
+    // Legacy MCP agent created before key-at-rest storage (no sealed copy):
+    // mint + persist a key once so future reuse is stable. Any tokens issued
+    // before this point already had to re-authorize (the old design rotated),
+    // so adopting a fresh stable key here is safe and one-time.
+    const apiKey = generateApiKey();
     const agent = await prisma.agent.update({
       where: { id: existing.id },
-      data: { keyHash, keyPrefix: prefix, lastUsedAt: new Date() },
+      data: {
+        keyHash: hashKey(apiKey),
+        keyPrefix: keyPrefix(apiKey),
+        mcpKeyEnc: encryptSecret(apiKey),
+        lastUsedAt: new Date(),
+      },
     });
     return { agent, apiKey };
   }
 
+  const apiKey = generateApiKey();
   const agent = await prisma.agent.create({
     data: {
       name: MCP_AGENT_NAME_PREFIX,
-      keyHash,
-      keyPrefix: prefix,
+      keyHash: hashKey(apiKey),
+      keyPrefix: keyPrefix(apiKey),
+      mcpKeyEnc: encryptSecret(apiKey),
       ownerHumanId: humanId,
       claimedAt: new Date(),
     },

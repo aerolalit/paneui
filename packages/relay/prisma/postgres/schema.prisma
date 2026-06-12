@@ -37,6 +37,12 @@ model Agent {
   ownerHuman      Human?    @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
   claimedAt       DateTime? @map("claimed_at")
 
+  // AES-256-GCM envelope (crypto.ts) of the remote-MCP per-human agent's
+  // plaintext API key, stored at-rest so re-authorization recovers the SAME
+  // key instead of rotating it (which would invalidate live OAuth tokens).
+  // NULL for every ordinary (CLI) agent. See sqlite schema for full notes.
+  mcpKeyEnc       String?   @map("mcp_key_enc")
+
   panes    Pane[]
   templates   Template[]
   feedback    Feedback[]
@@ -867,4 +873,24 @@ model OAuthToken {
   @@index([expiresAt])
   @@index([kind])
   @@map("oauth_tokens")
+}
+
+// Server-side pending authorization (CSRF + integrity for the consent step).
+// Created at GET /oauth/authorize, consumed at POST /oauth/authorize/decision.
+// See the sqlite schema for the full rationale.
+model OAuthPendingAuthorization {
+  id                String   @id
+  loginSessionHash  String   @map("login_session_hash")
+  clientId          String   @map("client_id")
+  redirectUri       String   @map("redirect_uri")
+  codeChallenge     String   @map("code_challenge")
+  state             String?
+  scope             String?
+  resource          String?
+  expiresAt         DateTime @map("expires_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([loginSessionHash])
+  @@index([expiresAt])
+  @@map("oauth_pending_authorizations")
 }

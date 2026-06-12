@@ -292,6 +292,34 @@ export const generalRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
+ * Per-IP rate-limit middleware for the OAuth + unauthenticated /mcp surface.
+ *
+ * The OAuth endpoints (/oauth/register, /oauth/authorize, /oauth/token,
+ * /oauth/revoke) and the /mcp discovery path are mounted BEFORE the general
+ * /v1 limiter so Claude's discovery probes aren't throttled — which left them
+ * with no per-IP bound at all (open DCR + unbounded unauthenticated session
+ * creation). This middleware reinstates a per-IP bound dedicated to that
+ * surface, keyed on a separate `oauth:` namespace so it never shares a bucket
+ * with the general `ip:` limiter. The limiter instance is created once per app
+ * in buildApp() and read off the request context.
+ *
+ * Keyed on IP only (no token key): the OAuth/MCP discovery surface is
+ * pre-auth, so there is no stable bearer token to bucket on.
+ */
+export const mcpOAuthRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const limiter = c.get("mcpOAuthLimiter");
+  // The limiter is optional purely so a feature-disabled relay (no MCP) need
+  // not construct it; when MCP is enabled buildApp() always injects it.
+  if (limiter) {
+    const ip = clientIp(c, c.get("config").TRUSTED_PROXY);
+    if (!(await limiter.check("oauth:" + ip))) {
+      throw errors.tooManyRequests("rate limit exceeded");
+    }
+  }
+  await next();
+};
+
+/**
  * Per-IP rate limit for the WebSocket upgrade (`WS /v1/panes/:id/stream`).
  *
  * The upgrade is handled out-of-band by the `server.on("upgrade")` listener,

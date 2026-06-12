@@ -55,8 +55,54 @@ const PUBLIC_METHODS = new Set([
 interface Session {
   transport: WebStandardStreamableHTTPServerTransport;
   server: McpServer;
+  // Last time a request touched this session — for idle eviction.
+  lastSeenAt: number;
 }
 const sessions = new Map<string, Session>();
+
+/**
+ * Bound the in-memory session map so unauthenticated `initialize` (capability
+ * discovery is token-free) can't grow it without limit (memory DoS). Called on
+ * every request before routing:
+ *
+ *   1. Sweep sessions idle longer than `idleTtlMs` — close + drop them.
+ *   2. If still at/over `maxSessions`, evict the least-recently-seen sessions
+ *      until under the cap (making room for the incoming one).
+ *
+ * `maxSessions <= 0` disables the cap; `idleTtlMs <= 0` disables idle sweeping.
+ */
+function evictSessions(maxSessions: number, idleTtlMs: number): void {
+  const now = Date.now();
+  if (idleTtlMs > 0) {
+    for (const [id, s] of sessions) {
+      if (now - s.lastSeenAt > idleTtlMs) {
+        try {
+          void s.transport.close?.();
+        } catch {
+          // best effort — drop the entry regardless
+        }
+        sessions.delete(id);
+      }
+    }
+  }
+  if (maxSessions > 0 && sessions.size >= maxSessions) {
+    // Evict oldest-first until we're under the cap (leave room for one more).
+    const ordered = [...sessions.entries()].sort(
+      (a, b) => a[1].lastSeenAt - b[1].lastSeenAt,
+    );
+    let over = sessions.size - maxSessions + 1;
+    for (const [id, s] of ordered) {
+      if (over <= 0) break;
+      try {
+        void s.transport.close?.();
+      } catch {
+        // best effort
+      }
+      sessions.delete(id);
+      over--;
+    }
+  }
+}
 
 /**
  * Build an McpServer bound to a per-request auth holder. The tool handlers
@@ -170,7 +216,11 @@ export function mountMcp(app: Hono<AppEnv>, loopbackUrl: string): void {
     const m = /^Bearer\s+(.+)$/i.exec(authHeader);
     if (m) {
       tokenPresent = true;
-      const resolved = await verifyMcpAccessToken(prisma, m[1]!.trim());
+      const resolved = await verifyMcpAccessToken(
+        prisma,
+        m[1]!.trim(),
+        `${config.publicUrl}/mcp`,
+      );
       if (resolved) {
         tokenValid = true;
         authInfo = {
@@ -242,6 +292,16 @@ export function mountMcp(app: Hono<AppEnv>, loopbackUrl: string): void {
 
     const isInitialize = rpcMethod === "initialize";
 
+    // Bound the in-memory session map BEFORE potentially creating a new session
+    // — unauthenticated `initialize` is what grows it, so cap + idle-evict here
+    // so a flood of discovery sessions can't exhaust memory.
+    if (!session && isInitialize) {
+      evictSessions(
+        config.MCP_MAX_SESSIONS,
+        config.MCP_SESSION_IDLE_TTL_SECONDS * 1000,
+      );
+    }
+
     if (!session) {
       if (sessionId && !isInitialize) {
         // Unknown session on a non-initialize request → 404 (the SDK transport
@@ -276,7 +336,7 @@ export function mountMcp(app: Hono<AppEnv>, loopbackUrl: string): void {
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
-          sessions.set(id, { transport, server });
+          sessions.set(id, { transport, server, lastSeenAt: Date.now() });
         },
         onsessionclosed: (id) => {
           sessions.delete(id);
@@ -291,12 +351,13 @@ export function mountMcp(app: Hono<AppEnv>, loopbackUrl: string): void {
       transport.onclose = () => {
         if (transport.sessionId) sessions.delete(transport.sessionId);
       };
-      session = { transport, server };
+      session = { transport, server, lastSeenAt: Date.now() };
       // Note: not yet in `sessions` until onsessioninitialized fires with the
       // generated id; the transport returns the id in the response header.
     } else {
       // Existing session — refresh the auth holder so this request's identity
-      // is what the tool handlers see.
+      // is what the tool handlers see, and bump its idle clock.
+      session.lastSeenAt = Date.now();
       const holder = (
         session.transport as unknown as {
           _authHolder?: { current: AuthInfo | undefined };
@@ -317,3 +378,13 @@ export function mountMcp(app: Hono<AppEnv>, loopbackUrl: string): void {
 
   log.info("mcp endpoint mounted", { path: "/mcp", loopback: loopbackUrl });
 }
+
+/**
+ * Test-only window into the in-memory session map. NOT for production code —
+ * the map is process-global module state, exposed here so the e2e can assert
+ * the cap + idle-eviction behaviour without reaching into module internals.
+ */
+export const _sessionsForTests = {
+  size: (): number => sessions.size,
+  clear: (): void => sessions.clear(),
+};

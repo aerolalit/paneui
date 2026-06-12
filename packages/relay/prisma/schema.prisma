@@ -39,6 +39,14 @@ model Agent {
   ownerHuman      Human?    @relation(fields: [ownerHumanId], references: [id], onDelete: SetNull)
   claimedAt       DateTime? @map("claimed_at")
 
+  // AES-256-GCM envelope (crypto.ts) of this agent's plaintext API key, stored
+  // at-rest ONLY for the remote-MCP per-human agent (name prefix `claude-mcp`).
+  // It lets a re-authorization recover the SAME key instead of rotating it,
+  // which would invalidate every previously-issued OAuth token (each token
+  // carries its own sealed copy of the key it was issued with). NULL for every
+  // ordinary agent — we never store a plaintext-recoverable key for CLI agents.
+  mcpKeyEnc       String?   @map("mcp_key_enc")
+
   panes    Pane[]
   templates   Template[]
   feedback    Feedback[]
@@ -1035,4 +1043,41 @@ model OAuthToken {
   @@index([expiresAt])
   @@index([kind])
   @@map("oauth_tokens")
+}
+
+// A server-side pending authorization, created at GET /oauth/authorize once the
+// human is logged in and the request is validated, and consumed (deleted) at
+// POST /oauth/authorize/decision. It exists for two reasons:
+//
+//  1. CSRF — the consent decision is a cookie-authed, state-changing POST. The
+//     record is keyed to the login session (loginSessionHash = sha256(login
+//     cookie)) and the consent form carries a signed, single-use CSRF token
+//     bound to (session, this record). The decision handler verifies the token
+//     AND that the record belongs to the presenting session before minting a
+//     code.
+//  2. Integrity — the decision no longer trusts the authorization params from
+//     hidden form fields; it loads client_id / redirect_uri / PKCE challenge /
+//     scope / resource from THIS server-side record, so a tampered hidden field
+//     can't alter what is authorized.
+//
+// Short-lived (same TTL as an auth code) and single-use; a sweep on insert
+// drops expired rows so an abandoned consent screen doesn't accumulate.
+model OAuthPendingAuthorization {
+  // pma_… random id; the consent form's hidden anchor + the CSRF binding key.
+  id                String   @id
+  // sha256(login cookie) of the human who opened the consent screen — equals
+  // Login.cookieHash. The decision must come from this same session.
+  loginSessionHash  String   @map("login_session_hash")
+  clientId          String   @map("client_id")
+  redirectUri       String   @map("redirect_uri")
+  codeChallenge     String   @map("code_challenge")
+  state             String?
+  scope             String?
+  resource          String?
+  expiresAt         DateTime @map("expires_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([loginSessionHash])
+  @@index([expiresAt])
+  @@map("oauth_pending_authorizations")
 }

@@ -7,11 +7,14 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   generateAuthCode,
   generateClientId,
+  generateConsentCsrfToken,
   generateOAuthToken,
+  generatePendingAuthId,
   openAgentKey,
   redirectUriAllowed,
   sealAgentKey,
   sha256,
+  verifyConsentCsrfToken,
   verifyPkceS256,
 } from "./oauth.js";
 import { _resetKeyCacheForTests } from "../crypto.js";
@@ -102,5 +105,49 @@ describe("agent-key seal/open", () => {
     const sealed = sealAgentKey(key);
     expect(sealed).not.toContain(key);
     expect(openAgentKey(sealed)).toBe(key);
+  });
+});
+
+describe("consent CSRF token (#1)", () => {
+  const session = sha256("login-cookie-a");
+  const pendingId = generatePendingAuthId();
+
+  it("verifies a token bound to (session, pending)", () => {
+    const tok = generateConsentCsrfToken(session, pendingId);
+    expect(verifyConsentCsrfToken(tok, session, pendingId)).toBe(true);
+  });
+
+  it("rejects a token verified against a different session", () => {
+    const tok = generateConsentCsrfToken(session, pendingId);
+    expect(
+      verifyConsentCsrfToken(tok, sha256("other-session"), pendingId),
+    ).toBe(false);
+  });
+
+  it("rejects a token verified against a different pending id", () => {
+    const tok = generateConsentCsrfToken(session, pendingId);
+    expect(verifyConsentCsrfToken(tok, session, generatePendingAuthId())).toBe(
+      false,
+    );
+  });
+
+  it("rejects a missing or malformed token", () => {
+    expect(verifyConsentCsrfToken(undefined, session, pendingId)).toBe(false);
+    expect(verifyConsentCsrfToken("", session, pendingId)).toBe(false);
+    expect(verifyConsentCsrfToken("no-dot", session, pendingId)).toBe(false);
+    expect(verifyConsentCsrfToken(".onlymac", session, pendingId)).toBe(false);
+  });
+
+  it("rejects a token whose MAC was tampered", () => {
+    const tok = generateConsentCsrfToken(session, pendingId);
+    const [nonce] = tok.split(".");
+    expect(
+      verifyConsentCsrfToken(`${nonce}.deadbeef`, session, pendingId),
+    ).toBe(false);
+  });
+
+  it("mints unique pending ids with the pma_ prefix", () => {
+    expect(generatePendingAuthId()).toMatch(/^pma_/);
+    expect(generatePendingAuthId()).not.toBe(generatePendingAuthId());
   });
 });

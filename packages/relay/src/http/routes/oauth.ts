@@ -24,17 +24,24 @@ import type { PrismaClient } from "@prisma/client";
 import type { Config } from "../../config.js";
 import type { AppEnv } from "../env.js";
 import { resolveHumanOptional } from "../../auth/human-auth.js";
-import { LOGIN_COOKIE_NAME } from "../../auth/cookie.js";
+import {
+  hashLoginCookie,
+  LOGIN_COOKIE_NAME,
+  parseLoginCookie,
+} from "../../auth/cookie.js";
 import {
   generateAuthCode,
   generateClientId,
   generateClientSecret,
+  generateConsentCsrfToken,
   generateOAuthToken,
+  generatePendingAuthId,
   openAgentKey,
   provisionMcpAgent,
   redirectUriAllowed,
   sealAgentKey,
   sha256,
+  verifyConsentCsrfToken,
   verifyPkceS256,
 } from "../../mcp/oauth.js";
 import { log } from "../../log.js";
@@ -272,32 +279,106 @@ oauth.get("/authorize", resolveHumanOptional, async (c) => {
     return c.redirect(loginUrl);
   }
 
-  // Render a minimal consent screen. The "allow" POST carries the validated
-  // params forward (signed implicitly by the login cookie requirement on the
-  // decision route). We embed them as hidden fields.
+  // Bind the consent to a SERVER-SIDE pending-authorization record keyed to
+  // this login session, rather than trusting hidden form fields at decision
+  // time (F-07 hidden-field hardening). The decision handler loads the
+  // authorization params from this record and verifies a signed, single-use
+  // CSRF token bound to (session, this record) — closing the CSRF hole that
+  // SameSite=Lax alone leaves open on this cookie-authed, state-changing POST.
+  const loginCookie = parseLoginCookie(c.req.header("cookie") ?? null);
+  if (!loginCookie) {
+    // resolveHumanOptional resolved a human, so a cookie must be present; this
+    // is belt-and-suspenders (and narrows the type for hashLoginCookie).
+    return c.text("unauthorized: log in to consent", 401);
+  }
+  const loginSessionHash = hashLoginCookie(loginCookie);
+
+  // Opportunistic sweep of expired pending rows so an abandoned consent screen
+  // doesn't accumulate (best-effort; never blocks the render).
+  await prisma.oAuthPendingAuthorization
+    .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+    .catch(() => undefined);
+
+  const pendingId = generatePendingAuthId();
+  await prisma.oAuthPendingAuthorization.create({
+    data: {
+      id: pendingId,
+      loginSessionHash,
+      clientId,
+      redirectUri,
+      codeChallenge,
+      state: state ?? null,
+      scope: scope ?? PANE_SCOPE,
+      resource: resource ?? `${config.publicUrl}/mcp`,
+      expiresAt: new Date(
+        Date.now() + config.MCP_OAUTH_CODE_TTL_SECONDS * 1000,
+      ),
+    },
+  });
+  const csrfToken = generateConsentCsrfToken(loginSessionHash, pendingId);
+
+  // Render a minimal consent screen. The "allow"/"deny" POST carries only the
+  // pending-auth id + the CSRF token — every authorization parameter is read
+  // back from the server-side record, so a tampered field can't change what is
+  // authorized.
   return c.html(
     consentPage({
       clientName: client.clientName ?? clientId,
       humanEmail: human.email,
-      clientId,
       redirectUri,
-      codeChallenge,
-      state: state ?? "",
-      scope: scope ?? PANE_SCOPE,
-      resource: resource ?? `${config.publicUrl}/mcp`,
+      pendingId,
+      csrfToken,
     }),
   );
 });
 
 const decisionBody = z.object({
   decision: z.enum(["allow", "deny"]),
-  client_id: z.string(),
-  redirect_uri: z.string(),
-  code_challenge: z.string(),
-  state: z.string().optional(),
-  scope: z.string().optional(),
-  resource: z.string().optional(),
+  // The server-side pending-authorization id + its bound CSRF token. Every
+  // OAuth parameter (client_id, redirect_uri, PKCE challenge, scope, resource,
+  // state) is read back from the pending record — NOT from the POST — so a
+  // tampered/forged field can't influence what is authorized.
+  pending_id: z.string(),
+  csrf_token: z.string(),
 });
+
+/**
+ * Reject a cookie-authed, state-changing POST whose Origin (falling back to
+ * Referer) is not the relay's own origin. Mirrors csrf.ts' csrfProtect logic;
+ * inlined here because the /oauth sub-app is mounted ahead of the global
+ * csrfProtect wiring (which scopes to /v1 + /panes), and the consent decision
+ * needs the same server-side Origin check as a second CSRF layer alongside the
+ * signed token below. Returns null when allowed, or a Response to short-circuit.
+ */
+function originRejectsCsrf(
+  rawOrigin: string | undefined,
+  rawReferer: string | undefined,
+  publicUrl: string,
+): boolean {
+  // Neither header present: not a forgeable cross-site browser request. A
+  // same-origin top-level form POST always carries at least a Referer, so for
+  // the consent form this case is effectively the non-browser/test path.
+  if (
+    (rawOrigin === undefined || rawOrigin === "") &&
+    (rawReferer === undefined || rawReferer === "")
+  ) {
+    return false;
+  }
+  const originOf = (u: string | undefined | null): string | null => {
+    if (!u) return null;
+    try {
+      return new URL(u).origin;
+    } catch {
+      return null;
+    }
+  };
+  const selfOrigin = originOf(publicUrl);
+  const reqOrigin =
+    (rawOrigin !== undefined && rawOrigin !== ""
+      ? originOf(rawOrigin)
+      : null) ?? originOf(rawReferer);
+  return reqOrigin === null || reqOrigin !== selfOrigin;
+}
 
 oauth.post("/authorize/decision", resolveHumanOptional, async (c) => {
   const prisma = c.get("prisma");
@@ -308,6 +389,18 @@ oauth.post("/authorize/decision", resolveHumanOptional, async (c) => {
     return c.text("unauthorized: log in to consent", 401);
   }
 
+  // CSRF layer 1 — server-side Origin/Referer check (SameSite=Lax alone is
+  // insufficient for a cookie-authed state-changing POST; see csrf.ts).
+  if (
+    originRejectsCsrf(
+      c.req.header("origin"),
+      c.req.header("referer"),
+      config.publicUrl,
+    )
+  ) {
+    return c.text("forbidden: cross-origin consent rejected", 403);
+  }
+
   let body: z.infer<typeof decisionBody>;
   try {
     body = decisionBody.parse(await c.req.parseBody());
@@ -315,62 +408,106 @@ oauth.post("/authorize/decision", resolveHumanOptional, async (c) => {
     return c.text("invalid_request", 400);
   }
 
-  const client = await prisma.oAuthClient.findUnique({
-    where: { clientId: body.client_id },
+  // Load the server-side pending authorization. Must exist, be unexpired, and
+  // belong to THIS login session.
+  const loginCookie = parseLoginCookie(c.req.header("cookie") ?? null);
+  if (!loginCookie) {
+    return c.text("unauthorized: log in to consent", 401);
+  }
+  const loginSessionHash = hashLoginCookie(loginCookie);
+  const pending = await prisma.oAuthPendingAuthorization.findUnique({
+    where: { id: body.pending_id },
   });
-  if (!client || !redirectUriAllowed(client.redirectUris, body.redirect_uri)) {
+  if (
+    !pending ||
+    pending.expiresAt < new Date() ||
+    pending.loginSessionHash !== loginSessionHash
+  ) {
+    return c.text(
+      "invalid_request: consent expired; restart authorization",
+      400,
+    );
+  }
+
+  // CSRF layer 2 — the signed, single-use token bound to (session, pending).
+  if (
+    !verifyConsentCsrfToken(body.csrf_token, loginSessionHash, body.pending_id)
+  ) {
+    return c.text("forbidden: invalid consent token", 403);
+  }
+
+  // Single-use: consume the pending record now, regardless of allow/deny, so a
+  // token can't be replayed.
+  const consumed = await prisma.oAuthPendingAuthorization.deleteMany({
+    where: { id: body.pending_id },
+  });
+  if (consumed.count === 0) {
+    // Lost a race (double-submit) — the other request already consumed it.
+    return c.text("invalid_request: consent already used", 400);
+  }
+
+  // Re-validate the client + redirect_uri from the (trusted) server-side
+  // record before any redirect.
+  const client = await prisma.oAuthClient.findUnique({
+    where: { clientId: pending.clientId },
+  });
+  if (
+    !client ||
+    !redirectUriAllowed(client.redirectUris, pending.redirectUri)
+  ) {
     // Never redirect to an unvalidated URI.
     return c.text("invalid_request: client/redirect mismatch", 400);
   }
 
   if (body.decision === "deny") {
     return c.redirect(
-      errorRedirect(body.redirect_uri, "access_denied", body.state),
+      errorRedirect(
+        pending.redirectUri,
+        "access_denied",
+        pending.state ?? undefined,
+      ),
     );
   }
 
   // ALLOW: provision (or reuse) the human's MCP agent, mint a single-use code
-  // bound to client + redirect_uri + PKCE challenge + the agent.
+  // bound to client + redirect_uri + PKCE challenge + the agent. All params
+  // come from the trusted pending record.
   const { agent, apiKey } = await provisionMcpAgent(prisma, human.id);
   const code = generateAuthCode();
   await prisma.oAuthAuthCode.create({
     data: {
       codeHash: sha256(code),
-      clientId: body.client_id,
-      redirectUri: body.redirect_uri,
-      codeChallenge: body.code_challenge,
+      clientId: pending.clientId,
+      redirectUri: pending.redirectUri,
+      codeChallenge: pending.codeChallenge,
       codeChallengeMethod: "S256",
       humanId: human.id,
       agentId: agent.id,
-      scope: body.scope ?? PANE_SCOPE,
-      resource: body.resource ?? `${config.publicUrl}/mcp`,
+      scope: pending.scope ?? PANE_SCOPE,
+      resource: pending.resource ?? `${config.publicUrl}/mcp`,
       expiresAt: new Date(
         Date.now() + config.MCP_OAUTH_CODE_TTL_SECONDS * 1000,
       ),
     },
   });
 
-  // The plaintext agent key is sealed into the token at exchange time — stash
-  // it transiently on the code row's encrypted scope? No: we re-provision (key
-  // rotation) at exchange would invalidate prior tokens. Instead the exchange
-  // seals THIS key, so carry it via the code: store it sealed on the code row's
-  // resource-independent path. We reuse the auth code's agentId + re-seal at
-  // exchange by reading the agent — but we only have the plaintext key HERE.
-  // Seal it now and stash on the code via a dedicated column is cleanest, but
-  // to avoid widening the code row we re-mint the key at exchange. Simpler and
-  // correct: stash the sealed key in-memory keyed by codeHash for the short
-  // code TTL. See pendingKeys below.
+  // Carry the agent's plaintext key from consent to token-exchange. The agent
+  // key is now STABLE across re-authorizations (provisionMcpAgent stores it
+  // sealed at-rest and reuses it — see mcp/oauth.ts), so the in-memory handoff
+  // here is purely a convenience that avoids re-decrypting at exchange; even if
+  // it's lost (relay restart), the exchange could recover the same key from the
+  // agent. We stash the sealed key keyed by codeHash for the short code TTL.
   pendingAgentKeys.set(sha256(code), sealAgentKey(apiKey));
 
   log.info("oauth code issued", {
-    clientId: body.client_id,
+    clientId: pending.clientId,
     humanId: human.id,
     agentId: agent.id,
   });
 
-  const u = new URL(body.redirect_uri);
+  const u = new URL(pending.redirectUri);
   u.searchParams.set("code", code);
-  if (body.state) u.searchParams.set("state", body.state);
+  if (pending.state) u.searchParams.set("state", pending.state);
   return c.redirect(u.toString());
 });
 
@@ -638,10 +775,19 @@ oauth.post("/revoke", async (c) => {
  * Verify an access token → the mapped identity, or null. Used by the MCP route
  * (and exposed for tests). Resolves token → agent + decrypted agent key so the
  * MCP request can act AS that agent.
+ *
+ * `expectedResource` is the RFC 8707 audience this resource server identifies
+ * as — `${publicUrl}/mcp`. A token whose bound `resource` does not exactly
+ * match is rejected (audience binding): a token minted for a DIFFERENT resource
+ * (e.g. a token phished for another audience and replayed here) must not be
+ * accepted by this MCP endpoint. Legacy tokens with a NULL resource are not
+ * matched against — there's nothing to compare — but every token this server
+ * issues records the resource, so the binding is enforced for all new tokens.
  */
 export async function verifyMcpAccessToken(
   prisma: AppEnv["Variables"]["prisma"],
   token: string,
+  expectedResource: string,
 ): Promise<{
   clientId: string;
   humanId: string;
@@ -659,6 +805,15 @@ export async function verifyMcpAccessToken(
     row.revokedAt ||
     row.expiresAt < new Date()
   ) {
+    return null;
+  }
+  // RFC 8707 audience binding — reject a token bound to a different resource.
+  if (row.resource !== null && row.resource !== expectedResource) {
+    log.warn("oauth token resource mismatch", {
+      tokenPrefix: sha256(token).slice(0, 8),
+      expected: expectedResource,
+      bound: row.resource,
+    });
     return null;
   }
   // The mapped agent must still be live (not revoked / soft-deleted).
@@ -699,16 +854,25 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Best-effort host extraction for the consent screen's "where am I sending
+ * this?" line. Returns the host (with port if non-default) or the raw value if
+ * it can't be parsed. */
+function redirectHost(redirectUri: string): string {
+  try {
+    return new URL(redirectUri).host;
+  } catch {
+    return redirectUri;
+  }
+}
+
 function consentPage(p: {
   clientName: string;
   humanEmail: string;
-  clientId: string;
   redirectUri: string;
-  codeChallenge: string;
-  state: string;
-  scope: string;
-  resource: string;
+  pendingId: string;
+  csrfToken: string;
 }): string {
+  const host = redirectHost(p.redirectUri);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -722,6 +886,9 @@ function consentPage(p: {
   h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
   .who { color: #8889; font-size: .9rem; margin-bottom: 1rem; }
   .scope { background: #8881; border-radius: 8px; padding: .75rem 1rem; margin: 1rem 0; font-size: .95rem; }
+  .unverified { background: #e8553a14; border: 1px solid #e8553a55; border-radius: 8px; padding: .75rem 1rem; margin: 1rem 0; font-size: .9rem; }
+  .unverified b { color: #e8553a; }
+  .target { color: #8889; font-size: .85rem; margin-top: .25rem; word-break: break-all; }
   .row { display: flex; gap: .75rem; margin-top: 1.5rem; }
   button { flex: 1; padding: .7rem 1rem; border-radius: 8px; border: 1px solid #8884; font: inherit; cursor: pointer; }
   button.allow { background: #e8553a; border-color: #e8553a; color: #fff; font-weight: 600; }
@@ -733,6 +900,13 @@ function consentPage(p: {
   <div class="card">
     <h1>Allow <b>${esc(p.clientName)}</b> to access your pane account?</h1>
     <div class="who">Signed in as ${esc(p.humanEmail)}</div>
+    <div class="unverified">
+      <b>⚠ This application is not verified by pane.</b>
+      <code>${esc(p.clientName)}</code> registered itself; pane has not vetted
+      it. Only continue if you started this connection and recognise where it
+      sends you.
+      <div class="target">It will receive your authorization at: <b>${esc(host)}</b></div>
+    </div>
     <div class="scope">
       <b>${esc(p.clientName)}</b> will be able to create panes, send and read
       events and records, and manage templates and attachments as a pane agent
@@ -740,12 +914,8 @@ function consentPage(p: {
     </div>
     <div class="row">
       <form method="post" action="/oauth/authorize/decision">
-        <input type="hidden" name="client_id" value="${esc(p.clientId)}" />
-        <input type="hidden" name="redirect_uri" value="${esc(p.redirectUri)}" />
-        <input type="hidden" name="code_challenge" value="${esc(p.codeChallenge)}" />
-        <input type="hidden" name="state" value="${esc(p.state)}" />
-        <input type="hidden" name="scope" value="${esc(p.scope)}" />
-        <input type="hidden" name="resource" value="${esc(p.resource)}" />
+        <input type="hidden" name="pending_id" value="${esc(p.pendingId)}" />
+        <input type="hidden" name="csrf_token" value="${esc(p.csrfToken)}" />
         <button class="deny" type="submit" name="decision" value="deny">Deny</button>
         <button class="allow" type="submit" name="decision" value="allow">Allow</button>
       </form>
