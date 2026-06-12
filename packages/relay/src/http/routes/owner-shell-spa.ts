@@ -1773,19 +1773,39 @@ const SHELL_JS = `
   // Opening a pane mounts the existing pane shell in #pane-host-frame (an iframe
   // at /panes/:id?embedded=1) and pushes /panes/:id, instead of full-page
   // navigating. The panes list stays mounted, so its scroll survives. Back
-  // blanks the iframe src — the browser tears the shell document down, and its
+  // blanks the iframe — the browser tears the shell document down, and its
   // WebSocket + nested content iframe go with it (no leaked live iframe/socket).
   const paneHostFrame = document.getElementById('pane-host-frame');
+  // Which pane the iframe currently shows (null = blank). Tracked so we don't
+  // needlessly reload, and so navigation uses location.replace (see below).
+  let mountedPaneId = null;
 
+  // Navigate the host iframe WITHOUT adding a browser history entry. Setting
+  // iframe.src pushes a joint-session-history entry, so a single openPane()
+  // would cost TWO back presses — the first would only rewind the iframe to
+  // about:blank (a blank pane page) before the second reached the list.
+  // location.replace() swaps the iframe document in place instead. The frame is
+  // always same-origin (about:blank or our own /panes/:id), so this is allowed;
+  // .src is a defensive fallback.
+  function frameReplace(url) {
+    try {
+      paneHostFrame.contentWindow.location.replace(url);
+    } catch (e) {
+      paneHostFrame.src = url;
+    }
+  }
   function mountPaneHost(paneId) {
     if (!paneHostFrame) { location.href = '/panes/' + encodeURIComponent(paneId); return; }
-    const want = '/panes/' + encodeURIComponent(paneId) + '?embedded=1';
-    if (paneHostFrame.getAttribute('src') !== want) paneHostFrame.src = want;
+    if (mountedPaneId !== paneId) {
+      frameReplace('/panes/' + encodeURIComponent(paneId) + '?embedded=1');
+      mountedPaneId = paneId;
+    }
     activate('pane');
   }
   function unmountPaneHost() {
-    if (paneHostFrame && paneHostFrame.getAttribute('src') !== 'about:blank') {
-      paneHostFrame.src = 'about:blank';
+    if (paneHostFrame && mountedPaneId !== null) {
+      frameReplace('about:blank');
+      mountedPaneId = null;
     }
   }
   function openPane(paneId) {
