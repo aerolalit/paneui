@@ -1884,6 +1884,11 @@ const SHELL_JS = `
   const mountPreview = (frame) => {
     if (!frame || !frame.dataset || !frame.dataset.src) return;
     if (!frame.getAttribute('src')) {
+      // Tag the iframe on its first load so the CSS opacity transition fades
+      // it in once content is actually visible (instead of fading in a blank
+      // frame the moment src lands). { once: true } keeps any subsequent
+      // navigation inside the iframe from re-firing the fade.
+      frame.addEventListener('load', () => { frame.classList.add('loaded'); }, { once: true });
       frame.setAttribute('src', frame.dataset.src);
       // Explore previews are scaled imperatively (per fluid card width);
       // favorites/app use a fixed CSS scale and recents a CSS var, so
