@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pane — Privacy Policy</title>
+  <meta name="description" content="Privacy policy for the hosted Pane service at paneui.com and relay.paneui.com: what we collect, how we use it, third-party services, retention, and your choices. Pane is open-source and self-hostable." />
+
+  <!-- canonical + browser chrome -->
+  <link rel="canonical" href="https://paneui.com/privacy" />
+  <meta name="theme-color" content="#f7f5f1" />
+  <meta name="color-scheme" content="light" />
+
+  <!-- Open Graph -->
+  <meta property="og:site_name" content="Pane" />
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:url" content="https://paneui.com/privacy" />
+  <meta property="og:title" content="Pane — Privacy Policy" />
+  <meta property="og:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices. Pane is open-source and self-hostable." />
+  <meta property="og:image" content="https://paneui.com/og.png" />
+  <meta property="og:image:secure_url" content="https://paneui.com/og.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Pane: apps, sites, artifacts built by your agent, hosted by a URL." />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Pane — Privacy Policy" />
+  <meta name="twitter:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices." />
+  <meta name="twitter:image" content="https://paneui.com/og.png" />
+  <meta name="twitter:image:alt" content="Pane: apps, sites, artifacts built by your agent, hosted by a URL." />
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23D97757'/%3E%3Ccircle cx='62' cy='58' r='17.5' fill='%23ffffff'/%3E%3Crect x='20' y='26' width='40' height='32' rx='10' fill='%23D97757'/%3E%3Crect x='24' y='30' width='32' height='24' rx='7' fill='%23ffffff'/%3E%3Ccircle cx='33.5' cy='42' r='3.4' fill='%23D97757'/%3E%3Ccircle cx='46.5' cy='42' r='3.4' fill='%23D97757'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <style>
+    :root {
+      --bg: #f7f5f1;
+      --bg-soft: #efece5;
+      --panel: #ffffff;
+      --panel-2: #faf8f4;
+      --border: #e6e0d6;
+      --fg: #1a1726;
+      --muted: #5b5570;
+      --faint: #8b85a0;
+      --agent: #D97757;
+      --human: #E0A23A;
+      --accent: #D97757;
+      --accent-2: #E0A23A;
+      --code: #f3f0ea;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      min-height: 100vh;
+      min-height: 100dvh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    a { color: inherit; text-decoration: none; }
+    code { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .wrap { width: 100%; max-width: min(1180px, 94vw); margin: 0 auto; padding: 0 clamp(18px, 4vw, 40px); }
+
+    /* ambient glow behind the header, matching the landing page */
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background: radial-gradient(120vw 78vh at 50% -12%, rgba(217,119,87,.10), rgba(224,162,58,.04) 46%, transparent 72%);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ---------- nav (matches landing page) ---------- */
+    nav { position: relative; z-index: 2; padding: clamp(14px, 2.2vh, 22px) 0; }
+    nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -.01em; }
+    .brand svg { width: 30px; height: 30px; display: block; }
+    .nav-actions { display: flex; align-items: center; gap: 10px; }
+    .nav-home {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: var(--muted); font-size: 14px; font-weight: 600;
+      border: 1px solid var(--border); padding: 8px 14px; border-radius: 9px;
+      transition: border-color .15s ease, color .15s ease, background .15s ease;
+    }
+    .nav-home:hover { color: var(--fg); border-color: var(--accent); background: rgba(217,119,87,.08); }
+    .nav-home svg { width: 15px; height: 15px; }
+    .nav-relay {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: linear-gradient(100deg, var(--accent), var(--accent-2)); color: #fff;
+      font-size: 14px; font-weight: 650; padding: 9px 16px; border-radius: 9px;
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+    .nav-relay:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(217,119,87,.28); }
+    .nav-relay svg { width: 14px; height: 14px; }
+    @media (max-width: 560px) {
+      .nav-home { display: none; }
+    }
+
+    /* ---------- legal document ---------- */
+    main { position: relative; z-index: 1; flex: 1 0 auto; padding: clamp(28px, 5vh, 60px) 0 clamp(40px, 7vh, 80px); }
+    .doc { max-width: 760px; margin: 0 auto; }
+
+    .doc-head { margin-bottom: clamp(26px, 4vh, 40px); }
+    .doc-eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px;
+      margin-bottom: clamp(14px, 2.2vh, 20px);
+    }
+    .doc-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--human); box-shadow: 0 0 0 4px rgba(224,162,58,.16); }
+    .doc h1 {
+      font-size: clamp(28px, 4.4vw, 46px); line-height: 1.07; font-weight: 800; letter-spacing: -0.035em;
+      margin: 0 0 12px;
+    }
+    .doc h1 .grad {
+      background: linear-gradient(100deg, var(--agent), var(--human));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .updated { font-size: 13.5px; color: var(--faint); margin: 0; }
+    .updated b { color: var(--muted); font-weight: 650; }
+
+    .lead {
+      font-size: clamp(15.5px, 1.3vw, 18px); line-height: 1.62; color: var(--muted);
+      margin: clamp(20px, 3vh, 30px) 0 0;
+      padding: clamp(16px, 2.4vh, 22px) clamp(18px, 2.6vw, 24px);
+      background: var(--panel); border: 1px solid var(--border); border-radius: 13px;
+      box-shadow: 0 4px 14px rgba(26,23,38,.04);
+    }
+    .lead a { color: var(--accent); font-weight: 600; }
+    .lead a:hover { text-decoration: underline; }
+
+    .doc section { margin-top: clamp(30px, 4.4vh, 46px); }
+    .doc h2 {
+      font-size: clamp(20px, 2.3vw, 27px); font-weight: 800; letter-spacing: -0.025em;
+      margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    .doc p { color: var(--muted); font-size: clamp(14.5px, 1.1vw, 16.5px); line-height: 1.7; margin: 0 0 14px; }
+    .doc p:last-child { margin-bottom: 0; }
+    .doc strong { color: var(--fg); font-weight: 650; }
+    .doc ul { margin: 0 0 14px; padding-left: 0; list-style: none; display: grid; gap: 11px; }
+    .doc li {
+      position: relative; color: var(--muted); font-size: clamp(14.5px, 1.1vw, 16.5px); line-height: 1.62;
+      padding-left: 26px;
+    }
+    .doc li::before {
+      content: ""; position: absolute; left: 4px; top: .62em;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: linear-gradient(100deg, var(--agent), var(--human));
+    }
+    .doc li strong { color: var(--fg); }
+    .doc a.inline { color: var(--accent); font-weight: 600; }
+    .doc a.inline:hover { text-decoration: underline; }
+    .doc code { background: var(--code); border-radius: 5px; padding: 2px 6px; font-size: .92em; color: var(--fg); }
+
+    .callout {
+      margin: 16px 0 0;
+      padding: clamp(14px, 2.1vh, 18px) clamp(16px, 2.4vw, 20px);
+      background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+      border-radius: 11px;
+    }
+    .callout p { margin: 0; }
+
+    .contact-card {
+      margin-top: 16px;
+      padding: clamp(16px, 2.4vh, 22px) clamp(18px, 2.6vw, 24px);
+      background: var(--panel); border: 1px solid var(--border); border-radius: 13px;
+      box-shadow: 0 4px 14px rgba(26,23,38,.04);
+    }
+    .contact-card p { margin: 0; }
+    .contact-card .email { color: var(--accent); font-weight: 700; }
+
+    /* ---------- footer (matches landing page) ---------- */
+    footer { position: relative; z-index: 1; padding: clamp(12px, 2vh, 22px) 0; border-top: 1px solid var(--border); }
+    footer .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
+    .foot-links a { color: var(--muted); font-size: 13.5px; }
+    .foot-links a:hover { color: var(--fg); }
+    .foot-meta { color: var(--faint); font-size: 13px; }
+
+    @media (max-width: 560px) {
+      footer .wrap { justify-content: center; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============ NAV ============ -->
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Pane home">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <rect width="100" height="100" rx="22" fill="#D97757" />
+          <circle cx="62" cy="58" r="17" fill="#ffffff" />
+          <rect x="20" y="26" width="40" height="32" rx="10" fill="#D97757" />
+          <rect x="24" y="30" width="32" height="24" rx="7" fill="#ffffff" />
+          <circle cx="33.5" cy="42" r="3.4" fill="#D97757" />
+          <circle cx="46.5" cy="42" r="3.4" fill="#D97757" />
+        </svg>
+        Pane
+      </a>
+      <div class="nav-actions">
+        <a class="nav-home" href="/" aria-label="Back to the Pane homepage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+          Home
+        </a>
+        <a class="nav-relay" href="https://relay.paneui.com" rel="noopener">
+          Open relay
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============ PRIVACY POLICY ============ -->
+  <main id="top">
+    <div class="wrap">
+      <article class="doc">
+
+        <header class="doc-head">
+          <span class="doc-eyebrow"><span class="dot"></span>Legal</span>
+          <h1>Pane <span class="grad">Privacy</span> Policy</h1>
+          <p class="updated">Last updated: <b>June 12, 2026</b></p>
+
+          <p class="lead">
+            This policy covers the hosted Pane service operated at <a href="https://relay.paneui.com" rel="noopener">relay.paneui.com</a>
+            and <a href="https://paneui.com" rel="noopener">paneui.com</a> ("Pane", "we", "us"). Pane is open-source software you can
+            also self-host. If you self-host Pane, you are the data controller for your instance and this policy does not apply to it.
+          </p>
+        </header>
+
+        <section aria-labelledby="collect">
+          <h2 id="collect">What we collect</h2>
+          <ul>
+            <li><strong>Account data:</strong> your email address (required to sign in), and optionally a display name and phone number if you provide them. We record login timestamps.</li>
+            <li><strong>Content you create:</strong> the panes (interactive web UIs) your agent builds, the structured events people submit through them, records (mutable collections such as lists and boards), and files uploaded as attachments.</li>
+            <li><strong>Authentication data:</strong> short-lived magic-link login tokens and API and OAuth tokens. These are stored hashed or encrypted, never in plaintext.</li>
+            <li><strong>Technical data:</strong> standard request logs and operational metrics (timestamps, IP address, error traces) used to run and secure the service.</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="use">
+          <h2 id="use">How we use your data</h2>
+          <ul>
+            <li><strong>To provide the service:</strong> authenticate you, create and serve your panes, deliver events back to your agent, and store your records and attachments.</li>
+            <li><strong>To send magic-link login emails.</strong></li>
+            <li><strong>To operate, secure, debug, and improve the service,</strong> including rate limiting and abuse prevention.</li>
+          </ul>
+          <div class="callout">
+            <p>We do not sell your data, use it for advertising, or use your content to train AI models.</p>
+          </div>
+        </section>
+
+        <section aria-labelledby="third-party">
+          <h2 id="third-party">Third-party services</h2>
+          <p>We host on Microsoft Azure and use:</p>
+          <ul>
+            <li><strong>Azure Container Apps</strong> for hosting and storage.</li>
+            <li><strong>Azure Communication Services</strong> to send magic-link login emails (your email address is processed to deliver the message).</li>
+            <li><strong>Azure Application Insights</strong> for operational telemetry (request metrics, error traces, and logs).</li>
+          </ul>
+          <p>We share data with these infrastructure providers only as needed to run the service, under their data-protection terms. We do not share your data with any other third parties.</p>
+          <p>When you connect Pane to an AI client such as Claude, that client sends tool requests to Pane on your behalf using an OAuth token you authorized. The client provider's own privacy policy governs the client side of that connection.</p>
+        </section>
+
+        <section aria-labelledby="retention">
+          <h2 id="retention">Data retention</h2>
+          <ul>
+            <li>Active accounts and their content are retained while your account is active.</li>
+            <li>When an account is deleted, its data is soft-deleted and then permanently erased after a retention window (30 days by default for free accounts).</li>
+            <li>Panes expire automatically at their time-to-live. Expired login links and tokens are purged automatically.</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="choices">
+          <h2 id="choices">Your choices</h2>
+          <ul>
+            <li>You can disconnect the connector at any time, which revokes its access immediately. Your other credentials are unaffected.</li>
+            <li>You can request access to or deletion of your data by contacting us (see <a class="inline" href="#contact">Contact</a>).</li>
+            <li>You can self-host Pane to keep all data under your own control.</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="security">
+          <h2 id="security">Security</h2>
+          <p>Credentials are stored hashed or encrypted at rest. Access tokens are scoped to your own account and are revocable. All traffic is served over HTTPS.</p>
+        </section>
+
+        <section aria-labelledby="changes">
+          <h2 id="changes">Changes to this policy</h2>
+          <p>We may update this policy. Material changes will be reflected by the "Last updated" date at the top of this page.</p>
+        </section>
+
+        <section aria-labelledby="contact">
+          <h2 id="contact">Contact</h2>
+          <div class="contact-card">
+            <p>For privacy questions, data access requests, or deletion requests, contact <a class="email" href="mailto:privacy@paneui.com">privacy@paneui.com</a>.</p>
+          </div>
+        </section>
+
+      </article>
+    </div>
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer>
+    <div class="wrap">
+      <div class="foot-links">
+        <a href="/">Home</a>
+        <a href="/#faq">FAQ</a>
+        <a href="/privacy">Privacy</a>
+        <a href="https://relay.paneui.com" rel="noopener">Hosted relay</a>
+        <a href="https://github.com/aerolalit/paneui" rel="noopener">GitHub</a>
+        <a href="https://relay.paneui.com/skills/pane/SKILL.md" rel="noopener">Agent skill</a>
+      </div>
+      <span class="foot-meta">Open-core · MIT licensed</span>
+    </div>
+  </footer>
+
+</body>
+</html>
