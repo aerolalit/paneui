@@ -668,6 +668,63 @@ export interface ShellArgs {
   // static `/apple-touch-icon.png` (its icon route is cookie-gated and iOS may
   // fetch the icon without the cookie).
   appleTouchIconHref: string;
+  // Chrome-free render: no visible header/top-nav at all, just a hidden stub of
+  // the presence elements the shell client reads. Set by the owner /home SPA's
+  // embedded iframe mount (?embedded=1), which supplies its own chrome and wants
+  // the pane edge-to-edge. Defaults to falsy → the normal header renders.
+  chromeless?: boolean;
+}
+
+// The header band: the slim owner top-nav, or the standalone brand+presence
+// header, or — when chromeless — nothing visible. Chromeless still emits a
+// hidden stub carrying the four presence element ids (#dot/#status/#agent-dot/
+// #agent-status) the shell client reads, so it can't null-deref when there's no
+// header to render into.
+function renderShellHeader(args: ShellArgs): string {
+  if (args.chromeless) {
+    return `<div hidden aria-hidden="true"><span id="dot"></span><span id="status"></span><span id="agent-dot"></span><span id="agent-status"></span></div>`;
+  }
+  return `${renderTopNav(args)}${
+    args.topNav
+      ? // Top-nav mode already carries the brand + presence pills inline,
+        // so we skip the standalone dark `<header>` block — otherwise the
+        // shell shows three header rows (brand, presence, tabs) for one
+        // page's worth of context.
+        ""
+      : // Standalone header — runs on /s/<token> (anonymous capability-link
+        // mount) and on /p/:paneId when not signed in. Both audiences see the
+        // landing page at /, not the owner's /home (which is logged-in-only).
+        // The owner's mount renders the top-nav variant above with /home.
+        `<header>
+  <a class="brand" href="/" aria-label="pane home">
+    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
+    <span class="brand-name">Pane</span>
+  </a>
+  <span class="spacer"></span>
+  <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+      <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
+      <line x1="8" y1="12" x2="16" y2="12"/>
+    </svg>
+    <span id="dot" class="dot"></span>
+    <span id="status" class="info">connecting...</span>
+  </span>
+  <span class="pill">
+    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="4" y="9" width="16" height="11" rx="2.5"/>
+      <path d="M12 9V5"/>
+      <circle cx="12" cy="3.5" r="1.6"/>
+      <line x1="9" y1="14" x2="9" y2="14.5"/>
+      <line x1="15" y1="14" x2="15" y2="14.5"/>
+    </svg>
+    <span id="agent-dot" class="dot"></span>
+    <span id="agent-status" class="info">${args.isClosed ? "pane closed" : "no agent yet"}</span>
+  </span>
+</header>`
+  }`;
 }
 
 function renderTopNav(args: ShellArgs): string {
@@ -1027,7 +1084,7 @@ function shareModalScript(
 // not-signed-in /panes/:id) or, in future, inline inside the owner /home SPA.
 // renderShell() wraps this in the full HTML document; the two are byte-for-byte
 // the document this function used to return on its own.
-export function renderPaneViewer(args: ShellArgs): string {
+function renderPaneViewer(args: ShellArgs): string {
   const cfg = {
     paneId: args.paneId,
     schema: args.schema,
@@ -1048,47 +1105,7 @@ export function renderPaneViewer(args: ShellArgs): string {
   // neutralise it the same way we'd neutralise any HTML text node: escape `<`.
   // (JSON.stringify already emits valid JSON; we just close the one breakout.)
   const cfgJson = JSON.stringify(cfg).replace(/</g, "\\u003c");
-  return `${renderTopNav(args)}${
-    args.topNav
-      ? // Top-nav mode already carries the brand + presence pills inline,
-        // so we skip the standalone dark `<header>` block — otherwise the
-        // shell shows three header rows (brand, presence, tabs) for one
-        // page's worth of context.
-        ""
-      : // Standalone header — runs on /s/<token> (anonymous capability-link
-        // mount) and on /p/:paneId when not signed in. Both audiences see the
-        // landing page at /, not the owner's /home (which is logged-in-only).
-        // The owner's mount renders the top-nav variant above with /home.
-        `<header>
-  <a class="brand" href="/" aria-label="pane home">
-    <svg class="brand-logo" width="20" height="20" viewBox="0 0 100 100" aria-hidden="true">${BRAND_MARK_SVG_BODY}</svg>
-    <span class="brand-name">Pane</span>
-  </a>
-  <span class="spacer"></span>
-  <span class="pill">
-    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-      <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
-      <line x1="8" y1="12" x2="16" y2="12"/>
-    </svg>
-    <span id="dot" class="dot"></span>
-    <span id="status" class="info">connecting...</span>
-  </span>
-  <span class="pill">
-    <svg class="pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="4" y="9" width="16" height="11" rx="2.5"/>
-      <path d="M12 9V5"/>
-      <circle cx="12" cy="3.5" r="1.6"/>
-      <line x1="9" y1="14" x2="9" y2="14.5"/>
-      <line x1="15" y1="14" x2="15" y2="14.5"/>
-    </svg>
-    <span id="agent-dot" class="dot"></span>
-    <span id="agent-status" class="info">${args.isClosed ? "pane closed" : "no agent yet"}</span>
-  </span>
-</header>`
-  }
+  return `${renderShellHeader(args)}
 ${
   args.preamble
     ? `<div class="preamble" role="note">

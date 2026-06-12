@@ -247,6 +247,9 @@ ownerShell.get("/:id", async (c) => {
       // the Share button is safe to surface here and nowhere else. Suppressed in
       // embedded mode — the SPA frames this and supplies its own chrome.
       topNav: embedded ? null : { canShare: true },
+      // Embedded mounts render chrome-free (no header band) so the pane fills the
+      // SPA's full-screen pane view; the standalone load keeps its header.
+      chromeless: embedded,
       // Owner mount keeps the static robot home-screen icon. The per-pane icon
       // route (/s/<token>/icon.png) is token-authed; an owner equivalent would
       // be cookie-gated, and iOS may fetch apple-touch-icon without the cookie,
