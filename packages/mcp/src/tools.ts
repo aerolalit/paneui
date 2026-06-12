@@ -51,6 +51,33 @@ export interface ToolResult {
   [key: string]: unknown;
 }
 
+/**
+ * Host-supplied capabilities for the handful of tools that aren't pure
+ * PaneClient wrappers. The stdio server leaves this undefined and the
+ * handlers fall back to the CLI config store + a network skill fetch; the
+ * relay's HTTP MCP server injects an `env` so those tools resolve against the
+ * relay itself (no CLI config on disk, no self-HTTP loop for the skill).
+ *
+ * This is the single seam that keeps the TOOLS array transport-agnostic and
+ * reusable by BOTH servers — every other tool is already a thin PaneClient
+ * call and needs nothing from the host.
+ */
+export interface ToolEnv {
+  /** `agent` action=whoami — describe the active identity (no secrets). */
+  describeConfig?: () => Record<string, unknown>;
+  /** `agent` action=logout — clear the locally-saved profile. */
+  clearProfile?: () => Record<string, unknown>;
+  /**
+   * `get_skill` — return the MCP-flavoured skill markdown + its version. The
+   * relay passes its in-process renderer; the stdio server fetches it over
+   * HTTP from the relay's /skills route.
+   */
+  getSkill?: (versionOnly: boolean) => Promise<{
+    markdown?: string;
+    version?: string;
+  }>;
+}
+
 /** One registered tool: name, human/LLM description, Zod input shape, handler. */
 export interface ToolDef {
   name: string;
@@ -58,9 +85,13 @@ export interface ToolDef {
   // Zod raw shape — the object passed to z.object(). The MCP SDK accepts this
   // directly in registerTool({ inputSchema }) and validates arguments with it.
   inputSchema: z.ZodRawShape;
+  // `env` is optional: when omitted (the stdio server + existing tests) the
+  // config/skill-coupled tools use their CLI defaults; the relay's HTTP server
+  // injects one so the same handlers run server-side.
   handler: (
     client: PaneClient,
     args: Record<string, unknown>,
+    env?: ToolEnv,
   ) => Promise<ToolResult>;
 }
 
@@ -869,7 +900,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "create_pane",
     description:
-      "Hand the human a rich interactive UI by URL and (optionally) get structured data back. Build the UI as inline HTML (pass `name` + `html`) OR reuse a saved template (pass `template_id`). The relay hosts it and returns a URL. ALWAYS give the returned url to the human — paste it into the conversation and ask them to open it. Reach for this whenever a text reply is the wrong shape: forms, approvals, pickers, surveys, dashboards, diff/doc review, wizards. If the page captures input it emits events back to you (poll them with get_events) or mutates record collections (the record tools). Returns { pane_id, url, urls, title, expires_at }.",
+      "Hand the human a rich interactive UI by URL and (optionally) get structured data back. Build the UI as inline HTML (pass `name` + `html`) OR reuse a saved template (pass `template_id`). The relay hosts it and returns a URL. ALWAYS give the returned url to the human — paste it into the conversation and ask them to open it. Reach for this whenever a text reply is the wrong shape: forms, approvals, pickers, surveys, dashboards, diff/doc review, wizards. If the page captures input it emits events back to you (poll them with get_events) or mutates record collections (the record tools). BEFORE authoring: call get_skill for the events-vs-records decision + schema grammar, and the `taste` tool (action: get) for the human's house style — both shape the HTML you write. Returns { pane_id, url, urls, title, expires_at }.",
     inputSchema: createPaneShape,
     handler: async (client, args) => {
       try {
@@ -1156,7 +1187,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "upsert_record",
     description:
-      "Create a row in a pane's record collection, or return the existing row if record_key is already present (deduped:true). Use to add a todo, a line item, a comment, etc. The collection must be declared in the pane's record schema with 'agent' allowed to write. Returns { record, deduped }.",
+      "Create a row in a pane's record collection, or return the existing row if record_key is already present (deduped:true). Use to add a todo, a line item, a comment, etc. The collection must be declared in the pane's record schema with 'agent' allowed to write. If you're still designing the pane, call get_skill first for the records-vs-events decision and the x-pane-collections schema grammar. Returns { record, deduped }.",
     inputSchema: upsertRecordShape,
     handler: async (client, args) => {
       try {
@@ -1890,19 +1921,21 @@ export const TOOLS: ToolDef[] = [
     description:
       "Agent identity + binding. ONE tool with an `action` enum: whoami (the resolved relay URL, active profile, whether a key is configured — no network, no secrets) | claim (bind this agent to a human via a one-shot claim code from their Settings UI; one-way) | logout (clear the locally-saved key/profile; does NOT revoke it on the relay — use the `key` tool's revoke for that).",
     inputSchema: agentShape,
-    handler: async (client, args) => {
+    handler: async (client, args, env) => {
       const action = String(args["action"]);
       try {
         switch (action) {
           case "whoami":
-            // No network — pure local config introspection.
-            return jsonResult(describeActiveConfig());
+            // No network — pure local config introspection. The relay's HTTP
+            // server injects describeConfig (active token's agent identity);
+            // the stdio server reads the CLI config store.
+            return jsonResult((env?.describeConfig ?? describeActiveConfig)());
           case "claim":
             if (str(args, "code") === undefined)
               return invalidArgs("claim requires `code`");
             return jsonResult(await client.claimAgent(String(args["code"])));
           case "logout":
-            return jsonResult(clearActiveProfile());
+            return jsonResult((env?.clearProfile ?? clearActiveProfile)());
           default:
             return invalidArgs(`unknown agent action '${action}'`);
         }
@@ -1944,10 +1977,20 @@ export const TOOLS: ToolDef[] = [
     description:
       "Fetch the relay's auto-updating SKILL.md (the full Pane usage guide) — UNAUTHENTICATED, needs no API key. Call this to self-teach the Pane workflow (events vs records, schema grammars, the poll loop) before driving the other tools. Pass version_only:true to get just the relay's skill version string (to check if a cached copy is stale).",
     inputSchema: getSkillShape,
-    handler: async (_client, args) => {
+    handler: async (_client, args, env) => {
       try {
+        const versionOnly = args["version_only"] === true;
+        // The relay's HTTP server injects getSkill so MCP consumers receive
+        // the MCP-invocation rendering of the skill (tool-call grammar, not
+        // `pane ...` commands) straight from the relay image. The stdio server
+        // falls back to fetching SKILL.md over HTTP from its configured relay.
+        if (env?.getSkill) {
+          const { markdown, version } = await env.getSkill(versionOnly);
+          if (versionOnly) return jsonResult({ version });
+          return textResult(markdown ?? "");
+        }
         const url = resolveUrl();
-        if (args["version_only"]) {
+        if (versionOnly) {
           const { version } = await fetchSkill(url, { version: true });
           return jsonResult({ version });
         }

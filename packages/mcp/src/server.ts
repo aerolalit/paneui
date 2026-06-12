@@ -9,9 +9,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaneClient } from "@paneui/core";
-import { resolveClient } from "./config.js";
-import { TOOLS } from "./tools.js";
+import { resolveClient, resolveUrl } from "./config.js";
+import { TOOLS, type ToolEnv } from "./tools.js";
 import { VERSION } from "./version.js";
+import { fetchMcpGuide } from "./skill.js";
+import { registerGuideCapabilities } from "./capabilities.js";
 
 export interface BuildServerOptions {
   /** Display name for the auto-registered agent (when no key is configured). */
@@ -53,6 +55,32 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     return clientPromise;
   };
 
+  // MCP consumers get the MCP-flavoured guide (tool-call grammar), not the
+  // CLI-grammar SKILL.md. get_skill fetches /skills/pane/MCP.md from the
+  // configured relay; everything else keeps its CLI defaults (the stdio server
+  // reads identity from the shared CLI config store).
+  const toolEnv: ToolEnv = {
+    getSkill: (versionOnly) =>
+      fetchMcpGuide(resolveUrl(), { version: versionOnly }),
+  };
+
+  // Conceptual guide as an MCP prompt + resource. Fetched from the relay lazily
+  // on read; a relay-unreachable read surfaces a short pointer to get_skill
+  // rather than failing registration.
+  registerGuideCapabilities(server, async () => {
+    try {
+      const { markdown } = await fetchMcpGuide(resolveUrl());
+      return markdown ?? "";
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return (
+        "# pane\n\nThe pane guide could not be fetched from the relay " +
+        `(${message}).\n\nCall the \`get_skill\` tool to retrieve it once the ` +
+        "relay is reachable.\n"
+      );
+    }
+  });
+
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
@@ -84,7 +112,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             isError: true,
           };
         }
-        return tool.handler(client, args);
+        return tool.handler(client, args, toolEnv);
       },
     );
   }

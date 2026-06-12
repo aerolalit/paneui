@@ -46,6 +46,8 @@ import blobBridge from "../bridge/attachment-bridge.js";
 import blobUploadBridge from "../bridge/attachment-upload-bridge.js";
 import blobDownloadBridge from "../bridge/attachment-download-bridge.js";
 import skill from "./routes/skill.js";
+import { oauth, registerOAuthMetadata } from "./routes/oauth.js";
+import { mountMcp } from "./routes/mcp.js";
 import bridge from "../bridge/routes.js";
 import { loadClient } from "../bridge/routes.js";
 import { generalRateLimit } from "./rate-limit.js";
@@ -265,6 +267,27 @@ export function buildApp(
   // agent can fetch it from the relay it uses. Registered here, before the
   // rate-limit middleware, so it stays unmetered like /healthz.
   app.route("/skills", skill);
+
+  // Remote MCP connector — OAuth 2.1 authorization server + Streamable-HTTP MCP
+  // endpoint. Registered BEFORE the rate limiter / CSRF / body-cap middleware
+  // (like /skills and /healthz) so:
+  //   - capability discovery (initialize, tools/list) is reachable without a
+  //     token and without tripping the per-IP limiter during Claude's probe;
+  //   - the OAuth metadata + token endpoints answer Claude's discovery chain
+  //     unmetered (a hosted client polls them);
+  //   - the /mcp transport sets its own permissive CORS (the cookie-auth CSRF
+  //     gate does not apply — /mcp is bearer-token-auth, never cookie-auth).
+  // The MCP route does its own auth (verifyMcpAccessToken) + 401 challenge.
+  // Gate the whole feature behind MCP_HTTP_ENABLED so a CLI-only relay can hide
+  // it entirely (no /mcp, no /oauth, no /.well-known/oauth-*).
+  if (config.MCP_HTTP_ENABLED) {
+    registerOAuthMetadata(app);
+    app.route("/oauth", oauth);
+    // Tool-handler PaneClient loops back to the relay's own API. Prefer a
+    // localhost loopback so it never leaves the box; fall back to publicUrl.
+    const loopback = `http://127.0.0.1:${config.PORT}`;
+    mountMcp(app, loopback);
+  }
 
   // System pages — /login + /home + /my-panes + /my-templates + /my-agents
   // + /settings. These are pane-shipped HTML pages that read the human's

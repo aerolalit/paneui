@@ -763,3 +763,108 @@ model DeletionLog {
   @@index([entityType, entityId])
   @@map("deletion_log")
 }
+
+// ===========================================================================
+// Remote MCP OAuth 2.1 authorization server (issue: remote MCP connector).
+//
+// The relay doubles as an OAuth 2.1 Authorization Server + Resource Server so
+// a hosted MCP client (claude.ai / Claude mobile) can connect to the relay's
+// Streamable-HTTP MCP endpoint at /mcp as a custom connector. The human logs in
+// with the existing magic-link flow + consents; the relay provisions (or
+// reuses) an Agent owned by that human and issues access/refresh tokens that
+// map to it. See docs/architecture/remote-mcp-oauth.md.
+// ===========================================================================
+
+// A registered OAuth client. Created by Dynamic Client Registration (RFC 7591)
+// — Claude self-registers on first connect. `redirectUris` is the exact-match
+// allowlist; an authorization request whose redirect_uri isn't in it is
+// refused (open-redirect defence).
+model OAuthClient {
+  // The public client_id handed to the client at registration.
+  clientId          String   @id @map("client_id")
+  // Hash of the client_secret for confidential clients; null for public
+  // clients (PKCE-only, which is what Claude uses). The raw secret is returned
+  // once at registration and never stored.
+  clientSecretHash  String?  @map("client_secret_hash")
+  clientName        String?  @map("client_name")
+  // JSON array of allowed redirect URIs (exact match, no wildcard).
+  redirectUris      Json     @map("redirect_uris")
+  // JSON array of grant types (authorization_code, refresh_token).
+  grantTypes        Json     @map("grant_types")
+  // "none" (public/PKCE) | "client_secret_basic" | "client_secret_post".
+  tokenEndpointAuthMethod String @default("none") @map("token_endpoint_auth_method")
+  // Space-delimited scopes the client requested at registration.
+  scope             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  authCodes         OAuthAuthCode[]
+  tokens            OAuthToken[]
+
+  @@map("oauth_clients")
+}
+
+// A one-time, short-TTL authorization code minted by the /authorize consent
+// step. Bound to client + redirect_uri + the PKCE code_challenge; single-use
+// (consumedAt set on exchange). Carries the human + the provisioned agent so
+// the token exchange can mint tokens mapping to that agent.
+model OAuthAuthCode {
+  // sha256(code) — the raw code is in the redirect and never stored.
+  codeHash          String   @id @map("code_hash")
+  clientId          String   @map("client_id")
+  client            OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  // The redirect_uri this code was issued against — the token exchange must
+  // present the identical value (exact match).
+  redirectUri       String   @map("redirect_uri")
+  // PKCE S256 challenge captured at /authorize; the exchange must present a
+  // code_verifier whose S256 hash equals this.
+  codeChallenge     String   @map("code_challenge")
+  codeChallengeMethod String @default("S256") @map("code_challenge_method")
+  // The consenting human + the agent provisioned/reused for them.
+  humanId           String   @map("human_id")
+  agentId           String   @map("agent_id")
+  scope             String?
+  // RFC 8707 resource indicator the client asked for (the MCP endpoint URL).
+  resource          String?
+  expiresAt         DateTime @map("expires_at")
+  consumedAt        DateTime? @map("consumed_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([clientId])
+  @@index([expiresAt])
+  @@map("oauth_auth_codes")
+}
+
+// An issued access or refresh token. Opaque-token-in-DB model: the raw token is
+// returned once and only its sha256 is stored. The token maps to an agent; the
+// agent's plaintext API key is stored AES-256-GCM-encrypted (via crypto.ts,
+// PANE_SECRET_KEY) so the MCP request can act AS that agent against the relay's
+// own API without re-deriving the key. Revocable (revokedAt) so the owner can
+// disconnect Claude without rotating their CLI key.
+model OAuthToken {
+  // sha256(token).
+  tokenHash         String   @id @map("token_hash")
+  // "access" | "refresh".
+  kind              String
+  clientId          String   @map("client_id")
+  client            OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  humanId           String   @map("human_id")
+  agentId           String   @map("agent_id")
+  scope             String?
+  resource          String?
+  // AES-256-GCM envelope of the agent's plaintext API key (crypto.ts format).
+  // Lets verifyAccessToken hand the MCP tool handlers a real PaneClient keyed
+  // as this agent. Only set on tokens that need to act (access + refresh).
+  agentKeyEnc       String   @map("agent_key_enc")
+  // For a refresh token, the access token it most recently minted (sha256), so
+  // a refresh can revoke the superseded access token. Null for access tokens.
+  refreshFor        String?  @map("refresh_for")
+  expiresAt         DateTime @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([clientId])
+  @@index([humanId])
+  @@index([expiresAt])
+  @@index([kind])
+  @@map("oauth_tokens")
+}
