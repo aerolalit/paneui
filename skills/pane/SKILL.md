@@ -10,7 +10,7 @@ description: >-
   watch for the result.
 ---
 
-<!-- pane skill v0.0.22 -->
+<!-- pane skill v0.0.23 -->
 
 # pane
 
