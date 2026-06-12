@@ -119,16 +119,24 @@ export const OWNER_SHELL_CSS = `
     grid-template-columns: 220px 1fr;
     grid-template-rows: 1fr;
   }
-  /* Installed PWA: size to the *layout* viewport (100vh) instead of the dynamic
-     one. In standalone mode there is no Safari toolbar, so layout == visual ==
-     screen during live use (no regression to the dvh toolbar fix above). But the
-     iOS app-switcher paints its card snapshot at the layout viewport / full
-     screen, while a 100dvh shell can be captured shorter than that — leaving the
-     splash/background_color (--bg #f7f5f1) exposed as a dead strip below the
-     in-flow bottom tab bar. Filling 100vh paints the whole snapshot canvas, so
-     the tab bar hugs the true bottom in the switcher, matching native apps. */
+  /* Installed PWA: pin the shell to the viewport with position:fixed/inset:0
+     instead of a vh/dvh *length*. Two device-only iOS quirks make length-based
+     sizing lose in standalone mode:
+       - 100dvh can be captured SHORTER than the full screen in the app-switcher
+         snapshot, exposing the splash/background_color (--bg #f7f5f1) as a dead
+         strip below the in-flow bottom tab bar.
+       - 100vh resolves TALLER than the visible area, pushing the bottom grid row
+         (the tab bar) below the screen edge so its LABELS clip off — leaving
+         icons with empty space beneath and no names (confirmed on-device).
+     position:fixed + inset:0 is bounded by the viewport edges, so it fills the
+     screen exactly — no undershoot strip, no overshoot clip, labels visible.
+     height:auto lets inset (top:0/bottom:0) drive the box; without it the base
+     height:100dvh would win over the bottom inset and reintroduce the dvh strip.
+     Scoped to standalone so Safari-browser mode keeps the in-flow dvh layout
+     (#544/#547 toolbar fix). On-device verified: standalone reports app pos=fixed,
+     app/nav bottom == innerHeight, all five tab labels visible. */
   @media all and (display-mode: standalone) {
-    .app { height: 100vh; }
+    .app { position: fixed; inset: 0; height: auto; }
   }
   @media (max-width: 639px) {
     /* The nav is the first child (the desktop left sidebar), so on a row grid
@@ -257,7 +265,7 @@ export const OWNER_SHELL_CSS = `
       flex-direction: row;
       align-items: stretch;
       justify-content: space-around;
-      padding: 6px max(8px, env(safe-area-inset-left)) calc(6px + var(--safe-bottom)) max(8px, env(safe-area-inset-right));
+      padding: 4px max(8px, env(safe-area-inset-left)) calc(2px + var(--safe-bottom)) max(8px, env(safe-area-inset-right));
     }
     .nav .brand { display: none; }
     /* The footer's full-page links (/my-agents, /settings) and sign-out have
@@ -276,10 +284,10 @@ export const OWNER_SHELL_CSS = `
     .nav .me .avatar, .nav .me .who { display: none; }
     .nav .me .acct-tab {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3px; width: 100%; min-height: 52px;
+      gap: 3px; width: 100%; min-height: 46px;
       background: transparent; border: none; cursor: pointer;
       color: var(--ink-dim); font-size: 11px;
-      padding: 8px 4px 4px;
+      padding: 4px 4px 2px;
     }
     .nav .me .acct-tab .icon {
       width: 22px; height: 22px;
@@ -352,8 +360,8 @@ export const OWNER_SHELL_CSS = `
       flex-direction: column;
       justify-content: center;
       gap: 3px;
-      padding: 8px 4px 4px;
-      min-height: 52px;
+      padding: 4px 4px 2px;
+      min-height: 46px;
       font-size: 11px;
       text-align: center;
       border-radius: 8px;
