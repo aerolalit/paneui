@@ -1559,20 +1559,21 @@ const EXTRA_CSS = `
     flex: 0 0 auto; cursor: pointer;
     font-size: 12.5px; font-weight: 600; font-family: inherit;
     padding: 5px 12px; border-radius: 999px;
-    background: var(--surface-2); border: 1px solid var(--hairline);
-    color: var(--ink-mute); transition: color 100ms, background 100ms, border-color 100ms;
+    background: rgba(244,201,140,.14); border: 1px solid rgba(244,201,140,.30);
+    color: var(--ink-dim); transition: color 100ms, background 100ms, border-color 100ms, box-shadow 100ms;
   }
   .chip:hover { color: var(--ink); }
   .chip.on {
     background: var(--accent); color: #1a120c; border-color: transparent;
+    box-shadow: 0 2px 6px rgba(217,119,87,.30);
   }
   .pane-row .row-tags {
     display: flex; flex-wrap: nowrap; gap: 5px; margin-top: 5px;
     overflow: hidden; min-width: 0;
   }
   .pane-row .row-tag {
-    font-size: 10.5px; color: var(--ink-mute);
-    background: var(--surface-2); border: 1px solid var(--hairline);
+    font-size: 10.5px; color: var(--ink-dim);
+    background: rgba(244,201,140,.12); border: 1px solid rgba(244,201,140,.28);
     border-radius: 999px; padding: 1px 8px;
     flex: 0 0 auto; white-space: nowrap;
   }
@@ -2056,6 +2057,11 @@ const SHELL_JS = `
       star.setAttribute('title', newOn ? 'Unfavorite' : 'Favorite');
       star.setAttribute('aria-label', newOn ? 'Unfavorite' : 'Favorite');
       star.classList.toggle('active', newOn);
+      // Mirror the new fav state on the row itself so the CSS
+      // .pane-row[data-fav="1"] selector (left-edge accent + warm wash)
+      // repaints without a reload.
+      const favRow = star.closest('.pane-row');
+      if (favRow) favRow.setAttribute('data-fav', newOn ? '1' : '0');
       const svg = star.querySelector('svg');
       if (svg) {
         svg.innerHTML = newOn

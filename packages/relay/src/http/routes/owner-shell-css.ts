@@ -460,7 +460,7 @@ export const OWNER_SHELL_CSS = `
   .search input {
     width: 100%;
     background: var(--surface);
-    border: 1px solid var(--hairline);
+    border: 1px solid rgba(244,201,140,.32);
     border-radius: 10px;
     padding: 9px 12px 9px 34px;
     color: var(--ink);
@@ -763,8 +763,9 @@ export const OWNER_SHELL_CSS = `
     display: flex; flex-direction: column; gap: 8px;
   }
   .pane-row {
+    position: relative;
     background: var(--surface);
-    border: 1px solid var(--hairline);
+    border: 1px solid rgba(244,201,140,.28);
     border-radius: 12px;
     padding: 12px 14px;
     display: grid;
@@ -777,9 +778,24 @@ export const OWNER_SHELL_CSS = `
     gap: 14px;
     align-items: center;
     cursor: pointer;
-    transition: border-color 150ms;
+    transition: border-color 150ms, background 150ms;
   }
-  .pane-row:hover { border-color: var(--hairline-2); }
+  .pane-row:hover { border-color: rgba(244,201,140,.55); }
+  /* Favorited rows pick up a coral→amber left edge plus a soft warm wash that
+     fades into the row. Color carries meaning here — starred panes pop without
+     the rest of the list shouting. The wash is layered above var(--surface) so
+     the underlying surface still defines the base in both light and dark. */
+  .pane-row[data-fav="1"] {
+    background:
+      linear-gradient(90deg, rgba(244,201,140,.18) 0%, transparent 16%),
+      var(--surface);
+  }
+  .pane-row[data-fav="1"]::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--brand-2));
+  }
   .pane-row .icon {
     width: 44px; height: 44px;
     border-radius: 11px;
