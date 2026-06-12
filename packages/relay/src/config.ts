@@ -514,6 +514,74 @@ const schema = z.object({
     .int()
     .positive()
     .default(30 * 24 * 60 * 60),
+
+  // ---- Remote MCP connector (OAuth-protected Streamable-HTTP MCP) ----
+  //
+  // Mounts the MCP Streamable-HTTP endpoint at /mcp plus a self-hosted OAuth
+  // 2.1 authorization server (DCR + PKCE) so a hosted MCP client (claude.ai /
+  // Claude mobile) can add the relay as a custom connector. The issuer is the
+  // relay's PUBLIC_URL; tokens map to a per-human Agent.
+  //
+  // Enabled by default. Disable to hide /mcp and the OAuth endpoints entirely
+  // (e.g. a relay that only serves the CLI). The human-login + consent step
+  // reuses the magic-link flow, so a relay with EMAIL_PROVIDER=none can still
+  // expose initialize + tools/list (capability discovery is unauthenticated)
+  // but a human can never complete consent — document this for self-hosters.
+  MCP_HTTP_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
+  // Access-token TTL for the MCP OAuth flow. Short by design — a refresh token
+  // (longer-lived, revocable) keeps the connector working. 1 hour default.
+  MCP_OAUTH_ACCESS_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60),
+
+  // Refresh-token TTL. 30 days mirrors the login cookie — disconnecting Claude
+  // is a token revoke (the owner can do it without rotating their CLI key).
+  MCP_OAUTH_REFRESH_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
+
+  // Authorization-code TTL. Single-use and consumed within seconds of the
+  // redirect; 5 minutes is generous headroom for the round trip.
+  MCP_OAUTH_CODE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60),
+
+  // Dedicated per-IP rate limit for the OAuth endpoints (/oauth/register,
+  // /oauth/authorize, /oauth/token, /oauth/revoke) and the unauthenticated
+  // /mcp discovery path. These are mounted BEFORE the general /v1 limiter so
+  // Claude's discovery probes aren't throttled by the agent-API limiter, which
+  // also means they had NO per-IP bound at all — an open registration +
+  // unbounded session creation surface. This limiter restores a bound without
+  // affecting /v1. Generous enough for Claude's legitimate discovery burst
+  // (a handful of well-known + register + authorize + token hits) but low
+  // enough to stop a flood. =0 disables it (unlimited — not recommended).
+  MCP_RATE_LIMIT: z.coerce.number().int().min(0).default(60),
+  MCP_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // Cap on the in-memory MCP session map (routes/mcp.ts). A session is created
+  // on every `initialize`, which is UNAUTHENTICATED (capability discovery), so
+  // without a cap an attacker can grow the map unboundedly (memory DoS). When
+  // the map is full the oldest idle session is evicted to make room.
+  // =0 disables the cap (unbounded — not recommended).
+  MCP_MAX_SESSIONS: z.coerce.number().int().min(0).default(1000),
+  // Idle TTL for an MCP session. A session untouched for this long is evicted
+  // on the next sweep / insertion, so abandoned discovery sessions don't
+  // linger. Must comfortably exceed a normal request gap.
+  MCP_SESSION_IDLE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 60),
 });
 
 export type RawConfig = z.infer<typeof schema>;

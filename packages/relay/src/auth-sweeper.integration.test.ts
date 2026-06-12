@@ -117,6 +117,61 @@ async function seedAttachmentTokenRow(opts: {
   return tok.id;
 }
 
+async function seedOAuthClient(): Promise<string> {
+  const client = await prisma.oAuthClient.create({
+    data: {
+      clientId: `pmcli_${randomBytes(8).toString("hex")}`,
+      redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+      grantTypes: ["authorization_code", "refresh_token"],
+    },
+  });
+  return client.clientId;
+}
+
+async function seedOAuthCode(opts: {
+  clientId: string;
+  humanId: string;
+  expiresAt: Date;
+  consumedAt?: Date | null;
+}): Promise<string> {
+  const codeHash = randomBytes(32).toString("hex");
+  await prisma.oAuthAuthCode.create({
+    data: {
+      codeHash,
+      clientId: opts.clientId,
+      redirectUri: "https://claude.ai/api/mcp/auth_callback",
+      codeChallenge: "x".repeat(43),
+      humanId: opts.humanId,
+      agentId: "agent_x",
+      expiresAt: opts.expiresAt,
+      consumedAt: opts.consumedAt ?? null,
+    },
+  });
+  return codeHash;
+}
+
+async function seedOAuthToken(opts: {
+  clientId: string;
+  humanId: string;
+  expiresAt: Date;
+  revokedAt?: Date | null;
+}): Promise<string> {
+  const tokenHash = randomBytes(32).toString("hex");
+  await prisma.oAuthToken.create({
+    data: {
+      tokenHash,
+      kind: "access",
+      clientId: opts.clientId,
+      humanId: opts.humanId,
+      agentId: "agent_x",
+      agentKeyEnc: "v1.enc",
+      expiresAt: opts.expiresAt,
+      revokedAt: opts.revokedAt ?? null,
+    },
+  });
+  return tokenHash;
+}
+
 describe("sweepAuthTokens (integration, real DB)", () => {
   it("hard-deletes expired logins; preserves non-expired ones", async () => {
     const humanId = await seedHuman("a@example.com");
@@ -236,6 +291,86 @@ describe("sweepAuthTokens (integration, real DB)", () => {
     ).not.toBeNull();
   });
 
+  it("hard-deletes expired oauth_auth_codes + oauth_tokens; grace windows apply", async () => {
+    const humanId = await seedHuman("oauth@example.com");
+    const clientId = await seedOAuthClient();
+
+    const expiredCode = await seedOAuthCode({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const oldConsumedCode = await seedOAuthCode({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() + HOUR_MS),
+      consumedAt: new Date(Date.now() - 8 * DAY_MS),
+    });
+    const liveCode = await seedOAuthCode({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() + HOUR_MS),
+    });
+
+    const expiredTok = await seedOAuthToken({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    const oldRevokedTok = await seedOAuthToken({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() + HOUR_MS),
+      revokedAt: new Date(Date.now() - 8 * DAY_MS),
+    });
+    const recentRevokedTok = await seedOAuthToken({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() + HOUR_MS),
+      revokedAt: new Date(Date.now() - HOUR_MS),
+    });
+    const liveTok = await seedOAuthToken({
+      clientId,
+      humanId,
+      expiresAt: new Date(Date.now() + HOUR_MS),
+    });
+
+    const r = await sweepAuthTokens(prisma);
+    expect(r.oauth_auth_codes).toBe(2);
+    expect(r.oauth_tokens).toBe(2);
+
+    expect(
+      await prisma.oAuthAuthCode.findUnique({
+        where: { codeHash: expiredCode },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.oAuthAuthCode.findUnique({
+        where: { codeHash: oldConsumedCode },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.oAuthAuthCode.findUnique({ where: { codeHash: liveCode } }),
+    ).not.toBeNull();
+
+    expect(
+      await prisma.oAuthToken.findUnique({ where: { tokenHash: expiredTok } }),
+    ).toBeNull();
+    expect(
+      await prisma.oAuthToken.findUnique({
+        where: { tokenHash: oldRevokedTok },
+      }),
+    ).toBeNull();
+    expect(
+      await prisma.oAuthToken.findUnique({
+        where: { tokenHash: recentRevokedTok },
+      }),
+    ).not.toBeNull();
+    expect(
+      await prisma.oAuthToken.findUnique({ where: { tokenHash: liveTok } }),
+    ).not.toBeNull();
+  });
+
   it("is a no-op when nothing matches the sweep predicates", async () => {
     const humanId = await seedHuman("d@example.com");
     await seedLogin(humanId, new Date(Date.now() + HOUR_MS));
@@ -247,6 +382,8 @@ describe("sweepAuthTokens (integration, real DB)", () => {
       magic_links: 0,
       claim_codes: 0,
       attachment_tokens: 0,
+      oauth_auth_codes: 0,
+      oauth_tokens: 0,
     });
   });
 

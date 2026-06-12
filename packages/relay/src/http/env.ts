@@ -27,6 +27,13 @@ export type AppEnv = {
     // public-pane anonymous-write spam surface — the HTTP-side peer of the WS
     // per-connection anonymous-emit cap (#445).
     anonRecordWriteLimiter: SlidingWindowLimiter;
+    // Per-IP limiter for the OAuth endpoints + the unauthenticated /mcp
+    // discovery path. These are mounted ahead of the general /v1 limiter (so
+    // Claude's discovery probes aren't throttled by the agent-API bucket),
+    // which left them unbounded — this restores a per-IP bound dedicated to
+    // that surface. Only present when MCP_HTTP_ENABLED; the mcpOAuthRateLimit
+    // middleware no-ops when it's absent.
+    mcpOAuthLimiter?: SlidingWindowLimiter;
     // Configured AttachmentStore backend (filesystem or azure, per config.BLOB_STORE).
     // Optional in tests that don't exercise attachment routes — the /v1/attachments route
     // throws if it's missing so callers can't accidentally rely on an

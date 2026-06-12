@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppEnv } from "../env.js";
+import { MCP_GUIDE, MCP_GUIDE_VERSION } from "../../mcp/guide.js";
 
 // Serves the pane agent skill verbatim at GET /skills/pane/SKILL.md so an agent
 // can fetch it straight from the relay it talks to — no repo clone, and the
@@ -77,6 +78,25 @@ skill.get("/pane/SKILL.md", (c) =>
 // skill — they share the same boot-snapshot lifecycle.
 skill.get("/pane/SKILL.md/version", (c) =>
   c.json({ version: SKILL_VERSION }, 200, {
+    "Cache-Control": "public, max-age=3600",
+  }),
+);
+
+// GET /skills/pane/MCP.md — the MCP-flavoured guide (conceptual core + MCP
+// tool-call invocation grammar), composed at boot from MCP-INVOCATION.md + the
+// core blocks of SKILL.md. This is what the stdio MCP server's get_skill tool
+// fetches (so MCP consumers get tool-call grammar, not `pane ...` commands).
+skill.get("/pane/MCP.md", (c) =>
+  c.body(MCP_GUIDE, 200, {
+    "Content-Type": "text/markdown; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  }),
+);
+
+// GET /skills/pane/MCP.md/version — version probe for the MCP guide. Shares the
+// single `<!-- pane skill v... -->` version with the CLI skill.
+skill.get("/pane/MCP.md/version", (c) =>
+  c.json({ version: MCP_GUIDE_VERSION }, 200, {
     "Cache-Control": "public, max-age=3600",
   }),
 );

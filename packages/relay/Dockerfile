@@ -30,13 +30,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Workspace manifests first, for layer caching. The relay depends on the
-# @paneui/core workspace package, so both workspaces are installed.
+# @paneui/core AND @paneui/mcp workspace packages (the latter supplies the
+# shared MCP tool handlers + guide composition for the remote MCP endpoint), so
+# all three workspaces are installed. @paneui/mcp itself depends only on
+# @paneui/core, so the install graph is core ← mcp ← relay.
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
 COPY packages/core/package.json ./packages/core/package.json
+COPY packages/mcp/package.json ./packages/mcp/package.json
 # --ignore-scripts: the root `prepare` script runs `husky`, a dev-only git-hook
 # installer with no role inside the image (and the .git dir is not in context).
 RUN npm ci --workspace @paneui/relay --workspace @paneui/core \
+    --workspace @paneui/mcp \
     --include-workspace-root --ignore-scripts
 
 # Re-run install scripts for better-sqlite3 only — the `--ignore-scripts`
@@ -48,10 +53,17 @@ RUN npm ci --workspace @paneui/relay --workspace @paneui/core \
 # pure JS so doesn't need this dance.
 RUN npm rebuild better-sqlite3 --workspace @paneui/relay
 
-# Build @paneui/core first — the relay imports its compiled output.
+# Build @paneui/core first — both the relay and @paneui/mcp import its compiled
+# output.
 COPY packages/core/tsconfig.json ./packages/core/tsconfig.json
 COPY packages/core/src ./packages/core/src
 RUN npm run build --workspace @paneui/core
+
+# Build @paneui/mcp next — the relay imports its compiled dist (the shared tool
+# handlers, guide composition, and prompt/resource registration).
+COPY packages/mcp/tsconfig.json ./packages/mcp/tsconfig.json
+COPY packages/mcp/src ./packages/mcp/src
+RUN npm run build --workspace @paneui/mcp
 
 COPY packages/relay/prisma ./packages/relay/prisma
 # `npm run generate` runs scripts/prisma-generate.mjs, so the scripts dir must
@@ -100,11 +112,14 @@ ENV BLOB_STORE_FS_DIR=/app/data/blobs
 COPY package.json package-lock.json ./
 COPY packages/relay/package.json ./packages/relay/package.json
 COPY packages/core/package.json ./packages/core/package.json
+COPY packages/mcp/package.json ./packages/mcp/package.json
 RUN npm ci --omit=dev --workspace @paneui/relay --workspace @paneui/core \
+    --workspace @paneui/mcp \
     --include-workspace-root --ignore-scripts
 
-# Generated client + migrations + compiled JS. @paneui/core's compiled dist is
-# copied so the workspace symlink resolves to real built output at runtime.
+# Generated client + migrations + compiled JS. @paneui/core's and @paneui/mcp's
+# compiled dist are copied so the workspace symlinks resolve to real built
+# output at runtime (the relay imports @paneui/mcp/tools etc.).
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 # better-sqlite3's native binding (.node) is built in the build stage (which
@@ -113,6 +128,7 @@ COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 # bindings file" on first connect. Overlay the compiled package from build.
 COPY --from=build /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=build /app/packages/core/dist ./packages/core/dist
+COPY --from=build /app/packages/mcp/dist ./packages/mcp/dist
 COPY --from=build /app/packages/relay/dist ./packages/relay/dist
 COPY packages/relay/prisma ./packages/relay/prisma
 # Migration runner (bounded retry wrapper around `prisma migrate deploy`).

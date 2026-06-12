@@ -68,6 +68,45 @@ function generateCspNonce(): string {
   return Buffer.from(buf).toString("base64url");
 }
 
+/**
+ * Validate a `returnUrl` query param for the login flow and return a safe
+ * same-origin PATH (path + search), or null. Open-redirect defence — a crafted
+ * returnUrl must not bounce the human off-site after login, so we accept only:
+ *   - a relative path beginning with a single "/" (not "//", which is a
+ *     protocol-relative URL to another host), or
+ *   - an absolute URL whose origin equals the relay's PUBLIC_URL.
+ * Anything else yields null and the caller falls back to /home. Mirrors the
+ * magic-link callback's sameOriginPathOrNull guard so the two agree.
+ */
+function sameOriginReturnPath(
+  value: string | undefined,
+  publicUrl: string,
+): string | null {
+  if (!value) return null;
+  // Reject protocol-relative ("//host") and scheme-relative tricks up front.
+  if (value.startsWith("//")) return null;
+  if (value.startsWith("/")) {
+    // A site-relative path — inherently same-origin. Normalize through URL to
+    // drop any embedded credentials/host smuggling, then take path+search.
+    try {
+      const u = new URL(value, publicUrl);
+      if (u.origin !== new URL(publicUrl).origin) return null;
+      return u.pathname + u.search;
+    } catch {
+      return null;
+    }
+  }
+  // An absolute URL — only same-origin is honored.
+  try {
+    const base = new URL(publicUrl);
+    const target = new URL(value);
+    if (target.origin !== base.origin) return null;
+    return target.pathname + target.search;
+  } catch {
+    return null;
+  }
+}
+
 // Nonce-based CSP for the system-pages-authored HTML. No 'unsafe-inline' on
 // script-src or style-src — every inline block is nonce'd and there are no
 // inline style attributes left in this file's output.
@@ -788,9 +827,18 @@ systemPages.get("/login", (c) => {
   const provider = c.get("emailProvider");
   const config = c.get("config");
   const human = c.get("human");
+  // A returnUrl carries the human back to where they came from after login
+  // (e.g. the OAuth consent screen). Only same-origin PATHS are honored — an
+  // absolute/off-origin value is dropped (open-redirect defence), mirroring the
+  // magic-link callback's sameOriginPathOrNull guard.
+  const returnUrl = sameOriginReturnPath(
+    c.req.query("returnUrl"),
+    config.publicUrl,
+  );
   if (human) {
-    // Already signed in — bounce to /home rather than re-prompting.
-    return c.redirect("/home", 302);
+    // Already signed in — bounce straight to the return target (if safe) or
+    // /home rather than re-prompting.
+    return c.redirect(returnUrl ?? "/home", 302);
   }
   // Format the magic-link TTL for the success message. Always shown in
   // minutes — sub-minute TTLs round up to "1 minute" since "0 minutes" or
@@ -847,6 +895,10 @@ systemPages.get("/login", (c) => {
        <script nonce="${nonce}">
          const form = document.getElementById("login-form");
          const status = document.getElementById("login-status");
+         // returnUrl is rendered server-side (already validated same-origin) as
+         // a bare path; the request-link API wants an absolute same-origin URL,
+         // so resolve it against the current origin before sending.
+         const RETURN_PATH = ${JSON.stringify(returnUrl ?? "")};
          form?.addEventListener("submit", async (e) => {
            e.preventDefault();
            const email = (document.getElementById("email")).value.trim();
@@ -856,6 +908,7 @@ systemPages.get("/login", (c) => {
            try {
              const body = { email };
              if (name.length > 0) body.name = name;
+             if (RETURN_PATH) body.returnUrl = new URL(RETURN_PATH, window.location.origin).toString();
              const res = await fetch("/v1/auth/request-link", {
                method: "POST",
                headers: { "content-type": "application/json" },
