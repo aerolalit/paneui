@@ -22,6 +22,7 @@ import { agentScope } from "../agent-scope.js";
 import { errors } from "../errors.js";
 import { parseIncludeDeleted, softDeleteWhere } from "../../db/soft-delete.js";
 import { comparePaneSchemas } from "../../core/schema-compat.js";
+import { validateVersionContent } from "./version-content.js";
 import type { EventSchema } from "../../types.js";
 import { log } from "../../log.js";
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
@@ -1321,6 +1322,7 @@ panes.patch("/:id", requireAgent, async (c) => {
 // events under their original schema even after the upgrade.
 panes.post("/:id/upgrade", requireAgent, async (c) => {
   const prisma = c.get("prisma");
+  const config = c.get("config");
   const id = c.req.param("id");
   const me = c.get("agent");
 
@@ -1333,7 +1335,7 @@ panes.post("/:id/upgrade", requireAgent, async (c) => {
     throw errors.invalidRequest(
       "invalid body",
       e,
-      `the request body must be \`{ "template_version"?: number, "compat"?: "strict" | "force" }\``,
+      `the request body must be \`{ "template_version"?: number, "compat"?: "strict" | "force", "template"?: { "source": string, "type"?: "html-inline", "event_schema"?, "input_schema"?, "record_schema"?, "template_record_schema"? } }\` — pass \`template\` to edit an inline pane's HTML in place (mutually exclusive with template_version)`,
     );
   }
   const compat = body.compat ?? "strict";
@@ -1352,6 +1354,138 @@ panes.post("/:id/upgrade", requireAgent, async (c) => {
   if (pane.deletedAt !== null) throw errors.softDeleted("pane");
   if (pane.status === "closed" || pane.expiresAt.getTime() < Date.now()) {
     throw errors.gone("pane is closed — upgrading a closed pane has no effect");
+  }
+
+  // Inline upgrade — the body carries new HTML (+ optional schemas). Append a
+  // fresh version to THIS pane's template and re-pin to it in one transaction,
+  // editing the pane's HTML in place (same id/URL) without a separate
+  // `template version` call. Restricted to INLINE (anonymous, slug=null) panes:
+  // a named/reusable template is a shared asset whose version history goes
+  // through POST /v1/templates/:id/versions (+ a deliberate upgrade), and whose
+  // follow-installs need the publish-side advancement this path doesn't run.
+  if (body.template) {
+    const tmpl = pane.templateVersion.template;
+    if (tmpl.slug !== null) {
+      throw errors.invalidRequest(
+        "inline upgrade applies only to inline panes",
+        undefined,
+        `this pane uses the named template '${tmpl.slug}' — append a version with POST /v1/templates/${tmpl.slug}/versions, then upgrade with template_version`,
+      );
+    }
+    const cur = pane.templateVersion;
+    // Inherit any schema the caller didn't supply from the current version, so
+    // "just change the HTML" keeps the same event/input/record contracts (and
+    // sails through the compat gate). An explicit value overrides; explicit
+    // `null`/omitted-on-current means view-only / no schema.
+    const content = {
+      source: body.template.source,
+      type: body.template.type ?? ("html-inline" as const),
+      event_schema:
+        body.template.event_schema !== undefined
+          ? body.template.event_schema
+          : (cur.eventSchema ?? undefined),
+      input_schema:
+        body.template.input_schema !== undefined
+          ? body.template.input_schema
+          : ((cur.inputSchema as Record<string, unknown> | null) ?? undefined),
+      record_schema:
+        body.template.record_schema !== undefined
+          ? body.template.record_schema
+          : (cur.recordSchema ?? undefined),
+      template_record_schema:
+        body.template.template_record_schema !== undefined
+          ? body.template.template_record_schema
+          : (cur.templateRecordSchema ?? undefined),
+    };
+    const newEventSchema = validateVersionContent(config, content);
+
+    if (
+      config.MAX_VERSIONS_PER_ARTIFACT > 0 &&
+      tmpl.latestVersion >= config.MAX_VERSIONS_PER_ARTIFACT
+    ) {
+      throw errors.tooManyRequests(
+        `version cap reached (max ${config.MAX_VERSIONS_PER_ARTIFACT} per template)`,
+      );
+    }
+
+    // Compat gate against the schemas we're about to persist.
+    const inlineBreaks = comparePaneSchemas({
+      oldEventSchema: cur.eventSchema as unknown as EventSchema | null,
+      newEventSchema,
+      oldInputSchema: cur.inputSchema as Record<string, unknown> | null,
+      newInputSchema:
+        (content.input_schema as Record<string, unknown> | undefined) ?? null,
+      oldRecordSchema: cur.recordSchema as Record<string, unknown> | null,
+      newRecordSchema:
+        (content.record_schema as Record<string, unknown> | undefined) ?? null,
+    });
+    if (inlineBreaks.length > 0 && compat === "strict") {
+      throw errors.schemaIncompatibleUpgrade(inlineBreaks);
+    }
+
+    const nextVersion = tmpl.latestVersion + 1;
+    const newVersion = await prisma.$transaction(async (tx) => {
+      const v = await tx.templateVersion.create({
+        data: {
+          templateId: tmpl.id,
+          version: nextVersion,
+          templateType: content.type,
+          templateSource: content.source,
+          eventSchema:
+            newEventSchema !== null
+              ? (newEventSchema as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          inputSchema:
+            content.input_schema !== undefined
+              ? (content.input_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          recordSchema:
+            content.record_schema !== undefined
+              ? (content.record_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+          templateRecordSchema:
+            content.template_record_schema !== undefined
+              ? (content.template_record_schema as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+        },
+      });
+      await tx.template.update({
+        where: { id: tmpl.id },
+        data: { latestVersion: nextVersion },
+      });
+      await tx.pane.update({
+        where: { id },
+        data: { templateVersionId: v.id },
+      });
+      return v;
+    });
+
+    if (compat === "force" && inlineBreaks.length > 0) {
+      log.warn("pane inline-upgrade with compat=force skipped schema gate", {
+        paneId: id,
+        agentId: me.id,
+        fromVersion: cur.version,
+        toVersion: nextVersion,
+        breakCount: inlineBreaks.length,
+      });
+    }
+    await appendSystemEvent(prisma, id, "system.template.updated", {
+      from_version_id: cur.id,
+      from_version: cur.version,
+      to_version_id: newVersion.id,
+      to_version: nextVersion,
+      compat,
+      breaks: inlineBreaks,
+    });
+
+    return c.json({
+      pane_id: id,
+      template_version_id: newVersion.id,
+      template_version: nextVersion,
+      upgraded: true,
+      breaks: inlineBreaks,
+      compat,
+    });
   }
 
   // Target version. Defaults to the template head's latestVersion. Must

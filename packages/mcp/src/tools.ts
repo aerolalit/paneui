@@ -398,7 +398,36 @@ const upgradePaneShape = {
     .positive()
     .optional()
     .describe(
-      "Target version of the SAME template. Defaults to the template head's latest version.",
+      "Target version of the SAME template. Defaults to the template head's latest version. Mutually exclusive with `html`.",
+    ),
+  html: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "INLINE EDIT: the new HTML. The relay appends a fresh template version with this HTML and re-pins the pane to it in one call — editing an INLINE pane's HTML in place (same id/URL), no separate version step needed. Any schema you don't pass below is inherited from the pane's current version, so to change only the HTML pass only `html`. Inline panes only; a named/reusable template must go through the `template` tool (action: version) + `template_version`. Mutually exclusive with `template_version`.",
+    ),
+  template_type: z
+    .string()
+    .optional()
+    .describe("Type for the `html` version. Default: html-inline."),
+  event_schema: z
+    .unknown()
+    .optional()
+    .describe("New event schema for the `html` version. Omit to inherit."),
+  input_schema: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("New input schema for the `html` version. Omit to inherit."),
+  record_schema: z
+    .unknown()
+    .optional()
+    .describe("New record schema for the `html` version. Omit to inherit."),
+  template_record_schema: z
+    .unknown()
+    .optional()
+    .describe(
+      "New template-level record schema for the `html` version. Omit to inherit.",
     ),
   force: z
     .boolean()
@@ -1119,7 +1148,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "upgrade_pane",
     description:
-      "Re-pin a LIVE pane to another version of its SAME template (POST /upgrade) — swap the HTML (design) and event/input/record schemas in place. The human keeps the same URL; no new pane is created. Use after appending a new template version with the `template` tool (action: version). By default a strict schema-compat gate refuses an upgrade that would narrow the schema (returns schema_incompatible_upgrade + details.breaks); pass force:true to apply anyway. Returns { pane_id, template_version, upgraded, breaks, compat }.",
+      "Re-pin a LIVE pane to swap its HTML (design) + event/input/record schemas in place — same URL, no new pane. Two ways: (1) pass `html` to EDIT AN INLINE PANE'S HTML in one call — the relay appends a fresh version with that HTML and re-pins (schemas you omit are inherited from the current version, so to change only the HTML pass only `html`); inline panes only. (2) pass `template_version` to re-pin to a version you already appended with the `template` tool (action: version) — for named/reusable templates. By default a strict schema-compat gate refuses an upgrade that would narrow the schema (returns schema_incompatible_upgrade + details.breaks); pass force:true to apply anyway. Returns { pane_id, template_version, upgraded, breaks, compat }.",
     inputSchema: upgradePaneShape,
     annotations: {
       title: "Upgrade Pane",
@@ -1130,10 +1159,36 @@ export const TOOLS: ToolDef[] = [
     },
     handler: async (client, args) => {
       try {
-        const opts: { template_version?: number; compat?: "strict" | "force" } =
-          {};
+        const opts: {
+          template_version?: number;
+          compat?: "strict" | "force";
+          template?: {
+            source: string;
+            type?: string;
+            event_schema?: unknown;
+            input_schema?: Record<string, unknown>;
+            record_schema?: unknown;
+            template_record_schema?: unknown;
+          };
+        } = {};
         if (args["template_version"] !== undefined)
           opts.template_version = args["template_version"] as number;
+        if (args["html"] !== undefined) {
+          const tpl: NonNullable<typeof opts.template> = {
+            source: String(args["html"]),
+          };
+          if (args["template_type"] !== undefined)
+            tpl.type = String(args["template_type"]);
+          if (args["event_schema"] !== undefined)
+            tpl.event_schema = args["event_schema"];
+          if (args["input_schema"] !== undefined)
+            tpl.input_schema = args["input_schema"] as Record<string, unknown>;
+          if (args["record_schema"] !== undefined)
+            tpl.record_schema = args["record_schema"];
+          if (args["template_record_schema"] !== undefined)
+            tpl.template_record_schema = args["template_record_schema"];
+          opts.template = tpl;
+        }
         if (args["force"]) opts.compat = "force";
         return jsonResult(
           await client.upgradePane(String(args["pane_id"]), opts),

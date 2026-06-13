@@ -44,8 +44,13 @@ beforeEach(async () => {
   await testDb.truncateAll(prisma);
 });
 
-// Seed an agent + a template with v1, then a fresh pane pinned to v1.
-async function seedPaneV1(opts?: { v1Schema?: object }): Promise<{
+// Seed an agent + a template with v1, then a fresh pane pinned to v1. Pass
+// `inline: true` for an anonymous (slug=null) template, as `pane create
+// --template <html>` produces — the only kind the inline-upgrade path accepts.
+async function seedPaneV1(opts?: {
+  v1Schema?: object;
+  inline?: boolean;
+}): Promise<{
   apiKey: string;
   agentId: string;
   templateId: string;
@@ -64,7 +69,7 @@ async function seedPaneV1(opts?: { v1Schema?: object }): Promise<{
     data: {
       ownerId: agent.id,
       name: "Test",
-      slug: `tmpl-${randomBytes(3).toString("hex")}`,
+      slug: opts?.inline ? null : `tmpl-${randomBytes(3).toString("hex")}`,
       latestVersion: 1,
     },
   });
@@ -434,5 +439,102 @@ describe("POST /v1/panes/:id/upgrade — event history preservation (#268)", () 
     });
     expect(sysEvent!.templateVersionId).toBe(v2Id);
     expect(sysEvent!.templateVersionNum).toBe(2);
+  });
+});
+
+describe("POST /v1/panes/:id/upgrade — inline upgrade (edit HTML in place)", () => {
+  it("appends a version + re-pins from new HTML, same pane, schemas inherited", async () => {
+    const { apiKey, templateId, paneId } = await seedPaneV1({ inline: true });
+
+    const res = await postUpgrade(paneId, apiKey, {
+      template: { source: "<p>edited in place</p>" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      template_version: number;
+      upgraded: boolean;
+      breaks: unknown[];
+    };
+    expect(body.upgraded).toBe(true);
+    expect(body.template_version).toBe(2); // a fresh version was appended
+    expect(body.breaks).toEqual([]); // HTML-only change inherits schemas → compatible
+
+    // The template head advanced and the new version carries the new HTML...
+    const tmpl = await prisma.template.findUnique({
+      where: { id: templateId },
+    });
+    expect(tmpl!.latestVersion).toBe(2);
+    const v2 = await prisma.templateVersion.findUnique({
+      where: { templateId_version: { templateId, version: 2 } },
+    });
+    expect(v2!.templateSource).toBe("<p>edited in place</p>");
+    // ...and inherited v1's event schema verbatim.
+    const v1 = await prisma.templateVersion.findUnique({
+      where: { templateId_version: { templateId, version: 1 } },
+    });
+    expect(v2!.eventSchema).toEqual(v1!.eventSchema);
+
+    // The pane (same id) is re-pinned to the new version.
+    const pane = await prisma.pane.findUnique({ where: { id: paneId } });
+    expect(pane!.templateVersionId).toBe(v2!.id);
+  });
+
+  it("rejects inline upgrade on a NAMED (reusable) template", async () => {
+    // A named template (slug set) is a shared asset — its versions go through
+    // POST /v1/templates/:id/versions, not a single pane's upgrade.
+    const { apiKey, paneId } = await seedPaneV1({ inline: false });
+    const res = await postUpgrade(paneId, apiKey, {
+      template: { source: "<p>nope</p>" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_request");
+  });
+
+  it("rejects template + template_version together (mutually exclusive)", async () => {
+    const { apiKey, paneId } = await seedPaneV1({ inline: true });
+    const res = await postUpgrade(paneId, apiKey, {
+      template: { source: "<p>x</p>" },
+      template_version: 1,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("gates an inline upgrade that narrows the schema; force overrides", async () => {
+    // v1 lets the event be emitted by page OR agent; the inline upgrade supplies
+    // an event_schema that drops "agent" — a narrowing change. Strict refuses,
+    // force applies.
+    const { apiKey, paneId } = await seedPaneV1({
+      inline: true,
+      v1Schema: {
+        events: {
+          "feed.logged": {
+            emittedBy: ["page", "agent"],
+            payload: { type: "object" },
+          },
+        },
+      },
+    });
+    const narrow = {
+      source: "<p>v2</p>",
+      event_schema: {
+        events: {
+          "feed.logged": { emittedBy: ["page"], payload: { type: "object" } },
+        },
+      },
+    };
+
+    const strict = await postUpgrade(paneId, apiKey, { template: narrow });
+    expect(strict.status).toBe(422);
+    const sBody = (await strict.json()) as { error: { code: string } };
+    expect(sBody.error.code).toBe("schema_incompatible_upgrade");
+
+    const forced = await postUpgrade(paneId, apiKey, {
+      template: narrow,
+      compat: "force",
+    });
+    expect(forced.status).toBe(200);
+    const fBody = (await forced.json()) as { upgraded: boolean };
+    expect(fBody.upgraded).toBe(true);
   });
 });

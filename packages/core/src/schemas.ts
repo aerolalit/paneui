@@ -223,10 +223,33 @@ export type MintParticipantInput = z.infer<typeof mintParticipantSchema>;
 // of the current one (events written under the old schema would no longer
 // validate). "force" overrides the gate — used sparingly when the operator
 // knows data loss is acceptable.
-export const upgradePaneSchema = z.object({
-  template_version: z.number().int().positive().optional(),
-  compat: z.enum(["strict", "force"]).optional(),
+// Inline upgrade content: new HTML (+ optionally new schemas), appended as a
+// fresh template version that the pane is re-pinned to — all in one atomic
+// /upgrade call, so an inline pane's HTML can be edited in place (same id/URL)
+// without a separate `template version` step. Omitted schemas inherit from the
+// pane's current version, so "just change the HTML" needs only `source`. Mirrors
+// createArtifactVersionSchema, but `type` is optional (defaults to html-inline).
+export const upgradePaneInlineTemplateSchema = z.object({
+  source: z.string().min(1),
+  type: artifactTypeSchema.optional(),
+  event_schema: z.unknown().optional(),
+  input_schema: z.record(z.string(), z.unknown()).optional(),
+  record_schema: z.unknown().optional(),
+  template_record_schema: z.unknown().optional(),
 });
+
+export const upgradePaneSchema = z
+  .object({
+    template_version: z.number().int().positive().optional(),
+    compat: z.enum(["strict", "force"]).optional(),
+    // Inline upgrade — mutually exclusive with template_version (one supplies a
+    // brand-new version, the other re-pins to an existing one).
+    template: upgradePaneInlineTemplateSchema.optional(),
+  })
+  .refine((d) => !(d.template && d.template_version !== undefined), {
+    message:
+      "`template` (inline upgrade) and `template_version` are mutually exclusive",
+  });
 export type UpgradePaneInput = z.infer<typeof upgradePaneSchema>;
 
 // PATCH /v1/panes/:id — in-place edit of instance-level pane fields (#502).
