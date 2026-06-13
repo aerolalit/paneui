@@ -334,6 +334,27 @@ describe("GET /panes/:id/content", () => {
     expect(html).toContain("hello from the test template");
     // The runtime is injected into the iframe document.
     expect(html).toContain("window.pane");
+    // The default stylesheet MUST be injected, exactly as on /s/:token/content.
+    // Templates style with the --pane-* custom properties it defines; omitting
+    // it (the owner-route drift this guards) leaves logged-in panes unstyled.
+    expect(html).toContain("--pane-accent");
+  });
+
+  it("matches the token route: same default-CSS injection in the head", async () => {
+    // The owner /content is documented as a mirror of /s/:token/content. Both
+    // wrap the same template body with the runtime + the default stylesheet, so
+    // a pane renders identically whether opened logged-in or via a share link.
+    const { cookie, paneId } = await seedOwnedPane();
+    const res = await app.fetch(
+      new Request(`http://t/panes/${paneId}/content`, withCookie(cookie)),
+    );
+    const html = await res.text();
+    // Default CSS sits in <head>, before the body markup (so author <style>
+    // blocks still win the cascade at equal specificity).
+    const styleIdx = html.indexOf("--pane-accent");
+    const bodyIdx = html.indexOf("hello from the test template");
+    expect(styleIdx).toBeGreaterThan(-1);
+    expect(styleIdx).toBeLessThan(bodyIdx);
   });
 
   it("401s without a login cookie", async () => {
