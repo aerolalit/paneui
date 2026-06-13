@@ -986,12 +986,28 @@ export class PaneClient {
    */
   async upgradePane(
     paneId: string,
-    opts: { template_version?: number; compat?: "strict" | "force" } = {},
+    opts: {
+      template_version?: number;
+      compat?: "strict" | "force";
+      // Inline upgrade: supply new HTML (+ optional schemas) and the relay
+      // appends a fresh template version + re-pins this pane to it atomically
+      // (inline panes only). Omitted schemas inherit from the current version.
+      // Mutually exclusive with template_version.
+      template?: {
+        source: string;
+        type?: string;
+        event_schema?: unknown;
+        input_schema?: Record<string, unknown>;
+        record_schema?: unknown;
+        template_record_schema?: unknown;
+      };
+    } = {},
   ): Promise<UpgradePaneResponse> {
     const body: Record<string, unknown> = {};
     if (opts.template_version !== undefined)
       body["template_version"] = opts.template_version;
     if (opts.compat !== undefined) body["compat"] = opts.compat;
+    if (opts.template !== undefined) body["template"] = opts.template;
     const r = await this.call(
       "POST",
       `/v1/panes/${encodeURIComponent(paneId)}/upgrade`,

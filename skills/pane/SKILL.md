@@ -248,9 +248,13 @@ There are two ways to give `pane create` a template:
 - **By reference** — `--template-id <id|slug>` — instance an existing reusable
   template. The reuse path, and the one you should reach for first.
 - **Inline** — `--template <path|inline>` — a one-off UI, defined on the call.
-  The relay creates an anonymous template behind it; you never manage it. Use
-  the inline form only for a **genuine one-off** — a UI you are sure you will
-  never want again. Anything reusable belongs in `pane template create`.
+  The relay creates an anonymous template behind it. Use the inline form for a
+  **one-off** — a UI you won't reuse across panes; anything reusable belongs in
+  `pane template create`. You don't manage that anonymous template directly, but
+  you are **not** locked out of editing the pane's HTML later: `pane upgrade
+  <pane-id> --template <new-html>` edits an inline pane's HTML in place, same
+  URL, in one call (see `pane upgrade`). So "I made it inline, now I can't change
+  it" is false — reach for `pane upgrade --template`.
 
 ## Search before you generate — the load-bearing rule
 
@@ -877,10 +881,27 @@ you are done with rather than waiting for its TTL to expire.
 A pane is pinned to one template version for its whole life — `pane create`
 captures the latest version at creation time and never moves. So when a human
 asks you to "update this pane with a new design / new content", you do **not**
-edit the running pane's HTML directly (there's no such operation) and you do
-**not** have to throw the pane away. Instead:
+edit the running pane's HTML directly in storage and you do **not** have to
+throw the pane away. There are two ways in, depending on the pane:
 
-1. Append a new template version with the new HTML and/or schemas:
+**A. Inline pane → edit the HTML in one call (the common case).** A pane created
+with inline HTML (`pane create --template <html>`) can have its HTML changed in
+place with a single command — the relay appends a fresh version and re-pins the
+pane to it atomically, same id/URL:
+```sh
+pane upgrade pan_xxxx --template ./v2.html          # just new HTML
+pane upgrade pan_xxxx --template ./v2.html --event-schema ./v2-schema.json
+```
+Any schema you don't pass is **inherited** from the pane's current version, so
+to change only the HTML you pass only `--template`. This is the answer to "I
+made an inline pane and now want to tweak its HTML" — you do NOT need to rebuild
+it into a new pane, and you do NOT need a separate `template version` step. (The
+MCP `upgrade_pane` tool takes the same as an `html` arg.) Inline panes only.
+
+**B. Named/reusable template → version it, then re-pin.** For a pane on a named
+template (created with `pane template create` + `--template-id`), the template
+is a shared asset, so its versions are managed explicitly:
+1. Append a new template version:
    ```sh
    pane template version <id|slug> --template ./v2.html --event-schema ./v2-schema.json
    #   -> { template_id, version: 2 }
@@ -895,8 +916,8 @@ edit the running pane's HTML directly (there's no such operation) and you do
    compat }`. `upgraded:false` means the pane was already on that version
    (idempotent no-op).
 
-This swaps both the HTML (design) and the event/input/record schemas (content
-contract) at once. It only moves a pane between versions of the **same**
+Either way swaps both the HTML (design) and the event/input/record schemas
+(content contract). It only moves a pane between versions of the **same**
 template — pointing it at a different template is conceptually a different
 pane, so create a new one for that.
 
