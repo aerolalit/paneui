@@ -123,18 +123,22 @@ for f in package.json packages/cli/package.json packages/core/package.json packa
   echo "  $f"
 done
 
-# Bump the internal @paneui/core dep in every package that depends on it
-# (today: cli + mcp + relay). Caret-pinning to the new version is what
-# makes npm-workspaces keep linking the local copy at build time — without
-# this, the workspace falls back to the older published version from npm
-# and the build fails with "no exported member …" errors for anything
-# added since the last release.
+# Bump every internal @paneui/* dep in every package that depends on it
+# (today: @paneui/core in cli + mcp + relay; @paneui/mcp in relay). Caret-
+# pinning to the new version is what makes npm-workspaces keep linking the
+# local copy at build time — without this, the workspace falls back to the
+# older published version from npm and the build/runtime fails with "no
+# exported member …" or "Cannot find module …/tools" for anything added
+# since the last release. Caret on 0.0.x is patch-locked, so the dep range
+# MUST move in lockstep with the version bump.
 for f in packages/cli/package.json packages/mcp/package.json packages/relay/package.json; do
-  if jq -e '.dependencies."@paneui/core"' "$f" >/dev/null; then
-    tmp=$(mktemp)
-    jq --arg v "^$VERSION" '.dependencies."@paneui/core" = $v' "$f" > "$tmp" && mv "$tmp" "$f"
-    echo "  $f (@paneui/core dep → ^$VERSION)"
-  fi
+  for dep in "@paneui/core" "@paneui/mcp"; do
+    if jq -e --arg d "$dep" '.dependencies[$d]' "$f" >/dev/null; then
+      tmp=$(mktemp)
+      jq --arg d "$dep" --arg v "^$VERSION" '.dependencies[$d] = $v' "$f" > "$tmp" && mv "$tmp" "$f"
+      echo "  $f ($dep dep → ^$VERSION)"
+    fi
+  done
 done
 
 # Runtime VERSION constant — what `pane --version` prints.
@@ -208,7 +212,7 @@ git add package.json package-lock.json \
   packages/core/package.json \
   packages/mcp/package.json packages/mcp/src/version.ts packages/mcp/server.json \
   packages/relay/package.json \
-  skills/pane/SKILL.md
+  skills/pane/SKILL.md skills/pane/MCP-INVOCATION.md
 git commit -q -m "chore(release): v${VERSION}
 
 Bump @paneui/core, @paneui/cli, @paneui/mcp, @paneui/relay and root to
