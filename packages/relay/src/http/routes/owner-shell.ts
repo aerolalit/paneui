@@ -40,6 +40,10 @@ import {
 import { issueTicket, TICKET_TTL_MS } from "../../ws/ticket.js";
 import { recordView } from "../../bridge/recents.js";
 import { buildPaneCsp, paneCspImgOrigin } from "../../bridge/preview-render.js";
+import {
+  PANE_DEFAULT_CSS,
+  shouldInjectDefaults,
+} from "../../bridge/default-styles.js";
 import { errors } from "../errors.js";
 import { log } from "../../log.js";
 import type { EventSchema, Author } from "../../types.js";
@@ -297,11 +301,21 @@ ownerShell.get("/:id/content", async (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "private, no-store");
 
+  // Default stylesheet — injected in <head> before the agent's markup, exactly
+  // as the capability-token mount does (GET /s/:token/content). This MUST mirror
+  // that route: templates style themselves with the `--pane-*` custom properties
+  // PANE_DEFAULT_CSS defines, so omitting it here left logged-in (owner) panes
+  // with unstyled, washed-out controls while the same pane rendered correctly on
+  // the token URL. The `data-pane-bare` marker opts a template out.
+  const styleBlock = shouldInjectDefaults(artifactBody)
+    ? `<style>${PANE_DEFAULT_CSS}</style>`
+    : "";
   const wrapped = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${styleBlock}
 <script>${RUNTIME_JS}</script>
 </head>
 <body>
