@@ -103,6 +103,28 @@ export function verifyConsentCsrfToken(
 }
 
 /**
+ * Constant-time comparison of a presented client_secret against the stored
+ * SHA-256 hash for a confidential client. The naïve `client.clientSecretHash
+ * !== sha256(secret)` compare leaks the hash one nibble at a time via early
+ * exit on the first differing character — a local timing oracle. Both inputs
+ * are equal-length SHA-256 hex (64 chars) but we still length-check first to
+ * keep timingSafeEqual from throwing (which would itself leak a signal).
+ *
+ * Returns false for any of: missing secret, missing stored hash (i.e. a
+ * public client mistakenly routed here), or hash mismatch.
+ */
+export function verifyClientSecret(
+  presentedSecret: string | undefined,
+  storedSecretHash: string | null,
+): boolean {
+  if (!presentedSecret || !storedSecretHash) return false;
+  const a = Buffer.from(sha256(presentedSecret));
+  const b = Buffer.from(storedSecretHash);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
  * Verify a PKCE code_verifier against a stored S256 challenge. PKCE is
  * REQUIRED for this server: a missing/short verifier, or a mismatch, returns
  * false and the caller rejects the exchange (invalid_grant).
