@@ -1,6 +1,6 @@
 {
   "name": "@paneui/cli",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Command-line client for the Pane relay: create panes, inspect state, send and watch events.",
   "license": "MIT",
   "type": "module",
@@ -41,7 +41,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@paneui/core": "^0.0.25",
+    "@paneui/core": "^0.0.26",
     "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
