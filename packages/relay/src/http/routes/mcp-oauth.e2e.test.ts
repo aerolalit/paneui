@@ -575,6 +575,50 @@ describe("refresh + revoke", () => {
   });
 
   it("revokes an access token so it stops working", async () => {
+    const { access_token, clientId } = await fullAuthFlow();
+    const rev = await app.fetch(
+      new Request(`http://t/oauth/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          token: access_token,
+          client_id: clientId,
+        }).toString(),
+      }),
+    );
+    expect(rev.status).toBe(200);
+    // A privileged MCP call now 401s.
+    const initRes = await mcpPost(initBody(), { token: access_token });
+    expect(initRes.status).toBe(401);
+  });
+
+  it("silently rejects revoke from a different client (RFC 7009 §2.1 — no cross-client takedowns)", async () => {
+    // Victim authorises and is granted access + refresh tokens.
+    const victim = await fullAuthFlow();
+    // A separate client (the attacker) is registered.
+    const attackerClientId = await registerClient();
+    // Attacker submits the victim's refresh token under their OWN client_id —
+    // if cross-client revocation were allowed, this would silently disconnect
+    // the victim.
+    const rev = await app.fetch(
+      new Request(`http://t/oauth/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          token: victim.refresh_token,
+          client_id: attackerClientId,
+        }).toString(),
+      }),
+    );
+    // The response is indistinguishable from a real revoke (RFC 7009 §2.2 — no
+    // enumeration oracle): same 200, empty body. The actual state matters.
+    expect(rev.status).toBe(200);
+    // Victim's access token STILL works — nothing was revoked.
+    const initRes = await mcpPost(initBody(), { token: victim.access_token });
+    expect(initRes.status).toBe(200);
+  });
+
+  it("silently ignores revoke when client_id is missing (RFC 7009 §2.1)", async () => {
     const { access_token } = await fullAuthFlow();
     const rev = await app.fetch(
       new Request(`http://t/oauth/revoke`, {
@@ -584,9 +628,9 @@ describe("refresh + revoke", () => {
       }),
     );
     expect(rev.status).toBe(200);
-    // A privileged MCP call now 401s.
+    // Token was NOT revoked (no client authenticated).
     const initRes = await mcpPost(initBody(), { token: access_token });
-    expect(initRes.status).toBe(401);
+    expect(initRes.status).toBe(200);
   });
 });
 

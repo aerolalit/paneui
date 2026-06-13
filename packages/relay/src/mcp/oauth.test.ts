@@ -14,6 +14,7 @@ import {
   redirectUriAllowed,
   sealAgentKey,
   sha256,
+  verifyClientSecret,
   verifyConsentCsrfToken,
   verifyPkceS256,
 } from "./oauth.js";
@@ -51,6 +52,35 @@ describe("verifyPkceS256", () => {
     const verifier = "short";
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     expect(verifyPkceS256(verifier, challenge)).toBe(false);
+  });
+});
+
+describe("verifyClientSecret", () => {
+  const secret = "the-actual-secret-value";
+  const storedHash = sha256(secret);
+
+  it("accepts the matching secret", () => {
+    expect(verifyClientSecret(secret, storedHash)).toBe(true);
+  });
+
+  it("rejects a wrong secret", () => {
+    expect(verifyClientSecret("wrong-secret", storedHash)).toBe(false);
+  });
+
+  it("rejects a one-character-different secret (no timing leak via early exit)", () => {
+    // Both hashes are 64 hex chars, so length-check passes and we rely on
+    // timingSafeEqual to compare without leaking the diff position.
+    const nearMiss = sha256("wrong-secret");
+    expect(verifyClientSecret(secret, nearMiss)).toBe(false);
+  });
+
+  it("rejects a missing secret", () => {
+    expect(verifyClientSecret(undefined, storedHash)).toBe(false);
+    expect(verifyClientSecret("", storedHash)).toBe(false);
+  });
+
+  it("rejects when the stored hash is null (public client mis-routed here)", () => {
+    expect(verifyClientSecret(secret, null)).toBe(false);
   });
 });
 

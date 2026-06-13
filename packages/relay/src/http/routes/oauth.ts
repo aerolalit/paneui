@@ -41,6 +41,7 @@ import {
   redirectUriAllowed,
   sealAgentKey,
   sha256,
+  verifyClientSecret,
   verifyConsentCsrfToken,
   verifyPkceS256,
 } from "../../mcp/oauth.js";
@@ -560,8 +561,10 @@ async function exchangeCode(
 
   // Confidential clients must authenticate; public (none) clients rely on PKCE.
   if (client.tokenEndpointAuthMethod !== "none") {
-    const secret = String(form["client_secret"] ?? "");
-    if (!secret || client.clientSecretHash !== sha256(secret)) {
+    const secret = form["client_secret"]
+      ? String(form["client_secret"])
+      : undefined;
+    if (!verifyClientSecret(secret, client.clientSecretHash)) {
       return c.json({ error: "invalid_client" }, 401);
     }
   }
@@ -641,8 +644,10 @@ async function exchangeRefresh(
   const client = await prisma.oAuthClient.findUnique({ where: { clientId } });
   if (!client) return c.json({ error: "invalid_client" }, 401);
   if (client.tokenEndpointAuthMethod !== "none") {
-    const secret = String(form["client_secret"] ?? "");
-    if (!secret || client.clientSecretHash !== sha256(secret)) {
+    const secret = form["client_secret"]
+      ? String(form["client_secret"])
+      : undefined;
+    if (!verifyClientSecret(secret, client.clientSecretHash)) {
       return c.json({ error: "invalid_client" }, 401);
     }
   }
@@ -703,33 +708,39 @@ async function issueTokenPair(
   const refreshHash = sha256(refreshToken);
   const now = Date.now();
 
-  await prisma.oAuthToken.create({
-    data: {
-      tokenHash: accessHash,
-      kind: "access",
-      clientId: p.clientId,
-      humanId: p.humanId,
-      agentId: p.agentId,
-      scope: p.scope,
-      resource: p.resource,
-      agentKeyEnc: p.sealedKey,
-      expiresAt: new Date(now + config.MCP_OAUTH_ACCESS_TTL_SECONDS * 1000),
-    },
-  });
-  await prisma.oAuthToken.create({
-    data: {
-      tokenHash: refreshHash,
-      kind: "refresh",
-      clientId: p.clientId,
-      humanId: p.humanId,
-      agentId: p.agentId,
-      scope: p.scope,
-      resource: p.resource,
-      agentKeyEnc: p.sealedKey,
-      refreshFor: accessHash,
-      expiresAt: new Date(now + config.MCP_OAUTH_REFRESH_TTL_SECONDS * 1000),
-    },
-  });
+  // Atomic: a crash between the two writes used to leave a live access token
+  // with no refresh path — the client would re-authorise, but the orphaned
+  // access remained valid until the sweeper reclaimed it. Wrapping in a
+  // single transaction guarantees both rows land or neither does.
+  await prisma.$transaction([
+    prisma.oAuthToken.create({
+      data: {
+        tokenHash: accessHash,
+        kind: "access",
+        clientId: p.clientId,
+        humanId: p.humanId,
+        agentId: p.agentId,
+        scope: p.scope,
+        resource: p.resource,
+        agentKeyEnc: p.sealedKey,
+        expiresAt: new Date(now + config.MCP_OAUTH_ACCESS_TTL_SECONDS * 1000),
+      },
+    }),
+    prisma.oAuthToken.create({
+      data: {
+        tokenHash: refreshHash,
+        kind: "refresh",
+        clientId: p.clientId,
+        humanId: p.humanId,
+        agentId: p.agentId,
+        scope: p.scope,
+        resource: p.resource,
+        agentKeyEnc: p.sealedKey,
+        refreshFor: accessHash,
+        expiresAt: new Date(now + config.MCP_OAUTH_REFRESH_TTL_SECONDS * 1000),
+      },
+    }),
+  ]);
 
   return {
     access_token: accessToken,
@@ -746,27 +757,48 @@ oauth.post("/revoke", async (c) => {
   const prisma = c.get("prisma");
   const form = await c.req.parseBody();
   const token = String(form["token"] ?? "");
-  if (!token) {
-    // RFC 7009: invalid token is still a 200 (revocation is idempotent).
-    return c.body(null, 200);
+  const clientId = String(form["client_id"] ?? "");
+  // RFC 7009 §2.2: every non-error path returns 200 with no body. The endpoint
+  // is intentionally indistinguishable for "no such token", "wrong client",
+  // and "already revoked" so it can't be turned into an enumeration oracle.
+  if (!token || !clientId) return c.body(null, 200);
+
+  // RFC 7009 §2.1: the revocation endpoint MUST authenticate the client and
+  // MUST reject tokens that do not belong to it. Without this check, anyone
+  // who learns another user's refresh token could silently disconnect their
+  // Claude connector. Mirror the token endpoint's client-auth shape exactly
+  // (public → no secret expected; confidential → constant-time secret check).
+  const client = await prisma.oAuthClient.findUnique({ where: { clientId } });
+  if (!client) return c.body(null, 200);
+  if (client.tokenEndpointAuthMethod !== "none") {
+    const secret = form["client_secret"]
+      ? String(form["client_secret"])
+      : undefined;
+    if (!verifyClientSecret(secret, client.clientSecretHash)) {
+      return c.body(null, 200);
+    }
   }
+
   const tokenHash = sha256(token);
   const row = await prisma.oAuthToken.findUnique({ where: { tokenHash } });
-  if (row && !row.revokedAt) {
-    // Revoke the presented token. If it's a refresh token, also revoke the
-    // access token it minted; if it's an access token, leave the refresh alone
-    // (RFC 7009 allows but doesn't require cascading either way — we cascade
-    // refresh→access for tighter disconnect).
-    await prisma.oAuthToken.update({
-      where: { tokenHash },
+  // Silently ignore tokens that don't exist OR belong to a different client —
+  // either case must look identical to the caller (RFC 7009 §2.2).
+  if (!row || row.clientId !== clientId || row.revokedAt) {
+    return c.body(null, 200);
+  }
+  // Revoke the presented token. If it's a refresh token, also revoke the
+  // access token it minted; if it's an access token, leave the refresh alone
+  // (RFC 7009 allows but doesn't require cascading either way — we cascade
+  // refresh→access for tighter disconnect).
+  await prisma.oAuthToken.update({
+    where: { tokenHash },
+    data: { revokedAt: new Date() },
+  });
+  if (row.kind === "refresh" && row.refreshFor) {
+    await prisma.oAuthToken.updateMany({
+      where: { tokenHash: row.refreshFor, revokedAt: null },
       data: { revokedAt: new Date() },
     });
-    if (row.kind === "refresh" && row.refreshFor) {
-      await prisma.oAuthToken.updateMany({
-        where: { tokenHash: row.refreshFor, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-    }
   }
   return c.body(null, 200);
 });
