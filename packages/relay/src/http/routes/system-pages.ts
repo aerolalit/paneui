@@ -231,6 +231,8 @@ function layout(args: {
 <meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#14110d" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -714,6 +716,13 @@ const servePng = (png: Buffer) => {
     return c.body(ab);
   };
 };
+// GET /favicon.ico — raster favicon at the conventional path. Google's favicon
+// service (www.google.com/s2/favicons) and legacy browsers probe /favicon.ico
+// directly and do NOT reliably resolve SVG-only or data: URI favicons. Without
+// this route the relay's domain has no discoverable favicon, so the connector's
+// directory + tool-call icon falls back to a generic globe. Same PNG bytes as
+// the apple-touch-icon (source: app-icon.ts) so every surface shows one mark.
+systemPages.get("/favicon.ico", servePng(APP_ICON_180_PNG));
 systemPages.get("/apple-touch-icon.png", servePng(APP_ICON_180_PNG));
 systemPages.get(
   "/apple-touch-icon-precomposed.png",

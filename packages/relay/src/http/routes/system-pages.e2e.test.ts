@@ -449,6 +449,7 @@ describe("PWA assets", () => {
   });
 
   it.each([
+    "/favicon.ico",
     "/apple-touch-icon.png",
     "/apple-touch-icon-precomposed.png",
     "/icon-192.png",
@@ -475,6 +476,18 @@ describe("PWA assets", () => {
     // Without this link, iOS "Add to Home Screen" falls back to a screenshot.
     expect(html).toContain('rel="apple-touch-icon"');
     expect(html).toContain('href="/apple-touch-icon.png"');
+  });
+
+  it("links a discoverable favicon so crawlers don't fall back to a globe", async () => {
+    // Google's s2/favicons service (which Anthropic's connector directory uses
+    // to fetch the tool-call icon) probes /favicon.ico and parses
+    // <link rel="icon"> with a fetchable href — it does NOT resolve SVG-only or
+    // data: URI favicons. The root system page must advertise both.
+    const res = await app.fetch(new Request("http://t/"));
+    const html = await res.text();
+    expect(html).toContain('rel="icon"');
+    expect(html).toContain('href="/favicon.ico"');
+    expect(html).toContain('href="/favicon.svg"');
   });
 });
 
