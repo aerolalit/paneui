@@ -1,6 +1,6 @@
 {
   "name": "@paneui/core",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Pane relay client: typed HTTP + WebSocket operations against a Pane relay. Framework-free.",
   "license": "MIT",
   "type": "module",
