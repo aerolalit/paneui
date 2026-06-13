@@ -1,4 +1,4 @@
-<!-- pane skill v0.0.23 -->
+<!-- pane skill v0.0.24 -->
 
 # pane (MCP)
 
