@@ -1,5 +1,6 @@
 {
   "name": "@paneui/mcp",
+  "mcpName": "io.github.aerolalit/pane",
   "version": "0.0.25",
   "description": "Model Context Protocol (stdio) server for Pane: lets any MCP client (Claude Desktop, Cursor, …) hand a human a rich interactive UI by URL and get structured data back.",
   "license": "MIT",
