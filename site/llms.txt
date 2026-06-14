@@ -17,6 +17,7 @@ a small relay, with no host app, no inbound port, and no public address of its o
 ## Docs
 
 - [Agent skill — SKILL.md](https://relay.paneui.com/skills/pane/SKILL.md): The single most useful document. Teaches an agent how to use pane end to end (create a session, hand over the URL, watch for the structured response).
+- [Connect to your AI chat](https://paneui.com/connect): Add pane to Claude (web/desktop/mobile), ChatGPT, or any chat app with remote MCP connectors — no install. Add a custom connector at `https://relay.paneui.com/mcp`, log in by email, approve consent.
 - [Source repository](https://github.com/aerolalit/paneui): MIT-licensed monorepo — `@paneui/core` (types), `@paneui/cli` (the `pane` CLI), and the relay (Docker image only).
 - [Production deploy guide](https://github.com/aerolalit/paneui/blob/main/docs/DEPLOY.md): Hosted reference deployment on Azure Container Apps backed by Postgres.
 - [Self-hosting guide](https://github.com/aerolalit/paneui/blob/main/docs/SELF-HOSTING.md): Single-container self-host with SQLite. One `docker run`.

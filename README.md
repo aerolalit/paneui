@@ -182,6 +182,23 @@ pane create --name "Hello" \
 pane watch <pane-id> --type hello
 ```
 
+### Use from an AI chat (remote connector — no install)
+
+No terminal? Add Pane to **Claude (web, desktop, mobile), ChatGPT, or any
+chat app that supports remote MCP connectors** — nothing to install. Add a
+custom connector pointing at:
+
+```
+https://relay.paneui.com/mcp
+```
+
+Log in with your email (magic link), approve the consent screen once, and Pane's
+tools show up in the chat — then ask it to *"build me a pane for …"* and it hands
+back a URL. This is the only way to drive Pane from a phone or a pure chat app.
+
+Full walkthrough (Claude web/desktop/mobile, Claude Code's `claude mcp add`,
+ChatGPT, and others) → **[docs/CONNECT-AI-CHAT.md](docs/CONNECT-AI-CHAT.md)**.
+
 ## Distribution
 
 The repo is an npm-workspaces monorepo with four packages:
@@ -193,9 +210,12 @@ The repo is an npm-workspaces monorepo with four packages:
 
 The CLI is `pane <command> [options]` — `create`, `show`, `send`, `watch`, `list`, `delete`, and `participant` operate on a pane; `template`, `attachment`, `records`, `query`, `taste`, `feedback`, `key`, `agent`, `config`, and `skill` are the other command groups. Run `pane --help` for the full list.
 
-### Use from an MCP client
+### Use from an MCP client (local stdio server)
 
-Add Pane to any MCP host (Claude Desktop, Cursor, …) — no global install needed:
+Run Pane as a **local** stdio MCP server inside any MCP host (Claude Desktop,
+Cursor, …) — no global install needed. (For a chat app with no terminal, or your
+phone, use the [remote connector](docs/CONNECT-AI-CHAT.md) instead — nothing to
+run locally.)
 
 ```json
 {
@@ -241,6 +261,7 @@ expectations. Security vulnerabilities: please report them privately — see
 ## See also
 
 - [`skills/pane/SKILL.md`](skills/pane/SKILL.md): the agent-facing reference — every command, the template/pane model, schemas, records, attachments, query (authoritative, version-matched to the relay)
+- [`docs/CONNECT-AI-CHAT.md`](docs/CONNECT-AI-CHAT.md): add Pane to Claude / ChatGPT / any chat app as a remote connector — no install
 - [`docs/SPEC.md`](docs/SPEC.md): technical design (architecture, API, data model, bridge, auth, open/closed split)
 - [`docs/SELF-HOSTING.md`](docs/SELF-HOSTING.md): run your own relay on SQLite, in one container
 - [`docs/DEPLOY.md`](docs/DEPLOY.md): operator deployment — Postgres, scaling, observability, Azure

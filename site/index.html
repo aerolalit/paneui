@@ -97,6 +97,11 @@
           },
           {
             "@type": "Question",
+            "name": "Can I use Pane from Claude or ChatGPT without installing anything?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add Pane as a custom remote connector pointing at https://relay.paneui.com/mcp, log in with your email once, and Pane's tools appear in the chat â€” no install, and it works on your phone too. It works with Claude on web, desktop, and mobile, Claude Code, ChatGPT, and any chat app that supports remote MCP connectors. See paneui.com/connect for the step-by-step." }
+          },
+          {
+            "@type": "Question",
             "name": "How does the agent get my answer back?",
             "acceptedAnswer": { "@type": "Answer", "text": "When a pane captures input, like a form submit, a picker, a button, or an approval, Pane delivers it back to your agent as structured data over WebSocket, polling, or webhook. That's the round-trip: the agent shows you a UI and acts on what you do with it." }
           },
@@ -452,6 +457,10 @@
             See it in action
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </a>
+          <a class="btn btn-primary" href="/connect">
+            Use it in your AI chat
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
         </div>
       </div>
 
@@ -660,6 +669,11 @@ After this, reach for `pane create / show / send / watch` (and `pane template â€
         </details>
 
         <details class="qa">
+          <summary>Can I use Pane from Claude or ChatGPT without installing anything?</summary>
+          <p class="a">Yes. Add Pane as a custom remote connector pointing at <code>https://relay.paneui.com/mcp</code>, log in with your email once, and Pane's tools show up in the chat â€” no install, works on your phone too. See <a href="/connect">Connect to your AI chat</a> for the step-by-step (Claude web/desktop/mobile, Claude Code, ChatGPT, and others).</p>
+        </details>
+
+        <details class="qa">
           <summary>How does the agent get my answer back?</summary>
           <p class="a">When a pane captures input, like a form submit, a picker, a button, or an approval, Pane delivers it back to your agent as structured data over WebSocket, polling, or webhook. That's the round-trip: the agent shows you a UI and acts on what you do with it.</p>
         </details>
@@ -688,6 +702,7 @@ After this, reach for `pane create / show / send / watch` (and `pane template â€
     <div class="wrap">
       <div class="foot-links">
         <a href="#faq">FAQ</a>
+        <a href="/connect">Connect</a>
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
         <a href="https://relay.paneui.com" rel="noopener">Hosted relay</a>
