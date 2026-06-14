@@ -35,10 +35,11 @@ The chat builds the UI, hands you a `relay.paneui.com` URL, you open it on any
 device, interact, and your structured answer flows straight back into the
 conversation.
 
-**This is the only way to use Pane from a phone or a pure chat app** — there's
-no terminal there to run the `pane` CLI or the stdio `@paneui/mcp` server. The
-remote connector runs entirely on Pane's hosted relay; your chat only makes
-outbound HTTP calls to it.
+**This is the only way to use Pane from a phone or a pure chat app.** On a phone
+there's no terminal and no way to run a local process, so the `pane` CLI and the
+stdio `@paneui/mcp` server simply don't apply — there's nothing to install. You
+add the connector once and use it. The connector runs entirely on Pane's hosted
+relay; your chat only makes outbound HTTP calls to it.
 
 ---
 
@@ -47,10 +48,11 @@ outbound HTTP calls to it.
 - A **Pane account** on the hosted relay. You don't need to create one in
   advance — the first time you authorize, you'll log in by email (magic link)
   and the account is created on the spot.
-- **Remote / custom MCP connectors** must be available in your chat app. On
-  Claude this is a feature of the **paid plans** (Pro, Max, Team, Enterprise);
-  on other apps, check that they support "custom connectors" or "remote MCP
-  servers". Coding agents like Claude Code have it built in.
+- **Custom / remote MCP connectors** must be supported by your chat app. Claude
+  supports them on the web, desktop, and mobile apps — **no paid plan required**
+  (the free plan works too). On other apps, check that they support "custom
+  connectors" or "remote MCP servers". Coding agents like Claude Code have it
+  built in.
 
 The connector URL is always:
 
@@ -166,11 +168,10 @@ revocable. The full design is in
   connect), so it can't pre-verify every client. Check the **redirect host**
   shown on the consent screen is the app you're actually authorizing before you
   allow it.
-- **My chat app has no "custom connector" option** — remote connectors are a
-  paid-plan feature on most chat apps. If yours doesn't support remote MCP, use
-  a coding agent with the CLI/skill instead (see the
-  [README](../README.md#install)) or the local stdio server
-  ([`@paneui/mcp`](../packages/mcp/README.md)).
+- **My chat app has no "custom connector" option** — not every chat app
+  supports remote MCP connectors yet. If yours doesn't, use a coding agent with
+  the CLI/skill instead (see the [README](../README.md#install)) or the local
+  stdio server ([`@paneui/mcp`](../packages/mcp/README.md)).
 - **Tools don't appear after connecting** — reopen the chat's tool/connector
   menu; some clients need the conversation restarted to pick up a new connector.
 
