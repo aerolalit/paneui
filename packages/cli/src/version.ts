@@ -8,4 +8,4 @@
 // Keep this in lockstep with packages/cli/package.json's `version` field;
 // they're consulted in different places (here for the runtime header,
 // package.json for npm publish + dependency resolution).
-export const VERSION = "0.0.28";
+export const VERSION = "0.0.29";
