@@ -13,6 +13,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://paneui.com/connect</loc>
+    <lastmod>2026-06-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://paneui.com/privacy</loc>
     <lastmod>2026-06-12</lastmod>
     <changefreq>yearly</changefreq>

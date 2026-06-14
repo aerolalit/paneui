@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pane — Privacy Policy</title>
-  <meta name="description" content="Privacy policy for the hosted Pane service at paneui.com and relay.paneui.com: what we collect, how we use it, third-party services, retention, and your choices. Pane is open-source and self-hostable." />
+  <title>Pane — Connect to your AI chat</title>
+  <meta name="description" content="Add Pane to Claude (web, desktop, mobile), ChatGPT, or any chat app that supports remote MCP connectors. No install — paste one URL, log in, and your chat can build you interactive UIs by URL." />
 
   <!-- canonical + browser chrome -->
-  <link rel="canonical" href="https://paneui.com/privacy" />
+  <link rel="canonical" href="https://paneui.com/connect" />
   <meta name="theme-color" content="#f7f5f1" />
   <meta name="color-scheme" content="light" />
 
@@ -15,9 +15,9 @@
   <meta property="og:site_name" content="Pane" />
   <meta property="og:type" content="website" />
   <meta property="og:locale" content="en_US" />
-  <meta property="og:url" content="https://paneui.com/privacy" />
-  <meta property="og:title" content="Pane — Privacy Policy" />
-  <meta property="og:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices. Pane is open-source and self-hostable." />
+  <meta property="og:url" content="https://paneui.com/connect" />
+  <meta property="og:title" content="Pane — Connect to your AI chat" />
+  <meta property="og:description" content="Add Pane to Claude, ChatGPT, or any chat app with remote MCP connectors. No install — paste one URL, log in once, and your chat builds you interactive UIs by URL." />
   <meta property="og:image" content="https://paneui.com/og.png" />
   <meta property="og:image:secure_url" content="https://paneui.com/og.png" />
   <meta property="og:image:type" content="image/png" />
@@ -27,8 +27,8 @@
 
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Pane — Privacy Policy" />
-  <meta name="twitter:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices." />
+  <meta name="twitter:title" content="Pane — Connect to your AI chat" />
+  <meta name="twitter:description" content="Add Pane to Claude, ChatGPT, or any chat app with remote MCP connectors. No install — paste one URL and log in once." />
   <meta name="twitter:image" content="https://paneui.com/og.png" />
   <meta name="twitter:image:alt" content="Pane: apps, sites, artifacts built by your agent, hosted by a URL." />
 
@@ -73,7 +73,6 @@
     code { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .wrap { width: 100%; max-width: min(1180px, 94vw); margin: 0 auto; padding: 0 clamp(18px, 4vw, 40px); }
 
-    /* ambient glow behind the header, matching the landing page */
     body::before {
       content: "";
       position: fixed; inset: 0;
@@ -81,7 +80,7 @@
       pointer-events: none; z-index: 0;
     }
 
-    /* ---------- nav (matches landing page) ---------- */
+    /* ---------- nav ---------- */
     nav { position: relative; z-index: 2; padding: clamp(14px, 2.2vh, 22px) 0; }
     nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -.01em; }
@@ -107,7 +106,7 @@
       .nav-home { display: none; }
     }
 
-    /* ---------- legal document ---------- */
+    /* ---------- document ---------- */
     main { position: relative; z-index: 1; flex: 1 0 auto; padding: clamp(28px, 5vh, 60px) 0 clamp(40px, 7vh, 80px); }
     .doc { max-width: 760px; margin: 0 auto; }
 
@@ -128,8 +127,6 @@
       background: linear-gradient(100deg, var(--agent), var(--human));
       -webkit-background-clip: text; background-clip: text; color: transparent;
     }
-    .updated { font-size: 13.5px; color: var(--faint); margin: 0; }
-    .updated b { color: var(--muted); font-weight: 650; }
 
     .lead {
       font-size: clamp(15.5px, 1.3vw, 18px); line-height: 1.62; color: var(--muted);
@@ -141,6 +138,35 @@
     .lead a { color: var(--accent); font-weight: 600; }
     .lead a:hover { text-decoration: underline; }
 
+    /* ---------- connector URL hero ---------- */
+    .url-hero {
+      margin: clamp(20px, 3vh, 28px) 0 0;
+      padding: clamp(18px, 2.8vh, 26px) clamp(18px, 2.8vw, 26px);
+      background: linear-gradient(160deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border); border-radius: 15px;
+      box-shadow: 0 6px 20px rgba(26,23,38,.05);
+    }
+    .url-hero .label { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+    .url-row { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+    .url-box {
+      flex: 1 1 320px; min-width: 0;
+      display: flex; align-items: center;
+      background: var(--code); border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px 16px;
+      font: 15px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg);
+      overflow-x: auto; white-space: nowrap;
+    }
+    .copy-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      background: linear-gradient(100deg, var(--accent), var(--accent-2)); color: #fff;
+      border: none; cursor: pointer;
+      font-size: 14px; font-weight: 650; padding: 0 18px; border-radius: 10px; min-height: 46px;
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+    .copy-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(217,119,87,.28); }
+    .copy-btn svg { width: 16px; height: 16px; }
+    .url-hero .hint { font-size: 13.5px; color: var(--faint); margin: 14px 0 0; }
+
     .doc section { margin-top: clamp(30px, 4.4vh, 46px); }
     .doc h2 {
       font-size: clamp(20px, 2.3vw, 27px); font-weight: 800; letter-spacing: -0.025em;
@@ -149,20 +175,46 @@
     .doc p { color: var(--muted); font-size: clamp(14.5px, 1.1vw, 16.5px); line-height: 1.7; margin: 0 0 14px; }
     .doc p:last-child { margin-bottom: 0; }
     .doc strong { color: var(--fg); font-weight: 650; }
+    .doc a.inline { color: var(--accent); font-weight: 600; }
+    .doc a.inline:hover { text-decoration: underline; }
+    .doc code { background: var(--code); border-radius: 5px; padding: 2px 6px; font-size: .92em; color: var(--fg); }
+
+    /* numbered steps */
+    .steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 14px; }
+    .steps li {
+      position: relative; padding-left: 46px;
+      color: var(--muted); font-size: clamp(14.5px, 1.1vw, 16.5px); line-height: 1.62;
+    }
+    .steps li::before {
+      counter-increment: step; content: counter(step);
+      position: absolute; left: 0; top: -2px;
+      width: 30px; height: 30px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; color: #fff;
+      background: linear-gradient(100deg, var(--agent), var(--human));
+    }
+    .steps li strong { color: var(--fg); }
+
+    /* simple bullet list (matches privacy page) */
     .doc ul { margin: 0 0 14px; padding-left: 0; list-style: none; display: grid; gap: 11px; }
-    .doc li {
+    .doc ul li {
       position: relative; color: var(--muted); font-size: clamp(14.5px, 1.1vw, 16.5px); line-height: 1.62;
       padding-left: 26px;
     }
-    .doc li::before {
+    .doc ul li::before {
       content: ""; position: absolute; left: 4px; top: .62em;
       width: 7px; height: 7px; border-radius: 50%;
       background: linear-gradient(100deg, var(--agent), var(--human));
     }
-    .doc li strong { color: var(--fg); }
-    .doc a.inline { color: var(--accent); font-weight: 600; }
-    .doc a.inline:hover { text-decoration: underline; }
-    .doc code { background: var(--code); border-radius: 5px; padding: 2px 6px; font-size: .92em; color: var(--fg); }
+    .doc ul li strong { color: var(--fg); }
+
+    /* code block */
+    pre {
+      margin: 0 0 14px; padding: 14px 16px;
+      background: var(--code); border: 1px solid var(--border); border-radius: 10px;
+      overflow-x: auto;
+    }
+    pre code { background: none; padding: 0; font-size: 13.5px; color: var(--fg); }
 
     .callout {
       margin: 16px 0 0;
@@ -172,16 +224,7 @@
     }
     .callout p { margin: 0; }
 
-    .contact-card {
-      margin-top: 16px;
-      padding: clamp(16px, 2.4vh, 22px) clamp(18px, 2.6vw, 24px);
-      background: var(--panel); border: 1px solid var(--border); border-radius: 13px;
-      box-shadow: 0 4px 14px rgba(26,23,38,.04);
-    }
-    .contact-card p { margin: 0; }
-    .contact-card .email { color: var(--accent); font-weight: 700; }
-
-    /* ---------- footer (matches landing page) ---------- */
+    /* ---------- footer ---------- */
     footer { position: relative; z-index: 1; padding: clamp(12px, 2vh, 22px) 0; border-top: 1px solid var(--border); }
     footer .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
     .foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
@@ -223,89 +266,77 @@
     </div>
   </nav>
 
-  <!-- ============ PRIVACY POLICY ============ -->
+  <!-- ============ CONNECT GUIDE ============ -->
   <main id="top">
     <div class="wrap">
       <article class="doc">
 
         <header class="doc-head">
-          <span class="doc-eyebrow"><span class="dot"></span>Legal</span>
-          <h1>Pane <span class="grad">Privacy</span> Policy</h1>
-          <p class="updated">Last updated: <b>June 12, 2026</b></p>
+          <span class="doc-eyebrow"><span class="dot"></span>Setup</span>
+          <h1>Connect Pane to your <span class="grad">AI chat</span></h1>
 
           <p class="lead">
-            This policy covers the hosted Pane service operated at <a href="https://relay.paneui.com" rel="noopener">relay.paneui.com</a>
-            and <a href="https://paneui.com" rel="noopener">paneui.com</a> ("Pane", "we", "us"). Pane is open-source software you can
-            also self-host. If you self-host Pane, you are the data controller for your instance and this policy does not apply to it.
+            Add Pane to <strong>Claude</strong> (web, desktop, mobile), <strong>ChatGPT</strong>, or any chat app
+            that supports remote MCP connectors — <strong>nothing to install</strong>. Paste one URL, log in once,
+            and your chat can build you real interactive UIs by URL and read your answers back. This is the only
+            way to use Pane from a phone or a pure chat app. Got a coding agent instead? See the
+            <a href="/#faq">install flow on the homepage</a>.
           </p>
+
+          <div class="url-hero">
+            <p class="label">Custom connector URL</p>
+            <div class="url-row">
+              <div class="url-box" id="connectorUrl">https://relay.paneui.com/mcp</div>
+              <button class="copy-btn" id="copyUrl" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                <span class="lbl">Copy</span>
+              </button>
+            </div>
+            <p class="hint">Self-hosting? Use <code>https://&lt;your-relay-host&gt;/mcp</code> — the same login flow is built in.</p>
+          </div>
         </header>
 
-        <section aria-labelledby="collect">
-          <h2 id="collect">What we collect</h2>
-          <ul>
-            <li><strong>Account data:</strong> your email address (required to sign in), and optionally a display name and phone number if you provide them. We record login timestamps.</li>
-            <li><strong>Content you create:</strong> the panes (interactive web UIs) your agent builds, the structured events people submit through them, records (mutable collections such as lists and boards), and files uploaded as attachments.</li>
-            <li><strong>Authentication data:</strong> short-lived magic-link login tokens and API and OAuth tokens. These are stored hashed or encrypted, never in plaintext.</li>
-            <li><strong>Technical data:</strong> standard request logs and operational metrics (timestamps, IP address, error traces) used to run and secure the service.</li>
-          </ul>
-        </section>
-
-        <section aria-labelledby="use">
-          <h2 id="use">How we use your data</h2>
-          <ul>
-            <li><strong>To provide the service:</strong> authenticate you, create and serve your panes, deliver events back to your agent, and store your records and attachments.</li>
-            <li><strong>To send magic-link login emails.</strong></li>
-            <li><strong>To operate, secure, debug, and improve the service,</strong> including rate limiting and abuse prevention.</li>
-          </ul>
+        <section aria-labelledby="claude">
+          <h2 id="claude">Claude — web, desktop &amp; mobile</h2>
+          <ol class="steps">
+            <li>Open <strong>Settings → Connectors</strong> (web: <a class="inline" href="https://claude.ai/settings/connectors" rel="noopener">claude.ai/settings/connectors</a>; mobile: profile → Settings → Connectors).</li>
+            <li>Click <strong>Add custom connector</strong>.</li>
+            <li>Name it <code>Pane</code> and paste the URL <code>https://relay.paneui.com/mcp</code>, then save.</li>
+            <li>Click <strong>Connect</strong>. A window opens on the Pane relay — <strong>log in with your email</strong> (magic link).</li>
+            <li>On the consent screen, review and click <strong>Allow</strong>. You're returned to Claude.</li>
+            <li>Pane's tools now appear in the chat. Ask: <em>"Use Pane to build me a quick contact form and give me the link."</em></li>
+          </ol>
           <div class="callout">
-            <p>We do not sell your data, use it for advertising, or use your content to train AI models.</p>
+            <p>Custom connectors are a feature of Claude's <strong>paid plans</strong> (Pro, Max, Team, Enterprise). Add it once on the web and it's available on your phone too — same account.</p>
           </div>
         </section>
 
-        <section aria-labelledby="third-party">
-          <h2 id="third-party">Third-party services</h2>
-          <p>We host on Microsoft Azure and use:</p>
+        <section aria-labelledby="claude-code">
+          <h2 id="claude-code">Claude Code (remote, no local server)</h2>
+          <p>Claude Code can use the hosted connector instead of running anything locally:</p>
+          <pre><code>claude mcp add --transport http pane https://relay.paneui.com/mcp</code></pre>
+          <p>Then run <code>/mcp</code>, select <strong>pane</strong>, and <strong>Authenticate</strong> — it opens the browser for the same login + consent, and you're set. Prefer streaming and local control? The CLI route gives you true <code>pane watch</code> — see the <a class="inline" href="https://github.com/aerolalit/paneui#install" rel="noopener">README install section</a>.</p>
+        </section>
+
+        <section aria-labelledby="others">
+          <h2 id="others">ChatGPT &amp; other MCP-capable apps</h2>
+          <p>Pane's endpoint is a standard OAuth-protected remote MCP server, not a Claude-specific integration — any client that supports <strong>remote MCP / custom connectors</strong> works.</p>
           <ul>
-            <li><strong>Azure Container Apps</strong> for hosting and storage.</li>
-            <li><strong>Azure Communication Services</strong> to send magic-link login emails (your email address is processed to deliver the message).</li>
-            <li><strong>Azure Application Insights</strong> for operational telemetry (request metrics, error traces, and logs).</li>
+            <li><strong>ChatGPT</strong> — in the clients that expose custom connectors / MCP, add a connector with the URL <code>https://relay.paneui.com/mcp</code> and complete the login + consent when prompted.</li>
+            <li><strong>Any other client</strong> — wherever it asks for a remote/HTTP MCP <em>server URL</em>, give it <code>https://relay.paneui.com/mcp</code>. It discovers the auth endpoints automatically and walks you through login + consent.</li>
           </ul>
-          <p>We share data with these infrastructure providers only as needed to run the service, under their data-protection terms. We do not share your data with any other third parties.</p>
-          <p>When you connect Pane to an AI client such as Claude, that client sends tool requests to Pane on your behalf using an OAuth token you authorized. The client provider's own privacy policy governs the client side of that connection.</p>
+          <p>The flow is identical everywhere: <strong>paste the URL → log in by email → approve consent</strong>. No API key to copy, no client secret to manage.</p>
         </section>
 
-        <section aria-labelledby="retention">
-          <h2 id="retention">Data retention</h2>
+        <section aria-labelledby="manage">
+          <h2 id="manage">Managing the connection</h2>
           <ul>
-            <li>Active accounts and their content are retained while your account is active.</li>
-            <li>When an account is deleted, its data is soft-deleted and then permanently erased after a retention window (30 days by default for free accounts).</li>
-            <li>Panes expire automatically at their time-to-live. Expired login links and tokens are purged automatically.</li>
+            <li><strong>One identity per chat app.</strong> Re-authorizing the same app reuses its Pane identity, so your panes and templates accumulate under one account.</li>
+            <li><strong>Disconnect any time.</strong> Remove the connector in your chat app's settings (or revoke it on the relay) and access is revoked immediately — your other credentials are unaffected.</li>
+            <li><strong>Tokens</strong> are short-lived and refresh automatically; everything is revocable. A connection grants full agent access, the same as a CLI key.</li>
           </ul>
-        </section>
-
-        <section aria-labelledby="choices">
-          <h2 id="choices">Your choices</h2>
-          <ul>
-            <li>You can disconnect the connector at any time, which revokes its access immediately. Your other credentials are unaffected.</li>
-            <li>You can request access to or deletion of your data by contacting us (see <a class="inline" href="#contact">Contact</a>).</li>
-            <li>You can self-host Pane to keep all data under your own control.</li>
-          </ul>
-        </section>
-
-        <section aria-labelledby="security">
-          <h2 id="security">Security</h2>
-          <p>Credentials are stored hashed or encrypted at rest. Access tokens are scoped to your own account and are revocable. All traffic is served over HTTPS.</p>
-        </section>
-
-        <section aria-labelledby="changes">
-          <h2 id="changes">Changes to this policy</h2>
-          <p>We may update this policy. Material changes will be reflected by the "Last updated" date at the top of this page.</p>
-        </section>
-
-        <section aria-labelledby="contact">
-          <h2 id="contact">Contact</h2>
-          <div class="contact-card">
-            <p>For privacy questions, data access requests, or deletion requests, contact <a class="email" href="mailto:privacy@paneui.com">privacy@paneui.com</a>.</p>
+          <div class="callout">
+            <p>Want the full walkthrough, the OAuth security model, and troubleshooting? See <a class="inline" href="https://github.com/aerolalit/paneui/blob/main/docs/CONNECT-AI-CHAT.md" rel="noopener">docs/CONNECT-AI-CHAT.md</a> on GitHub.</p>
           </div>
         </section>
 
@@ -329,6 +360,34 @@
       <span class="foot-meta">Open-core · MIT licensed</span>
     </div>
   </footer>
+
+  <script>
+    (function () {
+      var btn = document.getElementById('copyUrl');
+      var url = 'https://relay.paneui.com/mcp';
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var done = function () {
+          var lbl = btn.querySelector('.lbl');
+          if (!lbl) return;
+          var prev = lbl.textContent;
+          lbl.textContent = 'Copied';
+          setTimeout(function () { lbl.textContent = prev; }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(done).catch(done);
+        } else {
+          var r = document.createRange();
+          r.selectNode(document.getElementById('connectorUrl'));
+          var sel = window.getSelection();
+          sel.removeAllRanges(); sel.addRange(r);
+          try { document.execCommand('copy'); } catch (e) {}
+          sel.removeAllRanges();
+          done();
+        }
+      });
+    })();
+  </script>
 
 </body>
 </html>
