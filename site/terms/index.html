@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pane — Privacy Policy</title>
-  <meta name="description" content="Privacy policy for the hosted Pane service at paneui.com and relay.paneui.com: what we collect, how we use it, third-party services, retention, and your choices. Pane is open-source and self-hostable." />
+  <title>Pane — Terms of Service</title>
+  <meta name="description" content="Terms of service for the hosted Pane service at paneui.com and relay.paneui.com: the service, accounts, acceptable use, your content, AI connectors, disclaimers, and liability. Pane is open-source and self-hostable." />
 
   <!-- canonical + browser chrome -->
-  <link rel="canonical" href="https://paneui.com/privacy" />
+  <link rel="canonical" href="https://paneui.com/terms" />
   <meta name="theme-color" content="#f7f5f1" />
   <meta name="color-scheme" content="light" />
 
@@ -15,9 +15,9 @@
   <meta property="og:site_name" content="Pane" />
   <meta property="og:type" content="website" />
   <meta property="og:locale" content="en_US" />
-  <meta property="og:url" content="https://paneui.com/privacy" />
-  <meta property="og:title" content="Pane — Privacy Policy" />
-  <meta property="og:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices. Pane is open-source and self-hostable." />
+  <meta property="og:url" content="https://paneui.com/terms" />
+  <meta property="og:title" content="Pane — Terms of Service" />
+  <meta property="og:description" content="The terms governing the hosted Pane service: accounts, acceptable use, your content, AI connectors, disclaimers, and liability. Pane is open-source and self-hostable." />
   <meta property="og:image" content="https://paneui.com/og.png" />
   <meta property="og:image:secure_url" content="https://paneui.com/og.png" />
   <meta property="og:image:type" content="image/png" />
@@ -27,8 +27,8 @@
 
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Pane — Privacy Policy" />
-  <meta name="twitter:description" content="What the hosted Pane service collects, how it's used, the third-party providers involved, data retention, and your choices." />
+  <meta name="twitter:title" content="Pane — Terms of Service" />
+  <meta name="twitter:description" content="The terms governing the hosted Pane service: accounts, acceptable use, your content, AI connectors, disclaimers, and liability." />
   <meta name="twitter:image" content="https://paneui.com/og.png" />
   <meta name="twitter:image:alt" content="Pane: apps, sites, artifacts built by your agent, hosted by a URL." />
 
@@ -223,89 +223,111 @@
     </div>
   </nav>
 
-  <!-- ============ PRIVACY POLICY ============ -->
+  <!-- ============ TERMS OF SERVICE ============ -->
   <main id="top">
     <div class="wrap">
       <article class="doc">
 
         <header class="doc-head">
           <span class="doc-eyebrow"><span class="dot"></span>Legal</span>
-          <h1>Pane <span class="grad">Privacy</span> Policy</h1>
-          <p class="updated">Last updated: <b>June 12, 2026</b></p>
+          <h1>Pane <span class="grad">Terms</span> of Service</h1>
+          <p class="updated">Last updated: <b>June 14, 2026</b></p>
 
           <p class="lead">
-            This policy covers the hosted Pane service operated at <a href="https://relay.paneui.com" rel="noopener">relay.paneui.com</a>
-            and <a href="https://paneui.com" rel="noopener">paneui.com</a> ("Pane", "we", "us"). Pane is open-source software you can
-            also self-host. If you self-host Pane, you are the data controller for your instance and this policy does not apply to it.
+            These terms govern your use of the hosted Pane service operated at <a href="https://relay.paneui.com" rel="noopener">relay.paneui.com</a>
+            and <a href="https://paneui.com" rel="noopener">paneui.com</a> ("Pane", "we", "us", "our"). Pane is open-source software you can
+            also self-host. If you self-host Pane, your use of the software is governed by its open-source license (MIT), not by these terms.
+            By using the hosted service, you agree to these terms.
           </p>
         </header>
 
-        <section aria-labelledby="collect">
-          <h2 id="collect">What we collect</h2>
+        <section aria-labelledby="acceptance">
+          <h2 id="acceptance">1. Acceptance</h2>
+          <p>By accessing or using the hosted Pane service, or by connecting it to an AI client such as Claude, you agree to be bound by these terms and by our <a class="inline" href="/privacy">Privacy Policy</a>. If you do not agree, do not use the service. If you use Pane on behalf of an organization, you represent that you are authorized to accept these terms on its behalf.</p>
+        </section>
+
+        <section aria-labelledby="service">
+          <h2 id="service">2. The service</h2>
+          <p>Pane is a round-trip UI channel between software agents and people: an agent creates a "pane" (an interactive web UI served at a URL), a person interacts with it, and their input is returned to the agent as structured data. The service stores the panes, events, records, and attachments you create so they can be served and delivered back to your agent.</p>
+          <p>Pane is provided to you free of charge, on an "as-available" basis. It is early-stage software and may change.</p>
+        </section>
+
+        <section aria-labelledby="accounts">
+          <h2 id="accounts">3. Accounts &amp; eligibility</h2>
           <ul>
-            <li><strong>Account data:</strong> your email address (required to sign in), and optionally a display name and phone number if you provide them. We record login timestamps.</li>
-            <li><strong>Content you create:</strong> the panes (interactive web UIs) your agent builds, the structured events people submit through them, records (mutable collections such as lists and boards), and files uploaded as attachments.</li>
-            <li><strong>Authentication data:</strong> short-lived magic-link login tokens and API and OAuth tokens. These are stored hashed or encrypted, never in plaintext.</li>
-            <li><strong>Technical data:</strong> standard request logs and operational metrics (timestamps, IP address, error traces) used to run and secure the service.</li>
+            <li>You must be at least 16 years old, or the age of digital consent in your jurisdiction, to use the hosted service.</li>
+            <li>You are responsible for your account, your API keys, your OAuth tokens, and all activity that occurs under them. Keep your credentials secure and do not share them.</li>
+            <li>You are responsible for the actions of any agent you authorize to act on your behalf through Pane.</li>
           </ul>
         </section>
 
-        <section aria-labelledby="use">
-          <h2 id="use">How we use your data</h2>
+        <section aria-labelledby="acceptable-use">
+          <h2 id="acceptable-use">4. Acceptable use</h2>
+          <p>You agree not to use the service to:</p>
           <ul>
-            <li><strong>To provide the service:</strong> authenticate you, create and serve your panes, deliver events back to your agent, and store your records and attachments.</li>
-            <li><strong>To send magic-link login emails.</strong></li>
-            <li><strong>To operate, secure, debug, and improve the service,</strong> including rate limiting and abuse prevention.</li>
+            <li>break any applicable law, or infringe the intellectual-property, privacy, or other rights of anyone;</li>
+            <li>create or distribute malware, or content designed to phish, deceive, defraud, or harass;</li>
+            <li>upload unlawful content, or content you do not have the right to share;</li>
+            <li>probe, scan, overload, or attempt to breach the security or integrity of the service or its infrastructure;</li>
+            <li>evade rate limits, quotas, or other technical or usage restrictions;</li>
+            <li>resell, sublicense, or operate the hosted service as your own offering. (You are free to self-host the open-source software instead.)</li>
           </ul>
+          <p>We may suspend or remove content, or suspend or terminate access, that we reasonably believe violates these terms or risks harm to the service or others.</p>
+        </section>
+
+        <section aria-labelledby="your-content">
+          <h2 id="your-content">5. Your content</h2>
+          <p>You retain ownership of the content you create through Pane — the panes, events, records, and attachments. You grant us a limited, non-exclusive license to host, store, process, transmit, and display that content <strong>solely to operate and provide the service to you</strong>. This license ends when the content is deleted, subject to routine backup and the retention windows described in the <a class="inline" href="/privacy">Privacy Policy</a>.</p>
+          <p>You are responsible for your content and for having the rights necessary to use it with Pane. Panes render agent-authored HTML inside sandboxed iframes; you are responsible for what you and your agents publish through them.</p>
           <div class="callout">
             <p>We do not sell your data, use it for advertising, or use your content to train AI models.</p>
           </div>
         </section>
 
-        <section aria-labelledby="third-party">
-          <h2 id="third-party">Third-party services</h2>
-          <p>We host on Microsoft Azure and use:</p>
-          <ul>
-            <li><strong>Azure Container Apps</strong> for hosting and storage.</li>
-            <li><strong>Azure Communication Services</strong> to send magic-link login emails (your email address is processed to deliver the message).</li>
-            <li><strong>Azure Application Insights</strong> for operational telemetry (request metrics, error traces, and logs).</li>
-          </ul>
-          <p>We share data with these infrastructure providers only as needed to run the service, under their data-protection terms. We do not share your data with any other third parties.</p>
-          <p>When you connect Pane to an AI client such as Claude, that client sends tool requests to Pane on your behalf using an OAuth token you authorized. The client provider's own privacy policy governs the client side of that connection.</p>
+        <section aria-labelledby="connectors">
+          <h2 id="connectors">6. AI clients &amp; connectors</h2>
+          <p>When you connect Pane to an AI client (for example, as a Claude connector), you authorize that client to send requests to Pane on your behalf using an OAuth token you grant. You are responsible for the instructions you give such a client and for the resulting activity in your account. The client provider's own terms and privacy policy govern the client side of that connection. You can revoke a connector's access at any time, which immediately disables its access without affecting your other credentials.</p>
         </section>
 
-        <section aria-labelledby="retention">
-          <h2 id="retention">Data retention</h2>
-          <ul>
-            <li>Active accounts and their content are retained while your account is active.</li>
-            <li>When an account is deleted, its data is soft-deleted and then permanently erased after a retention window (30 days by default for free accounts).</li>
-            <li>Panes expire automatically at their time-to-live. Expired login links and tokens are purged automatically.</li>
-          </ul>
+        <section aria-labelledby="availability">
+          <h2 id="availability">7. Availability &amp; changes</h2>
+          <p>The service is provided on an "as-available" basis with no guarantee of uptime or continuity. We may add, change, suspend, limit, or discontinue features — or the hosted service as a whole — at any time, and may apply quotas or usage limits. Because Pane is open-source, you can self-host it to keep running it on your own terms.</p>
         </section>
 
-        <section aria-labelledby="choices">
-          <h2 id="choices">Your choices</h2>
-          <ul>
-            <li>You can disconnect the connector at any time, which revokes its access immediately. Your other credentials are unaffected.</li>
-            <li>You can request access to or deletion of your data by contacting us (see <a class="inline" href="#contact">Contact</a>).</li>
-            <li>You can self-host Pane to keep all data under your own control.</li>
-          </ul>
+        <section aria-labelledby="disclaimer">
+          <h2 id="disclaimer">8. Disclaimer of warranties</h2>
+          <p>The hosted service is provided <strong>"as is" and "as available", without warranties of any kind</strong>, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, non-infringement, accuracy, or uninterrupted or error-free operation. You use the service at your own risk. Some jurisdictions do not allow the exclusion of certain warranties, so some of these exclusions may not apply to you.</p>
         </section>
 
-        <section aria-labelledby="security">
-          <h2 id="security">Security</h2>
-          <p>Credentials are stored hashed or encrypted at rest. Access tokens are scoped to your own account and are revocable. All traffic is served over HTTPS.</p>
+        <section aria-labelledby="liability">
+          <h2 id="liability">9. Limitation of liability</h2>
+          <p>To the maximum extent permitted by law, Pane and its operator will not be liable for any indirect, incidental, special, consequential, or exemplary damages, or for any loss of data, profits, goodwill, or business, arising out of or relating to your use of (or inability to use) the service. To the maximum extent permitted by law, our total aggregate liability for any claim relating to the service is limited to the greater of the amount you paid us for the service in the twelve months before the claim (which, for the free service, is zero) or EUR 100. Nothing in these terms limits liability that cannot be limited under applicable law.</p>
+        </section>
+
+        <section aria-labelledby="termination">
+          <h2 id="termination">10. Termination</h2>
+          <p>You may stop using the service and delete your account at any time. We may suspend or terminate your access if you breach these terms, if required by law, or if continuing to provide the service to you would create a risk to the service or others. On termination, your data is handled as described in the <a class="inline" href="/privacy">Privacy Policy</a>. Sections that by their nature should survive termination (including content ownership, disclaimers, and limitation of liability) will survive.</p>
+        </section>
+
+        <section aria-labelledby="oss">
+          <h2 id="oss">11. Open-source software</h2>
+          <p>The Pane software is open source and released under the MIT License, available at <a class="inline" href="https://github.com/aerolalit/paneui" rel="noopener">github.com/aerolalit/paneui</a>. These terms govern only the hosted service we operate; the MIT License governs your use of the software itself, including when you self-host.</p>
         </section>
 
         <section aria-labelledby="changes">
-          <h2 id="changes">Changes to this policy</h2>
-          <p>We may update this policy. Material changes will be reflected by the "Last updated" date at the top of this page.</p>
+          <h2 id="changes">12. Changes to these terms</h2>
+          <p>We may update these terms from time to time. Material changes will be reflected by the "Last updated" date at the top of this page. Your continued use of the service after a change takes effect constitutes acceptance of the updated terms.</p>
+        </section>
+
+        <section aria-labelledby="governing-law">
+          <h2 id="governing-law">13. Governing law</h2>
+          <p>These terms are governed by the laws of Germany, excluding its conflict-of-laws rules, and excluding the United Nations Convention on Contracts for the International Sale of Goods. Mandatory consumer-protection rights you have under the law of your place of residence are unaffected.</p>
         </section>
 
         <section aria-labelledby="contact">
-          <h2 id="contact">Contact</h2>
+          <h2 id="contact">14. Contact</h2>
           <div class="contact-card">
-            <p>For privacy questions, data access requests, or deletion requests, contact <a class="email" href="mailto:privacy@paneui.com">privacy@paneui.com</a>.</p>
+            <p>Questions about these terms? Contact <a class="email" href="mailto:legal@paneui.com">legal@paneui.com</a>.</p>
           </div>
         </section>
 
