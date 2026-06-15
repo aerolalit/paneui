@@ -1126,7 +1126,14 @@ ${
         // silent/background redirects), and it opens no new windows.
         // `allow-popups` and `allow-same-origin` remain omitted, so the framed
         // document itself still runs at an opaque origin and can't spawn windows.
-        `<iframe id="frame" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
+        //
+        // `allow="clipboard-write"` is a Permissions-Policy delegation (NOT a
+        // sandbox token) that lets a template call
+        // navigator.clipboard.writeText() on a user gesture — e.g. a "copy this"
+        // button. It's write-only (no clipboard read), needs no
+        // `allow-same-origin`, and the framed document still runs at an opaque
+        // origin.
+        `<iframe id="frame" allow="clipboard-write" sandbox="allow-scripts allow-forms allow-downloads allow-top-navigation-by-user-activation" src="${htmlEscape(args.iframeContentUrl)}"></iframe>`
   }${args.topNav?.canShare ? `\n${renderShareModal()}` : ""}
 <script type="application/json" id="pane-cfg">${cfgJson}</script>
 <script nonce="${args.nonce}">${SHELL_JS}</script>${
