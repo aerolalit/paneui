@@ -214,7 +214,31 @@ auth.get("/auth/verify", async (c) => {
   // already-consumed / expired token the same way as a missing one to
   // avoid leaking whether a real link existed.
   const link = await prisma.magicLink.findUnique({ where: { tokenHash } });
-  if (!link || link.consumedAt || link.expiresAt < new Date()) {
+  const verifyAt = new Date();
+  if (!link || link.consumedAt || link.expiresAt < verifyAt) {
+    // Diagnostic only — the CLIENT response below is byte-identical across all
+    // rejection branches (no account-enumeration / browser-binding oracle).
+    // The server log distinguishes them so a "every link fails" report can be
+    // pinned to a specific cause: `expired` with a small positive `skewMs`
+    // points at relay clock skew; `already_consumed` at a link prefetcher;
+    // `not_found` at a wrong/truncated token. (#magic-link-mobile)
+    log.info("magic-link verify rejected", {
+      reason: !link
+        ? "not_found"
+        : link.consumedAt
+          ? "already_consumed"
+          : "expired",
+      ...(link
+        ? {
+            email: link.email,
+            expiresAt: link.expiresAt.toISOString(),
+            now: verifyAt.toISOString(),
+            // >0 means the link was already past expiry at click time. A value
+            // close to the TTL on a just-clicked link is the clock-skew tell.
+            skewMs: verifyAt.getTime() - link.expiresAt.getTime(),
+          }
+        : {}),
+    });
     return c.json(
       {
         error: {
@@ -245,6 +269,16 @@ auth.get("/auth/verify", async (c) => {
     );
     const presented = nonceCookie ? hashMagicLinkNonce(nonceCookie) : null;
     if (presented === null || presented !== link.nonceHash) {
+      // Diagnostic only (see the rejection-log note above). `nonce_missing` is
+      // the signature of a cross-browser-context click: the link was requested
+      // in one cookie jar (e.g. an in-app webview / OAuth connector view) and
+      // opened in another (the system browser), so the pane_ml_nonce cookie
+      // never reaches verify. `nonce_mismatch` means a cookie WAS sent but
+      // doesn't match — a genuinely different requester. (#magic-link-mobile)
+      log.info("magic-link verify rejected", {
+        reason: presented === null ? "nonce_missing" : "nonce_mismatch",
+        email: link.email,
+      });
       return c.json(
         {
           error: {
@@ -264,6 +298,14 @@ auth.get("/auth/verify", async (c) => {
     data: { consumedAt: new Date() },
   });
   if (consumed.count === 0) {
+    // Diagnostic only (see the rejection-log note above). The token passed
+    // lookup + nonce but lost the consume race — a concurrent verify (often a
+    // mail-client link prefetch firing alongside the human click) claimed the
+    // row first. (#magic-link-mobile)
+    log.info("magic-link verify rejected", {
+      reason: "consume_race",
+      email: link.email,
+    });
     return c.json(
       {
         error: {
@@ -274,6 +316,11 @@ auth.get("/auth/verify", async (c) => {
       400,
     );
   }
+
+  // Success — emit a matching positive signal so a fixed flow (e.g. Salina
+  // completing the whole login in one system browser) shows up in the logs
+  // next to the rejections it replaced. (#magic-link-mobile)
+  log.info("magic-link verify ok", { email: link.email });
 
   // Find-or-create the Human row by email. Per the proposal §4.2:
   // verifiedAt is set on FIRST successful login only — it's the moment of
