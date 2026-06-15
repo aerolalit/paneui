@@ -319,6 +319,12 @@ describe("bridge shell GET /s/:token", () => {
     // run at a real origin.
     expect(tokens).toContain("allow-top-navigation-by-user-activation");
     expect(tokens).not.toContain("allow-popups");
+    // `allow="clipboard-write"` is a Permissions-Policy delegation (not a
+    // sandbox token) that lets a template copy to the clipboard on a user
+    // gesture — e.g. a "copy this" button. Write-only; no clipboard read.
+    const allowMatch = body.match(/<iframe[^>]*\sallow="([^"]+)"/);
+    expect(allowMatch).not.toBeNull();
+    expect(allowMatch![1]).toContain("clipboard-write");
   });
 
   it("renders the closed banner and no iframe for a closed pane", async () => {
