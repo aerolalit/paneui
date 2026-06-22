@@ -80,7 +80,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@types/node": "^25.9.2",
+    "@types/node": "^26.0.0",
     "@types/pg": "^8.20.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
