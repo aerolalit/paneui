@@ -48,7 +48,7 @@ jobs:
       # a cryptographic proof of where it came from.
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -131,7 +131,7 @@ jobs:
     permissions:
       contents: write # create the Release object
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history + tags so --generate-notes can diff against the
           # previous tag; a shallow clone has neither.
