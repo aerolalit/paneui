@@ -8,24 +8,34 @@
 # (~0.34.x). Patch bumps are auto-PR'd here daily; the polyglot suite +
 # the rest of CI gate auto-merge (.github/workflows/dependabot-auto-merge.yml).
 # Minor / major bumps land as regular PRs requiring manual review.
+#
+# IMPORTANT: this is an npm *workspaces* monorepo (workspaces: ["packages/*"])
+# with a single root package-lock.json. Dependabot must run from the root
+# directory only. Per-package `directory:` entries (e.g. /packages/relay) make
+# Dependabot treat each package as standalone and resolve its workspace
+# siblings (@paneui/core, etc.) from the public registry — which fails with
+# "Dependabot can't access a private package registry" and produces a broken
+# lockfile that can never rebase. A single "/" entry is workspace-aware: it
+# covers every package under packages/* and regenerates the one root lockfile.
 
 version: 2
 updates:
-  # Relay package — the security-sensitive surface. Sharp lives here.
+  # Single npm entry at the workspace root — covers all packages/* via npm
+  # workspaces. The security-sensitive surface (sharp, in packages/relay) is
+  # patched daily in its own PR so the polyglot suite gates auto-merge;
+  # everything else is grouped to keep PR noise low.
   - package-ecosystem: "npm"
-    directory: "/packages/relay"
+    directory: "/"
     schedule:
       interval: "daily"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
-    # Group every other npm dep into one weekly PR to keep noise low;
-    # sharp gets its own PR so the polyglot suite gates the merge.
     groups:
       sharp:
         patterns:
           - "sharp"
-      relay-other-deps:
+      all-other-deps:
         patterns:
           - "*"
         exclude-patterns:
@@ -38,32 +48,6 @@ updates:
       # against a fresh libvips. Block Dependabot from opening them.
       - dependency-name: "sharp"
         update-types: ["version-update:semver-major"]
-
-  # Other workspace packages — generic patch/minor coverage.
-  - package-ecosystem: "npm"
-    directory: "/packages/core"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-
-  - package-ecosystem: "npm"
-    directory: "/packages/cli"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-
-  # Repo root (workspace tooling).
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
 
   # Keep GitHub Actions pinned but patched.
   - package-ecosystem: "github-actions"
