@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.3-r.3",
-    "@hono/node-server": "^2.0.4",
+    "@hono/node-server": "^2.0.6",
     "@modelcontextprotocol/sdk": "^1.20.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.219.0",
@@ -50,7 +50,7 @@
     "@opentelemetry/instrumentation-pg": "^0.71.0",
     "@opentelemetry/resources": "^2.8.0",
     "@opentelemetry/sdk-logs": "^0.219.0",
-    "@opentelemetry/sdk-metrics": "^2.7.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
     "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@opentelemetry/semantic-conventions": "^1.41.0",
     "@paneui/core": "^0.0.31",
@@ -62,8 +62,8 @@
     "@twemoji/svg": "^15.0.0",
     "ajv": "^8.20.0",
     "better-sqlite3": "^12.11.1",
-    "hono": "^4.12.25",
-    "pg": "^8.21.0",
+    "hono": "^4.12.27",
+    "pg": "^8.22.0",
     "prisma": "^7.8.0",
     "sharp": "~0.35.1",
     "web-push": "^3.6.7",
@@ -74,12 +74,12 @@
     "@azure/communication-email": "^1.0.0",
     "@azure/identity": "^4.13.1",
     "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
-    "@azure/storage-blob": "^12.32.0",
+    "@azure/storage-blob": "^12.33.0",
     "ioredis": "^5.11.1",
-    "nodemailer": "^9.0.1"
+    "nodemailer": "^9.0.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^25.9.2",
     "@types/pg": "^8.20.0",
     "@types/web-push": "^3.6.4",
@@ -87,6 +87,6 @@
     "jsdom": "^29.1.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
